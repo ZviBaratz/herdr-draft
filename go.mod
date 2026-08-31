@@ -2,7 +2,10 @@ module github.com/ZviBaratz/herdr-draft
 
 go 1.25.0
 
-require charm.land/bubbletea/v2 v2.0.8
+require (
+	charm.land/bubbletea/v2 v2.0.8
+	golang.org/x/text v0.41.0
+)
 
 require (
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
@@ -20,5 +23,4 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 )
