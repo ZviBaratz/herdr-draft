@@ -509,14 +509,9 @@ integer `1`.
       Herdr's own SGR-decode-and-forward path end to end, not a physical
       terminal's mouse reporting, so a from-hardware click is still worth a
       spot-check at Task 19, but the code path itself is confirmed working.
-- [x] `agent_pane_busy` retry: start an agent immediately after
+- [ ] `agent_pane_busy` retry: start an agent immediately after
       `worktree create` and confirm the bounded retry rides it out.
-      **Live-probed 2026-08-31 (task 2b):** `herdr agent start probe --kind
-      claude --pane <id>` issued ~90 ms after `worktree create` returned did
-      *not* hit `agent_pane_busy` — it succeeded on the first call
-      (`interactive_ready: true` after ~4.8 s total). The race from upstream
-      #3375 did not reproduce in this environment/herdr version at this
-      pane-creation-to-agent-start gap; the bounded retry (500 ms × 5 s)
-      remains defensive/untested against an actual busy rejection and should
-      still be covered by the Task 9 mock-runner unit test.
+      **Probed 2026-08-31 (task 2b):** busy state did not reproduce at
+      ~90 ms creation-to-start gap; retry path itself remains unconfirmed
+      live — recheck opportunistically at Task 19.
 - [ ] Pin the minimum supported clauth version in README.
