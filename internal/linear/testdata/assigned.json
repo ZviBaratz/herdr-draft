@@ -1,0 +1,32 @@
+{
+  "data": {
+    "viewer": {
+      "assignedIssues": {
+        "nodes": [
+          {
+            "identifier": "ENG-142",
+            "title": "Fix pagination off-by-one on the issues list",
+            "branchName": "zvi/eng-142-fix-pagination-off-by-one",
+            "url": "https://linear.app/example/issue/ENG-142/fix-pagination-off-by-one",
+            "description": "The issues list drops the last row on page boundaries.",
+            "state": { "name": "Todo", "type": "unstarted" },
+            "estimate": 3,
+            "priority": 2,
+            "cycle": { "number": 14 }
+          },
+          {
+            "identifier": "ENG-108",
+            "title": "Add retry backoff to the sync worker",
+            "branchName": "zvi/eng-108-add-retry-backoff",
+            "url": "https://linear.app/example/issue/ENG-108/add-retry-backoff",
+            "description": "Retries should use exponential backoff with jitter.",
+            "state": { "name": "In Progress", "type": "started" },
+            "estimate": null,
+            "priority": 1,
+            "cycle": null
+          }
+        ]
+      }
+    }
+  }
+}
