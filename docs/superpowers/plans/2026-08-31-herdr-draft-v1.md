@@ -4,7 +4,7 @@
 
 **Goal:** A herdr plugin whose popup form creates a fully configured agent session (Linear issue, project, worktree, placement, agent kind, clauth account, initial prompt) in one submit.
 
-**Architecture:** Standalone Go + Bubble Tea binary in a herdr popup pane. Strict dumb-view: `internal/form` renders and routes keys/mouse only; `internal/app` owns all I/O (async, debounced, versioned); `internal/plan` turns form output into an ordered op list executed against a `herdr.Runner` interface (CLI subprocess + one raw socket call). Pure domain packages first, UI second, submit pipeline last.
+**Architecture:** Standalone Go + Bubble Tea binary in a herdr popup pane. Strict dumb-view: `internal/form` renders and routes keys/mouse only; `internal/app` owns all I/O (async, debounced, versioned); `internal/plan` turns form output into an ordered op list executed against a `herdr.Runner` interface (CLI subprocess only — no raw socket use). Pure domain packages first, UI second, submit pipeline last.
 
 **Tech Stack:** Go 1.25, `charm.land/bubbletea/v2 v2.0.8`, `charm.land/bubbles/v2 v2.1.1`, `charm.land/lipgloss/v2 v2.0.5`, `github.com/lrstanley/bubblezone/v2 v2.0.0`, `github.com/BurntSushi/toml`. External processes: `herdr`, `git`, `clauth`. HTTP: Linear GraphQL.
 
@@ -20,7 +20,7 @@
 - The form never does I/O (spec §4). All async results carry a version/key and stale results are dropped.
 - Fields with static preconditions (Linear unconfigured, <2 clauth profiles) are not rendered; fields with dynamic preconditions (non-git target, non-claude agent) render present-but-inert (spec §6).
 - All user-visible strings width-budgeted; degradation order per spec §6.
-- Tests never touch the network, a live herdr, clauth, or Linear — fixtures and fakes only. The one live checkpoint is Task 19.
+- Tests never touch the network, a live herdr, clauth, or Linear — fixtures and fakes only. The live checkpoints are Tasks 2b (early probes) and 19 (closeout).
 
 ## File Structure
 
@@ -32,7 +32,6 @@ herdr-draft/
   internal/gitx/slug.go, repo.go     — branch derivation; git subprocess queries
   internal/herdrc/context.go         — HERDR_PLUGIN_CONTEXT_JSON types + parsing
   internal/herdrc/runner.go          — Runner interface + CLIRunner (subprocess, JSON)
-  internal/herdrc/socket.go          — raw socket client: layout.apply
   internal/clauth/status.go          — status feed: file-first, CLI fallback, degrade
   internal/linear/client.go, cache.go
   internal/config/config.go, state.go
@@ -142,7 +141,7 @@ func main() { fmt.Println("herdr-draft", version()) }
 
 - [ ] **Step 1: Read the manifest reference** — `/home/zvi/Projects/herdr/docs/next/website/src/content/docs/plugins.mdx` (manifest section, ~lines 55–130, and the `[[panes]]` placement section ~line 300). Copy the exact metadata field names from the documented example — do not invent keys.
 
-- [ ] **Step 2: Write `herdr-plugin.toml`** with: plugin id/metadata per the doc example (id `draft`, name `herdr-draft`, description "new session creation dialog"); `[[build]]` running `go build -o bin/herdr-draft ./cmd/herdr-draft`; `[[panes]]` entrypoint id `open`, title `New session`, `placement = "popup"`, `width = "80%"`, `height = "80%"`, command `["bin/herdr-draft"]`; `[[actions]]` id `open`, context `global`, invoking the same binary via the pane entrypoint if the schema supports it, else a command that runs `"$HERDR_BIN_PATH" plugin pane open --plugin draft --entrypoint open`. **Note:** `herdr plugin pane open --placement` does NOT accept `popup` (CLI parser: overlay/split/tab/zoomed only) — popup placement must come from the manifest entrypoint, so never pass `--placement` when opening.
+- [ ] **Step 2: Write `herdr-plugin.toml`** with: plugin id/metadata per the doc example (id `draft`, name `herdr-draft`, description "new session creation dialog"); `[[build]]` running `go build -o bin/herdr-draft ./cmd/herdr-draft`; `[[panes]]` entrypoint id `open`, title `New session`, `placement = "popup"`, `width = "80%"`, `height = "80%"`, command `["bin/herdr-draft"]`; `[[actions]]` id `open`, context `global`, invoking the same binary via the pane entrypoint if the schema supports it, else a command that opens the pane. **Three gotchas:** (a) `herdr plugin pane open --placement` does NOT accept `popup` (CLI parser: overlay/split/tab/zoomed only) — popup placement must come from the manifest entrypoint, so never pass `--placement` when opening. (b) Manifest command argv arrays run with NO shell expansion (plugins.mdx:118-122), so `["$HERDR_BIN_PATH", …]` will not expand — use `["sh","-c","\"$HERDR_BIN_PATH\" plugin pane open --plugin draft --entrypoint open"]` or a checked-in script. (c) Set `min_herdr_version` to the current herdr release (popup panes need ≥0.7.4) — do not copy the doc example's value.
 
 - [ ] **Step 3: Replace main with a minimal Bubble Tea program**
 
@@ -188,9 +187,27 @@ func main() {
 
 - [ ] **Step 4: `go get` the charm deps at pinned versions, `just check`** — expected: PASS.
 
-- [ ] **Step 5: Manual checkpoint (requires a running herdr):** `herdr plugin link --path ~/Projects/herdr-draft`, bind nothing yet, run `herdr plugin pane open --plugin draft --entrypoint open`. Expected: centered popup with the placeholder line; `q` closes it. Record the working invocation in README later. If the id/field names were wrong, fix the manifest now.
+- [ ] **Step 5: Manual checkpoint (requires a running herdr):** `herdr plugin link ~/Projects/herdr-draft` (the path is positional — `src/cli/spec.rs:804-806`), bind nothing yet, run `herdr plugin pane open --plugin draft --entrypoint open`. Expected: centered popup with the placeholder line; `q` closes it. Record the working invocation in README later. If the id/field names were wrong, fix the manifest now.
 
 - [ ] **Step 6: Commit** — `feat: plugin manifest and popup smoke binary`
+
+---
+
+### Task 2b: LIVE CHECKPOINT — early validation probes
+
+Requires a running herdr session (use a disposable named session) and the linked plugin from Task 2. This runs BEFORE any code builds on assumed shapes; its outputs become the fixtures later tasks consume. Read spec §17 first.
+
+- [ ] **Step 1: Capture creation-response fixtures.** In a throwaway git repo: `herdr worktree create --cwd <repo> --branch probe/x --no-focus`, `herdr workspace create --cwd /tmp --label probe --no-focus`, `herdr tab create --workspace <id> --no-focus`, `herdr pane split --pane <id> --no-focus`. Save each raw JSON response (sanitize paths) to `internal/herdrc/testdata/live/<method>.json`. Close the probe workspaces.
+
+- [ ] **Step 2: Capture the context fixture.** Temporarily add a manifest action running `["sh","-c","printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > /tmp/ctx.json"]`, invoke it, save the sanitized result as `internal/herdrc/testdata/context.json`, then remove the temporary action.
+
+- [ ] **Step 3: Probe the wrapped launch.** In a probe pane: `herdr pane run <pane_id> clauth start <profile> --` with a safe profile; confirm `herdr agent get <pane_id>` reports a claude agent; time detection latency (informs the 30 s default). Exit the agent cleanly.
+
+- [ ] **Step 4: Probe `agent_pane_busy`.** Immediately after a `worktree create`, run `herdr agent start probe --kind claude --pane <id>`; record whether the first call rejects with `agent_pane_busy` and how long until it succeeds.
+
+- [ ] **Step 5: Probe popup mouse.** In the Task 2 smoke popup (temporarily enable bubbletea mouse mode and print received mouse events), click and wheel; confirm events arrive.
+
+- [ ] **Step 6:** Tick the corresponding spec §17 boxes with one-line findings. Commit fixtures + spec — `chore: live probe fixtures and spec validation findings`
 
 ---
 
@@ -367,17 +384,17 @@ type Runner interface {
 	AgentStart(ctx context.Context, req AgentStartReq) error
 	AgentPrompt(ctx context.Context, req AgentPromptReq) error
 	AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error
-	LayoutApplyCommand(ctx context.Context, req LayoutApplyReq) (CreatedTopology, error)
+	PaneRun(ctx context.Context, paneID string, argv []string) error
 	WorktreeRemove(ctx context.Context, workspaceID string) error
 	WorkspaceClose(ctx context.Context, workspaceID string) error
 }
 
-type CLIRunner struct{ Bin, SocketPath string }  // implements Runner
+type CLIRunner struct{ Bin string; PollInterval time.Duration }  // implements Runner; the herdr CLI reads HERDR_SOCKET_PATH from the environment itself
 ```
 
   Request structs mirror spec §9 exactly: `WorktreeCreateReq{Cwd, Branch, Base, Label string; Focus, TrustRepository bool}`, `AgentStartReq{Name, Kind, PaneID string; ExtraArgs []string}`, `AgentPromptReq{Target, Text string; WaitTimeout time.Duration}`, etc.
 
-- [ ] **Step 1: Fixture** — `testdata/context.json` written by copying the real shape: read `PluginInvocationContext` in `/home/zvi/Projects/herdr/src/api/schema/plugins.rs:363` and serialize a representative example with those exact serde field names (fix the `Context` struct tags above to match what you find — the struct tags in this plan are the best current guess, the Rust source is normative).
+- [ ] **Step 1: Fixtures** — `testdata/context.json` and `testdata/live/*.json` were captured from a real herdr in Task 2b; use them verbatim as the canned outputs. Cross-check the `Context` struct tags against `PluginInvocationContext` in `/home/zvi/Projects/herdr/src/api/schema/plugins.rs:363` (snake_case; every field is Optional in Rust — make each Go field a pointer or tolerate absence). The struct tags in this plan are a best current guess; the captured fixtures are normative.
 
 - [ ] **Step 2: Failing tests** — `ParseContext` round-trips the fixture; `CLIRunner` tests use a **fake herdr**: a shell script written to `t.TempDir()` that logs its argv to a file and echoes canned JSON:
 
@@ -397,7 +414,7 @@ func fakeHerdr(t *testing.T, stdout string) (bin, argvLog string) {
 
   Cases: `WorktreeCreate` builds exactly `worktree create --cwd X --branch B --base R --label L --focus` and parses `workspace_id`/pane id from JSON; non-zero exit → error containing stderr; `AgentPrompt` passes `--wait --timeout N`.
 
-- [ ] **Step 3: Run** — FAIL. **Step 4: Implement** `CLIRunner` (one private `runJSON(ctx, args...) (json.RawMessage, error)` helper; per-method arg assembly + response structs). Leave `LayoutApplyCommand` and `AwaitDetection` returning `fmt.Errorf("not implemented")` — they land in Tasks 6 and 7's tests. **Step 5: Run** — PASS. **Step 6: Commit** — `feat: herdr context parsing and CLI runner`
+- [ ] **Step 3: Run** — FAIL. **Step 4: Implement** `CLIRunner` (one private `runJSON(ctx, args...) (json.RawMessage, error)` helper; per-method arg assembly + response structs). Leave `AwaitDetection` and `PaneRun` returning `fmt.Errorf("not implemented")` — they land in Tasks 6 and 7's tests. **Step 5: Run** — PASS. **Step 6: Commit** — `feat: herdr context parsing and CLI runner`
 
 ---
 
@@ -415,19 +432,18 @@ func fakeHerdr(t *testing.T, stdout string) (bin, argvLog string) {
 
 ---
 
-### Task 7: herdrc — socket client for layout.apply
+### Task 7: herdrc — pane run launch
 
 **Files:**
-- Create: `internal/herdrc/socket.go`, `internal/herdrc/socket_test.go`
+- Modify: `internal/herdrc/runner.go`
+- Test: `internal/herdrc/runner_test.go`
 
 **Interfaces:**
-- Produces: `LayoutApplyCommand(ctx, LayoutApplyReq{WorkspaceID, TabID, TabLabel string; Cwd string; Command []string; Focus bool}) (CreatedTopology, error)` on `CLIRunner`, speaking the raw socket API at `SocketPath`.
+- Produces: working `PaneRun(ctx, paneID string, argv []string) error` — invokes `herdr pane run <paneID> <argv…>`, which types the command into the pane's shell and submits it atomically (send-text + Enter; `src/cli/spec.rs` `pane run`, cli-reference.mdx:217). This is Path B's launch primitive (spec §9) — no raw socket use anywhere in the plugin.
 
-- [ ] **Step 1: Read the envelope spec** — `/home/zvi/Projects/herdr/docs/next/website/src/content/docs/socket-api.mdx` (raw methods section) and, if ambiguous, `/home/zvi/Projects/herdr/src/api/schema/panes.rs:144-205` for `layout.apply` params (`LayoutPane.command` is an argv array). Record the exact request/response framing (request id, method, params envelope; almost certainly newline-delimited JSON) as a comment in `socket.go`. This closes spec §17 item 1's framing half.
+- [ ] **Step 1: Failing test** — fake herdr (Task 5 helper) asserting the exact argv `pane run w1:p2 clauth start alpha --`; non-zero exit propagates stderr in the wrapped error.
 
-- [ ] **Step 2: Failing test** — in-test `net.Listener` on a unix socket in `t.TempDir()`; accept one connection, decode one JSON request, assert `method == "layout.apply"` and `params.root.command` equals the argv, reply with a canned success envelope carrying ids; assert `CreatedTopology` parsed. Second case: error envelope → wrapped error.
-
-- [ ] **Step 3: Run** — FAIL. **Step 4: Implement** (`net.Dialer.DialContext("unix", …)`, `json.Encoder`/`Decoder`, one request per connection). **Step 5: Run** — PASS. **Step 6: Commit** — `feat: layout.apply socket client`
+- [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS. **Step 5: Commit** — `feat: pane run launch support`
 
 ---
 
@@ -453,7 +469,7 @@ type Profile struct {
 	Windows    []Window `json:"windows"`
 }
 type Status struct {
-	Schema            string    `json:"schema"`
+	Schema            int       `json:"schema"` // JSON number — verified live: "schema": 1
 	ActiveProfile     string    `json:"active_profile"`
 	GeneratedAt       time.Time `json:"generated_at"`
 	RefreshIntervalMS int       `json:"refresh_interval_ms"`
@@ -467,9 +483,9 @@ type LoadOpts struct{ StatusFile, CLIBin string; Now func() time.Time }
 
 - [ ] **Step 1: Fixture** — build `testdata/status.json` from the real installed clauth: run `clauth status --json` once, redact profile names to `alpha`/`beta`/`gamma`, keep the structure byte-faithful (field names verified live 2026-08-31: `schema`, `active_profile`, `generated_at`, `refresh_interval_ms`, `profiles[].{name,active,provider,tier,has_live_session,auth_status,windows[]}`).
 
-- [ ] **Step 2: Failing tests** — parse fixture (names, auth_status, windows); **unknown schema** (mutate `schema` to `"v99-something"`) → `Degraded: true`, names still populated, no error; `Load` prefers `StatusFile` when `generated_at + 2×refresh_interval` is after `Now()`, else invokes `CLIBin status --json` (fake script as in Task 5); both missing → error.
+- [ ] **Step 2: Failing tests** — parse fixture (names, auth_status, windows); **unknown schema** (mutate `schema` to `99`) → `Degraded: true`, names still populated, no error; `Load` prefers `StatusFile` when `generated_at + 2×refresh_interval` is after `Now()`, else invokes `CLIBin status --json` (fake script as in Task 5); both missing → error.
 
-- [ ] **Step 3: Run** — FAIL. **Step 4: Implement.** Degradation rule: a parse of the required subset (`profiles[].name`) that succeeds keeps working regardless of `schema`; `Degraded` is set when `schema` differs from the fixture's known value — downstream renders name-only entries. **Step 5: Run** — PASS. **Step 6: Commit** — `feat: clauth status feed with schema degradation`
+- [ ] **Step 3: Run** — FAIL. **Step 4: Implement.** Degradation rule: a parse of the required subset (`profiles[].name`) that succeeds keeps working regardless of `schema`; `Degraded` is set when `schema != 1` — downstream renders name-only entries. **Step 5: Run** — PASS. **Step 6: Commit** — `feat: clauth status feed with schema degradation`
 
 ---
 
@@ -510,7 +526,7 @@ func SaveCache(stateDir string, issues []Issue) error
 - Create: `internal/config/config.go`, `internal/config/state.go`, `internal/config/config_test.go`
 
 **Interfaces:**
-- Produces: `type Config` mirroring spec §12 exactly (`BranchPrefix`, `DefaultWorktree`, `DefaultPlacement`, `Linear{APIKeyCmd []string; APIKey string; PromptTemplate string}`, `Clauth{Enabled *bool; Default string}`, `Agents{Favorites []string; Default string; ExtraArgs map[string][]string}`, `Timeouts{DetectionMS, PromptWaitMS int}`); `func Load(configDir string) (Config, error)` — missing file → all defaults; defaults: prefix `strings.ToLower(user.Username)+"/"`, worktree true, placement `new-space`, favorites `["claude"]`, detection 30000, prompt wait 120000. State: `type State{Recents []string; LastKind, LastPlacement string; LastWorktree *bool}`, `LoadState`/`SaveState(stateDir)` — corrupt/missing state silently zero-valued.
+- Produces: `type Config` mirroring spec §12 exactly (`BranchPrefix`, `DefaultWorktree`, `DefaultPlacement`, `Linear{APIKeyCmd []string; APIKey string; PromptTemplate string}`, `Clauth{Enabled *bool; Default string}`, `Agents{Favorites []string; Default string; ExtraArgs map[string][]string}`, `Timeouts{DetectionMS, PromptWaitMS int}`, `Palette map[string]string` from the optional `[palette]` table — spec §12); `func Load(configDir string) (Config, error)` — missing file → all defaults; defaults: prefix `strings.ToLower(user.Username)+"/"`, worktree true, placement `new-space`, favorites `["claude"]`, detection 30000, prompt wait 120000. State: `type State{Recents []string; LastKind, LastPlacement string; LastWorktree *bool}`, `LoadState`/`SaveState(stateDir)` — corrupt/missing state silently zero-valued.
 
 - [ ] **Step 1: Failing tests** — empty dir → defaults populated; full TOML (spec §12 example verbatim as the test fixture string) → every field parsed; unknown keys ignored; corrupt state → zero value, no error; recents round-trip capped at 20 with most-recent-first dedupe (`func (s *State) TouchRecent(path string)`).
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement** with `github.com/BurntSushi/toml`. **Step 4: Run** — PASS. **Step 5: Commit** — `feat: plugin config and loss-tolerant state`
@@ -529,14 +545,20 @@ func SaveCache(stateDir string, issues []Issue) error
 type Palette struct {
 	Accent, PanelBG, Text, DimText, Danger, Success, Border lipgloss.Color
 }
-func Default() Palette                       // herdr defaults, translated
+func Builtin(name string) (Palette, bool)    // every built-in herdr palette, translated
+func Default() Palette                       // herdr's default palette
 func Resolve(base Palette, overrides map[string]string) Palette // parse #hex; ignore invalid
-func LoadHerdrPalette() Palette              // discover herdr config, extract theme overrides, Resolve over Default; any failure → Default()
+func LoadHerdrPalette(draftOverrides map[string]string) Palette
+// resolution: herdr config [theme] name → Builtin (auto_switch / "terminal"
+// resolve to the configured dark variant, best-effort) → [theme.custom]
+// overrides → draftOverrides (herdr-draft's own [palette] table, applied
+// last) — any failure at a stage falls back to the previous stage,
+// ultimately Default(). Pixel parity is NOT a v1 gate (spec §7).
 ```
 
-- [ ] **Step 1: Translate constants** — read `/home/zvi/Projects/herdr/src/config/theme.rs` end-to-end: the default palette values, the `CustomThemeColors` keys (`accent`, `panel_bg`, …), `parse_color`, and how herdr resolves user overrides from `config.toml` (`[theme]` sections, including any light/dark mode split). Copy the default color values into `Default()` with a comment citing `theme.rs` + herdr commit hash. Record the override key names as the `overrides` map keys `LoadHerdrPalette` extracts. herdr's config lives at its platform config dir + `config.toml` (`src/config/io.rs:173`); on Linux resolve `${XDG_CONFIG_HOME:-~/.config}/herdr/config.toml`.
+- [ ] **Step 1: Translate constants** — the actual color values live in `/home/zvi/Projects/herdr/src/app/state.rs` (palette constructors from ~line 112; `Palette::from_name` at ~line 562 — `theme.rs` holds NO color values, only the config structs). Translate every palette `from_name` accepts, including its name aliases, into `Builtin`. Read `/home/zvi/Projects/herdr/src/config/theme.rs` for the config shape: `CustomThemeColors` keys (`accent`, `panel_bg`, …), `parse_color`, `auto_switch`, and mode-specific overrides. Cite `state.rs` + the herdr commit hash in a comment and in `NOTICE`. herdr's config lives at its platform config dir + `config.toml` (`src/config/io.rs:173`); on Linux resolve `${XDG_CONFIG_HOME:-~/.config}/herdr/config.toml`.
 
-- [ ] **Step 2: Failing tests** — `Resolve` merges a valid override and ignores `"not-a-color"`; `LoadHerdrPalette` with `HERDR_DRAFT_TEST_CONFIG` pointing at a fixture TOML (make the config path injectable: `LoadHerdrPaletteFrom(path string)`) picks up `accent`; missing file → `Default()`.
+- [ ] **Step 2: Failing tests** — `Resolve` merges a valid override and ignores `"not-a-color"`; `Builtin("tokyo-night")` differs from `Default()`; config-path-injectable `LoadHerdrPaletteFrom(path string, draftOverrides map[string]string)`: fixture TOML with `[theme] name` selects the builtin, `[theme.custom] accent` overrides it, a draft override wins over both; missing file → `Default()`.
 - [ ] **Step 3: Run** — FAIL. **Step 4: Implement.** **Step 5: Run** — PASS. **Step 6: Commit** — `feat: herdr palette resolution with attribution`
 
 ---
@@ -575,17 +597,20 @@ type Op struct {
 	Tab       *herdrc.TabCreateReq
 	Split     *herdrc.PaneSplitReq
 	Agent     *herdrc.AgentStartReq
-	Layout    *herdrc.LayoutApplyReq
+	RunArgv   []string // OpClauthLaunch: argv for Runner.PaneRun
 	Prompt    *herdrc.AgentPromptReq
 	Timeout   time.Duration
 }
 func Build(in Input) ([]Op, error)
 ```
 
-  Rules (spec §9): worktree on → `OpWorktreeCreate` regardless of placement; worktree off → op per placement. Launch: `AccountPin != "" && AgentKind == "claude"` → `OpClauthLaunch` (argv `["clauth","start",pin,"--"]+ExtraArgs`) + `OpAwaitDetection`; else `OpAgentStart` (name = `gitx.SanitizeBranch(Title)`, kind, extra args). `Prompt != ""` → final `OpAgentPrompt`. Pane/workspace ids inside requests that depend on step-1 output are left empty — the executor fills them (Task 13). Validation errors (empty title; worktree on without git repo flag in input — carry `IsGitRepo bool` in `Input`) return descriptive errors.
+  Also produces `func AgentName(title string) string` — herdr agent names must match `[a-z][a-z0-9_-]{0,31}` (agent-automation.mdx:38): sanitize like a branch slug, prefix `s-` when the first rune is not a lowercase letter, clamp to 30 runes to leave room for a 2-char dedupe suffix.
+
+  Rules (spec §9): worktree on → `OpWorktreeCreate` regardless of placement; worktree off → op per placement. Launch: `AccountPin != "" && AgentKind == "claude"` → `OpClauthLaunch` (`RunArgv = ["clauth","start",pin,"--"]+ExtraArgs`, executed via `Runner.PaneRun`) + `OpAwaitDetection`; else `OpAgentStart` (name = `AgentName(Title)`, kind, extra args). `Prompt != ""` → final `OpAgentPrompt`. Pane/workspace ids inside requests that depend on step-1 output are left empty — the executor fills them (Task 13). Validation errors (empty title; worktree on without git repo flag in input — carry `IsGitRepo bool` in `Input`) return descriptive errors.
 
 - [ ] **Step 1: Failing table-driven tests** — full matrix, asserting op kinds in order and key request fields:
-  - worktree+pin+prompt → `[OpWorktreeCreate, OpClauthLaunch, OpAwaitDetection, OpAgentPrompt]`, clauth argv exact.
+  - worktree+pin+prompt → `[OpWorktreeCreate, OpClauthLaunch, OpAwaitDetection, OpAgentPrompt]`, `RunArgv` exact.
+  - `AgentName("42 fix pagination")` → `s-42-fix-pagination`; a 40-rune title clamps to ≤30; every output matches `[a-z][a-z0-9_-]{0,31}`.
   - worktree+active+claude → `[OpWorktreeCreate, OpAgentStart, OpAgentPrompt]` (agent start does its own detection wait).
   - in-place + `PlacementTabHere` + codex + no prompt → `[OpTabCreate, OpAgentStart]`, tab req carries `Ctx.WorkspaceID`.
   - in-place + `PlacementSplitHere` → `OpPaneSplit` with `Ctx.FocusedPaneID`.
@@ -621,9 +646,9 @@ func CleanCheck(ctx context.Context, in Input, created herdrc.CreatedTopology) C
 func Clean(ctx context.Context, r herdrc.Runner, in Input, created herdrc.CreatedTopology) error // WorktreeRemove or WorkspaceClose per Input.UseWorktree
 ```
 
-  Execution threads step-1 output into later ops (fills `Agent.PaneID`, `Layout.WorkspaceID`, `Prompt.Target` from `Created`); emits `Progress` before and after each op; stops at first failure.
+  Execution threads step-1 output into later ops (fills `Agent.PaneID`, the `PaneRun` target pane, `Prompt.Target` from `Created`); emits `Progress` before and after each op; stops at first failure. **Busy retry (spec §9):** an op failing with an error containing the code `agent_pane_busy` (`herdr:src/app/agents.rs:255` — the shell still starting right after topology creation, upstream #3375's race) is retried every 500 ms for up to 5 s (interval and clock injectable) before the failure is recorded.
 
-- [ ] **Step 1: Failing tests with a mock Runner** — `type mockRunner struct{ calls []string; failAt string; topo herdrc.CreatedTopology }` implementing every method by appending its name+args and failing when name == failAt. Cases: happy path threads pane id from `WorktreeCreate` into `AgentStart` and `AgentPrompt`; failure at `AgentStart` → `FailedIndex` correct, no further calls, `Created` non-nil; failure at `AgentPrompt` → `PromptText` populated; progress sequence `[Running,Done]×n` verified; `Clean` on worktree input calls `WorktreeRemove`, non-worktree calls `WorkspaceClose`; `CleanCheck` denies a dirty worktree (temp repo from Task 4 helper with an uncommitted file) with a human-readable `Reason`.
+- [ ] **Step 1: Failing tests with a mock Runner** — `type mockRunner struct{ calls []string; failAt string; failErr error; failCount int; topo herdrc.CreatedTopology }` implementing every method by appending its name+args and failing when name == failAt (up to failCount times). Cases: happy path threads pane id from `WorktreeCreate` into `AgentStart` and `AgentPrompt`; failure at `AgentStart` → `FailedIndex` correct, no further calls, `Created` non-nil; `AgentStart` failing twice with an `agent_pane_busy` error then succeeding → overall success with 3 calls (injected zero interval); persistent non-busy error → immediate failure, no retry; failure at `AgentPrompt` → `PromptText` populated; progress sequence `[Running,Done]×n` verified; `Clean` on worktree input calls `WorktreeRemove`, non-worktree calls `WorkspaceClose`; `CleanCheck` denies a dirty worktree (temp repo from Task 4 helper with an uncommitted file) with a human-readable `Reason`.
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS. **Step 5: Commit** — `feat: staged plan executor with keep-or-clean gate`
 
 ---
@@ -684,6 +709,7 @@ func assertFrame(t *testing.T, name string, m form.Model, w, h int) {
 ```
 
   with `var update = flag.Bool("update", false, "regenerate golden frames")`.
+  **Determinism:** lipgloss v2 output varies with the detected color profile — pin it explicitly inside `ViewAt` (force truecolor; check the v2 renderer/profile API against how Atrium's frame tests keep `/home/zvi/Projects/atrium/app/testdata/frames/` stable) so frames are machine-independent.
 - [ ] **Step 3: Failing tests** — with two stub sections: focus ring wraps and skips disabled; frames `empty-80x24.txt`, `empty-120x40.txt` generated then committed after visual inspection; degradation at 80×20 keeps the Create button visible (stub sections + shrink).
 - [ ] **Step 4: Run/implement/PASS.** **Step 5: Commit** — `feat: form root with focus ring, herdr skin, golden frames`
 
@@ -714,7 +740,7 @@ func assertFrame(t *testing.T, name string, m form.Model, w, h int) {
 - Produces:
   - `IssueField`: `widgets.Picker` over `SetIssues(version, []linear.Issue)` with `none` row 0; rows render `identifier · title` with status/estimate hint; `Selected() *linear.Issue`.
   - `AgentField`: favorites chips + full-list picker behind a `more…` chip; `SetKinds([]string)` (populated by app layer from config + the spec's known 23), `Value() string`.
-  - `AccountField`: rendered only when constructed (static gate lives in app layer); `SetProfiles(clauth.Status)`, `SetAgentIsClaude(bool)` (dynamic inert), rows `name · tier · auth · 5h N%`, `active` row 0; `Pin() string` ("" = active); degraded status → name-only rows.
+  - `AccountField`: rendered only when constructed (static gate lives in app layer); `SetProfiles(clauth.Status)`, `SetAgentIsClaude(bool)` (dynamic inert), rows `name · tier · auth · 5h N%`, `active` row 0; `Pin() string` ("" = active); degraded status → name-only rows; rate-limited or auth-failed profiles carry a warning marker (no confirm modal — deferred, spec §16).
   - `PromptField`: wraps `widgets.PromptArea`; `Value() string`; fork of placeholder per spec §6.8.
   - `SubmitView`: renders staged `plan.Progress` list + the keep/clean failure prompt (`k` keep / `c` clean when allowed, reason line when not) — pure view over `SetProgress([]plan.Progress)`, `SetFailure(res plan.ExecResult, clean plan.CleanDecision)`, emits `SubmitMsg`/`KeepMsg`/`CleanMsg`.
 - [ ] **Step 1: Failing tests** — seeding: selecting an issue emits `IssueChosenMsg{Issue}` (app layer routes it to title/branch/prompt setters); account inert flips with agent kind; frames: `issue-picker-120x40`, `account-80x24`, `progress-80x24`, `failure-clean-denied-80x24`.
@@ -722,23 +748,18 @@ func assertFrame(t *testing.T, name string, m form.Model, w, h int) {
 
 ---
 
-### Task 19: LIVE CHECKPOINT — spec §17 validation against a running herdr
+### Task 19: LIVE CHECKPOINT — closeout validation
 
-**Files:**
-- Modify: whatever the probes disprove (`internal/herdrc/*`, `herdr-plugin.toml`, `internal/theme/palette.go`)
-- Modify: `docs/specs/2026-08-31-herdr-draft-design.md` (tick §17 boxes with findings)
+Requires a running herdr session. Task 2b verified the raw shapes early; this pass validates the finished code paths end-to-end and closes the remaining spec §17 items.
 
-This task is manual + scripted probes; it exists so UI polish (Task 20+) doesn't build on false assumptions. Requires: a running herdr session (use a disposable named session), the linked plugin from Task 2.
-
-- [ ] **Step 1:** Probe creation-response field names: run `herdr worktree create --cwd <throwaway repo> --branch probe/x --no-focus` and `herdr workspace create --cwd /tmp --label probe --no-focus`; diff actual JSON keys against `internal/herdrc/runner.go` structs; fix structs + fake-herdr fixtures to match reality; clean up the probe workspaces.
-- [ ] **Step 2:** Probe `layout.apply` framing + tab targeting: send the Task 7 request against the real socket into a probe workspace; determine whether targeting the initial `tab_id` replaces the lone shell pane or errors; encode the working variant in `Build` (`OpClauthLaunch` request) and its test expectations.
-- [ ] **Step 3:** Probe pane-id targeting of detected agents: start `claude` manually in a probe pane, run `herdr agent get <pane_id>` and `herdr agent prompt <pane_id> "hi" --wait --timeout 30000`; if pane ids are not accepted, switch `AwaitDetection`/`AgentPrompt` to resolve via `herdr agent list` and record the mapping.
-- [ ] **Step 4:** Probe `clauth start`-wrapped detection latency (spec §17 last item) and popup bg behavior (paint check with the Task 16 skin); adjust `Timeouts` default if >30s observed.
-- [ ] **Step 5:** Tick each §17 checkbox in the spec with a one-line finding; `just check`; commit — `fix: align runner and plan with live herdr behavior (spec §17)`
+- [ ] **Step 1:** Full Path A run via the real popup: worktree on, no pin, prompt set — verify workspace created, agent detected, prompt delivered, sidebar grouping correct. Clean up.
+- [ ] **Step 2:** Full Path B run: pinned clauth profile — verify the pane ran `clauth start`, detection reports claude, prompt delivered under the pinned account. Clean up.
+- [ ] **Step 3:** Popup background paint check with the real skin against the user's herdr theme (spec §17); fix palette fallout if any.
+- [ ] **Step 4:** Record the minimum supported clauth version for Task 22's README; tick every remaining §17 box with one-line findings. `just check`; commit — `fix: closeout findings from live validation`
 
 ---
 
-### Task 20: app layer — async orchestration and wiring
+### Task 20: app layer — startup, data sources, seeding
 
 **Files:**
 - Create: `internal/app/app.go`, `internal/app/async.go`, `internal/app/app_test.go`
@@ -750,9 +771,23 @@ This task is manual + scripted probes; it exists so UI polish (Task 20+) doesn't
   - debounced (150ms, versioned) reactions ported as *patterns* from Atrium `app_branchsearch.go` (clean list): dir validity check, branch list fetch + one `git fetch --prune` per repo per form-open, title dup verdicts (branch exists / workspace label taken via `WorkspaceList`).
   - Linear: cache-render-then-refresh; clauth: load at open + on account focus.
   - `IssueChosenMsg` routing: title/branch/prompt seeding with touched-respect; issue templates from config.
-  - submit: run validations (spec §9 list), then `plan.Build` + `plan.Execute` in a goroutine `tea.Cmd`, streaming `plan.Progress` msgs into `SubmitView`; keep/clean msgs → `plan.Clean`.
-- [ ] **Step 1: Failing tests** — with fakes: debounce coalesces (two `SetQuery` within 150ms → one fetch, use injectable clock `func() time.Time` + a test scheduler); stale version dropped end-to-end (fetch v1 resolves after v2 → v1 result discarded); dup verdict blocks submit and focuses title; happy-path submit produces the exact op list from Task 12's first case and forwards progress; account confirm gate triggers when every window of the pinned profile is ≥100% utilized.
-- [ ] **Step 2: Run/implement/PASS** (this is the largest task; keep `async.go` mechanical: one `type request{version int; key string}` guard used by every source). **Step 3: Wire `main.go`**: env checks → deps → `tea.NewProgram(app.New(deps), tea.WithAltScreen(), tea.WithMouseCellMotion())`. **Step 4: Commit** — `feat: app orchestration, validation gates, submit flow`
+- [ ] **Step 1: Failing tests** — with fakes: debounce coalesces (two `SetQuery` within 150ms → one fetch, use injectable clock `func() time.Time` + a test scheduler); stale version dropped end-to-end (fetch v1 resolves after v2 → v1 result discarded); dup verdicts computed and pushed to `TitleField` via setters; issue selection seeds title/branch/prompt and respects a touched branch.
+- [ ] **Step 2: Run/implement/PASS** (keep `async.go` mechanical: one `type request{version int; key string}` guard used by every source). **Step 3: Wire `main.go`**: env checks → deps → `tea.NewProgram(app.New(deps), tea.WithAltScreen(), <mouse option>)` — verify the bubbletea v2 mouse-enable option name against Atrium's usage, same as the key-msg type. **Step 4: Commit** — `feat: app startup, data sources, seeding`
+
+---
+
+### Task 20b: app layer — submit pipeline wiring
+
+**Files:**
+- Modify: `internal/app/app.go`, `internal/app/async.go`
+- Test: `internal/app/submit_test.go`
+
+**Interfaces:**
+- Consumes: `plan.Build`/`plan.Execute`/`plan.CleanCheck`/`plan.Clean` (Tasks 12–13), `SubmitView` msgs (Task 18), validation state from Task 20.
+- Produces: submit orchestration — validations first (spec §9 list: directory validity; branch/label duplicates block and re-focus Title; pinned profile `auth_status != ok` blocks with an account verdict), then `plan.Build` + `plan.Execute` in a `tea.Cmd`, streaming `plan.Progress` msgs into `SubmitView`; `KeepMsg`/`CleanMsg` → `plan.Clean` guarded by `plan.CleanCheck`.
+
+- [ ] **Step 1: Failing tests** — with fakes: happy-path submit produces the exact op list from Task 12's first matrix case and forwards every progress msg in order; dup verdict blocks submit and focuses Title; pinned profile with `auth_status: "expired"` blocks with an account verdict; a failed step puts `SubmitView` in failure state with the `CleanCheck` reason threaded through; `CleanMsg` on a denied check does nothing.
+- [ ] **Step 2: Run/implement/PASS.** **Step 3: Commit** — `feat: submit pipeline wiring`
 
 ---
 
@@ -785,6 +820,6 @@ This task is manual + scripted probes; it exists so UI polish (Task 20+) doesn't
 
 ## Self-Review (performed at write time)
 
-- **Spec coverage:** §5→T2; §6 grammar→T15/T16, fields→T14/T17/T18; §7→T11/T16/T21; §8→T20; §9→T12/T13/T20 (pre-open refusal T20); §10→T9; §11→T8 (+T19 latency); §12→T10; §13 verdicts→T17/T18/T20; §14→T1/T15/T17/T22; §15→T16 frames, T22 matrix, per-task units; §16 needs no tasks; §17→T7 (framing), T19 (rest).
+- **Spec coverage:** §5→T2; §6 grammar→T15/T16, fields→T14/T17/T18; §7→T11/T16/T21; §8→T20; §9→T12/T13/T20/T20b (pre-open refusal T20; busy retry T13); §10→T9; §11→T8 (+T2b latency); §12→T10; §13 verdicts→T17/T18/T20b; §14→T1/T15/T17/T22; §15→T16 frames, T22 matrix, per-task units; §16 needs no tasks; §17→T2b (early probes), T19 (closeout).
 - **Placeholder scan:** the two intentional "check the real source" steps (T5 context tags, T11 palette values) are verification steps against files the executor has locally, with the normative source named — not TBDs.
 - **Type consistency:** `herdrc.CreatedTopology`, `plan.Input/Op/Progress`, `theme.Palette`, `widgets.Picker` names checked across tasks 5–21.

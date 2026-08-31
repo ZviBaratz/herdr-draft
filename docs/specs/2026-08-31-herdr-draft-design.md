@@ -15,27 +15,44 @@ and an initial prompt.
 
 It is a standalone Go + Bubble Tea binary. herdr neither knows nor cares about
 the implementation language; the plugin drives herdr exclusively through the
-public CLI (`$HERDR_BIN_PATH`) and, for one operation, the documented socket
-JSON API (`$HERDR_SOCKET_PATH`).
+public CLI (`$HERDR_BIN_PATH`; the CLI itself reaches the server over the
+socket at `$HERDR_SOCKET_PATH`).
 
 ## 2. Background & ecosystem context
 
 Atrium (the author's previous TUI, now abandoned in favor of herdr) had a
 new-session creation form whose UX this plugin reproduces and adapts. An
-ecosystem survey (2026-08-31) found no existing tool that combines agent kind +
-account + worktree + placement in one creation form:
+ecosystem survey (2026-08-31, amended after adversarial review) found no
+existing tool that combines agent kind + account + worktree + placement in one
+creation form, though several own pieces of it:
 
 - `cloudmanic/herdr-plus` (Go) — workspace templates + fuzzy picker + worktree
   open with branch prompt. No agent form, no accounts.
 - `steig/worktender` (Go) — GitHub issue → worktree → workspace → briefed
   agent, non-interactive.
 - `andrewchng/herdr-sessionizer` (TS) — fzf-style project/worktree launcher.
-- Account-adjacent plugins display usage only; none selects an account at
-  launch.
+- `tdi/herdr-worktree-from-linear` (JS) — picker over assigned Linear issues →
+  worktree on the issue's `branchName`, opened as a workspace. The closest
+  Linear-flow prior art.
+- `talent-factory/herdr-linear` (Rust) — Linear issues panel with
+  implement-on-Enter.
+- `JLighter/herdr-spawn` (shell) — popup form (prompt, branch, agent kind,
+  worktree-per-agent); proves the form shape is wanted, far from Atrium-grade.
+- clauth ships its own herdr plugin (project wiki) — account dashboard popup
+  and a per-pane `$clauth` account tag via pane metadata; deliberately no
+  launch-time picker.
+- Other account-adjacent plugins display usage only.
 
-Upstream herdr has demand signals but no plans: issue #2755 (richer worktree
-dialog), #2542/#3224 (placement), #3375 (cleanup after failed agent starts),
-and discussion #3228 (custom resume command, filed by clauth's author) — the
+The honest composition alternative: `tdi/herdr-worktree-from-linear` plus a
+herdr-plus auto-layout (whose command can be `clauth start <profile>`) plus
+clauth's own dashboard delivers roughly 60–70% of this plugin's value with no
+new code. What no composition delivers — one form with editable
+title/branch/base, a prompt briefing composed from the issue, and per-launch
+account choice — is exactly herdr-draft's scope.
+
+Upstream herdr has demand signals but no plans: discussions #2755 (richer
+worktree dialog), #2542/#3224 (placement), #3375 (cleanup after failed agent
+starts), and #3228 (custom resume command, filed by clauth's author) — the
 last one is the known gap this plugin inherits (§16).
 
 herdr's own creation surfaces are primitives-only: the TUI's worktree dialog
@@ -79,7 +96,7 @@ marketplace publication, fixing the resume/account-binding gap (#3228).
 └────│─────────│─────────│─────────────────────────────────┘
      │         │         │
   herdr CLI  Linear    clauth status --json / git subprocess
-  + socket   GraphQL
+             GraphQL
 ```
 
 Atrium's load-bearing architectural rule carries over verbatim: **the form is a
@@ -174,9 +191,9 @@ Atrium:
    `claude` (dynamic). Entries
    from `clauth status --json`: `active` (don't pin; use whatever profile is
    live) plus one entry per profile showing name, tier, `auth_status`, and
-   5h/7d window utilization. Rate-limited profiles selectable but marked; a
-   submit pinned to one raises a confirm gate (Atrium's exhausted-pool
-   pattern).
+   5h/7d window utilization. Rate-limited or auth-failed profiles are
+   selectable but visibly marked; the exhausted-confirm modal is deferred to
+   future work (§16).
 8. **Prompt** — optional textarea (4 rows preferred, 1 floor). Placeholder
    ladder: `Optional — sent to the agent once it starts (Enter or Tab to
    skip)` down to `Optional`. Delivered post-launch via
@@ -189,10 +206,15 @@ herdr draws the popup's outer chrome natively — accent border, title, panel
 background in the user's palette (`herdr:src/ui/panes.rs` `render_popup_pane`).
 Inside it, the form must not look foreign:
 
-- **Palette**: replicate herdr's palette resolution — defaults from
-  `herdr:src/config/theme.rs` (translated constants) plus the user's theme
-  overrides parsed from herdr's own config file. Map to lipgloss styles.
-  If the config can't be found/parsed, fall back to herdr's default palette,
+- **Palette**: replicate herdr's theme resolution best-effort. The built-in
+  palettes live in `herdr:src/app/state.rs` (`Palette::from_name`, ~line 562;
+  `theme.rs` holds only the config structs and color parsing) — translate all
+  of them, plus name aliases. Selection: `[theme] name` from herdr's own
+  config, then `[theme.custom]` overrides, then herdr-draft's own `[palette]`
+  config table as the user-facing escape hatch. `auto_switch` and
+  `name = "terminal"` are unknowable from config alone: resolve to the
+  configured dark variant and document the limitation. Pixel parity is NOT a
+  v1 gate. If nothing can be read, fall back to herdr's default palette,
   never to an invented scheme.
 - **Conventions** imitated from herdr's dialog code (`src/ui/dialogs.rs`,
   `src/ui/widgets.rs`): header treatment, `✓` selection markers in choice
@@ -225,9 +247,9 @@ Pre-open refusal (before the form renders): herdr socket unreachable →
 plain-text error and exit.
 
 Submit-time validation (inline verdicts, submit blocked, focus moved):
-directory validity; branch/label duplicates; account `auth_status != ok` or
-fully rate-limited → confirm gate; prompt required only if config demands it
-(default: optional).
+directory validity; branch/label duplicates; pinned account
+`auth_status != ok` → blocking verdict on the account field; prompt required
+only if config demands it (default: optional).
 
 Staged creation, with per-step progress lines rendered in the popup
 (`creating worktree… ✓` / `starting claude… ✗ <error>`):
@@ -249,15 +271,19 @@ from it):
   Name = title slug (deduped; `DuplicateName` retried with suffix).
   `agent start` types the composed command into the shell pane and waits for
   detection (its own timeout honored).
-- *Path B — pinned clauth profile (claude only):* there is no CLI that types
-  into a bare pane and creation commands take no argv, so the launch uses the
-  documented socket API's `layout.apply` with a single-pane root whose
-  `command = ["clauth","start","<profile>","--", <extra args…>]`, targeted at
-  the workspace/tab created in step 1. herdr's screen detection recognizes
-  Claude Code through the wrapper. herdr-draft then waits for detection
-  (`herdr agent read <pane> --source detection` polling or
-  `events.wait pane.agent_status_changed`) with a configurable timeout
-  (default 30 s).
+- *Path B — pinned clauth profile (claude only):*
+  `herdr pane run <pane_id> clauth start <profile> -- <extra args…>` types the
+  wrapper command into the step-1 shell pane and submits it atomically
+  (send-text + Enter; `herdr:src/cli/spec.rs` `pane run`). herdr's screen
+  detection recognizes Claude Code through the wrapper — detection scans the
+  entire foreground job (`herdr:src/detect/mod.rs` `identify_agent_in_job`).
+  herdr-draft then waits for detection by polling `herdr agent get <pane_id>`
+  with a configurable timeout (default 30 s).
+
+Both paths retry a launch rejected with error code `agent_pane_busy` (the
+shell still starting right after step 1 — the exact failure mode behind
+upstream #3375; `herdr:src/app/agents.rs:255`) every 500 ms for up to 5 s
+before surfacing failure.
 
 **Step 3 — prompt** (when non-empty): wait for a detected settled state, then
 `herdr agent prompt <target> <text> --wait --timeout <ms>`. Handle documented
@@ -309,17 +335,22 @@ it.)
 
 ## 11. clauth integration
 
-- **Read**: `clauth status --json` (versioned `schema` field; per-profile
+- **Read**: `clauth status --json` (integer `schema` field, currently `1`;
+  per-profile
   `name`, `active`, `provider`, `tier`, `has_live_session`, `auth_status`,
   `fallback`, usage `windows[]` with `label`/`utilization_pct`/`resets_at`).
   Prefer reading the daemon's `~/.clauth/status.json` when fresh (clauth
   documents it as a feed for other apps); fall back to invoking the CLI.
-  Unknown/newer `schema` → degrade to name-only entries, never crash.
-- **Launch**: `clauth start <profile> -- <claude args>` via layout.apply
+  `schema != 1` → degrade to name-only entries, never crash.
+- **Launch**: `clauth start <profile> -- <claude args>` via `pane run`
   (§9 Path B). clauth owns the per-profile `CLAUDE_CONFIG_DIR` mirror; herdr-draft
   never touches `~/.clauth` internals beyond the documented status feed.
   `--with-fallback` / `--isolated` are not v1 form options (config may append
   them via per-kind extra args at the user's own risk).
+- **Interop**: clauth's own herdr plugin owns the account dashboard and the
+  per-pane `$clauth` metadata tag; herdr-draft must not publish competing pane
+  metadata under that token. Launch-time pinning and the dashboard are
+  complementary.
 - **Known gap, accepted for v1**: on herdr session restore, herdr resumes
   `claude --resume <id>` without the clauth wrapper, dropping the account
   binding. Upstream discussion #3228 proposes per-agent resume templates
@@ -355,6 +386,10 @@ codex = []
 [timeouts]
 detection_ms = 30000
 prompt_wait_ms = 120000
+
+[palette]  # optional escape hatch when herdr theme detection is wrong (§7)
+# accent = "#89b4fa"
+# panel_bg = "#1e1e2e"
 ```
 
 `$HERDR_PLUGIN_STATE_DIR/`: `recents.json` (recent project paths),
@@ -394,13 +429,14 @@ silently.
 ## 15. Testing
 
 - **Unit (pure, no I/O)**: branch derivation/sanitization + hash fallback;
-  form-state → creation plan (ordered list of herdr invocations / socket
-  calls) for every path × placement × worktree combination; Linear and clauth
+  form-state → creation plan (ordered list of herdr CLI invocations) for
+  every path × placement × worktree combination; Linear and clauth
   JSON parsing incl. unknown-schema degradation; verdict logic; width-budget
   ladders.
 - **Golden frames**: rendered form at 80×24 and 120×40 (Atrium's
   `testdata/frames` pattern) for: empty form, Linear-seeded, non-git target
-  (inert fields), account gate, staged-progress, failure keep/clean.
+  (inert fields), account field with marked profiles, staged-progress,
+  failure keep/clean.
 - **Fixtures** for all network/subprocess JSON; tests never hit Linear,
   clauth, or a live herdr.
 - **Manual smoke** (documented in README, not CI): throwaway named herdr
@@ -424,27 +460,33 @@ silently.
    proven itself in daily personal use.
 7. Prompt-history reuse picker (`↑` on empty prompt).
 8. Reading herdr theme changes live (v1 reads at startup only).
+9. Account exhausted-confirm modal (Atrium's gate); v1 ships the inline
+   rate-limit marker plus a blocking verdict on `auth_status != ok` only.
 
 ## 17. Implementation-time validation checklist
 
 Facts assumed above that must be verified against a live herdr before the
 relevant milestone is declared done:
 
-- [ ] `layout.apply` semantics for targeting the worktree workspace's initial
-      tab (replace lone shell pane) vs creating a new tab — pick whichever
-      leaves exactly one agent pane; confirm the socket framing from
-      `docs/socket-api.mdx` (raw method envelope).
-- [ ] `agent prompt` / `agent read` `<TARGET>` accepts a pane id for a
-      *detected* (unmanaged) agent, not only managed agent names.
+Resolved during adversarial review (2026-08-31): `layout.apply` is no longer
+used (Path B uses `pane run`; layout.apply with `tab_id` REPLACES the tab —
+socket-api.mdx — making it wrong for this use anyway); pane-id targeting of
+detected agents is documented (cli-reference.mdx:308); clauth `schema` is the
+integer `1`.
+
+- [ ] `pane run` launch of `clauth start <profile>` in a fresh worktree pane:
+      detection recognizes claude through the wrapper; measure latency
+      (affects the 30 s default).
 - [ ] Exact JSON field names in creation responses (`workspace_id`, pane ids)
       across `worktree create` / `workspace create` / `tab create` /
       `pane split`.
-- [ ] herdr user-config location and theme schema for palette parsing (§7);
-      confirm default palette constants against `src/config/theme.rs` at the
-      pinned herdr version.
+- [ ] herdr user-config location and theme resolution for palette parsing
+      (§7); translate the built-in palettes from `src/app/state.rs`
+      (`Palette::from_name`, ~line 562) at the pinned herdr version.
 - [ ] Popup PTY background behavior: whether terminal-default-bg cells render
       as `panel_bg` (paint explicitly regardless).
-- [ ] clauth `status --json` `schema` value handling on the installed version;
-      pin the minimum supported clauth version in README.
-- [ ] Detection latency for `clauth start`-wrapped claude launches (affects
-      the 30 s default).
+- [ ] Popup mouse forwarding on the user's terminal (source says yes:
+      `handle_popup_mouse`, `src/app/input/mod.rs:482`) — one manual probe.
+- [ ] `agent_pane_busy` retry: start an agent immediately after
+      `worktree create` and confirm the bounded retry rides it out.
+- [ ] Pin the minimum supported clauth version in README.
