@@ -404,9 +404,13 @@ func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout t
 	}
 }
 
-// PaneRun runs `herdr pane run <paneID> <argv...>`. Implemented in Task 7.
+// PaneRun runs `herdr pane run <paneID> <argv...>`, which types argv into
+// the pane's shell and submits it atomically (send-text + Enter; spec §9
+// Path B's launch primitive -- no raw socket use anywhere in the plugin).
 func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, argv []string) error {
-	return fmt.Errorf("not implemented")
+	args := append([]string{"pane", "run", paneID}, argv...)
+	_, err := r.runJSON(ctx, args...)
+	return err
 }
 
 // WorktreeRemove runs `herdr worktree remove --workspace <workspaceID>`.

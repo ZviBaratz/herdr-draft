@@ -451,6 +451,35 @@ func TestCLIRunnerAwaitDetectionTimeout(t *testing.T) {
 	}
 }
 
+func TestCLIRunnerPaneRun(t *testing.T) {
+	stdout := `{"id":"cli:pane:run","result":{"type":"pane_run"}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.PaneRun(context.Background(), "w1:p2", []string{"clauth", "start", "alpha", "--"})
+	if err != nil {
+		t.Fatalf("PaneRun: %v", err)
+	}
+
+	wantArgv := "pane run w1:p2 clauth start alpha --"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+func TestCLIRunnerPaneRunNonZeroExit(t *testing.T) {
+	bin := fakeHerdrFail(t, "no such pane w1:p2")
+	r := &CLIRunner{Bin: bin}
+
+	err := r.PaneRun(context.Background(), "w1:p2", []string{"echo", "hi"})
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no such pane w1:p2") {
+		t.Errorf("error %q does not contain stderr content", err.Error())
+	}
+}
+
 func TestCLIRunnerDefaultPollInterval(t *testing.T) {
 	r := &CLIRunner{Bin: "herdr"}
 	if got := r.pollInterval(); got != defaultPollInterval {
