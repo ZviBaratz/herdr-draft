@@ -64,21 +64,26 @@ func TestParseStatusFixture(t *testing.T) {
 	if st.Schema != 1 {
 		t.Errorf("Schema = %d, want 1", st.Schema)
 	}
-	if st.ActiveProfile != "gamma" {
-		t.Errorf("ActiveProfile = %q, want gamma", st.ActiveProfile)
+	if st.ActiveProfile != "alpha" {
+		t.Errorf("ActiveProfile = %q, want alpha", st.ActiveProfile)
 	}
 	if st.RefreshIntervalMS != 90000 {
 		t.Errorf("RefreshIntervalMS = %d, want 90000", st.RefreshIntervalMS)
 	}
-	wantGeneratedAt := time.Date(2026, 8, 31, 20, 48, 55, 0, time.UTC)
+	wantGeneratedAt := time.Date(2026, 8, 31, 20, 54, 37, 0, time.UTC)
 	if !st.GeneratedAt.Equal(wantGeneratedAt) {
 		t.Errorf("GeneratedAt = %v, want %v", st.GeneratedAt, wantGeneratedAt)
 	}
 
-	if len(st.Profiles) != 3 {
-		t.Fatalf("len(Profiles) = %d, want 3", len(st.Profiles))
+	// The live capture returned 4 profiles (redacted in order to
+	// alpha/beta/gamma/delta); the 4th ("delta") is kept specifically
+	// because its live shape included fetch_status "Cached" and a null
+	// resets_at on its "5h" window -- see
+	// TestParseStatusNullResetsAtDoesNotFailParse below.
+	if len(st.Profiles) != 4 {
+		t.Fatalf("len(Profiles) = %d, want 4", len(st.Profiles))
 	}
-	wantNames := []string{"alpha", "beta", "gamma"}
+	wantNames := []string{"alpha", "beta", "gamma", "delta"}
 	for i, name := range wantNames {
 		if st.Profiles[i].Name != name {
 			t.Errorf("Profiles[%d].Name = %q, want %q", i, st.Profiles[i].Name, name)
@@ -92,8 +97,8 @@ func TestParseStatusFixture(t *testing.T) {
 	if alpha.Tier != "Team" {
 		t.Errorf("alpha.Tier = %q, want Team", alpha.Tier)
 	}
-	if alpha.Active {
-		t.Error("alpha.Active = true, want false")
+	if !alpha.Active {
+		t.Error("alpha.Active = false, want true")
 	}
 	if len(alpha.Windows) != 3 {
 		t.Fatalf("len(alpha.Windows) = %d, want 3", len(alpha.Windows))
@@ -102,17 +107,64 @@ func TestParseStatusFixture(t *testing.T) {
 	if w0.Label != "5h" {
 		t.Errorf("alpha.Windows[0].Label = %q, want 5h", w0.Label)
 	}
-	if w0.UtilizationPct != 95.0 {
-		t.Errorf("alpha.Windows[0].UtilizationPct = %v, want 95.0", w0.UtilizationPct)
+	if w0.UtilizationPct != 0.0 {
+		t.Errorf("alpha.Windows[0].UtilizationPct = %v, want 0.0", w0.UtilizationPct)
 	}
-	wantResetsAt := time.Date(2026, 8, 31, 20, 50, 0, 410263000, time.UTC)
+	if w0.ResetsAt == nil {
+		t.Fatal("alpha.Windows[0].ResetsAt = nil, want non-nil")
+	}
+	wantResetsAt := time.Date(2026, 9, 1, 1, 49, 59, 780854000, time.UTC)
 	if !w0.ResetsAt.Equal(wantResetsAt) {
 		t.Errorf("alpha.Windows[0].ResetsAt = %v, want %v", w0.ResetsAt, wantResetsAt)
 	}
 
-	gamma := st.Profiles[2]
-	if !gamma.Active {
-		t.Error("gamma.Active = false, want true")
+	delta := st.Profiles[3]
+	if delta.Active {
+		t.Error("delta.Active = true, want false")
+	}
+}
+
+func TestParseStatusNullResetsAtDoesNotFailParse(t *testing.T) {
+	st, err := ParseStatus(fixtureBytes(t))
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+
+	var delta *Profile
+	for i := range st.Profiles {
+		if st.Profiles[i].Name == "delta" {
+			delta = &st.Profiles[i]
+			break
+		}
+	}
+	if delta == nil {
+		t.Fatal(`profile "delta" not found`)
+	}
+	if delta.Name != "delta" {
+		t.Errorf("delta.Name = %q, want delta", delta.Name)
+	}
+	if len(delta.Windows) != 3 {
+		t.Fatalf("len(delta.Windows) = %d, want 3", len(delta.Windows))
+	}
+
+	// delta's live capture had "5h": {"resets_at": null, ...} -- confirm
+	// ParseStatus tolerates it (ResetsAt nil) rather than failing the whole
+	// parse, and that the sibling windows with real timestamps still parse
+	// correctly alongside it.
+	five := delta.Windows[0]
+	if five.Label != "5h" {
+		t.Fatalf("delta.Windows[0].Label = %q, want 5h", five.Label)
+	}
+	if five.ResetsAt != nil {
+		t.Errorf("delta.Windows[0] (5h).ResetsAt = %v, want nil", five.ResetsAt)
+	}
+
+	sevenDay := delta.Windows[1]
+	if sevenDay.Label != "7d" {
+		t.Fatalf("delta.Windows[1].Label = %q, want 7d", sevenDay.Label)
+	}
+	if sevenDay.ResetsAt == nil {
+		t.Error("delta.Windows[1] (7d).ResetsAt = nil, want non-nil")
 	}
 }
 
@@ -130,10 +182,10 @@ func TestParseStatusUnknownSchemaDegrades(t *testing.T) {
 	if !st.Degraded {
 		t.Error("Degraded = false, want true for schema 99")
 	}
-	if len(st.Profiles) != 3 {
-		t.Fatalf("len(Profiles) = %d, want 3", len(st.Profiles))
+	if len(st.Profiles) != 4 {
+		t.Fatalf("len(Profiles) = %d, want 4", len(st.Profiles))
 	}
-	wantNames := []string{"alpha", "beta", "gamma"}
+	wantNames := []string{"alpha", "beta", "gamma", "delta"}
 	for i, name := range wantNames {
 		if st.Profiles[i].Name != name {
 			t.Errorf("Profiles[%d].Name = %q, want %q", i, st.Profiles[i].Name, name)
@@ -154,10 +206,10 @@ func TestLoadPrefersFreshStatusFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// generated_at is 2026-08-31T20:48:55Z, refresh_interval_ms is 90000
-	// (90s); fresh until generated_at + 180s = 2026-08-31T20:51:55Z. Pick a
+	// generated_at is 2026-08-31T20:54:37Z, refresh_interval_ms is 90000
+	// (90s); fresh until generated_at + 180s = 2026-08-31T20:57:37Z. Pick a
 	// Now() just before that boundary.
-	now := time.Date(2026, 8, 31, 20, 51, 0, 0, time.UTC)
+	now := time.Date(2026, 8, 31, 20, 57, 0, 0, time.UTC)
 	cliBin := fakeClauthFail(t, "CLIBin must not be invoked when the status file is fresh")
 
 	st, err := Load(context.Background(), LoadOpts{
@@ -168,8 +220,8 @@ func TestLoadPrefersFreshStatusFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if st.ActiveProfile != "gamma" {
-		t.Errorf("ActiveProfile = %q, want gamma (from status file)", st.ActiveProfile)
+	if st.ActiveProfile != "alpha" {
+		t.Errorf("ActiveProfile = %q, want alpha (from status file)", st.ActiveProfile)
 	}
 }
 
@@ -180,7 +232,7 @@ func TestLoadFallsBackToCLIWhenStatusFileStale(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Fresh window ends at 2026-08-31T20:51:55Z; pick a Now() well past it.
+	// Fresh window ends at 2026-08-31T20:57:37Z; pick a Now() well past it.
 	now := time.Date(2026, 8, 31, 21, 30, 0, 0, time.UTC)
 	cliStdout := `{"schema":1,"active_profile":"alpha","generated_at":"2026-08-31T21:29:00+00:00","refresh_interval_ms":90000,"profiles":[{"name":"alpha","active":true,"provider":"anthropic","tier":"Team","auth_status":"ok","windows":[]}]}`
 	cliBin, argvLog := fakeClauth(t, cliStdout)
@@ -218,8 +270,8 @@ func TestLoadMissingStatusFileFallsBackToCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if st.ActiveProfile != "gamma" {
-		t.Errorf("ActiveProfile = %q, want gamma (from CLI)", st.ActiveProfile)
+	if st.ActiveProfile != "alpha" {
+		t.Errorf("ActiveProfile = %q, want alpha (from CLI)", st.ActiveProfile)
 	}
 	if _, err := os.Stat(argvLog); err != nil {
 		t.Errorf("CLIBin was not invoked: %v", err)

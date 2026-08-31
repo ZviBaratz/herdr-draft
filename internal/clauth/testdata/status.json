@@ -1,14 +1,14 @@
 {
   "schema": 1,
-  "generated_at": "2026-08-31T20:48:55+00:00",
-  "active_profile": "gamma",
+  "generated_at": "2026-08-31T20:54:37+00:00",
+  "active_profile": "alpha",
   "pending_switch": null,
   "wrap_off": false,
   "refresh_interval_ms": 90000,
   "profiles": [
     {
       "name": "alpha",
-      "active": false,
+      "active": true,
       "provider": "anthropic",
       "base_url": null,
       "tier": "Team",
@@ -16,30 +16,30 @@
       "auth_status": "ok",
       "fetch_status": "Fresh",
       "stale": false,
-      "fetched_at": "2026-08-31T20:48:23+00:00",
-      "next_refresh_at": "2026-08-31T20:49:53+00:00",
+      "fetched_at": "2026-08-31T20:53:38+00:00",
+      "next_refresh_at": "2026-08-31T20:55:08+00:00",
       "auto_start": false,
       "bell_threshold": null,
       "fallback": {
         "position": 1,
         "threshold": 95.0,
-        "armed": false
+        "armed": true
       },
       "windows": [
         {
           "label": "5h",
-          "utilization_pct": 95.0,
-          "resets_at": "2026-08-31T20:50:00.410263+00:00"
+          "utilization_pct": 0.0,
+          "resets_at": "2026-09-01T01:49:59.780854+00:00"
         },
         {
           "label": "7d",
           "utilization_pct": 13.0,
-          "resets_at": "2026-09-07T03:00:00.410285+00:00"
+          "resets_at": "2026-09-07T02:59:59.780879+00:00"
         },
         {
           "label": "7d fable",
           "utilization_pct": 16.0,
-          "resets_at": "2026-09-07T03:00:00.410485+00:00"
+          "resets_at": "2026-09-07T02:59:59.781188+00:00"
         }
       ],
       "third_party": null
@@ -54,8 +54,8 @@
       "auth_status": "ok",
       "fetch_status": "Fresh",
       "stale": false,
-      "fetched_at": "2026-08-31T20:48:28+00:00",
-      "next_refresh_at": "2026-08-31T20:49:58+00:00",
+      "fetched_at": "2026-08-31T20:53:27+00:00",
+      "next_refresh_at": "2026-08-31T20:54:57+00:00",
       "auto_start": false,
       "bell_threshold": null,
       "fallback": null,
@@ -63,55 +63,93 @@
         {
           "label": "5h",
           "utilization_pct": 0.0,
-          "resets_at": "2026-09-01T00:00:00.299645+00:00"
+          "resets_at": "2026-09-01T00:00:00.458988+00:00"
         },
         {
           "label": "7d",
           "utilization_pct": 29.0,
-          "resets_at": "2026-09-04T01:00:00.299671+00:00"
+          "resets_at": "2026-09-04T01:00:00.459009+00:00"
         },
         {
           "label": "7d fable",
           "utilization_pct": 13.0,
-          "resets_at": "2026-09-04T01:00:00.299941+00:00"
+          "resets_at": "2026-09-04T01:00:00.459233+00:00"
         }
       ],
       "third_party": null
     },
     {
       "name": "gamma",
-      "active": true,
+      "active": false,
       "provider": "anthropic",
       "base_url": null,
       "tier": "Team",
       "has_live_session": false,
       "auth_status": "ok",
-      "fetch_status": "Fresh",
+      "fetch_status": "Cached",
       "stale": false,
-      "fetched_at": "2026-08-31T20:48:33+00:00",
-      "next_refresh_at": "2026-08-31T20:50:03+00:00",
+      "fetched_at": "2026-08-31T20:52:03+00:00",
+      "next_refresh_at": "2026-08-31T20:53:33+00:00",
       "auto_start": false,
       "bell_threshold": null,
       "fallback": {
         "position": 2,
         "threshold": 95.0,
-        "armed": true
+        "armed": false
       },
       "windows": [
         {
           "label": "5h",
           "utilization_pct": 3.0,
-          "resets_at": "2026-09-01T01:40:00.213850+00:00"
+          "resets_at": "2026-09-01T01:40:00.417153+00:00"
         },
         {
           "label": "7d",
           "utilization_pct": 40.0,
-          "resets_at": "2026-09-06T02:00:00.213874+00:00"
+          "resets_at": "2026-09-06T02:00:00.417187+00:00"
         },
         {
           "label": "7d fable",
           "utilization_pct": 39.0,
-          "resets_at": "2026-09-06T02:00:00.214148+00:00"
+          "resets_at": "2026-09-06T02:00:00.417588+00:00"
+        }
+      ],
+      "third_party": null
+    },
+    {
+      "name": "delta",
+      "active": false,
+      "provider": "anthropic",
+      "base_url": null,
+      "tier": "Team",
+      "has_live_session": false,
+      "auth_status": "ok",
+      "fetch_status": "Cached",
+      "stale": false,
+      "fetched_at": "2026-08-31T20:53:07+00:00",
+      "next_refresh_at": "2026-08-31T20:54:37+00:00",
+      "auto_start": false,
+      "bell_threshold": null,
+      "fallback": {
+        "position": 3,
+        "threshold": 95.0,
+        "armed": false
+      },
+      "windows": [
+        {
+          "label": "5h",
+          "utilization_pct": 0.0,
+          "resets_at": null
+        },
+        {
+          "label": "7d",
+          "utilization_pct": 2.0,
+          "resets_at": "2026-09-07T08:59:59.943045+00:00"
+        },
+        {
+          "label": "7d fable",
+          "utilization_pct": 0.0,
+          "resets_at": "2026-09-07T08:59:59.943269+00:00"
         }
       ],
       "third_party": null

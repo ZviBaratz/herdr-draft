@@ -18,11 +18,15 @@ import (
 )
 
 // Window is one rate-limit window reported for a profile (e.g. "5h", "7d"),
-// mirroring clauth's per-profile `windows[]` entries.
+// mirroring clauth's per-profile `windows[]` entries. ResetsAt is a pointer
+// because clauth reports it as JSON null for a window that has no reset
+// scheduled (confirmed live: a "Cached"-fetch-status profile's "5h" window
+// can carry `"resets_at": null`) -- nil means "no reset time reported",
+// distinct from any real, non-zero timestamp.
 type Window struct {
-	Label          string    `json:"label"`
-	UtilizationPct float64   `json:"utilization_pct"`
-	ResetsAt       time.Time `json:"resets_at"`
+	Label          string     `json:"label"`
+	UtilizationPct float64    `json:"utilization_pct"`
+	ResetsAt       *time.Time `json:"resets_at"`
 }
 
 // Profile is one clauth-managed auth profile, as reported by
@@ -30,7 +34,10 @@ type Window struct {
 // carries more fields (provider, base_url, has_live_session, fetch_status,
 // stale, fetched_at, next_refresh_at, auto_start, bell_threshold, fallback,
 // third_party); this subset is what herdr-draft consumes today, and
-// encoding/json silently ignores the rest.
+// encoding/json silently ignores the rest. Two of the unmodeled fields
+// (fetched_at, next_refresh_at) are timestamps too -- neither was observed
+// null in either live capture, but since Profile never unmarshals them at
+// all, even if they were null it would pose no parse hazard.
 type Profile struct {
 	Name       string   `json:"name"`
 	Active     bool     `json:"active"`
