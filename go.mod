@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	charm.land/bubbletea/v2 v2.0.8
+	github.com/BurntSushi/toml v1.6.0
 	golang.org/x/text v0.41.0
 )
 
