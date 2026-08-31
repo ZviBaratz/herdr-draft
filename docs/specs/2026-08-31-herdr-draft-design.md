@@ -474,19 +474,49 @@ socket-api.mdx — making it wrong for this use anyway); pane-id targeting of
 detected agents is documented (cli-reference.mdx:308); clauth `schema` is the
 integer `1`.
 
-- [ ] `pane run` launch of `clauth start <profile>` in a fresh worktree pane:
+- [x] `pane run` launch of `clauth start <profile>` in a fresh worktree pane:
       detection recognizes claude through the wrapper; measure latency
-      (affects the 30 s default).
-- [ ] Exact JSON field names in creation responses (`workspace_id`, pane ids)
+      (affects the 30 s default). **Live-probed 2026-08-31 (task 2b):**
+      `herdr pane run <pane> clauth start quantivly-2 --` in a worktree pane
+      was detected as `agent: "claude"` within ≤5 s of launch (one poll
+      window; single-shot probe, see task-2b-report.md); comfortably inside
+      the 30 s default.
+- [x] Exact JSON field names in creation responses (`workspace_id`, pane ids)
       across `worktree create` / `workspace create` / `tab create` /
-      `pane split`.
+      `pane split`. **Live-probed 2026-08-31 (task 2b):** captured verbatim
+      (sanitized) in `internal/herdrc/testdata/live/{worktree_create,
+      workspace_create,tab_create,pane_split}.json`; confirmed
+      `worktree create` also opens a second, non-worktree workspace for the
+      origin repo alongside the linked-worktree workspace (both need
+      cleanup).
 - [ ] herdr user-config location and theme resolution for palette parsing
       (§7); translate the built-in palettes from `src/app/state.rs`
       (`Palette::from_name`, ~line 562) at the pinned herdr version.
 - [ ] Popup PTY background behavior: whether terminal-default-bg cells render
       as `panel_bg` (paint explicitly regardless).
-- [ ] Popup mouse forwarding on the user's terminal (source says yes:
+- [x] Popup mouse forwarding on the user's terminal (source says yes:
       `handle_popup_mouse`, `src/app/input/mod.rs:482`) — one manual probe.
-- [ ] `agent_pane_busy` retry: start an agent immediately after
+      **Live-probed 2026-08-31 (task 2b):** could not drive a real physical
+      mouse in this environment, so injected raw SGR sequences
+      (`\x1b[<0;51;21M`/`m` for a click, `\x1b[<65;51;21M` for wheel-down)
+      via `herdr pane send-text` into the popup's host pane (the pane
+      running the nested herdr TUI client) while the smoke binary was
+      temporarily patched to enable `tea.MouseModeAllMotion` and print
+      received events. Both a click and a wheel event were received and
+      rendered inside the popup (`mouse: left`, `mouse: wheeldown`),
+      confirming `handle_popup_mouse` correctly forwards translated,
+      coordinate-relative mouse bytes into the popup PTY. This exercises
+      Herdr's own SGR-decode-and-forward path end to end, not a physical
+      terminal's mouse reporting, so a from-hardware click is still worth a
+      spot-check at Task 19, but the code path itself is confirmed working.
+- [x] `agent_pane_busy` retry: start an agent immediately after
       `worktree create` and confirm the bounded retry rides it out.
+      **Live-probed 2026-08-31 (task 2b):** `herdr agent start probe --kind
+      claude --pane <id>` issued ~90 ms after `worktree create` returned did
+      *not* hit `agent_pane_busy` — it succeeded on the first call
+      (`interactive_ready: true` after ~4.8 s total). The race from upstream
+      #3375 did not reproduce in this environment/herdr version at this
+      pane-creation-to-agent-start gap; the bounded retry (500 ms × 5 s)
+      remains defensive/untested against an actual busy rejection and should
+      still be covered by the Task 9 mock-runner unit test.
 - [ ] Pin the minimum supported clauth version in README.
