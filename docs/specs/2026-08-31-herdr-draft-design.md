@@ -1,13 +1,13 @@
-# herdr-blendr — new session creation dialog for herdr
+# herdr-draft — new session creation dialog for herdr
 
 - **Date:** 2026-08-31
 - **Status:** draft for review
-- **Repo:** `~/Projects/herdr-blendr` (this repo)
+- **Repo:** `~/Projects/herdr-draft` (this repo)
 - **License:** MIT (see §14 — Licensing & code provenance)
 
 ## 1. Summary
 
-herdr-blendr is a herdr plugin that provides an Atrium-style "new session" dialog:
+herdr-draft is a herdr plugin that provides an Atrium-style "new session" dialog:
 a single-screen form, opened in a herdr popup, that creates a fully configured
 agent session in one submit — Linear issue, project, git worktree (branch +
 base), placement (space / tab / split), agent kind, Claude account (via clauth),
@@ -68,7 +68,7 @@ marketplace publication, fixing the resume/account-binding gap (#3228).
 
 ```
 ┌ herdr (popup frame: native border, title, user palette) ─┐
-│  blendr binary (Go + Bubble Tea, PTY)                    │
+│  herdr-draft binary (Go + Bubble Tea, PTY)                    │
 │  ┌ form (dumb view) ──────────────┐                      │
 │  │ fields, focus ring, verdicts   │                      │
 │  └────────────▲───────────────────┘                      │
@@ -91,9 +91,9 @@ versions/keys and stale results are rejected.
 
 `herdr-plugin.toml`:
 
-- `[[build]]` — `go build -o bin/blendr ./cmd/blendr`.
-- `[[panes]]` — id `blendr`, title `New session`, `placement = "popup"`,
-  `width = "80%"`, `height = "80%"`, command `["bin/blendr"]`.
+- `[[build]]` — `go build -o bin/herdr-draft ./cmd/herdr-draft`.
+- `[[panes]]` — id `draft`, title `New session`, `placement = "popup"`,
+  `width = "80%"`, `height = "80%"`, command `["bin/herdr-draft"]`.
 - `[[actions]]` — id `open`, context `global`, so
   `herdr plugin action invoke` works and a keybinding can target it.
 
@@ -187,13 +187,13 @@ Atrium:
 
 herdr draws the popup's outer chrome natively — accent border, title, panel
 background in the user's palette (`herdr:src/ui/panes.rs` `render_popup_pane`).
-Inside it, blendr must not look foreign:
+Inside it, the form must not look foreign:
 
 - **Palette**: replicate herdr's palette resolution — defaults from
   `herdr:src/config/theme.rs` (translated constants) plus the user's theme
   overrides parsed from herdr's own config file. Map to lipgloss styles.
   If the config can't be found/parsed, fall back to herdr's default palette,
-  never to a blendr-invented scheme.
+  never to an invented scheme.
 - **Conventions** imitated from herdr's dialog code (`src/ui/dialogs.rs`,
   `src/ui/widgets.rs`): header treatment, `✓` selection markers in choice
   lists, action-button row styling, accent-colored focus indication, panel
@@ -254,7 +254,7 @@ from it):
   documented socket API's `layout.apply` with a single-pane root whose
   `command = ["clauth","start","<profile>","--", <extra args…>]`, targeted at
   the workspace/tab created in step 1. herdr's screen detection recognizes
-  Claude Code through the wrapper. blendr then waits for detection
+  Claude Code through the wrapper. herdr-draft then waits for detection
   (`herdr agent read <pane> --source detection` polling or
   `events.wait pane.agent_status_changed`) with a configurable timeout
   (default 30 s).
@@ -270,7 +270,7 @@ popup. *Keep* leaves the created space as a plain shell. *Clean* runs
 `herdr worktree remove` / `herdr workspace close` — worktree removal only
 when the checkout is clean and has no commits beyond base; otherwise the
 clean option is disabled with the reason shown. Never silent, never `--force`.
-(Upstream #3375 documents exactly this failure mess; blendr must not add to
+(Upstream #3375 documents exactly this failure mess; herdr-draft must not add to
 it.)
 
 ## 10. Linear integration (read-only)
@@ -316,7 +316,7 @@ it.)
   documents it as a feed for other apps); fall back to invoking the CLI.
   Unknown/newer `schema` → degrade to name-only entries, never crash.
 - **Launch**: `clauth start <profile> -- <claude args>` via layout.apply
-  (§9 Path B). clauth owns the per-profile `CLAUDE_CONFIG_DIR` mirror; blendr
+  (§9 Path B). clauth owns the per-profile `CLAUDE_CONFIG_DIR` mirror; herdr-draft
   never touches `~/.clauth` internals beyond the documented status feed.
   `--with-fallback` / `--isolated` are not v1 form options (config may append
   them via per-kind extra args at the user's own risk).
@@ -324,7 +324,7 @@ it.)
   `claude --resume <id>` without the clauth wrapper, dropping the account
   binding. Upstream discussion #3228 proposes per-agent resume templates
   (`clauth info <id>` already prints the exact resume command). Documented in
-  README; nothing blendr can fix locally.
+  README; nothing herdr-draft can fix locally.
 
 ## 12. Configuration & state
 
@@ -375,7 +375,7 @@ silently.
 
 ## 14. Licensing & code provenance
 
-- **herdr-blendr license: MIT** (ecosystem norm; adoption-friendly).
+- **herdr-draft license: MIT** (ecosystem norm; adoption-friendly).
 - **Atrium is AGPL-3.0 with multiple copyright holders.** The port is gated on
   per-file provenance, verified by `git blame --line-porcelain` (2026-08-31):
   - Clean to port (100% Zvi-authored surviving lines, relicensable by the
@@ -419,7 +419,7 @@ silently.
    that mistake.
 4. Linear writes of any kind.
 5. Resume/account binding across herdr restore — upstream #3228; support it
-   in blendr's README and revisit when herdr grows resume templates.
+   in herdr-draft's README and revisit when herdr grows resume templates.
 6. Marketplace publication (manifest metadata, docs) — after the tool has
    proven itself in daily personal use.
 7. Prompt-history reuse picker (`↑` on empty prompt).
