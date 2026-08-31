@@ -3,6 +3,7 @@ package clauth
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,6 +191,82 @@ func TestParseStatusUnknownSchemaDegrades(t *testing.T) {
 		if st.Profiles[i].Name != name {
 			t.Errorf("Profiles[%d].Name = %q, want %q", i, st.Profiles[i].Name, name)
 		}
+	}
+}
+
+func TestParseStatusMissingSchemaDegrades(t *testing.T) {
+	raw := fixtureBytes(t)
+	mutated := bytes.Replace(raw, []byte("  \"schema\": 1,\n"), []byte(""), 1)
+	if bytes.Equal(mutated, raw) {
+		t.Fatal("fixture does not contain the expected schema line; test setup is broken")
+	}
+
+	st, err := ParseStatus(mutated)
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+	if st.Schema != 0 {
+		t.Errorf("Schema = %d, want 0 (zero value for an absent field)", st.Schema)
+	}
+	if !st.Degraded {
+		t.Error("Degraded = false, want true when schema is entirely absent (0 != 1)")
+	}
+	if len(st.Profiles) != 4 {
+		t.Fatalf("len(Profiles) = %d, want 4", len(st.Profiles))
+	}
+	wantNames := []string{"alpha", "beta", "gamma", "delta"}
+	for i, name := range wantNames {
+		if st.Profiles[i].Name != name {
+			t.Errorf("Profiles[%d].Name = %q, want %q", i, st.Profiles[i].Name, name)
+		}
+	}
+}
+
+func TestParseStatusStructurallyIncompatibleSchemaFallsBackToMinimal(t *testing.T) {
+	raw := fixtureBytes(t)
+	// A schema value of the wrong JSON *type* (string, not number) makes the
+	// full Status decode fail outright -- distinct from
+	// TestParseStatusUnknownSchemaDegrades, where the full decode succeeds
+	// and only the schema *value* is unexpected. This exercises
+	// ParseStatus's other fallback path: decoding only the required
+	// profiles[].name subset via minimalStatus.
+	mutated := bytes.Replace(raw, []byte(`"schema": 1,`), []byte(`"schema": "v2",`), 1)
+	if bytes.Equal(mutated, raw) {
+		t.Fatal("fixture does not contain the expected schema field; test setup is broken")
+	}
+
+	// Confirm the premise: a full decode into Status actually fails on this
+	// payload, so this test is exercising the minimalStatus fallback branch
+	// and not silently overlapping with TestParseStatusUnknownSchemaDegrades's
+	// path.
+	var full Status
+	if err := json.Unmarshal(mutated, &full); err == nil {
+		t.Fatal("full Status decode unexpectedly succeeded; this payload no longer exercises the minimalStatus fallback")
+	}
+
+	st, err := ParseStatus(mutated)
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+	if !st.Degraded {
+		t.Error("Degraded = false, want true for a structurally incompatible schema")
+	}
+	if len(st.Profiles) != 4 {
+		t.Fatalf("len(Profiles) = %d, want 4", len(st.Profiles))
+	}
+	wantNames := []string{"alpha", "beta", "gamma", "delta"}
+	for i, name := range wantNames {
+		if st.Profiles[i].Name != name {
+			t.Errorf("Profiles[%d].Name = %q, want %q", i, st.Profiles[i].Name, name)
+		}
+	}
+	// The minimalStatus fallback only recovers profiles[].name -- every
+	// other Profile field must be left at its zero value.
+	if st.Profiles[0].Tier != "" || st.Profiles[0].AuthStatus != "" || st.Profiles[0].Active {
+		t.Errorf("Profiles[0] = %+v, want only Name populated", st.Profiles[0])
+	}
+	if st.ActiveProfile != "" {
+		t.Errorf("ActiveProfile = %q, want empty (not recovered by the minimal fallback)", st.ActiveProfile)
 	}
 }
 

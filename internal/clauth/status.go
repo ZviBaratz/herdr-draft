@@ -56,11 +56,13 @@ type Status struct {
 	Profiles          []Profile `json:"profiles"`
 
 	// Degraded is set when Schema is not the schema this package was built
-	// against (1). A degraded Status still carries whatever the full parse
-	// recovered (which, since clauth versions its schema for backward
-	// compatibility with additive changes, is typically the complete
-	// Profiles set) -- callers should treat any field beyond Profiles[].Name
-	// as unreliable and render name-only entries.
+	// against (1) -- including a payload that omits the schema field
+	// entirely, which decodes Schema to its zero value (0), also != 1. A
+	// degraded Status still carries whatever the full parse recovered
+	// (which, since clauth versions its schema for backward compatibility
+	// with additive changes, is typically the complete Profiles set) --
+	// callers should treat any field beyond Profiles[].Name as unreliable
+	// and render name-only entries.
 	Degraded bool `json:"-"`
 }
 
