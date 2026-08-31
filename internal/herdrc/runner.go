@@ -374,20 +374,34 @@ func (r *CLIRunner) pollDetection(ctx context.Context, paneID string) error {
 // since AwaitDetection was called. The returned error names the pane id and
 // the elapsed wait when it times out, or wraps ctx's error if ctx is
 // cancelled first.
+//
+// Every poll runs against a deadline-bound child context so a single hung
+// `herdr agent get` (e.g. an unresponsive server) is killed at the deadline
+// rather than being allowed to run past timeout, and the deadline is
+// checked before issuing each poll -- not only after one returns -- so no
+// poll is ever started once the deadline has already passed.
 func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error {
 	start := time.Now()
 	deadline := start.Add(timeout)
 	interval := r.pollInterval()
 
+	deadlineCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
 	for {
-		if err := r.pollDetection(ctx, paneID); err == nil {
-			return nil
-		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("await detection for pane %s: %w", paneID, err)
 		}
-
 		now := time.Now()
+		if !now.Before(deadline) {
+			return fmt.Errorf("await detection for pane %s: timed out after %s", paneID, now.Sub(start).Round(time.Millisecond))
+		}
+
+		if err := r.pollDetection(deadlineCtx, paneID); err == nil {
+			return nil
+		}
+
+		now = time.Now()
 		if !now.Before(deadline) {
 			return fmt.Errorf("await detection for pane %s: timed out after %s", paneID, now.Sub(start).Round(time.Millisecond))
 		}

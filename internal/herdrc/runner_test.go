@@ -37,6 +37,21 @@ func fakeHerdrFail(t *testing.T, stderr string) string {
 	return bin
 }
 
+// fakeHerdrHang writes a disposable shell script that ignores its arguments
+// and sleeps for sleepSeconds before ever exiting -- used to prove that a
+// poll bound to a deadline-limited context gets killed at the deadline
+// rather than being waited out to completion.
+func fakeHerdrHang(t *testing.T, sleepSeconds int) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\nsleep " + strconv.Itoa(sleepSeconds) + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
 // fakeHerdrFlaky writes a disposable shell script that fails (exit 1,
 // stderr "not found") for the first failCount invocations, using a counter
 // file to track how many times it has run, then succeeds and echoes
@@ -448,6 +463,25 @@ func TestCLIRunnerAwaitDetectionTimeout(t *testing.T) {
 	}
 	if elapsed < 50*time.Millisecond {
 		t.Errorf("AwaitDetection returned after %v, before its 50ms timeout elapsed", elapsed)
+	}
+}
+
+func TestCLIRunnerAwaitDetectionTimeoutKillsHangingPoll(t *testing.T) {
+	// The fake herdr sleeps far longer than the timeout; AwaitDetection must
+	// not wait for it to finish -- it must kill the poll at the deadline and
+	// return promptly, not after the poll's own 5s sleep.
+	bin := fakeHerdrHang(t, 5)
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	start := time.Now()
+	err := r.AwaitDetection(context.Background(), "w1:p2", 50*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if elapsed >= 500*time.Millisecond {
+		t.Errorf("AwaitDetection took %v to time out against a 50ms deadline and a hanging poll; the poll was not killed promptly", elapsed)
 	}
 }
 
