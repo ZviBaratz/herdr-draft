@@ -360,10 +360,48 @@ func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 	return err
 }
 
-// AwaitDetection polls `herdr agent get <paneID>` until detection settles.
-// Implemented in Task 6.
+// pollDetection runs `herdr agent get <paneID>` and reports only whether it
+// exited zero. AwaitDetection only needs a detected/not-yet boolean signal
+// -- any status counts as detected -- so this bypasses runJSON's response
+// parsing entirely and discards stdout/stderr.
+func (r *CLIRunner) pollDetection(ctx context.Context, paneID string) error {
+	cmd := exec.CommandContext(ctx, r.Bin, "agent", "get", paneID)
+	return cmd.Run()
+}
+
+// AwaitDetection polls `herdr agent get <paneID>` every PollInterval until
+// it exits zero (an agent was detected, in any status) or timeout elapses
+// since AwaitDetection was called. The returned error names the pane id and
+// the elapsed wait when it times out, or wraps ctx's error if ctx is
+// cancelled first.
 func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error {
-	return fmt.Errorf("not implemented")
+	start := time.Now()
+	deadline := start.Add(timeout)
+	interval := r.pollInterval()
+
+	for {
+		if err := r.pollDetection(ctx, paneID); err == nil {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("await detection for pane %s: %w", paneID, err)
+		}
+
+		now := time.Now()
+		if !now.Before(deadline) {
+			return fmt.Errorf("await detection for pane %s: timed out after %s", paneID, now.Sub(start).Round(time.Millisecond))
+		}
+
+		wait := interval
+		if remaining := deadline.Sub(now); wait > remaining {
+			wait = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("await detection for pane %s: %w", paneID, ctx.Err())
+		case <-time.After(wait):
+		}
+	}
 }
 
 // PaneRun runs `herdr pane run <paneID> <argv...>`. Implemented in Task 7.
