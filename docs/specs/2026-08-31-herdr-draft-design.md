@@ -489,11 +489,26 @@ integer `1`.
       `worktree create` also opens a second, non-worktree workspace for the
       origin repo alongside the linked-worktree workspace (both need
       cleanup).
-- [ ] herdr user-config location and theme resolution for palette parsing
+- [x] herdr user-config location and theme resolution for palette parsing
       (§7); translate the built-in palettes from `src/app/state.rs`
       (`Palette::from_name`, ~line 562) at the pinned herdr version.
-- [ ] Popup PTY background behavior: whether terminal-default-bg cells render
+      **Live-probed 2026-09-01 (task 19):** the user's real
+      `~/.config/herdr/config.toml` has `[theme] name = "tokyo-night"`;
+      `herdr pane read <popup-host> --format ansi` on a real popup shows
+      `\x1b[48;2;26;27;38m`/`\x1b[38;2;122;162;247m` throughout the form's
+      content, matching `internal/theme/palette.go`'s `tokyo-night` entry
+      (`PanelBG #1a1b26`, `Accent #7aa2f7`) exactly, byte-for-byte the same
+      RGB values herdr's own native border chrome uses in the same capture
+      — confirms config location, name resolution, and color translation
+      all correct end to end.
+- [x] Popup PTY background behavior: whether terminal-default-bg cells render
       as `panel_bg` (paint explicitly regardless).
+      **Live-probed 2026-09-01 (task 19):** in the same ANSI capture, every
+      interior row — including the blank vertical-padding row directly
+      under the top border — carries an explicit `48;2;26;27;38`
+      reassertion after each embedded reset, with no gap where a
+      terminal-default background would show through; no palette fallout
+      found, nothing to fix.
 - [x] Popup mouse forwarding on the user's terminal (source says yes:
       `handle_popup_mouse`, `src/app/input/mod.rs:482`) — one manual probe.
       **Live-probed 2026-08-31 (task 2b):** could not drive a real physical
@@ -514,4 +529,20 @@ integer `1`.
       **Probed 2026-08-31 (task 2b):** busy state did not reproduce at
       ~90 ms creation-to-start gap; retry path itself remains unconfirmed
       live — recheck opportunistically at Task 19.
-- [ ] Pin the minimum supported clauth version in README.
+      **Re-probed 2026-09-01 (task 19):** 5 back-to-back `worktree create`
+      → `agent start` pairs with no artificial delay at all (the pane id
+      read straight from `worktree create`'s own JSON response and used
+      immediately) still did not reproduce `agent_pane_busy` in this
+      environment; still leaving this unticked per the task brief ("if not,
+      reproduced, leave it and say so") — the retry path remains
+      unconfirmed live, covered only by Task 9's mock-runner unit tests.
+- [x] Pin the minimum supported clauth version in README. **Recorded
+      2026-09-01 (task 19) for Task 22:** clauth 0.14.1 (`clauth --version`)
+      is the version installed and exercised throughout this live
+      checkpoint — `clauth status --json` schema `1` parsed correctly by
+      `internal/clauth`, and `clauth start <profile> --` launches
+      correctly under `pane run`. No older clauth version was available to
+      test in this environment, so 0.14.1 is the empirically-confirmed
+      floor, not a verified absolute minimum — Task 22 should phrase the
+      README accordingly ("tested with clauth 0.14.1+") rather than
+      implying earlier 0.x releases were checked and rejected.
