@@ -75,7 +75,7 @@ v1).
    (§7). Full mouse support — herdr is mouse-first.
 5. Atrium's interaction quality: focus ring, debounced+versioned async,
    inline verdicts, present-but-inert fields, width-budgeted strings.
-6. Config-driven; nothing Quantivly- or user-specific hardcoded.
+6. Config-driven; nothing employer- or user-specific hardcoded.
 
 **Non-goals (v1)** — see §16 for the full future-work list: variant fan-out,
 draft persistence, Linear writes, model/effort/permission chip fields,

@@ -39,7 +39,7 @@ const accountLabel = "Account: "
 // accountActiveID is the "active" row's internal widgets.PickerItem.ID --
 // a leading-NUL sentinel that can never collide with a real clauth
 // profile name (clauth profile names are plain user-chosen identifiers,
-// e.g. "alpha", "quantivly-2"; none begin with a NUL byte), matching
+// e.g. "alpha", "work-2"; none begin with a NUL byte), matching
 // field_issue.go's issueNoneID and field_worktree.go's baseHeadID
 // sentinel discipline: widgets.Picker requires unique, non-empty IDs
 // (Task 14's own carried fact), and Pin() translates this sentinel back
