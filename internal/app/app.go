@@ -92,11 +92,17 @@ type clauthSource interface {
 
 // gitSource is the subset of git/filesystem access Model needs -- satisfied
 // by gitxSource (see NewGitSource) in production and a fake in tests. Every
-// method here is a thin wrapper over internal/gitx plus os.Stat for
-// DirExists (gitx itself has no directory-existence helper).
+// method here is a thin wrapper over internal/gitx, plus os.Stat for
+// DirExists (gitx itself has no directory-existence helper) and
+// internal/pathx for the Project field's own path-mode browsing
+// (ListSubdirs/ResolvePath, spec §6 field 2) -- filesystem rather than
+// git, but here for the same reason DirExists is: it is I/O this package's
+// own tests must be able to answer deterministically.
 type gitSource interface {
 	DirExists(path string) bool
 	IsGitRepo(dir string) bool
+	ListSubdirs(dir string, limit int) []string
+	ResolvePath(path string) string
 	ListBranches(ctx context.Context, dir string, limit int) ([]string, error)
 	BranchExists(ctx context.Context, dir, name string) (bool, error)
 	CurrentBranch(ctx context.Context, dir string) (string, error)
@@ -326,16 +332,41 @@ type Model struct {
 	// Update already uses for its own value, applied here one level up
 	// (form.Model exposes no "did section X change" signal of its own).
 	lastDir        string
+	lastDirTyped   string
 	lastTitle      string
 	lastDupKey     string
 	lastWorktreeOn bool
 	lastFocusedID  string
 
+	// projectCandidates is the fragment-mode candidate pool built once at
+	// New (buildDirCandidates), kept so leaving path mode can put it back
+	// -- DirField holds only ONE pool at a time, whichever was supplied
+	// last.
+	projectCandidates []string
+
+	// browseDir is the RAW (un-expanded) directory portion of the typed
+	// text whose listing DirField currently holds, or "" when the field is
+	// in fragment mode. It is the memoization atrium's DirectoryPicker got
+	// from its own cachedDir: typing WITHIN one directory re-ranks the
+	// listing already on hand instead of re-reading it, and only a change
+	// of parent schedules a fresh one.
+	browseDir string
+
+	// dirCandVersion is the single monotonic counter behind every
+	// DirField.SetCandidates call this Model makes -- the initial project
+	// pool, each browse result, and each restore of the pool on leaving
+	// path mode. One counter, because DirField's own staleness guard drops
+	// anything older than the highest version it has accepted: two
+	// independent counters would let a browse result outrank a newer
+	// restore.
+	dirCandVersion int
+
 	// request-version counters -- see async.go's request type and the
 	// schedule*/handle* pair for each source.
-	dirReqVersion   int
-	baseReqVersion  int
-	titleReqVersion int
+	dirReqVersion    int
+	baseReqVersion   int
+	titleReqVersion  int
+	browseReqVersion int
 	// clauthReqVersion is the clauth-reload source's own version counter --
 	// bumped directly by reloadClauthCmd (there is no separate debounce
 	// phase for this source, unlike the three above), and compared against
@@ -552,8 +583,13 @@ func New(s Setup) Model {
 	// preserve-by-ID/fallback-to-index-0 behavior on a picker with no
 	// prior selection -- see task-20-report.md for the full trace), so
 	// ordering IS the default.
-	m.dir.SetCandidates(1, buildDirCandidates(s.Ctx, s.Workspaces, s.State.Recents))
+	m.projectCandidates = buildDirCandidates(s.Ctx, s.Workspaces, s.State.Recents)
+	m.supplyDirCandidates(m.projectCandidates)
 	m.lastDir = m.dir.Value()
+	// Path mode's literal-fallback row is expanded the same way the
+	// browsed rows around it are (see DirField.SetPathExpander): the app
+	// layer owns every path resolution, the form package none.
+	m.dir.SetPathExpander(s.Deps.Git.ResolvePath)
 
 	m.worktreeDefaultOn = s.Config.DefaultWorktree
 	if s.State.LastWorktree != nil {
@@ -631,6 +667,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDirDebounce(msg)
 	case dirResultMsg:
 		return m.handleDirResult(msg)
+	case browseDebounceMsg:
+		return m.handleBrowseDebounce(msg)
+	case browseResultMsg:
+		return m.handleBrowseResult(msg)
 	case baseDebounceMsg:
 		return m.handleBaseDebounce(msg)
 	case baseResultMsg:
@@ -928,6 +968,11 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 func (m *Model) reactToChanges() []tea.Cmd {
 	var cmds []tea.Cmd
 
+	if typed := m.dir.Typed(); typed != m.lastDirTyped {
+		m.lastDirTyped = typed
+		cmds = append(cmds, m.reactToTypedDir(typed)...)
+	}
+
 	dirVal := m.dir.Value()
 	if dirVal != m.lastDir {
 		m.lastDir = dirVal
@@ -963,6 +1008,57 @@ func (m *Model) reactToChanges() []tea.Cmd {
 
 	m.syncDerivedInertness()
 	return cmds
+}
+
+// reactToTypedDir keeps DirField's candidate pool in step with what the
+// user is typing into the Project field (spec §6 field 2's dual mode):
+// the fixed project list while the text reads as a fragment, the browsed
+// directory's children while it reads as a path.
+//
+// DirField itself owns the RANKING in both modes and never reads the
+// filesystem; this is the half that decides WHICH pool it ranks. The
+// three transitions:
+//
+//   - fragment -> path: drop the pool immediately, so the rows never show
+//     unrelated project directories ranked by basename during the ~150ms
+//     before the first listing lands. What the user sees meanwhile is the
+//     literal-path fallback row alone, which is the honest answer.
+//   - path -> path, same parent: nothing. Typing "he" after "~/Projects/"
+//     re-ranks the listing DirField already holds -- atrium's own
+//     per-directory memoization, expressed here as a diff on browseDir
+//     rather than a cache inside the field.
+//   - path -> fragment: put the project pool back, and invalidate any
+//     listing still in flight (bumping the browse counter) so a slow
+//     os.ReadDir cannot land afterwards and clobber it.
+func (m *Model) reactToTypedDir(typed string) []tea.Cmd {
+	if !form.LooksLikePath(typed) {
+		if m.browseDir == "" {
+			return nil // already in fragment mode; the pool is already right
+		}
+		m.browseDir = ""
+		m.browseReqVersion++
+		m.supplyDirCandidates(m.projectCandidates)
+		return nil
+	}
+
+	dir, _ := form.SplitPath(typed)
+	if m.browseDir == dir {
+		return nil
+	}
+	entering := m.browseDir == ""
+	m.browseDir = dir
+	if entering {
+		m.supplyDirCandidates(nil)
+	}
+	return []tea.Cmd{m.scheduleBrowse(dir)}
+}
+
+// supplyDirCandidates hands DirField a new candidate pool under the next
+// version of the single monotonic counter every such call shares -- see
+// dirCandVersion's own doc comment for why there is only one.
+func (m *Model) supplyDirCandidates(candidates []string) {
+	m.dirCandVersion++
+	m.dir.SetCandidates(m.dirCandVersion, candidates)
 }
 
 // syncDerivedInertness re-applies PlacementField's/AccountField's own

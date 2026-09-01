@@ -23,12 +23,14 @@
 //     relies ENTIRELY on the app layer for both fragment-mode's candidate
 //     pool AND path-mode's browse listing, via the single
 //     SetCandidates(version, []string) setter the brief specifies: the
-//     app layer is expected to watch DirField's own Value()/typed text
-//     (via whatever polling or event mechanism it uses outside this
-//     package) and re-supply the appropriate candidate set (a fixed
-//     project list for fragment mode, or the current directory's children
-//     for path mode) as the user types. This package performs no
-//     os/filepath calls of any kind.
+//     app layer watches DirField's own Typed() text and re-supplies the
+//     appropriate candidate set (a fixed project list for fragment mode,
+//     or the browsed directory's children for path mode -- see the app
+//     package's own reactToTypedDir and its debounced browse source) as
+//     the user types. This package performs no os/filepath calls of any
+//     kind; the one place it needs a path EXPANDED, path mode's
+//     literal-fallback row, goes through the app-supplied mapper
+//     SetPathExpander installs.
 //   - Atrium's fragment-mode ranking is Atrium's own internal/fuzzy
 //     package, which is NOT on the clean-file list and was never opened
 //     for this task; fragment mode here uses this package's own fresh
@@ -150,6 +152,11 @@ type DirField struct {
 	validityPath  string
 	validity      Validity
 
+	// pathExpander is SetPathExpander's app-supplied raw->absolute mapper,
+	// nil until installed (identity, this field's own pre-browse
+	// behavior).
+	pathExpander func(string) string
+
 	hint string
 }
 
@@ -238,10 +245,10 @@ func (d *DirField) Update(msg tea.Msg) tea.Cmd {
 // zone whose widget has nothing to complete."
 func (d *DirField) Complete() bool {
 	raw := d.input.Value()
-	if !looksLikePath(raw) {
+	if !LooksLikePath(raw) {
 		return false
 	}
-	dir, base := splitPath(raw)
+	dir, base := SplitPath(raw)
 
 	lower := strings.ToLower(base)
 	var names []string
@@ -328,6 +335,44 @@ func (d *DirField) Value() string {
 		return ""
 	}
 	return sel.ID
+}
+
+// Typed returns the RAW text the user has entered, as opposed to
+// Value()'s resolved selection: "~/Pro" while Value() is whatever
+// candidate row that currently highlights.
+//
+// The app layer watches this (not Value()) to drive path mode, because
+// path mode is a property of what is being TYPED -- which directory to
+// list, and whether the candidate pool should be the project list or a
+// directory's children -- and every candidate row it then supplies is a
+// consequence of it. Watching Value() instead would be circular.
+func (d *DirField) Typed() string { return d.input.Value() }
+
+// SetPathExpander installs the app layer's raw->absolute path mapper
+// (pathx.Resolve in production), used for path mode's literal-fallback
+// row -- so the fallback names the same directory, in the same notation,
+// as the browsed rows around it, which the app layer supplies already
+// expanded. Without one the fallback stays the raw typed text, which is
+// this field's own behavior in every test that installs none.
+//
+// The function is the app layer's; this package still performs no I/O of
+// its own (see the file doc's Adaptations section).
+func (d *DirField) SetPathExpander(f func(string) string) {
+	d.pathExpander = f
+	d.refreshItems(false)
+}
+
+// expand applies SetPathExpander's mapper, falling back to raw when none
+// is installed or the mapper returns an empty string -- refreshItems'
+// PickerItem IDs must stay non-empty.
+func (d *DirField) expand(raw string) string {
+	if d.pathExpander == nil {
+		return raw
+	}
+	if expanded := d.pathExpander(raw); expanded != "" {
+		return expanded
+	}
+	return raw
 }
 
 // Hint sets the text shown on the always-reserved hint row.
@@ -443,19 +488,21 @@ func (d *DirField) visibleItems() []string {
 	if raw == "" {
 		return append([]string(nil), d.candidates...)
 	}
-	if !looksLikePath(raw) {
+	if !LooksLikePath(raw) {
 		return fuzzyRank(d.candidates, raw)
 	}
 	return d.pathModeItems(raw)
 }
 
-// pathModeItems ranks the FULL candidate list against splitPath's own base
+// pathModeItems ranks the FULL candidate list against SplitPath's own base
 // component, matching each candidate by its OWN basename (fuzzyRank, not a
 // plain prefix match -- matching Atrium's own path-mode ranking,
-// `fuzzy.Rank(names, base)`), then appends the literal typed path as a
-// fallback if it isn't already present -- so a complete or not-yet-listed
-// path stays selectable even when nothing on offer matches it (ported in
-// spirit from Atrium's own literal-fallback comment in visibleItems).
+// `fuzzy.Rank(names, base)`), then appends the literal typed path -- put
+// through SetPathExpander's own mapper when the app layer has installed
+// one -- as a fallback if it isn't already present, so a complete or
+// not-yet-listed path stays selectable even when nothing on offer matches
+// it (ported in spirit from Atrium's own literal-fallback comment in
+// visibleItems).
 //
 // Ranking is done by feeding fuzzyRank every candidate's basename WITHOUT
 // first collapsing duplicate basenames into one representative candidate
@@ -473,7 +520,7 @@ func (d *DirField) visibleItems() []string {
 // distinct candidate with each ranked occurrence of its basename,
 // regardless of how many differently-named candidates are interspersed.
 func (d *DirField) pathModeItems(raw string) []string {
-	_, base := splitPath(raw)
+	_, base := SplitPath(raw)
 
 	names := make([]string, len(d.candidates))
 	byName := make(map[string][]string, len(d.candidates))
@@ -498,24 +545,30 @@ func (d *DirField) pathModeItems(raw string) []string {
 			items = append(items, p)
 		}
 	}
-	if !seen[raw] {
-		items = append(items, raw)
+	if literal := d.expand(raw); !seen[literal] {
+		items = append(items, literal)
 	}
 	return items
 }
 
-// looksLikePath reports whether s should be treated as a path to browse
+// LooksLikePath reports whether s should be treated as a path to browse
 // rather than a fragment to fuzzy-match against the candidate pool --
 // ported verbatim from Atrium's own looksLikePath.
-func looksLikePath(s string) bool {
+//
+// Exported (with SplitPath) because the app layer decides from the SAME
+// grammar which directory to list and when to swap the candidate pool
+// (spec §6 field 2). A second copy of the rule over there would be a
+// second rule: the pool would swap on inputs this field does not treat as
+// paths, or fail to swap on inputs it does.
+func LooksLikePath(s string) bool {
 	return strings.HasPrefix(s, "/") || strings.HasPrefix(s, "~") || strings.HasPrefix(s, ".")
 }
 
-// splitPath splits raw into the directory portion to browse and the base
+// SplitPath splits raw into the directory portion to browse and the base
 // prefix to match within it -- ported from Atrium's own splitRawPath
 // (operating on the raw, un-expanded string; this package performs no
 // path expansion at all, see the file doc's Adaptations section).
-func splitPath(raw string) (dir, base string) {
+func SplitPath(raw string) (dir, base string) {
 	if strings.HasSuffix(raw, "/") {
 		return raw, ""
 	}

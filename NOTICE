@@ -18,6 +18,8 @@ derived from atrium:
   internal/form/widgets/chiprow.go  <- ui/overlay/chiprow.go
   internal/form/widgets/picker.go   <- ui/overlay/picker.go
   internal/gitx/repo.go             <- app/app_branchsearch.go (pattern)
+  internal/pathx/pathx.go           <- ui/overlay/directoryPicker.go
+                                        (listSubdirs, expandPath)
 
 atrium's ui/overlay/textInput.go and ui/overlay/branchPicker.go are not on
 the clean list (each carries surviving third-party lines from other atrium

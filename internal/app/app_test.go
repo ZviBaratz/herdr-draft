@@ -74,9 +74,19 @@ type fakeGit struct {
 	currentBranchErr                   error
 	fetchPruneErr                      error
 
+	// subdirs answers ListSubdirs, keyed by the RESOLVED directory a
+	// browse asked for (see fakeGit.ResolvePath's own fixed "~" -> /home
+	// substitution); a directory with no entry here lists as empty, which
+	// is what an unreadable or empty real directory does too.
+	subdirs map[string][]string
+
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
+	// listSubdirsCalls records every directory actually read, in order, so
+	// a test can assert that typing WITHIN one directory re-ranks what is
+	// already on hand instead of re-reading it.
+	listSubdirsCalls []string
 	// dirsSeen records every directory path handed to a git/filesystem
 	// call, so a test can assert what the app layer actually passed
 	// through (e.g. that a "~/..." project directory was expanded first).
@@ -94,6 +104,36 @@ func (g *fakeGit) DirExists(dir string) bool {
 	g.dirsSeen = append(g.dirsSeen, dir)
 	return g.dirExists
 }
+
+// ListSubdirs and ResolvePath stand in for internal/pathx so this
+// package's own tests never read the real filesystem. ResolvePath applies
+// a FIXED, home-independent expansion ("~" -> "/home/test") plus a
+// working-directory-independent one for "." -- the real pathx.Resolve is
+// tested against t.TempDir in its own package; what matters here is that
+// the app layer resolves before reading, and does so exactly once.
+func (g *fakeGit) ListSubdirs(dir string, limit int) []string {
+	g.listSubdirsCalls = append(g.listSubdirsCalls, dir)
+	entries := g.subdirs[dir]
+	if len(entries) > limit {
+		return entries[:limit]
+	}
+	return entries
+}
+
+func (g *fakeGit) ResolvePath(path string) string {
+	if path == "/" {
+		return "/" // filepath.Abs keeps the root; TrimSuffix below would eat it
+	}
+	switch {
+	case path == "~" || strings.HasPrefix(path, "~/"):
+		return strings.TrimSuffix("/home/test"+strings.TrimPrefix(path, "~"), "/")
+	case path == "." || strings.HasPrefix(path, "./"):
+		return strings.TrimSuffix("/cwd"+strings.TrimPrefix(path, "."), "/")
+	default:
+		return strings.TrimSuffix(path, "/")
+	}
+}
+
 func (g *fakeGit) IsGitRepo(dir string) bool {
 	g.isGitRepoCalls++
 	g.dirsSeen = append(g.dirsSeen, dir)
@@ -1353,4 +1393,329 @@ func TestBaseListFallsBackToABareHeadOnADetachedHead(t *testing.T) {
 	if !strings.Contains(frame, "HEAD") {
 		t.Errorf("base picker = %q, want the HEAD row still present", frame)
 	}
+}
+
+// --- path-mode directory browsing (spec §6 field 2) ----------------------
+
+// typeDir types into the focused Project field, the way a user reaches
+// path mode: the app layer reacts to DirField.Typed(), never to a setter
+// of its own.
+func typeDir(m *Model, s string) {
+	m.dir.Focus()
+	for _, r := range s {
+		m.dir.Update(rn(r))
+	}
+}
+
+// backspaceDir deletes n runes from the Project field.
+func backspaceDir(m *Model, n int) {
+	m.dir.Focus()
+	for range n {
+		m.dir.Update(key(tea.KeyBackspace, 0))
+	}
+}
+
+// browseModel returns a Model whose fragment-mode pool is two recents and
+// whose fake filesystem holds ~/Projects/{atrium,herdr-draft}.
+func browseModel(t *testing.T) (Model, *fakeGit) {
+	t.Helper()
+	git := newFakeGit()
+	git.subdirs = map[string][]string{
+		"/home/test/Projects": {"/home/test/Projects/atrium", "/home/test/Projects/herdr-draft"},
+	}
+	m := newTestModel(t, testSetup{
+		Git:   git,
+		State: config.State{Recents: []string{"/repo-alpha", "/repo-beta"}},
+	})
+	return m, git
+}
+
+// dirRows renders the Project field the way the popup does, so a test can
+// assert on what the user would actually see -- DirField's own item list
+// is private to the form package, and the rendered rows are the honest
+// end of this pipeline anyway.
+func dirRows(m Model) string {
+	return m.dir.View(60, 10)
+}
+
+// runBrowseRound drives one full browse: the debounce firing, then the
+// listing, then the result -- each through Model.Update, so the real
+// message dispatch (not just the handlers) is what the test exercises.
+func runBrowseRound(t *testing.T, m Model, cmds []tea.Cmd) Model {
+	t.Helper()
+	for _, cmd := range cmds {
+		if cmd == nil {
+			continue
+		}
+		msg := cmd()
+		debounce, ok := msg.(browseDebounceMsg)
+		if !ok {
+			continue
+		}
+		next, listCmd := m.Update(debounce)
+		m = next.(Model)
+		if listCmd == nil {
+			t.Fatalf("browse debounce produced no listing cmd")
+		}
+		next, _ = m.Update(listCmd())
+		m = next.(Model)
+	}
+	return m
+}
+
+// TestTypingAPathBrowsesTheDirectory is the feature: a "~"-prefixed entry
+// lists that directory's subdirectories instead of ranking the project
+// pool by basename.
+func TestTypingAPathBrowsesTheDirectory(t *testing.T) {
+	m, git := browseModel(t)
+
+	if rows := dirRows(m); !strings.Contains(rows, "/repo-alpha") {
+		t.Fatalf("fragment mode does not show the project pool:\n%s", rows)
+	}
+
+	typeDir(&m, "~/Projects/")
+	cmds := m.reactToChanges()
+
+	// Entering path mode drops the project pool immediately -- the rows
+	// must not show unrelated projects while the listing is in flight.
+	if rows := dirRows(m); strings.Contains(rows, "/repo-alpha") {
+		t.Errorf("project pool still on screen while the first listing is in flight:\n%s", rows)
+	}
+	if got := m.dir.Value(); got != "/home/test/Projects" {
+		t.Errorf("selection while browsing = %q, want the expanded literal-path fallback", got)
+	}
+
+	m = runBrowseRound(t, m, cmds)
+
+	if want := []string{"/home/test/Projects"}; !slicesEqual(git.listSubdirsCalls, want) {
+		t.Errorf("ListSubdirs calls = %v, want %v (resolved exactly once)", git.listSubdirsCalls, want)
+	}
+	rows := dirRows(m)
+	for _, want := range []string{"atrium", "herdr-draft"} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("browsed rows missing %q:\n%s", want, rows)
+		}
+	}
+}
+
+// TestTypingWithinOneDirectoryDoesNotRelist pins atrium's own
+// per-directory memoization, expressed here as a diff on browseDir: "he"
+// after "~/Projects/" re-ranks the listing already on hand.
+func TestTypingWithinOneDirectoryDoesNotRelist(t *testing.T) {
+	m, git := browseModel(t)
+
+	typeDir(&m, "~/Projects/")
+	m = runBrowseRound(t, m, m.reactToChanges())
+
+	typeDir(&m, "he")
+	cmds := m.reactToChanges()
+	m = runBrowseRound(t, m, cmds)
+
+	if len(git.listSubdirsCalls) != 1 {
+		t.Fatalf("ListSubdirs calls = %v, want exactly one (same parent directory)", git.listSubdirsCalls)
+	}
+	rows := dirRows(m)
+	if !strings.Contains(rows, "herdr-draft") {
+		t.Errorf("filtered rows lost the match:\n%s", rows)
+	}
+	if strings.Contains(rows, "atrium") {
+		t.Errorf("filtered rows still show a non-match:\n%s", rows)
+	}
+}
+
+// TestDescendingListsTheNewParent pins the other half: a further "/" IS a
+// new parent, so it does re-list.
+func TestDescendingListsTheNewParent(t *testing.T) {
+	m, git := browseModel(t)
+	git.subdirs["/home/test/Projects/herdr-draft"] = []string{"/home/test/Projects/herdr-draft/internal"}
+
+	typeDir(&m, "~/Projects/")
+	m = runBrowseRound(t, m, m.reactToChanges())
+	typeDir(&m, "herdr-draft/")
+	m = runBrowseRound(t, m, m.reactToChanges())
+
+	want := []string{"/home/test/Projects", "/home/test/Projects/herdr-draft"}
+	if !slicesEqual(git.listSubdirsCalls, want) {
+		t.Fatalf("ListSubdirs calls = %v, want %v", git.listSubdirsCalls, want)
+	}
+	if rows := dirRows(m); !strings.Contains(rows, "internal") {
+		t.Errorf("rows do not show the descended listing:\n%s", rows)
+	}
+}
+
+// TestLeavingPathModeRestoresTheProjectPool pins the return trip: the
+// pool DirField holds is whichever was supplied last, so fragment mode
+// has to put the project list back explicitly.
+func TestLeavingPathModeRestoresTheProjectPool(t *testing.T) {
+	m, _ := browseModel(t)
+
+	typeDir(&m, "~/Projects/")
+	m = runBrowseRound(t, m, m.reactToChanges())
+	if rows := dirRows(m); !strings.Contains(rows, "atrium") {
+		t.Fatalf("browse did not take effect:\n%s", rows)
+	}
+
+	backspaceDir(&m, len("~/Projects/"))
+	typeDir(&m, "repo")
+	m.reactToChanges()
+
+	rows := dirRows(m)
+	if !strings.Contains(rows, "/repo-alpha") {
+		t.Errorf("project pool was not restored on leaving path mode:\n%s", rows)
+	}
+	if strings.Contains(rows, "atrium") {
+		t.Errorf("browsed rows survived the return to fragment mode:\n%s", rows)
+	}
+}
+
+// TestStaleBrowseResultIsDropped pins the staleness guard at the result
+// end: a slow listing for a directory the user has already typed past
+// must not replace the fresher one.
+func TestStaleBrowseResultIsDropped(t *testing.T) {
+	m, _ := browseModel(t)
+
+	stale := m.scheduleBrowse("~/old/")().(browseDebounceMsg).req
+	typeDir(&m, "~/Projects/")
+	m = runBrowseRound(t, m, m.reactToChanges())
+
+	next, _ := m.Update(browseResultMsg{req: stale, entries: []string{"/home/test/old/ghost"}})
+	m = next.(Model)
+
+	rows := dirRows(m)
+	if strings.Contains(rows, "ghost") {
+		t.Errorf("stale listing was applied over the fresher one:\n%s", rows)
+	}
+	if !strings.Contains(rows, "atrium") {
+		t.Errorf("fresh listing was lost:\n%s", rows)
+	}
+}
+
+// TestLeavingPathModeInvalidatesAnInFlightListing pins the other half of
+// that guard: leaving path mode has no result of its own to outrank a
+// listing already in flight, so it bumps the counter itself.
+func TestLeavingPathModeInvalidatesAnInFlightListing(t *testing.T) {
+	m, _ := browseModel(t)
+
+	typeDir(&m, "~/Projects/")
+	cmds := m.reactToChanges()
+	var inFlight request
+	for _, cmd := range cmds {
+		if cmd == nil {
+			continue
+		}
+		if debounce, ok := cmd().(browseDebounceMsg); ok {
+			inFlight = debounce.req
+		}
+	}
+	if inFlight.version == 0 {
+		t.Fatalf("entering path mode scheduled no browse")
+	}
+
+	backspaceDir(&m, len("~/Projects/"))
+	typeDir(&m, "repo")
+	m.reactToChanges()
+
+	next, _ := m.Update(browseResultMsg{req: inFlight, entries: []string{"/home/test/Projects/atrium"}})
+	m = next.(Model)
+
+	rows := dirRows(m)
+	if strings.Contains(rows, "atrium") {
+		t.Errorf("an in-flight listing landed after the user left path mode:\n%s", rows)
+	}
+	if !strings.Contains(rows, "/repo-alpha") {
+		t.Errorf("project pool did not survive the late listing:\n%s", rows)
+	}
+}
+
+// TestAnEmptyListingClearsThePreviousDirectorysChildren pins
+// handleBrowseResult's own "install an empty listing too": an unreadable
+// directory must not leave the previous one's children on screen under a
+// path they do not belong to.
+func TestAnEmptyListingClearsThePreviousDirectorysChildren(t *testing.T) {
+	m, _ := browseModel(t)
+
+	typeDir(&m, "~/Projects/")
+	m = runBrowseRound(t, m, m.reactToChanges())
+	if rows := dirRows(m); !strings.Contains(rows, "atrium") {
+		t.Fatalf("browse did not take effect, so this test would pass vacuously:\n%s", rows)
+	}
+
+	typeDir(&m, "nowhere/")
+	m = runBrowseRound(t, m, m.reactToChanges())
+
+	rows := dirRows(m)
+	if strings.Contains(rows, "atrium") {
+		t.Errorf("the previous directory's children survived an empty listing:\n%s", rows)
+	}
+	if !strings.Contains(rows, "/home/test/Projects/nowhere") {
+		t.Errorf("the literal-path fallback is not what remains:\n%s", rows)
+	}
+}
+
+func slicesEqual(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestBrowsingIsReachableByTypingThroughUpdate closes the gap every other
+// test in this section leaves open: they drive DirField directly and then
+// call reactToChanges by hand. This one sends real keystrokes through
+// Model.Update -- the only path a user has -- and asserts a browse
+// actually gets scheduled at the end of it.
+func TestBrowsingIsReachableByTypingThroughUpdate(t *testing.T) {
+	m, _ := browseModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = next.(Model)
+	m.Init() // focuses the first section (Project, with no Linear configured)
+
+	// Only the LAST keystroke's cmd is flattened: every keystroke also
+	// batches the text input's own blink timer, which really does sleep.
+	var last tea.Cmd
+	versionBefore := m.browseReqVersion
+	for _, r := range "~/Projects/" {
+		n, cmd := m.Update(rn(r))
+		m, last = n.(Model), cmd
+	}
+	if m.browseReqVersion == versionBefore {
+		t.Fatalf("typing a path through Update never bumped the browse counter (Typed() = %q)", m.dir.Typed())
+	}
+
+	var scheduled bool
+	for _, msg := range flatten(last) {
+		if _, ok := msg.(browseDebounceMsg); ok {
+			scheduled = true
+		}
+	}
+	if !scheduled {
+		t.Fatalf("typing a path through Update scheduled no browse (Typed() = %q)", m.dir.Typed())
+	}
+	if m.browseDir != "~/Projects/" {
+		t.Errorf("browseDir = %q, want the raw typed parent", m.browseDir)
+	}
+}
+
+// flatten runs cmd and returns every message it produced, descending into
+// tea.BatchMsg (which is itself a []tea.Cmd, not a message a Model would
+// ever see).
+func flatten(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var msgs []tea.Msg
+	for _, c := range batch {
+		msgs = append(msgs, flatten(c)...)
+	}
+	return msgs
 }

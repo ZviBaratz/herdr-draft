@@ -55,3 +55,48 @@ FINAL REVIEW TRIAGE — Ruling: remaining minors (M1,M2,M3,M5,M7-M12) parked. Ea
 FINAL FIX WAVE: Ruling: reflow-on-focus (spec §6's per-section "constant height" no longer holds) ACCEPTED — at 80x24 a fixed layout gives ~2 rows/field, so no picker could ever show a candidate, breaking 5 of 10 fields. Re-reviewer measured the UX: moving focus shifts the target 0 to -6 rows at h=24, ALWAYS upward or unchanged, with footer and Create pinned at h-2/h-1. SPEC AMENDMENT CANDIDATE for Zvi: §6 should record the popup-budget reality rather than Atrium's full-height assumption. Cost if wrong: a spec/implementation mismatch on paper.
 FINAL FIX WAVE: Ruling: unfocused pickers still reserving blank rows in TALL windows accepted (cosmetic, ~12 rows at 120x40, reclaimed at every constrained size); collapsing unconditionally would have shifted a protected golden frame. Follow-up ticket, not a blocker.
 FINAL FIX WAVE: Ruling: I4 resolving the HEAD sentinel at check time rather than creation time accepted — the window is seconds, and worktree-local commits stay unreachable from a moved HEAD, so the case that matters (real work in the worktree) is still correctly refused.
+
+## Follow-up: path-browsing mode (2026-09-01)
+
+UNPARKED: the path-browsing mode ruled out of the final fix wave above is
+now implemented, on Zvi's request, as its own change with its own tests —
+which is what "not in a no-second-wave fix pass" meant. Spec §6 field 2 is
+now met in full; no amendment needed there.
+
+Rulings made while building it:
+
+- Ruling: the browse listing lives in `internal/pathx` (ported from
+  atrium's `listSubdirs`/`expandPath`), reached through the existing
+  `gitSource` interface, not through a new dependency — `gitSource`
+  already carries `DirExists` for exactly this reason, and routing it
+  there is what lets the app package's own tests answer directory reads
+  deterministically. Cost if wrong: an interface named for git holds two
+  filesystem methods.
+- Ruling: browsed rows are ABSOLUTE (atrium's behavior), not the user's
+  own `~`/`./` notation. `herdr workspace create --cwd` resolves a
+  relative path against the SERVER's working directory, so a `./foo`
+  selection would silently target the wrong place. Cost if wrong: rows are
+  longer on screen than what the user typed.
+- Ruling: `form.LooksLikePath`/`form.SplitPath` are exported rather than
+  re-implemented app-side, and DirField gains `Typed()` plus
+  `SetPathExpander` — the field stays I/O-free, but the grammar deciding
+  path mode has exactly one definition. Cost if wrong: three more exported
+  symbols on the form package.
+- Ruling: two deliberate deviations from atrium's `listSubdirs` — the cap
+  bounds the RESULT rather than the READ (atrium's version reports no
+  subdirectories at all in a directory whose first 500 entries are files),
+  and symlinks pointing at directories are followed with one `os.Stat`
+  each (atrium's `DirEntry.IsDir`-only test made a symlinked project root
+  invisible). Cost if wrong: one extra stat per symlink in a listing.
+- Ruling: entering path mode CLEARS the candidate pool rather than leaving
+  the project list on screen for the ~150ms until the first listing lands.
+  Cost if wrong: one debounce window shows only the literal-path row.
+- Live validation (disposable headless session, real popup binary, real
+  filesystem) found one defect the unit tests could not: bubbles'
+  `textinput.SetValue` only repositions a cursor that would be out of
+  bounds, so Tab-completing `…/scratch/gam` to `…/scratch/gamma-tools`
+  left the cursor after `gam` and the next keystroke landed mid-path.
+  Fixed in `lineInput.SetValue` (cursor to end), which also fixes the same
+  latent stranding in title/branch seeding. Ruling: fix it in
+  `lineInput.SetValue` rather than at the one call site — every caller
+  there replaces the whole value rather than editing around a cursor.

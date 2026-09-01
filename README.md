@@ -24,6 +24,30 @@ One keybinding opens the form; one submit produces a running, briefed agent
 in the right place. See `docs/specs/2026-08-31-herdr-draft-design.md` for
 the full design.
 
+### The Project field
+
+The Project field has two modes, and switches between them on what you
+type:
+
+- **Fragment** (anything not starting with `/`, `~` or `.`) fuzzy-filters
+  a fixed pool of candidates: the current space's repo root first, then
+  the current workspace cwd, then every open herdr workspace's own
+  worktree root, then your recents.
+- **Path** (`/`, `~` or `.`) browses the filesystem — the subdirectories
+  of the parent you have typed so far, re-read only when that parent
+  changes. `Tab` completes to the longest common prefix, shell-style, and
+  deliberately stops at an exact directory rather than diving into it;
+  typing `/` is how you descend. The fully typed path is always the last
+  row, so a directory that does not exist yet (or one buried past the
+  500-entry listing cap) stays selectable.
+
+Browsed rows are absolute — `~/Projects/x` resolves at browse time, since
+`herdr workspace create --cwd` would otherwise resolve a relative path
+against the *server's* working directory. An inline marker rates whatever
+is selected: `(invalid)` for a path that does not exist, `(direct)` for a
+directory that is not a git repository (which is allowed — it just means
+no worktree).
+
 ## Requirements
 
 - herdr ≥ 0.8.2 (`min_herdr_version` in `herdr-plugin.toml`).

@@ -62,6 +62,12 @@ const debounceDelay = 150 * time.Millisecond
 // picker's candidate list.
 const maxBaseRefs = 50
 
+// maxBrowseEntries bounds one path-mode directory listing (spec §6 field
+// 2), matching atrium's own maxDirEntries. A directory with more
+// subdirectories than this stays reachable by typing the target out --
+// DirField's literal-path fallback row.
+const maxBrowseEntries = 500
+
 // request is the single (version, key) staleness guard every debounced
 // source in this file shares -- see the file doc comment. version is what
 // the staleness comparison actually uses (compared against the source's
@@ -169,6 +175,65 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		cmd = m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), msg.req.key, m.worktree.On())
 	}
 	return m, cmd
+}
+
+// --- path-mode directory browsing (spec §6 field 2) ----------------------
+
+type browseDebounceMsg struct{ req request }
+
+type browseResultMsg struct {
+	req     request
+	entries []string
+}
+
+// scheduleBrowse bumps the browse source's own request counter and
+// returns a tea.Cmd that sleeps out debounceDelay before reporting the
+// fire. dirRaw is the RAW directory portion of the typed text -- expanded
+// only in runBrowse, at the moment it actually reaches the filesystem, so
+// what is compared against Model.browseDir stays what the user typed.
+//
+// Bumping here is also what invalidates a listing already in flight, and
+// Model.reactToTypedDir bumps this same counter directly (without
+// scheduling anything) when the user leaves path mode.
+func (m *Model) scheduleBrowse(dirRaw string) tea.Cmd {
+	m.browseReqVersion++
+	v := m.browseReqVersion
+	clock := m.deps.Clock
+	return func() tea.Msg {
+		clock.sleep(debounceDelay)
+		return browseDebounceMsg{req: request{version: v, key: dirRaw}}
+	}
+}
+
+// runBrowse lists the browsed directory's immediate subdirectories in the
+// background. Both halves -- resolving "~/Projects/" to an absolute path
+// and reading it -- happen inside the returned Cmd, off the update loop.
+func (m Model) runBrowse(req request) tea.Cmd {
+	git := m.deps.Git
+	return func() tea.Msg {
+		dir := git.ResolvePath(req.key)
+		return browseResultMsg{req: req, entries: git.ListSubdirs(dir, maxBrowseEntries)}
+	}
+}
+
+func (m Model) handleBrowseDebounce(msg browseDebounceMsg) (Model, tea.Cmd) {
+	if msg.req.version != m.browseReqVersion {
+		return m, nil // superseded by a newer directory, or by leaving path mode
+	}
+	return m, m.runBrowse(msg.req)
+}
+
+// handleBrowseResult installs a listing as DirField's candidate pool. An
+// EMPTY listing is installed too, not skipped: an unreadable or empty
+// directory must clear the previous one's children rather than leave them
+// on screen under a path they do not belong to -- DirField's own
+// literal-path fallback row is what remains selectable.
+func (m Model) handleBrowseResult(msg browseResultMsg) (Model, tea.Cmd) {
+	if msg.req.version != m.browseReqVersion {
+		return m, nil // a newer request landed while this one was in flight
+	}
+	m.supplyDirCandidates(msg.entries)
+	return m, nil
 }
 
 // --- base-ref list + once-per-repo git fetch --prune (spec §6 field 4) --
@@ -897,6 +962,12 @@ func (gitxSource) DirExists(path string) bool {
 }
 
 func (gitxSource) IsGitRepo(dir string) bool { return gitx.IsGitRepo(dir) }
+
+func (gitxSource) ListSubdirs(dir string, limit int) []string {
+	return pathx.ListSubdirs(dir, limit)
+}
+
+func (gitxSource) ResolvePath(path string) string { return pathx.Resolve(path) }
 
 func (gitxSource) ListBranches(ctx context.Context, dir string, limit int) ([]string, error) {
 	return gitx.ListBranches(ctx, dir, limit)
