@@ -64,13 +64,15 @@ const agentMoreLabel = "more…"
 // picker. Value() always returns a real kind name, never the internal
 // "more…" sentinel -- see the file doc's design note.
 //
-// AgentField renders at a CONSTANT 2+agentPickerRows physical lines
-// regardless of focus, kind set, or expanded state (this task's own
-// "verified fact": Section.Height must be hint-independent) -- the chip
-// row, an always-reserved second line (field_placement.go's own
+// AgentField PREFERS 2+agentPickerRows physical lines -- independent of
+// focus, kind set, and expanded state (this task's own "verified fact":
+// Section.Height must be hint-independent) -- and renders into whatever
+// compose's own budget allocation gives it (Section.View's h, sizes.go's
+// allocateHeights), shedding rows from the bottom: the chip row first,
+// then a reserved second line (field_placement.go's own
 // hint-independent-Height pattern, applied here even though no chip
 // currently sets a FocusHint -- reserved defensively in case one later
-// does), then agentPickerRows candidate rows (blank while collapsed).
+// does), then candidate rows (blank while collapsed).
 type AgentField struct {
 	chips  *widgets.ChipRow
 	picker *widgets.Picker
@@ -323,12 +325,22 @@ func (f *AgentField) fullListItems() []widgets.PickerItem {
 // submit" posture spec §6 field 3 documents for Title).
 func (f *AgentField) Value() string { return f.lastConfirmed }
 
-// Height reports AgentField's constant footprint -- independent of winH,
-// focus, kind set, or expanded state (see the type doc comment).
-func (f *AgentField) Height(int) int { return 2 + agentPickerRows }
+// Height reports AgentField's PREFERRED footprint in a popup winH rows
+// tall -- independent of focus, kind set, and expanded state (see the type
+// doc comment); the full-kind-list row count shrinks with winH via
+// pickerRowsAt (sizes.go).
+func (f *AgentField) Height(winH int) int {
+	return pickerChromeRows + pickerRowsAt(agentPickerRows, winH)
+}
 
-// View renders the field at exactly Height's own physical line count.
-func (f *AgentField) View(inner int) string {
+// MinHeight is the chip row alone -- the selected agent kind, which is
+// what a user not currently editing this field needs to see of it.
+func (f *AgentField) MinHeight() int { return 1 }
+
+// View renders the field into exactly h physical lines: the chip row
+// first, then the reserved hint row, then whatever full-kind-list rows are
+// left over (real rows while expanded, blanks otherwise).
+func (f *AgentField) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
@@ -337,16 +349,13 @@ func (f *AgentField) View(inner int) string {
 		chipView += "\n" + fitLine("", inner)
 	}
 
-	var rows string
-	if f.expanded {
-		rows = f.picker.MarkedView(inner, agentPickerRows, "row:"+f.ID()+":")
-	} else {
-		blanks := make([]string, agentPickerRows)
-		for i := range blanks {
-			blanks[i] = fitLine("", inner)
+	rows := strings.Split(fitBlock(chipView, pickerChromeRows, inner), "\n")
+	if candidates := h - pickerChromeRows; candidates > 0 {
+		if f.expanded {
+			rows = append(rows, strings.Split(f.picker.MarkedView(inner, candidates, "row:"+f.ID()+":"), "\n")...)
+		} else {
+			rows = append(rows, blankRows(candidates, inner)...)
 		}
-		rows = strings.Join(blanks, "\n")
 	}
-
-	return chipView + "\n" + rows
+	return sectionLines(h, inner, rows...)
 }

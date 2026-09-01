@@ -34,10 +34,12 @@ const (
 // form.go's own titleValuer capability so an Enter from a non-empty Title
 // submits the form -- see form.go's Section doc comment).
 //
-// TitleField renders at a CONSTANT two physical lines regardless of focus
-// or whether a verdict is currently set (this task's own "verified fact":
+// TitleField PREFERS two physical lines regardless of focus or whether a
+// verdict is currently set (this task's own "verified fact":
 // Section.Height must be hint-independent) -- one line for the label and
-// typed text, one always-reserved line for SetVerdict's own message.
+// typed text, one reserved line for SetVerdict's own message -- and drops
+// to the first of them alone when compose's own budget allocation cannot
+// afford the second.
 type TitleField struct {
 	palette theme.Palette
 	input   *lineInput
@@ -103,9 +105,9 @@ func (f *TitleField) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// View renders the field at exactly Height's own two physical lines: the
-// label/typed-text row, then the always-reserved verdict row.
-func (f *TitleField) View(inner int) string {
+// View renders the field into exactly h physical lines: the
+// label/typed-text row, then the reserved verdict row when h affords it.
+func (f *TitleField) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
@@ -115,7 +117,7 @@ func (f *TitleField) View(inner int) string {
 		budget = 1
 	}
 	header := fitLine(labelStyled+f.input.View(budget), inner)
-	return header + "\n" + f.verdictLine(inner)
+	return sectionLines(h, inner, header, f.verdictLine(inner))
 }
 
 // verdictLine renders SetVerdict's own message, bounded to
@@ -136,9 +138,19 @@ func (f *TitleField) verdictLine(inner int) string {
 	return fitLine(clipped, inner)
 }
 
-// Height reports TitleField's constant two-line footprint -- independent
-// of winH, focus, or verdict state (see the type doc comment).
+// Height reports TitleField's preferred two-line footprint -- independent
+// of winH, focus, and verdict state (see the type doc comment). Title has
+// no picker or textarea to shrink, so its preference is the same at every
+// window size.
 func (f *TitleField) Height(int) int { return 2 }
+
+// MinHeight is the label/typed-text row alone: a popup too short for every
+// field's preference sheds Title's reserved verdict row, but never the row
+// carrying the title itself. A verdict that actually blocks submit is
+// never lost this way -- spec §9 re-focuses Title on a blocked submit, and
+// compose's allocator fills the focused section to its full preference
+// first (sizes.go's allocateHeights).
+func (f *TitleField) MinHeight() int { return 1 }
 
 // Value returns the field's current typed text -- also TitleField's
 // titleValuer implementation (form.go's optional capability interface),

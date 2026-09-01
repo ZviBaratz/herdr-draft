@@ -35,20 +35,18 @@ var promptPlaceholderLadder = []string{
 // --wait` (spec §9 step 3) -- this package has no opinion on delivery,
 // only on collecting the text.
 //
-// PromptField renders at a CONSTANT 1+widgets.PromptAreaPreferredRows
-// physical lines regardless of focus or content (this task's own
-// "verified fact": Section.Height must be hint-independent, though here
-// it holds trivially -- widgets.PromptArea.View already always renders
-// exactly its own configured row count, see its own doc comment) -- a
-// one-line label header, then the wrapped PromptArea's own rows. Unlike
-// field_dir.go's DirField/field_issue.go's IssueField, PromptField never
-// calls PromptArea.SetRows: every other Task 17-18 field keeps its own
-// Height(winH) constant regardless of winH too (sizes.go's own doc
-// comment: the form's ACTUAL degradation mechanism is fitToHeight's
-// post-hoc line-dropping cascade over the composed content, not a
-// per-Section winH-driven shrink -- see its file doc's "Adaptations"
-// section), so there is nothing for a per-winH SetRows call here to do
-// that the shared cascade doesn't already handle.
+// PromptField renders a one-line label header plus the wrapped
+// PromptArea's own rows: spec §6 field 8's "4 rows preferred, 1 floor",
+// scaled to the window by promptRowsAt (sizes.go) and then to whatever
+// compose's own budget allocation could actually afford (Section.View's h).
+// Height stays independent of focus and content, per Section.Height's own
+// contract -- PromptArea.View already renders exactly its configured row
+// count regardless of what has been typed into it (see its own doc
+// comment), so that holds here trivially.
+//
+// This is where PromptArea.SetRows -- the shrink hook Task 15 built and
+// nothing ever called -- is finally driven: View applies it per render,
+// from the height it was allocated.
 type PromptField struct {
 	palette theme.Palette
 	area    *widgets.PromptArea
@@ -169,16 +167,33 @@ func (f *PromptField) SetValue(s string, seeded bool) {
 	}
 }
 
-// Height reports PromptField's constant footprint -- independent of winH
-// or content (see the type doc comment).
-func (f *PromptField) Height(int) int { return 1 + widgets.PromptAreaPreferredRows }
+// Height reports PromptField's PREFERRED footprint in a popup winH rows
+// tall: the one-line label header plus spec §6 field 8's own "4 rows
+// preferred, 1 floor" textarea, shrunk between those two bounds by
+// promptRowsAt (sizes.go) as the window gets short. Independent of focus
+// and content, per Section.Height's own contract.
+func (f *PromptField) Height(winH int) int {
+	return promptLabelRows + promptRowsAt(widgets.PromptAreaPreferredRows, widgets.PromptAreaMinRows, winH)
+}
 
-// View renders the field at exactly Height's own physical line count: a
-// one-line label header, then the wrapped PromptArea's own rows.
-func (f *PromptField) View(inner int) string {
+// MinHeight is the label plus spec §6 field 8's own one-row floor. Unlike
+// every other field in this package, Prompt cannot usefully collapse to
+// its header alone: a textarea with no rows shows the user neither what
+// they have typed nor where to type it.
+func (f *PromptField) MinHeight() int { return promptLabelRows + widgets.PromptAreaMinRows }
+
+// View renders the field into exactly h physical lines: a one-line label
+// header, then the wrapped PromptArea sized to whatever h leaves over
+// (floored at PromptAreaMinRows by SetRows' own contract). SetRows is
+// applied here, per render, the same way PromptArea.View already applies
+// SetWidth/SetHeight on every call -- the widget caches no geometry of its
+// own, so the render it was allocated for is the only place the form's
+// allocation can reach it.
+func (f *PromptField) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
+	f.area.SetRows(h - promptLabelRows)
 	header := fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(promptLabel), inner)
-	return header + "\n" + f.area.View(inner)
+	return sectionLines(h, inner, header, f.area.View(inner))
 }

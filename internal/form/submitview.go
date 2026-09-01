@@ -201,7 +201,14 @@ func (v *SubmitView) compose(w, h int) string {
 		lines = append(lines, blank)
 	}
 
-	lines = fitToHeight(lines, h, dividerDecorated, -1)
+	// No protect mask: SubmitView has no focus ring, so it has no
+	// must-survive region beyond the last line fitToHeight already keeps
+	// unconditionally. Its drop-blank-lines stage -- dead here for exactly
+	// the reason it was dead in form.go's compose, see sizes.go's
+	// isBlankLine -- now actually fires, which is what lets a long
+	// staged-progress list reclaim this view's own padding rows before it
+	// starts losing progress lines.
+	lines = fitToHeight(lines, nil, h, dividerDecorated, -1)
 
 	painted := make([]string, 0, h)
 	for _, l := range lines {

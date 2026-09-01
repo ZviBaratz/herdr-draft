@@ -91,14 +91,17 @@ const (
 // ("inert unless the selected agent kind is claude"), driven by
 // SetAgentIsClaude.
 //
-// AccountField renders at a CONSTANT 2+accountPickerRows physical lines
-// regardless of focus, agent-kind inertness, profile set, or degraded
-// status (this task's own "verified fact": Section.Height must be
-// hint-independent) -- a header row (label + current pin display), an
-// always-reserved hint row, then accountPickerRows candidate rows (always
-// shown, matching field_worktree.go's base-picker convention: a short
-// profile list is small enough that hiding it while unfocused buys
-// nothing).
+// AccountField PREFERS 2+accountPickerRows physical lines -- independent
+// of focus, agent-kind inertness, profile set, and degraded status (this
+// task's own "verified fact": Section.Height must be hint-independent) --
+// and renders into whatever compose's own budget allocation gives it
+// (Section.View's h, sizes.go's allocateHeights), shedding rows from the
+// bottom: a header row (label + current pin display) first, then a
+// reserved hint row, then profile rows (shown regardless of focus,
+// matching field_worktree.go's base-picker convention: a short profile
+// list is small enough that hiding it while unfocused buys nothing --
+// reclaiming those rows when the popup cannot afford them is the
+// allocator's job, not this field's).
 type AccountField struct {
 	palette theme.Palette
 	picker  *widgets.Picker
@@ -367,13 +370,23 @@ func (f *AccountField) Pin() string {
 	return sel.ID
 }
 
-// Height reports AccountField's constant footprint -- independent of
-// winH, focus, agent-kind inertness, profile set, or degraded status (see
-// the type doc comment).
-func (f *AccountField) Height(int) int { return 2 + accountPickerRows }
+// Height reports AccountField's PREFERRED footprint in a popup winH rows
+// tall -- independent of focus, agent-kind inertness, profile set, and
+// degraded status (see the type doc comment); the profile row count
+// shrinks with winH via pickerRowsAt (sizes.go).
+func (f *AccountField) Height(winH int) int {
+	return pickerChromeRows + pickerRowsAt(accountPickerRows, winH)
+}
 
-// View renders the field at exactly Height's own physical line count.
-func (f *AccountField) View(inner int) string {
+// MinHeight is the header row alone -- the label plus the pinned profile
+// (or the inert placeholder), which is what a user not currently editing
+// this field needs to see of it.
+func (f *AccountField) MinHeight() int { return 1 }
+
+// View renders the field into exactly h physical lines: the header first,
+// then the reserved hint/verdict row, then whatever profile rows are left
+// over.
+func (f *AccountField) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
@@ -382,14 +395,12 @@ func (f *AccountField) View(inner int) string {
 	if budget < 1 {
 		budget = 1
 	}
+	candidates := h - pickerChromeRows
 
 	if !f.agentIsClaude {
 		header := fitLine(labelStyled+fitLine(dimHint(f.palette).Render(accountInertPlaceholder), budget), inner)
-		blanks := make([]string, accountPickerRows)
-		for i := range blanks {
-			blanks[i] = fitLine("", inner)
-		}
-		return header + "\n" + fitLine("", inner) + "\n" + strings.Join(blanks, "\n")
+		rows := append([]string{header, fitLine("", inner)}, blankRows(candidates, inner)...)
+		return sectionLines(h, inner, rows...)
 	}
 
 	pin := f.Pin()
@@ -411,6 +422,9 @@ func (f *AccountField) View(inner int) string {
 		hintLine = fitLine(dimHint(f.palette).Render(accountDegradedHint), inner)
 	}
 
-	rows := f.picker.MarkedView(inner, accountPickerRows, "row:"+f.ID()+":")
-	return header + "\n" + hintLine + "\n" + rows
+	rows := []string{header, hintLine}
+	if candidates > 0 {
+		rows = append(rows, strings.Split(f.picker.MarkedView(inner, candidates, "row:"+f.ID()+":"), "\n")...)
+	}
+	return sectionLines(h, inner, rows...)
 }

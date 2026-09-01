@@ -177,17 +177,17 @@ func TestDirField_ValidityMarkerRendersOnlyForCurrentSelection(t *testing.T) {
 	d.SetCandidates(1, []string{"/home/z/repo-a", "/home/z/repo-b"})
 
 	d.SetValidity("/home/z/repo-a", ValidityInvalid)
-	if got := ansi.Strip(d.View(60)); !strings.Contains(got, "(invalid)") {
+	if got := ansi.Strip(d.View(60, d.Height(24))); !strings.Contains(got, "(invalid)") {
 		t.Fatalf("View(60) = %q, want it to contain \"(invalid)\" for the current selection", got)
 	}
 
 	d.picker.CursorNext() // selection moves to repo-b, which has no verdict yet
-	if got := ansi.Strip(d.View(60)); strings.Contains(got, "(invalid)") {
+	if got := ansi.Strip(d.View(60, d.Height(24))); strings.Contains(got, "(invalid)") {
 		t.Fatalf("View(60) = %q, still shows the stale (invalid) marker after selection moved", got)
 	}
 
 	d.SetValidity("/home/z/repo-b", ValidityDirect)
-	if got := ansi.Strip(d.View(60)); !strings.Contains(got, "(direct)") {
+	if got := ansi.Strip(d.View(60, d.Height(24))); !strings.Contains(got, "(direct)") {
 		t.Fatalf("View(60) = %q, want it to contain \"(direct)\" for repo-b", got)
 	}
 }
@@ -281,7 +281,7 @@ func TestDirField_HeightIsConstant(t *testing.T) {
 	if got := d.Height(24); got != base {
 		t.Errorf("Height(24) with candidates/validity/hint set = %d, want %d", got, base)
 	}
-	if got := strings.Count(d.View(60), "\n") + 1; got != base {
+	if got := strings.Count(d.View(60, d.Height(24)), "\n") + 1; got != base {
 		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
 	}
 }
@@ -296,11 +296,11 @@ func TestDirField_NoPanicOnDegenerateInputs(t *testing.T) {
 		}
 	}()
 	d := NewDirField(theme.Default())
-	_ = d.View(0)
+	_ = d.View(0, d.Height(24))
 	_ = d.Value()
 	_ = d.Complete()
 	d.Focus()
-	_ = d.View(-5)
+	_ = d.View(-5, d.Height(24))
 	d.SetCandidates(1, nil)
-	_ = d.View(1)
+	_ = d.View(1, d.Height(24))
 }

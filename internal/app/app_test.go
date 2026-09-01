@@ -340,7 +340,7 @@ func TestDupVerdictsPushedToTitleField(t *testing.T) {
 	m2, _ = m.handleTitleResult(result)
 	m = m2
 
-	frame := ansi.Strip(m.title.View(60))
+	frame := ansi.Strip(m.title.View(60, m.title.Height(24)))
 	if !strings.Contains(frame, "branch & label in use") {
 		t.Fatalf("TitleField.View(60) = %q, want it to contain the composed dup verdict", frame)
 	}
@@ -386,7 +386,7 @@ func TestTitleResult_StaleVersionDropped(t *testing.T) {
 	// v2 (fresher) resolves first: no duplicates.
 	m2, _ := m.handleTitleResult(titleResultMsg{req: request{version: v2, key: "t"}})
 	m = m2
-	frame := ansi.Strip(m.title.View(60))
+	frame := ansi.Strip(m.title.View(60, m.title.Height(24)))
 	if strings.Contains(frame, "exists") || strings.Contains(frame, "in use") {
 		t.Fatalf("TitleField.View(60) = %q, fresh v2's clean verdict was not applied", frame)
 	}
@@ -395,7 +395,7 @@ func TestTitleResult_StaleVersionDropped(t *testing.T) {
 	// not overwriting v2's already-applied clean verdict.
 	m2, _ = m.handleTitleResult(titleResultMsg{req: request{version: v1, key: "t"}, branchExists: true, labelTaken: true})
 	m = m2
-	frame = ansi.Strip(m.title.View(60))
+	frame = ansi.Strip(m.title.View(60, m.title.Height(24)))
 	if strings.Contains(frame, "in use") {
 		t.Fatalf("TitleField.View(60) = %q, stale v1 result was wrongly applied", frame)
 	}
@@ -508,7 +508,7 @@ func TestBaseResult_ErrorSetsCouldNotList(t *testing.T) {
 		t.Fatalf("fetchPruneCalls = %v after a failed result, want none", git.fetchPruneCalls)
 	}
 
-	frame := ansi.Strip(m.worktree.BaseSection().View(60))
+	frame := ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(24)))
 	if !strings.Contains(frame, "couldn't list") {
 		t.Fatalf("BaseSection View = %q, want it to contain the \"couldn't list\" status", frame)
 	}
@@ -534,7 +534,7 @@ func TestBaseResult_StaleVersionDropped(t *testing.T) {
 	// v2 (fresher) resolves first, successfully.
 	m2, _ := m.handleBaseResult(baseResultMsg{req: request{version: v2, key: "new"}, refs: []string{"main"}})
 	m = m2
-	frame := ansi.Strip(m.worktree.BaseSection().View(60))
+	frame := ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(24)))
 	if strings.Contains(frame, "couldn't list") {
 		t.Fatalf("BaseSection View = %q, fresh v2's success was not applied", frame)
 	}
@@ -543,7 +543,7 @@ func TestBaseResult_StaleVersionDropped(t *testing.T) {
 	// clobbering v2's already-applied success with "couldn't list".
 	m2, _ = m.handleBaseResult(baseResultMsg{req: request{version: v1, key: "old"}, err: true})
 	m = m2
-	frame = ansi.Strip(m.worktree.BaseSection().View(60))
+	frame = ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(24)))
 	if strings.Contains(frame, "couldn't list") {
 		t.Fatalf("BaseSection View = %q, stale v1 result was wrongly applied", frame)
 	}
@@ -1091,7 +1091,7 @@ func TestLinearResult_AppliesIssuesAndSavesCache(t *testing.T) {
 	// SetIssues applied -- confirmed indirectly via the rendered picker
 	// containing the fresh issue's own identifier once focused.
 	m.issue.Focus()
-	frame := ansi.Strip(m.issue.View(80))
+	frame := ansi.Strip(m.issue.View(80, m.issue.Height(24)))
 	if !strings.Contains(frame, "ENG-5") {
 		t.Fatalf("IssueField.View(80) = %q, want it to contain the freshly applied issue", frame)
 	}
@@ -1116,7 +1116,7 @@ func TestLinearResult_ErrorLeavesIssuesUntouched(t *testing.T) {
 	m = m2
 
 	m.issue.Focus()
-	frame := ansi.Strip(m.issue.View(80))
+	frame := ansi.Strip(m.issue.View(80, m.issue.Height(24)))
 	if !strings.Contains(frame, "ENG-6") {
 		t.Fatalf("IssueField.View(80) = %q, want the cache-rendered issue still present after a failed refresh", frame)
 	}
@@ -1165,7 +1165,7 @@ func TestReactToChanges_AccountFocusReloadsClauth(t *testing.T) {
 
 	m2, _ := m.handleClauthResult(result)
 	m = m2
-	if !strings.Contains(ansi.Strip(m.account.View(80)), "a") {
+	if !strings.Contains(ansi.Strip(m.account.View(80, m.account.Height(24))), "a") {
 		t.Fatalf("AccountField.View(80) does not show the reloaded profile")
 	}
 

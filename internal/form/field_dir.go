@@ -117,11 +117,13 @@ const dirLabel = "Project: "
 // doesn't look like a path, path mode (browsing whatever children the app
 // layer has most recently supplied for the current prefix) when it does.
 //
-// DirField renders at a constant 2+dirPickerRows physical lines regardless
-// of focus, candidates, or validity state -- a header row (label + typed
-// text/selection + inline validity marker), an always-reserved hint row,
-// then dirPickerRows candidate rows (blank while unfocused, matching
-// Atrium's own DirectoryPicker.Render contract).
+// DirField PREFERS 2+dirPickerRows physical lines -- independent of focus,
+// candidates, and validity state -- and renders into whatever compose's
+// own budget allocation gives it (Section.View's h, sizes.go's
+// allocateHeights), shedding rows from the bottom: a header row (label +
+// typed text/selection + inline validity marker) first, then a reserved
+// hint row, then candidate rows (blank while unfocused, matching Atrium's
+// own DirectoryPicker.Render contract).
 type DirField struct {
 	palette theme.Palette
 	input   *lineInput
@@ -331,30 +333,34 @@ func (d *DirField) Value() string {
 // Hint sets the text shown on the always-reserved hint row.
 func (d *DirField) Hint(s string) { d.hint = s }
 
-// Height reports DirField's constant footprint -- independent of winH,
-// focus, candidates, or validity state (see the type doc comment).
-func (d *DirField) Height(int) int { return 2 + dirPickerRows }
+// Height reports DirField's PREFERRED footprint in a popup winH rows tall
+// -- independent of focus, candidates, and validity state, per
+// Section.Height's own contract (see the type doc comment); the candidate
+// row count itself shrinks with winH via pickerRowsAt (sizes.go).
+func (d *DirField) Height(winH int) int {
+	return pickerChromeRows + pickerRowsAt(dirPickerRows, winH)
+}
 
-// View renders the field at exactly Height's own physical line count.
-func (d *DirField) View(inner int) string {
+// MinHeight is the header row alone -- the label, the current project
+// path, and its inline validity marker, which is what a user not currently
+// editing this field needs to see of it.
+func (d *DirField) MinHeight() int { return 1 }
+
+// View renders the field into exactly h physical lines: the header first,
+// then the reserved hint row, then whatever candidate rows are left over.
+func (d *DirField) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
-	header := d.renderHeader(inner)
-	hintLine := fitLine(dimHint(d.palette).Render(d.hint), inner)
-
-	var rows string
-	if d.focused {
-		rows = d.picker.MarkedView(inner, dirPickerRows, "row:"+d.ID()+":")
-	} else {
-		blanks := make([]string, dirPickerRows)
-		for i := range blanks {
-			blanks[i] = fitLine("", inner)
+	rows := []string{d.renderHeader(inner), fitLine(dimHint(d.palette).Render(d.hint), inner)}
+	if candidates := h - pickerChromeRows; candidates > 0 {
+		if d.focused {
+			rows = append(rows, strings.Split(d.picker.MarkedView(inner, candidates, "row:"+d.ID()+":"), "\n")...)
+		} else {
+			rows = append(rows, blankRows(candidates, inner)...)
 		}
-		rows = strings.Join(blanks, "\n")
 	}
-
-	return header + "\n" + hintLine + "\n" + rows
+	return sectionLines(h, inner, rows...)
 }
 
 // renderHeader renders the label plus, while focused, the raw editable

@@ -88,7 +88,7 @@ func TestPlacementField_WorktreeOnGoesInert(t *testing.T) {
 		t.Errorf("Value() after SetWorktreeOn(true) = %v, want %v (forced back to new space)", got, plan.PlacementNewSpace)
 	}
 
-	frame := ansi.Strip(f.View(60))
+	frame := ansi.Strip(f.View(60, f.Height(24)))
 	if !strings.Contains(frame, "worktree opens as its own space") {
 		t.Errorf("View(60) = %q, want it to contain the inert hint text", frame)
 	}
@@ -122,7 +122,7 @@ func TestPlacementField_HeightIsConstant(t *testing.T) {
 	if got := f.Height(24); got != base {
 		t.Errorf("Height(24) while inert = %d, want %d", got, base)
 	}
-	if got := strings.Count(f.View(60), "\n") + 1; got != base {
+	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
 		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
 	}
 }
@@ -134,6 +134,6 @@ func TestPlacementField_NoPanicOnDegenerateWidth(t *testing.T) {
 		}
 	}()
 	f := NewPlacementField(theme.Default())
-	_ = f.View(0)
-	_ = f.View(-3)
+	_ = f.View(0, f.Height(24))
+	_ = f.View(-3, f.Height(24))
 }

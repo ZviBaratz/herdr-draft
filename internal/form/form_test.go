@@ -71,10 +71,18 @@ func newStub(id string) *stubSection {
 	}
 }
 
-func (s *stubSection) ID() string            { return s.id }
-func (s *stubSection) Enabled() bool         { return s.enabled }
-func (s *stubSection) Height(w int) int      { return s.height(w) }
-func (s *stubSection) View(inner int) string { return s.content(inner) }
+func (s *stubSection) ID() string       { return s.id }
+func (s *stubSection) Enabled() bool    { return s.enabled }
+func (s *stubSection) Height(w int) int { return s.height(w) }
+
+// MinHeight deliberately equals the stub's own reported Height: these
+// stubs are "deliberately NOT self-degrading" (see buildManySections), so
+// a form built from them exercises sizes.go's last-resort line-dropping
+// ladder rather than its budget allocation -- which is exactly what
+// TestDegradation_CreateNeverClippedAt80x20 is there to pin.
+func (s *stubSection) MinHeight() int { return s.height(0) }
+
+func (s *stubSection) View(inner, _ int) string { return s.content(inner) }
 
 func (s *stubSection) Focus() tea.Cmd {
 	s.focused = true
@@ -522,8 +530,9 @@ func (s *pickerSection) Focus() tea.Cmd         { return nil }
 func (s *pickerSection) Blur()                  {}
 func (s *pickerSection) Update(tea.Msg) tea.Cmd { return nil }
 func (s *pickerSection) Height(int) int         { return s.rows }
-func (s *pickerSection) View(inner int) string {
-	return s.picker.View(inner, s.rows)
+func (s *pickerSection) MinHeight() int         { return 1 }
+func (s *pickerSection) View(inner, h int) string {
+	return s.picker.View(inner, h)
 }
 
 // chipRowSection always reserves the hint line regardless of whether the
@@ -544,7 +553,8 @@ func (s *chipRowSection) Focus() tea.Cmd         { return nil }
 func (s *chipRowSection) Blur()                  {}
 func (s *chipRowSection) Update(tea.Msg) tea.Cmd { return nil }
 func (s *chipRowSection) Height(int) int         { return 2 }
-func (s *chipRowSection) View(inner int) string {
+func (s *chipRowSection) MinHeight() int         { return 1 }
+func (s *chipRowSection) View(inner, h int) string {
 	v := s.row.View(inner)
 	if !strings.Contains(v, "\n") {
 		pad := inner
@@ -553,7 +563,7 @@ func (s *chipRowSection) View(inner int) string {
 		}
 		v += "\n" + strings.Repeat(" ", pad)
 	}
-	return v
+	return fitBlock(v, h, inner)
 }
 
 // buildEmptyForm returns a form with two representative-but-still-stub

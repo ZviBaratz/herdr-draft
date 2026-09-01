@@ -112,19 +112,32 @@ type Section interface {
 	// content, or a cursor-blink tick) to the section's own editing
 	// behavior.
 	Update(tea.Msg) tea.Cmd
-	// View renders the section into exactly Height(winH) physical lines
-	// (for the inner width the caller currently has, spec §6's
-	// constant-height contract) at the given inner content width.
-	View(inner int) string
-	// Height reports how many physical lines View(inner) renders at,
-	// for a popup winH rows tall. It must depend only on winH (and the
-	// section's own already-set internal state, e.g. a future concrete
-	// field's own SetRows-style setter) -- NEVER on whether the section
-	// currently has focus, per the task's own verified fact: "a hint
-	// line must always be reserved... Section.Height() must be
-	// hint-independent." This is what keeps the composed form from
-	// jumping as focus moves between sections at a fixed window size.
+	// View renders the section into exactly h physical lines at the given
+	// inner content width. h is what compose's own budget allocation
+	// (sizes.go's allocateHeights) decided this section gets for this
+	// render: Height(winH) when the popup can afford every section's
+	// preference, MinHeight() when it cannot, or something in between. A
+	// Section must put its most important row first (its label/value
+	// header) and shed rows from the bottom as h shrinks, so that even at
+	// h == MinHeight() the user can still see which field this is and what
+	// it currently holds.
+	View(inner, h int) string
+	// Height reports how many physical lines this section renders at GIVEN
+	// ITS PREFERENCE, for a popup winH rows tall. It must depend only on
+	// winH and the section's own already-set internal state -- NEVER on
+	// whether the section currently has focus, per the task's own verified
+	// fact ("a hint line must always be reserved... Section.Height() must
+	// be hint-independent"): focus is what compose's allocator arbitrates
+	// BETWEEN sections, and a Section folding it into its own preference
+	// would be arbitrating it a second time, from a position that cannot
+	// see the other nine fields competing for the same rows.
 	Height(winH int) int
+	// MinHeight reports the fewest physical lines this section can be
+	// rendered in without disappearing -- at minimum its own label/value
+	// header row, so a popup too short for every field's preference still
+	// shows that this field exists and what it holds. It takes no winH: a
+	// floor that shrank with the window would not be a floor.
+	MinHeight() int
 }
 
 // Optional capability interfaces a concrete Section may implement beyond
@@ -605,20 +618,28 @@ func (m Model) ViewAt(w, h int) string {
 }
 
 // compose assembles the form's content at exactly w x h: one blank
-// padding row top and bottom, each section's own View(inner) lines
-// (decorated with the focus-marker gutter, see decorateFocus) followed by
-// a divider, the footer's key ladder, then the trailing Create section --
-// always last, by construction (New always appends it). sizes.go's
-// fitToHeight then applies spec §6's degradation ladder if the composed
-// content is taller than h, and every line is finally painted with
-// Setup.Palette.PanelBG across the full w columns (spec §7: "panel
-// background painted explicitly across the full popup area").
+// padding row on top, each section's own View lines (decorated with the
+// focus-marker gutter, see decorateFocus) optionally followed by a
+// divider, the footer's key ladder, then the trailing Create section --
+// always last, by construction (New always appends it). Every line is
+// finally painted with Setup.Palette.PanelBG across the full w columns
+// (spec §7: "panel background painted explicitly across the full popup
+// area").
+//
+// How many lines each section gets is decided BEFORE anything is rendered,
+// by sizes.go's allocateHeights over the whole section list at once -- see
+// its doc comment for the allocation order and for why splitting each
+// section's View output and hoping fitToHeight could sort out the overflow
+// afterwards was never a layout at all. fitToHeight still runs, as the
+// last-resort backstop it was always meant to be, with the focused
+// section's own rows (and the Create button's) marked protected so a popup
+// too short even for every section's floor drops something else first.
 //
 // A zero-value Model (nil ring; see Model's own doc comment) renders as
 // "" -- there are no Sections to compose -- rather than dereferencing the
 // nil ring's own sections slice.
 func (m Model) compose(w, h int) string {
-	if h <= 0 || m.ring == nil {
+	if h <= 0 || m.ring == nil || len(m.ring.sections) == 0 {
 		return ""
 	}
 
@@ -628,12 +649,21 @@ func (m Model) compose(w, h int) string {
 	divider := decorateFocus(dividerLine(inner, m.palette), false, m.palette)
 	blank := decorateFocus("", false, m.palette)
 
+	heights, withDividers := allocateHeights(sections, m.ring.index, h, h-verticalPadding-footerRows)
+
 	lines := make([]string, 0, h+len(sections)*2)
-	for i := 0; i < verticalPadding; i++ {
-		lines = append(lines, blank)
+	protect := make([]bool, 0, h+len(sections)*2)
+	add := func(line string, keep bool) {
+		lines = append(lines, line)
+		protect = append(protect, keep)
 	}
 
-	body, last := sections[:len(sections)-1], sections[len(sections)-1]
+	for i := 0; i < verticalPadding; i++ {
+		add(blank, false)
+	}
+
+	lastIdx := len(sections) - 1
+	body, last := sections[:lastIdx], sections[lastIdx]
 	for i, s := range body {
 		focused := i == m.ring.index
 		// section:<id> (task 21): the whole rendered section is one zone
@@ -642,26 +672,33 @@ func (m Model) compose(w, h int) string {
 		// Section's own View already nested inside its own content (see
 		// e.g. field_placement.go's PlacementField.View) surviving intact,
 		// since bubblezone markers nest correctly (verified against the
-		// vendored v2.0.0 source's own "inception" test case). The
+		// vendored v2.0.0 source's own "inception" test case). The block is
+		// normalized to its allocated height BEFORE marking, so the zone's
+		// closing marker always survives on the block's real last line. The
 		// Create section is deliberately excluded here -- it registers
 		// its own "button:create" zone instead (createSection.View), not
 		// a generic "section:create" one, since a click on it submits
 		// rather than merely focusing.
-		marked := widgets.Zones.Mark(zoneSectionPrefix+s.ID(), s.View(inner))
+		block := fitBlock(s.View(inner, heights[i]), heights[i], inner)
+		marked := widgets.Zones.Mark(zoneSectionPrefix+s.ID(), block)
 		for _, l := range strings.Split(marked, "\n") {
-			lines = append(lines, decorateFocus(l, focused, m.palette))
+			add(decorateFocus(l, focused, m.palette), focused)
 		}
-		lines = append(lines, divider)
+		if withDividers {
+			add(divider, false)
+		}
 	}
 
-	lines = append(lines, decorateFocus(fitFooter(footerRungs(m.clearArmed), inner), false, m.palette))
+	add(decorateFocus(fitFooter(footerRungs(m.clearArmed), inner), false, m.palette), false)
 
-	lastFocused := m.ring.index == len(sections)-1
-	for _, l := range strings.Split(last.View(inner), "\n") {
-		lines = append(lines, decorateFocus(l, lastFocused, m.palette))
+	lastFocused := m.ring.index == lastIdx
+	for _, l := range strings.Split(fitBlock(last.View(inner, heights[lastIdx]), heights[lastIdx], inner), "\n") {
+		// The Create button is protected unconditionally, focused or not
+		// (spec §6 field 9: "never clipped").
+		add(decorateFocus(l, lastFocused, m.palette), true)
 	}
 
-	// Deliberately no trailing bottom padding here: sizes.go's clipTail
+	// Deliberately no trailing bottom padding here: sizes.go's clipKeeping
 	// (via fitToHeight) preserves whatever line is structurally LAST,
 	// mirroring Atrium's own fitOverlay ("it is the submit button in
 	// both compose() branches") -- so the Create section's own rendered
@@ -671,7 +708,7 @@ func (m Model) compose(w, h int) string {
 	// TestDegradation_CreateNeverClippedAt80x20: the last row came back
 	// blank instead of containing "Create").
 
-	lines = fitToHeight(lines, h, divider, -1)
+	lines = fitToHeight(lines, protect, h, divider, -1)
 
 	painted := make([]string, 0, h)
 	for _, l := range lines {
@@ -747,12 +784,18 @@ func (c *createSection) Update(tea.Msg) tea.Cmd { return nil }
 
 func (c *createSection) Height(int) int { return 1 }
 
+// MinHeight is 1, the same as Height: the Create button is a single line
+// that spec §6 field 9 forbids clipping, so there is nothing for a floor
+// to shed.
+func (c *createSection) MinHeight() int { return 1 }
+
 // View renders the Create button, wrapped in its own "button:create"
 // zone (task 21) -- not a generic "section:create" one; see the
 // zone-ID-scheme doc comment near this file's own zoneCreateButton
 // constant and compose's own doc comment for why the Create section is
-// excluded from that generic marking.
-func (c *createSection) View(inner int) string {
+// excluded from that generic marking. h is ignored beyond compose's own
+// normalization: this section is one line at every window size.
+func (c *createSection) View(inner, _ int) string {
 	return widgets.Zones.Mark(zoneCreateButton, renderCreateButton(inner, c.focused, c.palette))
 }
 

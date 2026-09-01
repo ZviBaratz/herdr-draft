@@ -283,7 +283,7 @@ func TestWorktreeField_SetBaseStatusShown(t *testing.T) {
 	turnOn(w)
 	w.SetBaseStatus("searching…")
 
-	frame := ansi.Strip(w.BaseSection().View(60))
+	frame := ansi.Strip(w.BaseSection().View(60, w.BaseSection().Height(24)))
 	if !strings.Contains(frame, "searching…") {
 		t.Fatalf("BaseSection().View(60) = %q, want it to contain the base status", frame)
 	}
@@ -298,12 +298,12 @@ func TestWorktreeField_NonGitPlaceholdersAreDistinct(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 
 	w.SetGitTarget(false)
-	nonGitBranch := ansi.Strip(w.BranchSection().View(60))
-	nonGitBase := ansi.Strip(w.BaseSection().View(60))
+	nonGitBranch := ansi.Strip(w.BranchSection().View(60, w.BranchSection().Height(24)))
+	nonGitBase := ansi.Strip(w.BaseSection().View(60, w.BaseSection().Height(24)))
 
 	w.SetGitTarget(true) // git repo, but still off
-	offBranch := ansi.Strip(w.BranchSection().View(60))
-	offBase := ansi.Strip(w.BaseSection().View(60))
+	offBranch := ansi.Strip(w.BranchSection().View(60, w.BranchSection().Height(24)))
+	offBase := ansi.Strip(w.BaseSection().View(60, w.BaseSection().Height(24)))
 
 	if nonGitBranch == offBranch {
 		t.Errorf("branch row placeholder is identical for \"non-git\" and \"off\": %q", nonGitBranch)
@@ -335,13 +335,13 @@ func TestWorktreeField_HeightIsConstantAcrossStates(t *testing.T) {
 		t.Errorf("BaseSection().Height(24) changed: got %d, want %d", got, baseBase)
 	}
 
-	if got := strings.Count(w.ChipsSection().View(60), "\n") + 1; got != chipsBase {
+	if got := strings.Count(w.ChipsSection().View(60, w.ChipsSection().Height(24)), "\n") + 1; got != chipsBase {
 		t.Errorf("ChipsSection().View(60) rendered %d lines, want %d", got, chipsBase)
 	}
-	if got := strings.Count(w.BranchSection().View(60), "\n") + 1; got != branchBase {
+	if got := strings.Count(w.BranchSection().View(60, w.BranchSection().Height(24)), "\n") + 1; got != branchBase {
 		t.Errorf("BranchSection().View(60) rendered %d lines, want %d", got, branchBase)
 	}
-	if got := strings.Count(w.BaseSection().View(60), "\n") + 1; got != baseBase {
+	if got := strings.Count(w.BaseSection().View(60, w.BaseSection().Height(24)), "\n") + 1; got != baseBase {
 		t.Errorf("BaseSection().View(60) rendered %d lines, want %d", got, baseBase)
 	}
 }
@@ -353,9 +353,9 @@ func TestWorktreeField_NoPanicOnDegenerateInputs(t *testing.T) {
 		}
 	}()
 	w := NewWorktreeField(theme.Default())
-	_ = w.ChipsSection().View(0)
-	_ = w.BranchSection().View(-2)
-	_ = w.BaseSection().View(0)
+	_ = w.ChipsSection().View(0, w.ChipsSection().Height(24))
+	_ = w.BranchSection().View(-2, w.BranchSection().Height(24))
+	_ = w.BaseSection().View(0, w.BaseSection().Height(24))
 	w.SetBaseItems(1, nil)
 	w.SetBranch("", true)
 }

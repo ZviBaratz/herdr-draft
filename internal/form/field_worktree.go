@@ -291,13 +291,18 @@ func (s worktreeChipsSection) Update(msg tea.Msg) tea.Cmd {
 
 func (s worktreeChipsSection) Height(int) int { return 2 }
 
-// View renders the chip row, padding to exactly two physical lines when
-// ChipRow.View itself only produced one -- the same reserved-hint-line
-// pattern field_placement.go's PlacementField.View uses, for the same
-// hint-independent-Height reason. Uses MarkedView (task 21) so every
-// chip registers its own "chip:worktree:<chipID>" zone (see Update's own
-// mouse-click handling above).
-func (s worktreeChipsSection) View(inner int) string {
+// MinHeight is the chip row itself, without the reserved hint line beneath
+// it: which chip is selected (or the inert placeholder saying why none can
+// be) is the whole fact this section exists to show.
+func (s worktreeChipsSection) MinHeight() int { return 1 }
+
+// View renders the chip row into exactly h physical lines, reserving the
+// hint line beneath it whenever h affords one -- the same
+// reserved-hint-line pattern field_placement.go's PlacementField.View
+// uses, for the same hint-independent-Height reason. Uses MarkedView (task
+// 21) so every chip registers its own "chip:worktree:<chipID>" zone (see
+// Update's own mouse-click handling above).
+func (s worktreeChipsSection) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
@@ -305,7 +310,7 @@ func (s worktreeChipsSection) View(inner int) string {
 	if !strings.Contains(v, "\n") {
 		v += "\n" + fitLine("", inner)
 	}
-	return v
+	return fitBlock(v, h, inner)
 }
 
 // worktreeBranchSection is the Section adapter for the branch text input
@@ -339,14 +344,19 @@ func (s worktreeBranchSection) Update(msg tea.Msg) tea.Cmd {
 
 func (s worktreeBranchSection) Height(int) int { return 2 }
 
-func (s worktreeBranchSection) View(inner int) string {
-	return s.f.renderBranch(inner)
+// MinHeight is the label/branch-name row alone -- the reserved second line
+// is the first thing this section sheds when the popup cannot afford every
+// field's preference.
+func (s worktreeBranchSection) MinHeight() int { return 1 }
+
+func (s worktreeBranchSection) View(inner, h int) string {
+	return s.f.renderBranch(inner, h)
 }
 
-// renderBranch renders the branch row at exactly two physical lines: the
-// label/text (or, while inert, one of the two distinct placeholders), then
-// an always-reserved second line.
-func (w *WorktreeField) renderBranch(inner int) string {
+// renderBranch renders the branch row into exactly h physical lines: the
+// label/text (or, while inert, one of the two distinct placeholders),
+// then a reserved second line whenever h affords one.
+func (w *WorktreeField) renderBranch(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
@@ -367,7 +377,7 @@ func (w *WorktreeField) renderBranch(inner int) string {
 	}
 
 	header := fitLine(labelStyled+body, inner)
-	return header + "\n" + fitLine("", inner)
+	return sectionLines(h, inner, header, fitLine("", inner))
 }
 
 // worktreeBaseSection is the Section adapter for the base-ref picker (ID
@@ -420,25 +430,36 @@ func (s worktreeBaseSection) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-func (s worktreeBaseSection) Height(int) int { return 2 + basePickerRows }
-
-func (s worktreeBaseSection) View(inner int) string {
-	return s.f.renderBase(inner)
+// Height reports the base picker's PREFERRED footprint in a popup winH
+// rows tall: header and reserved rows plus as many candidate rows as a
+// window that size can hold (pickerRowsAt, sizes.go).
+func (s worktreeBaseSection) Height(winH int) int {
+	return pickerChromeRows + pickerRowsAt(basePickerRows, winH)
 }
 
-// renderBase renders the base row at exactly 2+basePickerRows physical
-// lines: the label/selection (or, while inert, one of the two distinct
-// placeholders) with SetBaseStatus's own status text appended inline, an
-// always-reserved second line, then basePickerRows candidate rows (always
-// shown, unlike field_dir.go's DirField -- a short ref list is small
-// enough that hiding it while unfocused buys nothing, a deliberate
-// simplification over mechanically mirroring DirField's own
-// focus-gated-rows convention).
-func (w *WorktreeField) renderBase(inner int) string {
+// MinHeight is the header row alone -- the label plus the currently
+// selected base ref (or the inert placeholder).
+func (s worktreeBaseSection) MinHeight() int { return 1 }
+
+func (s worktreeBaseSection) View(inner, h int) string {
+	return s.f.renderBase(inner, h)
+}
+
+// renderBase renders the base row into exactly h physical lines: the
+// label/selection (or, while inert, one of the two distinct placeholders)
+// with SetBaseStatus's own status text appended inline, a reserved second
+// line, then whatever candidate rows h leaves over (always shown, unlike
+// field_dir.go's DirField -- a short ref list is small enough that hiding
+// it while unfocused buys nothing, a deliberate simplification over
+// mechanically mirroring DirField's own focus-gated-rows convention;
+// compose's allocator is what actually reclaims those rows when the popup
+// cannot afford them, for this field exactly as for every other).
+func (w *WorktreeField) renderBase(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
 	labelStyled := lipgloss.NewStyle().Foreground(w.palette.Text).Render(baseLabel)
+	candidates := h - pickerChromeRows
 
 	if !w.isGitRepo || !w.On() {
 		placeholder := worktreeOffPlaceholder
@@ -450,11 +471,8 @@ func (w *WorktreeField) renderBase(inner int) string {
 			budget = 1
 		}
 		header := fitLine(labelStyled+fitLine(dimHint(w.palette).Render(placeholder), budget), inner)
-		blanks := make([]string, basePickerRows)
-		for i := range blanks {
-			blanks[i] = fitLine("", inner)
-		}
-		return header + "\n" + fitLine("", inner) + "\n" + strings.Join(blanks, "\n")
+		rows := append([]string{header, fitLine("", inner)}, blankRows(candidates, inner)...)
+		return sectionLines(h, inner, rows...)
 	}
 
 	status := ""
@@ -472,10 +490,13 @@ func (w *WorktreeField) renderBase(inner int) string {
 	body := fitLine(lipgloss.NewStyle().Foreground(w.palette.Text).Render(display), budget)
 	header := fitLine(labelStyled+body+status, inner)
 
-	// "base" here matches worktreeBaseSection.ID()'s own return value --
-	// renderBase is a *WorktreeField method (shared by all three focus
-	// stops), not a worktreeBaseSection method, so it has no ID() of its
-	// own to read this from.
-	rows := w.base.MarkedView(inner, basePickerRows, "row:base:")
-	return header + "\n" + fitLine("", inner) + "\n" + rows
+	rows := []string{header, fitLine("", inner)}
+	if candidates > 0 {
+		// "base" here matches worktreeBaseSection.ID()'s own return value
+		// -- renderBase is a *WorktreeField method (shared by all three
+		// focus stops), not a worktreeBaseSection method, so it has no
+		// ID() of its own to read this from.
+		rows = append(rows, strings.Split(w.base.MarkedView(inner, candidates, "row:base:"), "\n")...)
+	}
+	return sectionLines(h, inner, rows...)
 }

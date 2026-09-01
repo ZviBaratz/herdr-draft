@@ -42,11 +42,12 @@ var placementChips = []widgets.Chip{
 // PlacementField is the form's Placement Section (spec §6 field 5): a
 // three-chip row selecting where a non-worktree creation attaches
 // relative to the invoking pane (internal/plan.Placement). It renders at a
-// constant 2 physical lines (the chip row, plus an always-reserved second
-// line -- ChipRow.View's own line count varies with whether the selected
-// chip carries a FocusHint or the row is inert, so this field's own
-// wrapper unconditionally pads to two lines, matching this task's
-// "verified fact": "your Section.Height() must be hint-independent").
+// preferred 2 physical lines (the chip row, plus a reserved second line --
+// ChipRow.View's own line count varies with whether the selected chip
+// carries a FocusHint or the row is inert, so this field's own wrapper
+// pads to two lines, matching this task's "verified fact": "your
+// Section.Height() must be hint-independent"), shrinking to the chip row
+// alone when compose's own budget allocation cannot afford the second.
 type PlacementField struct {
 	chips      *widgets.ChipRow
 	focused    bool
@@ -178,16 +179,23 @@ func (f *PlacementField) Value() plan.Placement {
 	}
 }
 
-// Height reports PlacementField's constant two-line footprint --
-// independent of winH, focus, selection, or inert state.
+// Height reports PlacementField's preferred two-line footprint --
+// independent of winH, focus, selection, and inert state.
 func (f *PlacementField) Height(int) int { return 2 }
 
-// View renders the chip row, padding to exactly two physical lines when
-// ChipRow.View itself only produced one (no FocusHint on the selected
-// chip, and not inert) -- see the type doc comment. Uses MarkedView (task
+// MinHeight is the chip row itself, without the reserved hint line beneath
+// it: which placement is selected (or the inert placeholder explaining why
+// the choice does not currently apply) is the fact this section exists to
+// show.
+func (f *PlacementField) MinHeight() int { return 1 }
+
+// View renders the chip row into exactly h physical lines, reserving the
+// hint line beneath it whenever h affords one (ChipRow.View itself
+// produces a single line when the selected chip carries no FocusHint and
+// the row is not inert) -- see the type doc comment. Uses MarkedView (task
 // 21) so every chip registers its own "chip:placement:<chipID>" zone
 // (see Update's own mouse-click handling above).
-func (f *PlacementField) View(inner int) string {
+func (f *PlacementField) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
@@ -195,5 +203,5 @@ func (f *PlacementField) View(inner int) string {
 	if !strings.Contains(v, "\n") {
 		v += "\n" + fitLine("", inner)
 	}
-	return v
+	return fitBlock(v, h, inner)
 }

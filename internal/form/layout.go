@@ -6,6 +6,8 @@
 package form
 
 import (
+	"strings"
+
 	"charm.land/lipgloss/v2"
 
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -27,6 +29,54 @@ func fitLine(s string, width int) string {
 		width = 1
 	}
 	return lipgloss.NewStyle().Width(width).MaxWidth(width).Inline(true).Render(s)
+}
+
+// fitBlock normalizes a Section's rendered block to exactly h physical
+// lines, width cells wide: extra lines are dropped from the BOTTOM (a
+// Section renders its label/value header first, per Section.View's own
+// contract, so the bottom is always its least important end), and a short
+// block is padded with blank rows.
+//
+// form.go's compose applies this to every Section's own View output before
+// composing it, so the line count it books against sizes.go's own
+// allocation is the line count actually emitted even if a Section's View
+// and its Height/MinHeight ever disagree. h < 1 is treated as 1: every
+// Section occupies at least one row.
+func fitBlock(block string, h, width int) string {
+	if h < 1 {
+		h = 1
+	}
+	lines := strings.Split(block, "\n")
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	for len(lines) < h {
+		lines = append(lines, fitLine("", width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// sectionLines assembles a field Section's own View output from an ordered
+// list of already-rendered rows, most important first, truncated or padded
+// to exactly h lines -- the shared shape every concrete field in this
+// package uses to honor Section.View's "shed rows from the bottom as h
+// shrinks" contract.
+func sectionLines(h, width int, rows ...string) string {
+	return fitBlock(strings.Join(rows, "\n"), h, width)
+}
+
+// blankRows returns n blank lines, width cells wide, joined -- the
+// reserved-but-empty candidate rows an unfocused picker field renders when
+// the form's budget still affords them.
+func blankRows(n, width int) []string {
+	if n < 1 {
+		return nil
+	}
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fitLine("", width)
+	}
+	return out
 }
 
 // dimText returns a plain dim-foreground style from palette, the base for

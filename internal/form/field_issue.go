@@ -65,12 +65,14 @@ const issueNoneLabel = "None (manual entry)"
 // honoring the touched-vs-preselected rule those setters already
 // implement.
 //
-// IssueField renders at a CONSTANT 2+issuePickerRows physical lines
-// regardless of focus, issue set, or filter text (this task's own
-// "verified fact": Section.Height must be hint-independent) -- a header
-// row (label + typed filter/selection), an always-reserved hint row, then
-// issuePickerRows candidate rows (blank while unfocused, matching
-// field_dir.go's DirField.View convention).
+// IssueField PREFERS 2+issuePickerRows physical lines -- independent of
+// focus, issue set, and filter text (this task's own "verified fact":
+// Section.Height must be hint-independent) -- and renders into whatever
+// compose's own budget allocation gives it (Section.View's h, sizes.go's
+// allocateHeights), shedding rows from the bottom: a header row (label +
+// typed filter/selection) first, then a reserved hint row, then candidate
+// rows (blank while unfocused, matching field_dir.go's DirField.View
+// convention).
 type IssueField struct {
 	palette theme.Palette
 	input   *lineInput
@@ -293,30 +295,37 @@ func (f *IssueField) Selected() *linear.Issue {
 // Hint sets the text shown on the always-reserved hint row.
 func (f *IssueField) Hint(s string) { f.hint = s }
 
-// Height reports IssueField's constant footprint -- independent of winH,
-// focus, issue set, or filter text (see the type doc comment).
-func (f *IssueField) Height(int) int { return 2 + issuePickerRows }
+// Height reports IssueField's PREFERRED footprint in a popup winH rows
+// tall: its header and hint rows plus as many candidate rows as a window
+// that size can hold (pickerRowsAt, sizes.go). Independent of focus, issue
+// set, and filter text, per Section.Height's own contract -- whether this
+// field actually gets its preference is compose's allocator's call, not
+// this field's.
+func (f *IssueField) Height(winH int) int {
+	return pickerChromeRows + pickerRowsAt(issuePickerRows, winH)
+}
 
-// View renders the field at exactly Height's own physical line count.
-func (f *IssueField) View(inner int) string {
+// MinHeight is the header row alone -- the label plus the current
+// selection, which is what a user who is not currently editing this field
+// needs to see of it.
+func (f *IssueField) MinHeight() int { return 1 }
+
+// View renders the field into exactly h physical lines: the header first,
+// then the reserved hint row, then whatever candidate rows are left over
+// (real rows while focused, blanks otherwise -- see the type doc comment).
+func (f *IssueField) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
-	header := f.renderHeader(inner)
-	hintLine := fitLine(dimHint(f.palette).Render(f.hint), inner)
-
-	var rows string
-	if f.focused {
-		rows = f.picker.MarkedView(inner, issuePickerRows, "row:"+f.ID()+":")
-	} else {
-		blanks := make([]string, issuePickerRows)
-		for i := range blanks {
-			blanks[i] = fitLine("", inner)
+	rows := []string{f.renderHeader(inner), fitLine(dimHint(f.palette).Render(f.hint), inner)}
+	if candidates := h - pickerChromeRows; candidates > 0 {
+		if f.focused {
+			rows = append(rows, strings.Split(f.picker.MarkedView(inner, candidates, "row:"+f.ID()+":"), "\n")...)
+		} else {
+			rows = append(rows, blankRows(candidates, inner)...)
 		}
-		rows = strings.Join(blanks, "\n")
 	}
-
-	return header + "\n" + hintLine + "\n" + rows
+	return sectionLines(h, inner, rows...)
 }
 
 // renderHeader renders the label plus, while focused, the raw typed

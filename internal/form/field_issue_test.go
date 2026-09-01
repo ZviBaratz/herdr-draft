@@ -170,7 +170,7 @@ func TestIssueField_HeightIsConstant(t *testing.T) {
 	if got := f.Height(24); got != base {
 		t.Errorf("Height(24) after selecting = %d, want %d", got, base)
 	}
-	if got := strings.Count(f.View(60), "\n") + 1; got != base {
+	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
 		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
 	}
 
@@ -178,7 +178,7 @@ func TestIssueField_HeightIsConstant(t *testing.T) {
 	if got := f.Height(24); got != base {
 		t.Errorf("Height(24) while blurred = %d, want %d", got, base)
 	}
-	if got := strings.Count(f.View(60), "\n") + 1; got != base {
+	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
 		t.Errorf("View(60) while blurred rendered %d physical lines, want Height()'s own %d", got, base)
 	}
 }
@@ -188,7 +188,7 @@ func TestIssueField_RowShowsStatusAndEstimateHint(t *testing.T) {
 	f.Focus()
 	f.SetIssues(1, sampleIssues())
 
-	frame := ansi.Strip(f.View(60))
+	frame := ansi.Strip(f.View(60, f.Height(24)))
 	if !strings.Contains(frame, "Todo") || !strings.Contains(frame, "est 3") {
 		t.Errorf("View(60) = %q, want it to contain the status/estimate hint", frame)
 	}
@@ -201,8 +201,8 @@ func TestIssueField_NoPanicOnDegenerateWidth(t *testing.T) {
 		}
 	}()
 	f := NewIssueField(theme.Default())
-	_ = f.View(0)
-	_ = f.View(-3)
+	_ = f.View(0, f.Height(24))
+	_ = f.View(-3, f.Height(24))
 }
 
 func TestIssueField_NoPanicBeforeSetIssues(t *testing.T) {
@@ -213,7 +213,7 @@ func TestIssueField_NoPanicBeforeSetIssues(t *testing.T) {
 	}()
 	f := NewIssueField(theme.Default())
 	f.Focus()
-	_ = f.View(60)
+	_ = f.View(60, f.Height(24))
 	f.Update(key(tea.KeyDown, 0))
 	f.Update(key(tea.KeyUp, 0))
 	_ = f.Selected()

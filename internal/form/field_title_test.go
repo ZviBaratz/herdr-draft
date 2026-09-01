@@ -77,7 +77,7 @@ func TestTitleField_VerdictShownOnlyForCurrentTitle(t *testing.T) {
 	}
 	f.SetVerdict("fix login", "branch: zvi/fix-login")
 
-	frame := ansi.Strip(f.View(60))
+	frame := ansi.Strip(f.View(60, f.Height(24)))
 	if !strings.Contains(frame, "branch: zvi/fix-login") {
 		t.Fatalf("View(60) = %q, want it to contain the current verdict", frame)
 	}
@@ -86,7 +86,7 @@ func TestTitleField_VerdictShownOnlyForCurrentTitle(t *testing.T) {
 	// must stop showing (a stale verdict must never be asserted for the
 	// new title).
 	f.Update(rn('!'))
-	frame = ansi.Strip(f.View(60))
+	frame = ansi.Strip(f.View(60, f.Height(24)))
 	if strings.Contains(frame, "branch: zvi/fix-login") {
 		t.Fatalf("View(60) = %q, still shows the stale verdict after the title changed", frame)
 	}
@@ -101,7 +101,7 @@ func TestTitleField_VerdictBoundedToTwentyOneCells(t *testing.T) {
 	longVerdict := strings.Repeat("x", 40)
 	f.SetVerdict(f.Value(), longVerdict) // key == "" == Value() on a fresh field
 
-	frame := ansi.Strip(f.View(80))
+	frame := ansi.Strip(f.View(80, f.Height(24)))
 	if strings.Contains(frame, longVerdict) {
 		t.Fatalf("View(80) contains the full 40-cell verdict text unbounded, want it clipped to 21 cells")
 	}
@@ -128,7 +128,7 @@ func TestTitleField_HeightIsConstant(t *testing.T) {
 		t.Errorf("Height(24) with a verdict set = %d, want %d (hint-line-independent)", got, base)
 	}
 
-	if got := strings.Count(f.View(60), "\n") + 1; got != base {
+	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
 		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
 	}
 }

@@ -146,7 +146,7 @@ func TestAgentField_HeightIsConstant(t *testing.T) {
 	if got := f.Height(24); got != base {
 		t.Errorf("Height(24) while expanded = %d, want %d", got, base)
 	}
-	if got := strings.Count(f.View(60), "\n") + 1; got != base {
+	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
 		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
 	}
 }
@@ -154,7 +154,7 @@ func TestAgentField_HeightIsConstant(t *testing.T) {
 func TestAgentField_ViewShowsMoreChipWhenTruncated(t *testing.T) {
 	f := NewAgentField(theme.Default())
 	f.SetKinds(manyKinds())
-	frame := ansi.Strip(f.View(60))
+	frame := ansi.Strip(f.View(60, f.Height(24)))
 	if !strings.Contains(frame, "more…") {
 		t.Errorf("View(60) = %q, want it to contain the more… chip", frame)
 	}
@@ -167,8 +167,8 @@ func TestAgentField_NoPanicOnDegenerateWidth(t *testing.T) {
 		}
 	}()
 	f := NewAgentField(theme.Default())
-	_ = f.View(0)
-	_ = f.View(-3)
+	_ = f.View(0, f.Height(24))
+	_ = f.View(-3, f.Height(24))
 }
 
 func TestAgentField_NoPanicBeforeSetKinds(t *testing.T) {
@@ -178,7 +178,7 @@ func TestAgentField_NoPanicBeforeSetKinds(t *testing.T) {
 		}
 	}()
 	f := NewAgentField(theme.Default())
-	_ = f.View(60)
+	_ = f.View(60, f.Height(24))
 	f.Update(key(tea.KeyRight, 0))
 	f.Update(key(tea.KeyDown, 0))
 	if got := f.Value(); got != "" {
