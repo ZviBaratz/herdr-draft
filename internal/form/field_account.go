@@ -201,11 +201,26 @@ func (f *AccountField) refreshItems() {
 // buildAccountItems builds the account picker's full item list: the
 // "active" sentinel row first, then one row per profile (name-only when
 // degraded is true -- spec §11: "schema != 1 -> degrade to name-only
-// entries").
+// entries"). A profile with an empty Name, or a Name already seen, is
+// skipped entirely -- clauth.Profile.Name is unvalidated external JSON
+// (internal/clauth/status.go's ParseStatus enforces neither
+// non-emptiness nor uniqueness), and widgets.PickerItem.ID is built
+// directly from it (see accountRow), so an empty or duplicate name would
+// otherwise either collide with the "active" sentinel's own "" ==
+// no-pin contract (Pin() below) or make widgets.Picker's first-match-wins
+// ID lookup pick an arbitrary one of the duplicates -- the same bug class
+// field_worktree.go's refreshBaseItems guards against for base refs via
+// an identical seen map, and field_issue.go's refreshItems guards against
+// for issues with an empty Identifier.
 func buildAccountItems(profiles []clauth.Profile, degraded bool) []widgets.PickerItem {
 	items := make([]widgets.PickerItem, 0, len(profiles)+1)
 	items = append(items, widgets.PickerItem{ID: accountActiveID, Label: accountActiveLabel, Hint: accountActiveHint})
+	seen := map[string]bool{accountActiveID: true}
 	for _, p := range profiles {
+		if p.Name == "" || seen[p.Name] {
+			continue
+		}
+		seen[p.Name] = true
 		items = append(items, accountRow(p, degraded))
 	}
 	return items

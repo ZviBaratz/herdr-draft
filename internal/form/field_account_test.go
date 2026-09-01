@@ -172,6 +172,64 @@ func TestAccountField_HealthyProfileCarriesNoWarning(t *testing.T) {
 	}
 }
 
+// TestAccountField_EmptyProfileNameSkipped pins the review fix directly:
+// a profile with an empty Name must not become its own row -- clauth's
+// Profile.Name is unvalidated external JSON (internal/clauth/status.go's
+// ParseStatus enforces neither non-emptiness nor uniqueness), and an
+// empty-ID row would otherwise be indistinguishable from the "active"
+// sentinel at the Pin() boundary ("" == no pin).
+func TestAccountField_EmptyProfileNameSkipped(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(clauth.Status{Profiles: []clauth.Profile{
+		{Name: "", Tier: "Team", AuthStatus: "ok"},
+		{Name: "real", Tier: "Team", AuthStatus: "ok"},
+	}})
+
+	f.Update(key(tea.KeyDown, 0)) // active -> the only real row (empty-name profile skipped)
+	if got := f.Pin(); got != "real" {
+		t.Fatalf("Pin() after one Down = %q, want %q (the empty-name profile must not occupy a row)", got, "real")
+	}
+
+	// A further Down must clamp on the same last real row -- if the
+	// empty-name profile had produced its own row, this would instead
+	// move Pin() back to "" and make it indistinguishable from "active".
+	f.Update(key(tea.KeyDown, 0))
+	if got := f.Pin(); got != "real" {
+		t.Fatalf("Pin() after a second (clamped) Down = %q, want %q", got, "real")
+	}
+}
+
+// TestAccountField_DuplicateProfileNamesDeduped pins the review fix's
+// other half: two profiles sharing a Name must yield exactly one row
+// (first-seen wins, mirroring field_worktree.go's identical seen-map
+// guard for base refs), so widgets.Picker's own first-match-wins ID
+// lookup never has two rows to disambiguate between.
+func TestAccountField_DuplicateProfileNamesDeduped(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(clauth.Status{Profiles: []clauth.Profile{
+		{Name: "dup", Tier: "Team", AuthStatus: "ok"},
+		{Name: "dup", Tier: "Max 20x", AuthStatus: "expired"}, // same name -- must not add a second row
+		{Name: "unique", Tier: "Team", AuthStatus: "ok"},
+	}})
+
+	f.Update(key(tea.KeyDown, 0)) // active -> dup (first-seen wins)
+	if got := f.Pin(); got != "dup" {
+		t.Fatalf("Pin() after one Down = %q, want %q", got, "dup")
+	}
+	f.Update(key(tea.KeyDown, 0)) // dup -> unique (the second "dup" must not have its own row)
+	if got := f.Pin(); got != "unique" {
+		t.Fatalf("Pin() after two Downs = %q, want %q (a duplicate name must yield exactly one row)", got, "unique")
+	}
+	// Clamped: a third Down must stay on "unique", confirming there is no
+	// hidden extra row for the second "dup" profile.
+	f.Update(key(tea.KeyDown, 0))
+	if got := f.Pin(); got != "unique" {
+		t.Fatalf("Pin() after three (clamped) Downs = %q, want %q", got, "unique")
+	}
+}
+
 func TestAccountField_HeightIsConstant(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	base := f.Height(24)
