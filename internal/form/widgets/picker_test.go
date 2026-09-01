@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -66,6 +68,72 @@ func TestPicker_CursorSurvivesSameVersionRefresh(t *testing.T) {
 	}
 }
 
+// TestPicker_SameVersionRefreshPreservesSelectionByIDAcrossReorder is the
+// controller-ruled regression test: selection preservation across a
+// same-version refresh must follow the item's ID, not its numeric position.
+// Item "2" moves from row 1 to row 0 in the refreshed list; an index-based
+// implementation would leave the cursor on row 1 and silently select a
+// different item ("3", now at row 1) instead.
+func TestPicker_SameVersionRefreshPreservesSelectionByIDAcrossReorder(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Label: "A"},
+		{ID: "2", Label: "B"},
+		{ID: "3", Label: "C"},
+	})
+	p.CursorNext() // cursor -> row 1, selects ID "2"
+
+	// Same version 1, refreshed AND reordered: "2" is now first, "3" now
+	// sits at the row "2" used to occupy.
+	p.SetItems(1, []PickerItem{
+		{ID: "2", Label: "B2"},
+		{ID: "3", Label: "C2"},
+		{ID: "1", Label: "A2"},
+	})
+
+	got, ok := p.Selected()
+	if !ok || got.ID != "2" {
+		t.Fatalf("Selected() = %+v, ok=%v, want ID \"2\" to stay selected across the reorder (identity, not index)", got, ok)
+	}
+}
+
+// TestPicker_SameVersionRefreshFallsBackToClampedIndexWhenSelectedIDIsGone
+// covers the fallback half of the controller ruling: when the previously
+// selected item's ID is no longer present after a same-version refresh
+// (e.g. a candidate dropped out), the cursor falls back to its old numeric
+// position clamped into the new range, rather than jumping back to the top.
+func TestPicker_SameVersionRefreshFallsBackToClampedIndexWhenSelectedIDIsGone(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Label: "A"},
+		{ID: "2", Label: "B"},
+		{ID: "3", Label: "C"},
+	})
+	p.CursorNext() // cursor -> row 1, selects ID "2"
+
+	// Same version 1, "2" is gone; only 2 items remain, so the old row-1
+	// position is still in range and should be kept (now "y").
+	p.SetItems(1, []PickerItem{
+		{ID: "x", Label: "X"},
+		{ID: "y", Label: "Y"},
+	})
+
+	got, ok := p.Selected()
+	if !ok || got.ID != "y" {
+		t.Fatalf("Selected() = %+v, ok=%v, want ID \"y\" (old row 1, clamped into range) when the selected ID vanished", got, ok)
+	}
+
+	// Now the old row-1 position is out of range entirely (only 1 item
+	// left): the fallback must clamp, not panic or leave a stale index.
+	p.SetItems(1, []PickerItem{
+		{ID: "solo", Label: "Solo"},
+	})
+	got, ok = p.Selected()
+	if !ok || got.ID != "solo" {
+		t.Fatalf("Selected() = %+v, ok=%v, want the sole remaining item (fallback clamped into range)", got, ok)
+	}
+}
+
 // TestPicker_StaleVersionIgnored covers the brief's core versioned-filter
 // requirement, ported in spirit from Atrium's picker.go stale-result guard:
 // a SetItems call whose version is lower than the highest version already
@@ -114,6 +182,58 @@ func TestPicker_ViewDoesNotPanicOnDegenerateDimensions(t *testing.T) {
 	p.SetItems(1, []PickerItem{{ID: "1", Label: "Alpha"}})
 	for _, dims := range [][2]int{{0, 0}, {-5, -5}, {0, 5}, {5, 0}, {5, -1}} {
 		_ = p.View(dims[0], dims[1])
+	}
+}
+
+// TestPicker_ViewTruncatesOverflowingRowInsteadOfWrapping is the
+// controller-ruled regression test for the Critical finding: lipgloss's
+// Style.Render word-wraps whenever width > 0 unless Inline(true) is set, and
+// that wrap step runs *before* MaxWidth truncation -- so a Style built as
+// plain Width(w).MaxWidth(w) silently turns one overflowing row into many
+// physical lines instead of clipping it onto one. A single row far wider
+// than the given width must still produce exactly one output line, exactly
+// width cells wide.
+func TestPicker_ViewTruncatesOverflowingRowInsteadOfWrapping(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{
+			ID:    "1",
+			Label: "this label is far longer than the ten-cell width given to View",
+			Hint:  "and this hint is also much longer than ten cells",
+		},
+	})
+
+	view := p.View(10, 1)
+
+	if got := strings.Count(view, "\n"); got != 0 {
+		t.Fatalf("View(10,1) has %d newlines, want 0 (exactly 1 line) -- overflow must truncate, not wrap:\n%q", got, view)
+	}
+	if got := lipgloss.Width(view); got != 10 {
+		t.Errorf("View(10,1) rendered width = %d, want exactly 10", got)
+	}
+}
+
+// TestPicker_ViewOverflowingRowsHoldExactHeightAcrossMultipleRows extends
+// the truncation guard to a multi-row view: every row must independently
+// clip to width, and the total output must still be exactly height lines
+// (not height-plus-however-many-words-wrapped).
+func TestPicker_ViewOverflowingRowsHoldExactHeightAcrossMultipleRows(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Label: "first label is much longer than the given width for sure"},
+		{ID: "2", Label: "second label is also much longer than the given width"},
+		{ID: "3", Label: "third"},
+	})
+
+	view := p.View(8, 3)
+	lines := strings.Split(view, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("View(8,3) produced %d lines, want exactly 3:\n%q", len(lines), view)
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w != 8 {
+			t.Errorf("line %d width = %d, want 8: %q", i, w, line)
+		}
 	}
 }
 

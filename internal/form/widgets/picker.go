@@ -94,11 +94,18 @@ func NewPicker(palette theme.Palette) *Picker {
 // section) -- so an out-of-order async source can never clobber a fresher
 // result with a stale one.
 //
-// A call at the same version as the one already held (e.g. a refreshed
-// fetch for the query already on screen) updates the items and re-applies
-// the current query, but leaves the cursor where the user left it, clamped
-// into the new range. A call at a strictly higher version resets the cursor
-// to the top, matching a genuinely new result set arriving.
+// A call at the same version as the one already held (e.g. a background
+// refresh of the candidates for the query already on screen) preserves the
+// user's selection **by item ID**, not by index: if the item that was
+// selected before the call is still present afterward (however its
+// position moved), it stays selected. Only when that ID is no longer in the
+// refreshed set does the cursor fall back to its old numeric position,
+// clamped into the new range. This matters because a same-version refresh
+// can reorder items (e.g. a directory picker's candidates re-sorted by
+// freshness) -- preserving by index alone would silently move the user's
+// selection onto a different, unrelated item that happens to now sit at the
+// same row. A call at a strictly higher version resets the cursor to the
+// top, matching a genuinely new result set arriving.
 func (p *Picker) SetItems(version int, items []PickerItem) {
 	if p.haveVersion && version < p.version {
 		return
@@ -106,13 +113,50 @@ func (p *Picker) SetItems(version int, items []PickerItem) {
 	isNewVersion := !p.haveVersion || version > p.version
 	p.haveVersion = true
 	p.version = version
+
+	var previousID string
+	var hadSelection bool
+	if !isNewVersion {
+		previousID, hadSelection = p.selectedID()
+	}
+
 	p.items = items
 	p.applyFilter()
-	if isNewVersion {
+
+	switch {
+	case isNewVersion:
 		p.cursor = 0
-	} else {
+	case hadSelection:
+		p.cursor = p.indexOfIDOrFallback(previousID, p.cursor)
+	default:
 		p.cursor = clampCursor(p.cursor, len(p.filtered))
 	}
+}
+
+// selectedID returns the ID of the currently selected item, or ("", false)
+// when nothing is selected -- a thin wrapper over Selected used by SetItems
+// to capture identity before the item set underneath it changes.
+func (p *Picker) selectedID() (string, bool) {
+	sel, ok := p.Selected()
+	if !ok {
+		return "", false
+	}
+	return sel.ID, true
+}
+
+// indexOfIDOrFallback returns the index of the filtered item whose ID
+// matches id, or -- when no filtered item has that ID (it was dropped by
+// the refresh) -- fallbackCursor clamped into the current filtered range.
+// This is the identity-with-index-fallback rule SetItems documents: prefer
+// keeping the same item selected across a same-version refresh; only fall
+// back to a raw position when that item is gone.
+func (p *Picker) indexOfIDOrFallback(id string, fallbackCursor int) int {
+	for i, it := range p.filtered {
+		if it.ID == id {
+			return i
+		}
+	}
+	return clampCursor(fallbackCursor, len(p.filtered))
 }
 
 // SetQuery replaces the active filter text and re-applies it against the
@@ -169,8 +213,13 @@ func (p *Picker) CursorPrev() {
 	}
 }
 
-// clampCursor keeps cursor within [0, itemCount) -- ported near-verbatim
-// from Atrium's Picker.clampCursor.
+// clampCursor keeps cursor within [0, itemCount). The itemCount upper-bound
+// clamp (cursor >= itemCount) is ported near-verbatim from Atrium's
+// Picker.clampCursor; the cursor < 0 lower-bound guard is a defensive
+// addition not present in the source -- Atrium's own cursor can't go
+// negative through its handleKey (KeyUp only decrements while cursor > 0),
+// but this widget also derives cursor from indexOfIDOrFallback and other
+// call sites, so the guard is kept here rather than relied on implicitly.
 func clampCursor(cursor, itemCount int) int {
 	if cursor < 0 {
 		return 0
@@ -267,9 +316,22 @@ func scrollOffset(cursor, total, rows int) int {
 }
 
 // widthStyle returns a Style that pads/truncates rendered content to
-// exactly width cells. Callers must only invoke it with width > 0: lipgloss
-// treats 0 as "unset" for both the Width and MaxWidth style keys, so this
-// would pass width<=0 content through unclipped rather than blanking it.
+// exactly width cells, on exactly one output line. Callers must only invoke
+// it with width > 0: lipgloss treats 0 as "unset" for both the Width and
+// MaxWidth style keys, so this would pass width<=0 content through
+// unclipped rather than blanking it.
+//
+// Inline(true) is required, not cosmetic: Style.Render runs Wrap() whenever
+// width > 0 and inline is false, *before* the MaxWidth truncation step (see
+// charm.land/lipgloss/v2@v2.0.5 style.go's "Word wrap" comment) -- so
+// without it, content longer than width is word-wrapped onto multiple
+// physical lines instead of being clipped onto one, silently breaking every
+// caller here that promises a fixed row/line count (Picker.View's
+// exactly-height-rows contract, ChipRow.View's single-line chip row).
+// Inline(true) skips that word-wrap step but leaves the width-alignment
+// padding (via alignTextHorizontal, which runs regardless of inline) and
+// the MaxWidth truncation (likewise unconditional) intact, so short content
+// still gets padded to width and long content still gets clipped to it.
 func widthStyle(width int) lipgloss.Style {
-	return lipgloss.NewStyle().Width(width).MaxWidth(width)
+	return lipgloss.NewStyle().Width(width).MaxWidth(width).Inline(true)
 }

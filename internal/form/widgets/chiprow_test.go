@@ -3,6 +3,8 @@ package widgets
 import (
 	"strings"
 	"testing"
+
+	"charm.land/lipgloss/v2"
 )
 
 // TestChipRow_WrapAroundNav covers the brief's wrap-around nav case, ported
@@ -79,6 +81,45 @@ func TestChipRow_FocusHintRendersForSelectedChip(t *testing.T) {
 	c.Next() // -> b, no FocusHint
 	if view := c.View(40); strings.Contains(view, "hint for a") {
 		t.Errorf("View(40) = %q, want no leftover hint once the selection moves off the chip that had one", view)
+	}
+}
+
+// TestChipRow_ViewTruncatesOverflowingRowInsteadOfWrapping is the
+// controller-ruled regression test for the Critical finding: a chip label
+// far wider than the given width must clip onto exactly one line, exactly
+// width cells wide -- not word-wrap onto several (see widthStyle's doc
+// comment in picker.go for why Inline(true) is required).
+func TestChipRow_ViewTruncatesOverflowingRowInsteadOfWrapping(t *testing.T) {
+	c := NewChipRow(testPalette())
+	c.SetChips([]Chip{{ID: "a", Label: "a chip label far longer than the ten-cell width given to View"}})
+
+	view := c.View(10)
+
+	if got := strings.Count(view, "\n"); got != 0 {
+		t.Fatalf("View(10) has %d newlines, want 0 (exactly 1 line) -- overflow must truncate, not wrap:\n%q", got, view)
+	}
+	if got := lipgloss.Width(view); got != 10 {
+		t.Errorf("View(10) rendered width = %d, want exactly 10", got)
+	}
+}
+
+// TestChipRow_ViewHintLineAlsoTruncatesInsteadOfWrapping extends the
+// truncation guard to the FocusHint line: a long hint must clip onto its
+// own single line rather than wrapping the row into many, and the whole
+// view must still be exactly two lines (chip row + hint row).
+func TestChipRow_ViewHintLineAlsoTruncatesInsteadOfWrapping(t *testing.T) {
+	c := NewChipRow(testPalette())
+	c.SetChips([]Chip{{ID: "a", Label: "A", FocusHint: "this focus hint is far longer than the given width for sure"}})
+
+	view := c.View(10)
+	lines := strings.Split(view, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("View(10) produced %d lines, want exactly 2 (chip row + hint row):\n%q", len(lines), view)
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w != 10 {
+			t.Errorf("line %d width = %d, want 10: %q", i, w, line)
+		}
 	}
 }
 
