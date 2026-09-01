@@ -131,6 +131,26 @@ func (f *AgentField) Blur() { f.focused = false }
 // inside the vertical list, and there is nothing left/right to navigate
 // to there.
 func (f *AgentField) Update(msg tea.Msg) tea.Cmd {
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		f.handleClick(click)
+		return nil
+	}
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		// Wheel only has meaning over the expanded full-list picker (spec
+		// §7: "scroll the focused picker") -- the favorite chip row is a
+		// small, always-fully-visible set, nothing to scroll.
+		if f.expanded {
+			switch wheelDelta(wheel) {
+			case -1:
+				f.picker.CursorPrev()
+				f.syncConfirmedFromPicker()
+			case 1:
+				f.picker.CursorNext()
+				f.syncConfirmedFromPicker()
+			}
+		}
+		return nil
+	}
 	km, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
@@ -171,6 +191,33 @@ func (f *AgentField) Update(msg tea.Msg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// handleClick implements task 21's mouse click over AgentField: while
+// expanded, a click on one of the full-list picker's own
+// "row:agent:<n>" zones selects that row (SelectAt), the click-driven
+// counterpart to Up/Down's own CursorPrev/CursorNext+
+// syncConfirmedFromPicker pairing above; while collapsed, a click on one
+// of the favorite chip row's own "chip:agent:<chipID>" zones either
+// expands the field (clicking the synthetic "more…" chip -- the
+// click-driven counterpart to Down on "more…" in Update above) or
+// selects that favorite (syncConfirmedFromChip, mirroring Left/Right).
+func (f *AgentField) handleClick(msg tea.MouseClickMsg) {
+	if f.expanded {
+		if _, ok := f.picker.SelectAt(msg, agentPickerRows, "row:"+f.ID()+":"); ok {
+			f.syncConfirmedFromPicker()
+		}
+		return
+	}
+	chip, ok := f.chips.SelectAt(msg, "chip:"+f.ID()+":")
+	if !ok {
+		return
+	}
+	if chip.ID == agentMoreChipID {
+		f.expand()
+		return
+	}
+	f.syncConfirmedFromChip()
 }
 
 // pickerAtTop reports whether the full-list picker's cursor is already on
@@ -285,14 +332,14 @@ func (f *AgentField) View(inner int) string {
 	if inner < 1 {
 		inner = 1
 	}
-	chipView := f.chips.View(inner)
+	chipView := f.chips.MarkedView(inner, "chip:"+f.ID()+":")
 	if !strings.Contains(chipView, "\n") {
 		chipView += "\n" + fitLine("", inner)
 	}
 
 	var rows string
 	if f.expanded {
-		rows = f.picker.View(inner, agentPickerRows)
+		rows = f.picker.MarkedView(inner, agentPickerRows, "row:"+f.ID()+":")
 	} else {
 		blanks := make([]string, agentPickerRows)
 		for i := range blanks {

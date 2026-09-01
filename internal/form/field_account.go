@@ -159,6 +159,19 @@ func (f *AccountField) Blur() { f.focused = false }
 // short enough that Up/Down alone is sufficient, per the type doc
 // comment).
 func (f *AccountField) Update(msg tea.Msg) tea.Cmd {
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		f.picker.SelectAt(click, accountPickerRows, "row:"+f.ID()+":")
+		return nil
+	}
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		switch wheelDelta(wheel) {
+		case -1:
+			f.picker.CursorPrev()
+		case 1:
+			f.picker.CursorNext()
+		}
+		return nil
+	}
 	km, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
@@ -398,6 +411,6 @@ func (f *AccountField) View(inner int) string {
 		hintLine = fitLine(dimHint(f.palette).Render(accountDegradedHint), inner)
 	}
 
-	rows := f.picker.View(inner, accountPickerRows)
+	rows := f.picker.MarkedView(inner, accountPickerRows, "row:"+f.ID()+":")
 	return header + "\n" + hintLine + "\n" + rows
 }

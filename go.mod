@@ -9,6 +9,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/lrstanley/bubblezone/v2 v2.0.0
 	golang.org/x/text v0.41.0
 )
 

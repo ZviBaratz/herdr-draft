@@ -142,6 +142,23 @@ func (f *IssueField) Blur() {
 // language and Atrium's own live-preview-while-browsing interaction
 // quality (spec §3 goal 5).
 func (f *IssueField) Update(msg tea.Msg) tea.Cmd {
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		if _, ok := f.picker.SelectAt(click, issuePickerRows, "row:"+f.ID()+":"); ok {
+			return f.selectionChangedCmd()
+		}
+		return nil
+	}
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		switch wheelDelta(wheel) {
+		case -1:
+			f.picker.CursorPrev()
+			return f.selectionChangedCmd()
+		case 1:
+			f.picker.CursorNext()
+			return f.selectionChangedCmd()
+		}
+		return nil
+	}
 	if km, ok := msg.(tea.KeyPressMsg); ok {
 		switch km.String() {
 		case "up":
@@ -290,7 +307,7 @@ func (f *IssueField) View(inner int) string {
 
 	var rows string
 	if f.focused {
-		rows = f.picker.View(inner, issuePickerRows)
+		rows = f.picker.MarkedView(inner, issuePickerRows, "row:"+f.ID()+":")
 	} else {
 		blanks := make([]string, issuePickerRows)
 		for i := range blanks {

@@ -101,7 +101,23 @@ func (f *PromptField) Blur() {
 // discipline field_title.go's TitleField.Update and
 // field_worktree.go's worktreeBranchSection.Update use, so a non-edit
 // message (e.g. a cursor-blink tick) never spuriously flips Touched().
+// A tea.MouseWheelMsg (task 21: "scroll the focused picker or the
+// prompt") is intercepted first and never reaches f.area.Update at all:
+// it scrolls via PromptArea's own ScrollUp/ScrollDown (bubbles/v2's
+// textarea.Model.CursorUp/CursorDown, which moves the cursor's LINE, not
+// the text content) rather than editing anything, so it must never flip
+// Touched() the way a genuine edit does.
 func (f *PromptField) Update(msg tea.Msg) tea.Cmd {
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		switch wheelDelta(wheel) {
+		case -1:
+			f.area.ScrollUp()
+		case 1:
+			f.area.ScrollDown()
+		}
+		return nil
+	}
+
 	before := f.area.Value()
 	cmd := f.area.Update(msg)
 	if f.area.Value() != before {

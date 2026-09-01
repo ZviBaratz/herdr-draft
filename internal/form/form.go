@@ -22,7 +22,29 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 
+	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
+)
+
+// Task 21's zone-ID scheme (github.com/lrstanley/bubblezone/v2, see
+// widgets/zones.go's own package doc for why Zones is a package-level,
+// non-global Manager): every focusable Section registers a
+// "section:<id>" zone in compose (below), the Create section registers
+// "button:create" instead (createSection.View) since its click semantics
+// differ from every other section (submit, not focus), and a concrete
+// field's own chip/picker rows register "chip:<sectionID>:<chipID>"/
+// "row:<sectionID>:<n>" zones themselves via widgets.ChipRow.MarkedView/
+// widgets.Picker.MarkedView (see e.g. field_placement.go's
+// PlacementField.View/Update). createSectionID names the one Section ID
+// compose/handleMouseClick both special-case (New's own internal Create
+// section, always last -- see New's doc comment); zoneCreateButton/
+// zoneSectionPrefix are these two constant name fragments, shared so a
+// typo in one can't silently desync a Mark call from the Get call that
+// is supposed to find it.
+const (
+	createSectionID   = "create"
+	zoneCreateButton  = "button:create"
+	zoneSectionPrefix = "section:"
 )
 
 // Section is one field/region of the form: a Linear issue picker, the
@@ -369,8 +391,93 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.PasteMsg:
 		m.clearArmed = HandlePaste()
 		return m, m.forwardToFocused(msg)
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
 	default:
 		return m, m.forwardToFocused(msg)
+	}
+}
+
+// handleMouseClick implements task 21's click grammar (spec §7: herdr is
+// mouse-first): a left-button click on the Create section's own
+// "button:create" zone (see createSection.View) submits, exactly like
+// Enter from Create; a left-button click within any OTHER section's own
+// "section:<id>" zone (see compose) moves the ring directly to that
+// section -- the same ring.set plumbing Tab navigation and FocusByID
+// already use, so it works even on a currently-disabled/present-but-inert
+// section, matching FocusByID's own documented contract -- and then
+// forwards the raw click to the now-focused section's own Update, so a
+// concrete field (PlacementField, WorktreeField's chip/base sections,
+// AgentField, IssueField/DirField/AccountField) can decide for itself
+// whether the SAME click also landed on one of ITS OWN finer-grained
+// chip:<sectionID>:<chipID>/row:<sectionID>:<n> zones -- it alone knows
+// which chip IDs or picker rows it owns; form.go does not (see e.g.
+// field_placement.go's PlacementField.Update). A click matching no zone
+// at all (the popup's own outer chrome, a stale click after a resize, or
+// any non-left button -- spec §7 only asks for click-to-activate, not a
+// context-menu) is a no-op.
+//
+// A zero-value Model (nil ring; see Model's own doc comment) is a no-op.
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
+	if m.ring == nil {
+		return m, nil
+	}
+	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+	if widgets.Zones.Get(zoneCreateButton).InBounds(msg) {
+		return m, submitCmd
+	}
+	for i, s := range m.ring.sections {
+		if s.ID() == createSectionID {
+			continue
+		}
+		if !widgets.Zones.Get(zoneSectionPrefix + s.ID()).InBounds(msg) {
+			continue
+		}
+		focusCmd := m.ring.set(i)
+		clickCmd := s.Update(msg)
+		return m, tea.Batch(focusCmd, clickCmd)
+	}
+	return m, nil
+}
+
+// handleMouseWheel implements task 21's wheel grammar: it forwards the
+// raw tea.MouseWheelMsg to the CURRENTLY FOCUSED section's own Update
+// only -- spec §7's "scroll the focused picker or the prompt", not
+// whatever section happens to sit under the mouse pointer -- letting a
+// concrete field decide for itself whether it has anything to scroll
+// (IssueField/DirField/WorktreeField's base picker/AccountField/
+// AgentField's expanded list move their own picker cursor; PromptField
+// scrolls its own textarea; every other field ignores it, the same
+// "forward and let the widget decide" posture forwardToFocused already
+// uses for every other unclassified message).
+//
+// A zero-value Model (nil ring; see Model's own doc comment) is a no-op.
+func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
+	if m.ring == nil {
+		return m, nil
+	}
+	return m, m.forwardToFocused(msg)
+}
+
+// wheelDelta translates a tea.MouseWheelMsg into -1 (wheel up: move
+// back/prev, mirroring Up) or +1 (wheel down: move forward/next,
+// mirroring Down), or 0 for a wheel axis this package has no vertical-
+// scroll meaning for (left/right -- spec §7 only asks for up/down
+// wheel-scroll). Shared by every field_*.go Update that handles
+// tea.MouseWheelMsg, so each one's own up/down cursor-move branches read
+// the same shape as their existing Up/Down KeyPressMsg branches.
+func wheelDelta(msg tea.MouseWheelMsg) int {
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		return -1
+	case tea.MouseWheelDown:
+		return 1
+	default:
+		return 0
 	}
 }
 
@@ -466,8 +573,31 @@ func (m Model) View() tea.View {
 // A zero-value Model (nil ring; see Model's own doc comment) renders ""
 // -- compose (below) guards the nil ring directly rather than this method
 // duplicating the check.
+//
+// ViewAt is task 21's own zone.Scan boundary: compose (below) and every
+// Section it composes register bubblezone/v2 zones by wrapping their own
+// rendered content in invisible marker sequences (widgets.Zones.Mark),
+// and THIS is the one place in the whole call graph -- the deterministic
+// render entry point every golden-frame test and the real tea.Program
+// alike ultimately go through (View() above calls this too) -- where
+// that marked content is handed to widgets.Zones.Scan before it ever
+// leaves this package: Scan both records each zone's on-screen bounds
+// for later mouse-hit lookups (handleMouseClick/handleMouseWheel, and
+// each field's own click handling) AND strips every marker sequence back
+// out of the returned string. Marker sequences are zero-width for every
+// lipgloss Width/MaxWidth measurement (verified directly: a private CSI
+// sequence ending in 'z', not a color/style code, so lipgloss's
+// ansi-aware width calculator skips it exactly like it skips a real SGR
+// code) and Scan removes them cleanly regardless of where sizes.go's own
+// degradation ladder (fitToHeight, inside compose) may have clipped
+// interior lines -- an unpaired marker left behind by a dropped line is
+// still stripped, its zone simply isn't reported this scan (see
+// widgets/zones.go's own doc comment) -- so this package's 11 committed
+// golden frames stay byte-identical: Scan is called BEFORE the
+// colorprofile.Writer pass below, so that pass (already a documented
+// TrueColor passthrough regardless) never sees a marker byte at all.
 func (m Model) ViewAt(w, h int) string {
-	content := m.compose(w, h)
+	content := widgets.Zones.Scan(m.compose(w, h))
 	var buf strings.Builder
 	cw := &colorprofile.Writer{Forward: &buf, Profile: colorprofile.TrueColor}
 	_, _ = cw.WriteString(content)
@@ -506,7 +636,19 @@ func (m Model) compose(w, h int) string {
 	body, last := sections[:len(sections)-1], sections[len(sections)-1]
 	for i, s := range body {
 		focused := i == m.ring.index
-		for _, l := range strings.Split(s.View(inner), "\n") {
+		// section:<id> (task 21): the whole rendered section is one zone
+		// -- clicking anywhere in it focuses it (handleMouseClick) -- with
+		// whatever finer chip:<id>:<chipID>/row:<id>:<n> zones the
+		// Section's own View already nested inside its own content (see
+		// e.g. field_placement.go's PlacementField.View) surviving intact,
+		// since bubblezone markers nest correctly (verified against the
+		// vendored v2.0.0 source's own "inception" test case). The
+		// Create section is deliberately excluded here -- it registers
+		// its own "button:create" zone instead (createSection.View), not
+		// a generic "section:create" one, since a click on it submits
+		// rather than merely focusing.
+		marked := widgets.Zones.Mark(zoneSectionPrefix+s.ID(), s.View(inner))
+		for _, l := range strings.Split(marked, "\n") {
 			lines = append(lines, decorateFocus(l, focused, m.palette))
 		}
 		lines = append(lines, divider)
@@ -605,8 +747,13 @@ func (c *createSection) Update(tea.Msg) tea.Cmd { return nil }
 
 func (c *createSection) Height(int) int { return 1 }
 
+// View renders the Create button, wrapped in its own "button:create"
+// zone (task 21) -- not a generic "section:create" one; see the
+// zone-ID-scheme doc comment near this file's own zoneCreateButton
+// constant and compose's own doc comment for why the Create section is
+// excluded from that generic marking.
 func (c *createSection) View(inner int) string {
-	return renderCreateButton(inner, c.focused, c.palette)
+	return widgets.Zones.Mark(zoneCreateButton, renderCreateButton(inner, c.focused, c.palette))
 }
 
 // actionButtonText / panelContrastFG / renderCreateButton port herdr's

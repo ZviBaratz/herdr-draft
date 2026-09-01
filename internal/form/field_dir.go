@@ -195,6 +195,19 @@ func (d *DirField) Blur() {
 // moves the input cursor) never spuriously resets a candidate row the
 // user has already selected with the arrow keys back to the top.
 func (d *DirField) Update(msg tea.Msg) tea.Cmd {
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		d.picker.SelectAt(click, dirPickerRows, "row:"+d.ID()+":")
+		return nil
+	}
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		switch wheelDelta(wheel) {
+		case -1:
+			d.picker.CursorPrev()
+		case 1:
+			d.picker.CursorNext()
+		}
+		return nil
+	}
 	if km, ok := msg.(tea.KeyPressMsg); ok {
 		switch km.String() {
 		case "up":
@@ -332,7 +345,7 @@ func (d *DirField) View(inner int) string {
 
 	var rows string
 	if d.focused {
-		rows = d.picker.View(inner, dirPickerRows)
+		rows = d.picker.MarkedView(inner, dirPickerRows, "row:"+d.ID()+":")
 	} else {
 		blanks := make([]string, dirPickerRows)
 		for i := range blanks {

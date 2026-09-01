@@ -53,8 +53,10 @@
 package widgets
 
 import (
+	"strconv"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -234,6 +236,52 @@ func (p *Picker) CursorPrev() {
 	}
 }
 
+// SelectVisibleRow moves the cursor to the item most recently rendered at
+// physical row (0-based, within a MarkedView/View call at the given
+// height), recomputing the same scrollOffset that render used -- the
+// mouse-click counterpart to CursorNext/CursorPrev/SelectID (task 21: a
+// click on one of this picker's own "row:<sectionID>:<n>" zones, usually
+// reached via SelectAt below rather than called directly). Returns false
+// (a no-op, cursor unchanged) when row is out of range for the CURRENT
+// filtered list at that height, or the filtered list is empty -- e.g. a
+// stale click after the list changed underneath it, or a click on a
+// blank/placeholder row that was never marked with a zone at all (see
+// MarkedView).
+func (p *Picker) SelectVisibleRow(row, height int) bool {
+	if row < 0 || len(p.filtered) == 0 {
+		return false
+	}
+	offset := scrollOffset(p.cursor, len(p.filtered), height)
+	idx := offset + row
+	if idx < 0 || idx >= len(p.filtered) {
+		return false
+	}
+	p.cursor = idx
+	return true
+}
+
+// SelectAt attempts to move the cursor to whichever of this picker's own
+// rows msg's coordinates land on, via that row's own
+// zonePrefix+strconv.Itoa(n) zone (task 21's "row:<sectionID>:<n>"
+// scheme, n being the row's PHYSICAL position) registered by the most
+// recent MarkedView(width, height, zonePrefix) call, returning the
+// matched item and true on a hit. height and zonePrefix must be the SAME
+// values passed to that MarkedView call, or the lookup will never match
+// anything. A no-op (returns the zero PickerItem and false) when msg
+// does not land on any of this picker's row zones.
+func (p *Picker) SelectAt(msg tea.MouseMsg, height int, zonePrefix string) (PickerItem, bool) {
+	for row := 0; row < height; row++ {
+		if !Zones.Get(zonePrefix + strconv.Itoa(row)).InBounds(msg) {
+			continue
+		}
+		if p.SelectVisibleRow(row, height) {
+			return p.filtered[p.cursor], true
+		}
+		return PickerItem{}, false
+	}
+	return PickerItem{}, false
+}
+
 // clampCursor keeps cursor within [0, itemCount). The itemCount upper-bound
 // clamp (cursor >= itemCount) is ported near-verbatim from Atrium's
 // Picker.clampCursor; the cursor < 0 lower-bound guard is a defensive
@@ -263,7 +311,26 @@ const pickerEmptyPlaceholder = "no matches"
 // renders height empty rows rather than panicking or leaving content
 // unclipped -- lipgloss's Width/MaxWidth style keys both treat 0 as
 // "unset", so callers must not rely on a zero-width Style to blank content.
+// It is MarkedView with an empty zone prefix (Zones.Mark's own empty-id
+// no-op, see its doc comment) -- the zero-dependency rendering path every
+// existing widget-level test and every raw (non-field-Section)
+// golden-frame fixture in this package continues to use unmodified.
 func (p *Picker) View(width, height int) string {
+	return p.MarkedView(width, height, "")
+}
+
+// MarkedView renders exactly like View, additionally wrapping each row
+// that corresponds to a real filtered item (not a blank trailing row, and
+// not the empty-list placeholder row) in a bubblezone/v2 zone marker
+// ID'd zonePrefix+strconv.Itoa(row) via this package's shared Zones
+// manager (zones.go) -- task 21's "row:<sectionID>:<n>" scheme, n being
+// the row's PHYSICAL position (0-based, within this call's own height),
+// NOT the item's absolute filtered index or ID, so a caller resolving a
+// click back to an item must go through SelectAt/SelectVisibleRow above,
+// which recompute the same scrollOffset this method used. zonePrefix ==
+// "" marks nothing at all (Zones.Mark's own empty-id no-op) -- see
+// View's own doc comment.
+func (p *Picker) MarkedView(width, height int, zonePrefix string) string {
 	if height < 1 {
 		height = 1
 	}
@@ -290,7 +357,12 @@ func (p *Picker) View(width, height int) string {
 			lines[row] = rowStyle.Render("")
 			continue
 		}
-		lines[row] = rowStyle.Render(p.renderRow(p.filtered[idx], idx == p.cursor))
+		rendered := p.renderRow(p.filtered[idx], idx == p.cursor)
+		zoneID := ""
+		if zonePrefix != "" {
+			zoneID = zonePrefix + strconv.Itoa(row)
+		}
+		lines[row] = rowStyle.Render(Zones.Mark(zoneID, rendered))
 	}
 	return strings.Join(lines, "\n")
 }

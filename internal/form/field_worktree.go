@@ -268,8 +268,14 @@ func (s worktreeChipsSection) Focus() tea.Cmd { return nil }
 func (s worktreeChipsSection) Blur()          {}
 
 // Update moves the chip cursor on Left/Up (Prev) or Right/Down (Next) --
-// both are no-ops while inert (widgets.ChipRow's own contract).
+// both are no-ops while inert (widgets.ChipRow's own contract) -- and
+// handles a task 21 left-button click on one of this row's own
+// "chip:worktree:<chipID>" zones (SelectAt, also a no-op while inert).
 func (s worktreeChipsSection) Update(msg tea.Msg) tea.Cmd {
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		s.f.chips.SelectAt(click, "chip:"+s.ID()+":")
+		return nil
+	}
 	km, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
@@ -288,12 +294,14 @@ func (s worktreeChipsSection) Height(int) int { return 2 }
 // View renders the chip row, padding to exactly two physical lines when
 // ChipRow.View itself only produced one -- the same reserved-hint-line
 // pattern field_placement.go's PlacementField.View uses, for the same
-// hint-independent-Height reason.
+// hint-independent-Height reason. Uses MarkedView (task 21) so every
+// chip registers its own "chip:worktree:<chipID>" zone (see Update's own
+// mouse-click handling above).
 func (s worktreeChipsSection) View(inner int) string {
 	if inner < 1 {
 		inner = 1
 	}
-	v := s.f.chips.View(inner)
+	v := s.f.chips.MarkedView(inner, "chip:"+s.ID()+":")
 	if !strings.Contains(v, "\n") {
 		v += "\n" + fitLine("", inner)
 	}
@@ -382,8 +390,23 @@ func (s worktreeBaseSection) Enabled() bool { return s.f.isGitRepo && s.f.On() }
 func (s worktreeBaseSection) Focus() tea.Cmd { return nil }
 func (s worktreeBaseSection) Blur()          {}
 
-// Update moves the base picker's cursor on Up/Down.
+// Update moves the base picker's cursor on Up/Down, a task 21 left-button
+// click on one of this picker's own "row:base:<n>" zones (SelectAt), or
+// a mouse wheel over it (CursorPrev/CursorNext, matching Up/Down).
 func (s worktreeBaseSection) Update(msg tea.Msg) tea.Cmd {
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		s.f.base.SelectAt(click, basePickerRows, "row:"+s.ID()+":")
+		return nil
+	}
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		switch wheelDelta(wheel) {
+		case -1:
+			s.f.base.CursorPrev()
+		case 1:
+			s.f.base.CursorNext()
+		}
+		return nil
+	}
 	km, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
@@ -449,6 +472,10 @@ func (w *WorktreeField) renderBase(inner int) string {
 	body := fitLine(lipgloss.NewStyle().Foreground(w.palette.Text).Render(display), budget)
 	header := fitLine(labelStyled+body+status, inner)
 
-	rows := w.base.View(inner, basePickerRows)
+	// "base" here matches worktreeBaseSection.ID()'s own return value --
+	// renderBase is a *WorktreeField method (shared by all three focus
+	// stops), not a worktreeBaseSection method, so it has no ID() of its
+	// own to read this from.
+	rows := w.base.MarkedView(inner, basePickerRows, "row:base:")
 	return header + "\n" + fitLine("", inner) + "\n" + rows
 }

@@ -25,11 +25,18 @@ const placementInertHint = "worktree opens as its own space"
 // placementChips are spec §6 field 5's three options, in order; "new"
 // (index 0, plan.PlacementNewSpace, the zero value) is what
 // SetWorktreeOn(true) snaps the selection back to -- see SetWorktreeOn's
-// own doc comment.
+// own doc comment. Chip IDs match config.toml's own `default_placement`
+// vocabulary ("tab-here"/"split-here", see placementFromConfigValue in
+// internal/app/app.go) rather than a shorter internal-only spelling --
+// unified in task 21 so this field's own task-21 mouse zone IDs
+// ("chip:placement:tab-here", the "click on chip:placement:tab-here
+// selects it" scenario the task brief names explicitly) read the same
+// vocabulary a config author already uses, instead of a second,
+// internal-only ID space for the exact same three concepts.
 var placementChips = []widgets.Chip{
 	{ID: "new", Label: "New space"},
-	{ID: "tab", Label: "Tab here"},
-	{ID: "split", Label: "Split here"},
+	{ID: "tab-here", Label: "Tab here"},
+	{ID: "split-here", Label: "Split here"},
 }
 
 // PlacementField is the form's Placement Section (spec §6 field 5): a
@@ -77,11 +84,17 @@ func (f *PlacementField) Blur() { f.focused = false }
 
 // Update moves the chip cursor on Left/Up (Prev) or Right/Down (Next) --
 // both are no-ops while the row is inert (widgets.ChipRow.Next/Prev's own
-// contract), and every other message is ignored: MapKey never forwards
+// contract) -- handles a task 21 left-button click on one of this row's
+// own "chip:placement:<chipID>" zones (SelectAt, also a no-op while
+// inert) -- and every other message is ignored: MapKey never forwards
 // Tab/Enter/Esc/etc. here as ActionNone (ZonePlacement is a plain,
 // non-picker, non-title, non-prompt zone), so nothing else is expected to
 // reach this Update.
 func (f *PlacementField) Update(msg tea.Msg) tea.Cmd {
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		f.chips.SelectAt(click, "chip:"+f.ID()+":")
+		return nil
+	}
 	km, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
@@ -143,9 +156,9 @@ func (f *PlacementField) SetValue(v plan.Placement) {
 func placementChipID(v plan.Placement) string {
 	switch v {
 	case plan.PlacementTabHere:
-		return "tab"
+		return "tab-here"
 	case plan.PlacementSplitHere:
-		return "split"
+		return "split-here"
 	default:
 		return "new"
 	}
@@ -156,9 +169,9 @@ func placementChipID(v plan.Placement) string {
 // defaults to PlacementNewSpace, the safe/zero-value choice.
 func (f *PlacementField) Value() plan.Placement {
 	switch f.chips.Selected().ID {
-	case "tab":
+	case "tab-here":
 		return plan.PlacementTabHere
-	case "split":
+	case "split-here":
 		return plan.PlacementSplitHere
 	default:
 		return plan.PlacementNewSpace
@@ -171,12 +184,14 @@ func (f *PlacementField) Height(int) int { return 2 }
 
 // View renders the chip row, padding to exactly two physical lines when
 // ChipRow.View itself only produced one (no FocusHint on the selected
-// chip, and not inert) -- see the type doc comment.
+// chip, and not inert) -- see the type doc comment. Uses MarkedView (task
+// 21) so every chip registers its own "chip:placement:<chipID>" zone
+// (see Update's own mouse-click handling above).
 func (f *PlacementField) View(inner int) string {
 	if inner < 1 {
 		inner = 1
 	}
-	v := f.chips.View(inner)
+	v := f.chips.MarkedView(inner, "chip:"+f.ID()+":")
 	if !strings.Contains(v, "\n") {
 		v += "\n" + fitLine("", inner)
 	}

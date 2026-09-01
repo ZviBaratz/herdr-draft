@@ -261,6 +261,24 @@ func (p *PromptArea) InsertNewline() {
 	p.ta.InsertRune('\n')
 }
 
+// ScrollUp moves the cursor up one visual line -- task 21's mouse-wheel
+// scroll (wheel up over the focused prompt), delegating to bubbles/v2's
+// own textarea.Model.CursorUp (verified exported in the vendored v2.1.1
+// source: moves the cursor one visual line up, which also scrolls the
+// wrapped textarea's own internal viewport once the cursor leaves the
+// visible window -- there is no separate "scroll without moving the
+// cursor" primitive on bubbles' own Model, so this, like InsertNewline
+// above, bypasses Update rather than synthesizing a keypress).
+func (p *PromptArea) ScrollUp() {
+	p.ta.CursorUp()
+}
+
+// ScrollDown is ScrollUp's opposite (wheel down), delegating to bubbles/
+// v2's own textarea.Model.CursorDown.
+func (p *PromptArea) ScrollDown() {
+	p.ta.CursorDown()
+}
+
 // Focus gives the textarea input focus (a blinking cursor, and Update
 // starts accepting keystrokes instead of ignoring them) and returns the
 // tea.Cmd that starts the cursor's blink loop -- bubbles' own Model.Focus
