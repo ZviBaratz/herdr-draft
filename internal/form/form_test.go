@@ -329,6 +329,70 @@ func TestModel_ConstantHeightAcrossFocusMoves(t *testing.T) {
 	}
 }
 
+// --- zero-value Model safety ----------------------------------------------
+
+// TestZeroValueModel_DoesNotPanic pins this project's "no panics in
+// production code" rule against a zero-value Model (`var m Model`, or any
+// Model obtained some way other than New): Model's own doc comment says
+// construction via New is required, but a caller that gets this wrong
+// must still fail safely, not crash. Every entry point
+// (Init/Update/View/ViewAt) is exercised, including four different
+// message kinds through Update -- a window resize (the one message a
+// zero-value Model must still record, since width/height are plain
+// fields, not ring-derived), a key press (would otherwise reach
+// handleKey's zoneFor/MapKey/ring dispatch), a paste, and a message class
+// Update's switch never classifies at all -- inside a single deferred
+// recover, so a regression's failure names which call panicked rather
+// than just "test crashed."
+func TestZeroValueModel_DoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("zero-value Model panicked: %v", r)
+		}
+	}()
+
+	var m Model
+
+	if cmd := m.Init(); cmd != nil {
+		t.Errorf("Init() on a zero-value Model returned a non-nil cmd")
+	}
+
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	if cmd != nil {
+		t.Errorf("Update(WindowSizeMsg) on a zero-value Model returned a non-nil cmd")
+	}
+	if m.width != 80 || m.height != 24 {
+		t.Errorf("Update(WindowSizeMsg) on a zero-value Model left width=%d height=%d, want 80x24 (width/height are plain fields, not ring-derived)", m.width, m.height)
+	}
+
+	next, cmd = m.Update(keyTab)
+	m = next.(Model)
+	if cmd != nil {
+		t.Errorf("Update(a KeyPressMsg) on a zero-value Model returned a non-nil cmd")
+	}
+
+	next, cmd = m.Update(tea.PasteMsg{Content: "pasted text"})
+	m = next.(Model)
+	if cmd != nil {
+		t.Errorf("Update(PasteMsg) on a zero-value Model returned a non-nil cmd")
+	}
+
+	next, cmd = m.Update(struct{ unclassified bool }{})
+	m = next.(Model)
+	if cmd != nil {
+		t.Errorf("Update(an unclassified msg) on a zero-value Model returned a non-nil cmd")
+	}
+
+	if v := m.View(); v.Content != "" {
+		t.Errorf("View() on a zero-value Model = %q, want empty content", v.Content)
+	}
+
+	if got := m.ViewAt(80, 24); got != "" {
+		t.Errorf("ViewAt(80, 24) on a zero-value Model = %q, want \"\"", got)
+	}
+}
+
 // --- golden frames ---------------------------------------------------------
 
 // pickerSection and chipRowSection wrap this package's own real widgets

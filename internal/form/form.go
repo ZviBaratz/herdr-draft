@@ -209,6 +209,16 @@ type Setup struct {
 // constant-height budget/degradation ladder, footer.go's key ladder, and
 // keys.go's MapKey grammar together, painted in Setup.Palette's herdr
 // skin.
+//
+// Construction via New is required. A zero-value Model (e.g. `var m
+// form.Model`, or any Model obtained some other way than a call to New)
+// has a nil focus ring and no Sections -- Init/Update/View/ViewAt each
+// guard against that nil ring explicitly (see their own doc comments) and
+// degrade to a no-op Cmd / an unchanged Model / an empty render rather
+// than dereferencing it, per this project's "no panics in production
+// code" rule, but a zero-value Model still can't do anything useful: the
+// guard exists so an uninitialized Model fails safely, not so leaving one
+// uninitialized is a supported way to use this package.
 type Model struct {
 	palette    theme.Palette
 	ring       *focusRing
@@ -256,8 +266,13 @@ func cancelCmd() tea.Msg { return CancelMsg{} }
 func clearCmd() tea.Msg  { return ClearRequestedMsg{} }
 
 // Init focuses the ring's current (first-enabled) section and returns
-// whatever tea.Cmd that produces.
+// whatever tea.Cmd that produces. A zero-value Model (nil ring; see
+// Model's own doc comment) is a no-op, returning nil rather than
+// dereferencing it.
 func (m Model) Init() tea.Cmd {
+	if m.ring == nil {
+		return nil
+	}
 	return m.ring.set(m.ring.index)
 }
 
@@ -269,11 +284,21 @@ func (m Model) Init() tea.Cmd {
 // requires (paste content must never re-enter the key grammar); anything
 // else (e.g. a cursor-blink tick) is forwarded to the focused section
 // only -- an unfocused section is Blurred and has no live cursor to tick.
+//
+// A zero-value Model (nil ring; see Model's own doc comment) still
+// records a tea.WindowSizeMsg (harmless -- width/height are plain fields,
+// not ring-derived), but every other message is a no-op: there is no
+// focused section, and no zone, to run MapKey or forwardToFocused
+// against.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width, m.height = wsm.Width, wsm.Height
 		return m, nil
+	}
+	if m.ring == nil {
+		return m, nil
+	}
+	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.PasteMsg:
@@ -341,7 +366,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // View satisfies tea.Model, rendering at the last tea.WindowSizeMsg this
 // Model saw (0x0 before the first one arrives -- ViewAt degrades to an
 // empty string in that case, same as every degenerate-dimension contract
-// this package's widgets already follow).
+// this package's widgets already follow). A zero-value Model (nil ring;
+// see Model's own doc comment) also renders "" -- see ViewAt/compose.
 func (m Model) View() tea.View {
 	return tea.NewView(m.ViewAt(m.width, m.height))
 }
@@ -371,6 +397,10 @@ func (m Model) View() tea.View {
 // github.com/charmbracelet/colorprofile@v0.4.3 writer.go: `case
 // w.Profile == TrueColor:` writes bytes unmodified), so it costs nothing
 // even though it is not, today, load-bearing.
+//
+// A zero-value Model (nil ring; see Model's own doc comment) renders ""
+// -- compose (below) guards the nil ring directly rather than this method
+// duplicating the check.
 func (m Model) ViewAt(w, h int) string {
 	content := m.compose(w, h)
 	var buf strings.Builder
@@ -388,8 +418,12 @@ func (m Model) ViewAt(w, h int) string {
 // content is taller than h, and every line is finally painted with
 // Setup.Palette.PanelBG across the full w columns (spec §7: "panel
 // background painted explicitly across the full popup area").
+//
+// A zero-value Model (nil ring; see Model's own doc comment) renders as
+// "" -- there are no Sections to compose -- rather than dereferencing the
+// nil ring's own sections slice.
 func (m Model) compose(w, h int) string {
-	if h <= 0 {
+	if h <= 0 || m.ring == nil {
 		return ""
 	}
 

@@ -21,6 +21,25 @@
 // still doesn't fit (too many enabled sections, or a terminal shorter
 // than every Section's own floor):
 //
+//   - fitOverlay's OWN first stage -- run unconditionally, before its
+//     height budget check even starts -- truncates each individual
+//     overlong line to innerWidth with a "…" tail
+//     (`truncate.StringWithTail(l, uint(innerWidth), "…")`,
+//     textInput_render.go:259-263, via github.com/muesli/reflow/truncate)
+//     has NO equivalent here, and is deliberately not ported: this
+//     package adds no dependency on reflow/truncate, and no line in a
+//     composed form silently loses its tail with an ellipsis. Two things
+//     cover the same underlying need without it -- a Section's own
+//     View(inner) is responsible for staying within the inner width it's
+//     handed (the same width-discipline convention
+//     widgets/picker.go's widthStyle doc already establishes:
+//     Inline(true) plus MaxWidth, a hard clip, no ellipsis), and
+//     paintLine (this file, below) applies its own `.MaxWidth(w)` as a
+//     last-resort backstop over the fully composed line (gutter +
+//     content + margin) regardless of what produced it. So overlong
+//     content is still bounded to the available width -- just clipped
+//     silently rather than marked with "…" -- a real, disclosed
+//     behavioral difference from Atrium, not an oversight.
 //   - dropLinesToFit is ported near-verbatim from fitOverlay's own helper
 //     of the same name (textInput_render.go): remove interior lines
 //     matching a droppable predicate, preserving the first and last line
