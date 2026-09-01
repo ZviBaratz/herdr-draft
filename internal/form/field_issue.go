@@ -53,6 +53,11 @@ const issueNoneID = "\x00none"
 
 const issueNoneLabel = "None (manual entry)"
 
+// issueUnavailableLabel is the header body an inert field shows in place
+// of a selection (SetUnavailable) -- the reason itself goes on the hint
+// row, which has the full inner width to spend on it.
+const issueUnavailableLabel = "unavailable"
+
 // IssueField is the form's Linear issue Section (spec §6 field 1): a
 // type-to-filter picker over the viewer's assigned issues, "none" pinned
 // as row 0 for manual (non-Linear-seeded) mode. Selecting an issue emits
@@ -88,6 +93,11 @@ type IssueField struct {
 	lastSelectedID string
 
 	hint string
+
+	// unavailable, when non-empty, is SetUnavailable's own reason: Linear
+	// is configured but could not be reached, so the field renders inert
+	// carrying that reason instead of a picker (spec §13).
+	unavailable string
 }
 
 // NewIssueField returns an empty, blurred IssueField (selection on the
@@ -107,14 +117,33 @@ func NewIssueField(palette theme.Palette) *IssueField {
 // ID identifies this Section for form.go's zoneFor.
 func (f *IssueField) ID() string { return "issue" }
 
-// Enabled reports that, once constructed, Issue always takes a focus stop
-// -- the "rendered only when Linear is configured" gate (spec §6 field 1)
-// is a STATIC precondition the app layer applies by simply not
+// Enabled reports that, once constructed, Issue takes a focus stop -- the
+// "rendered only when Linear is configured" gate (spec §6 field 1) is a
+// STATIC precondition the app layer applies by simply not
 // constructing/including this Section at all (matching form.go's own
 // Section doc comment: "Fields whose precondition is static at startup
 // ... are simply not rendered"), not something IssueField itself decides
 // dynamically.
-func (f *IssueField) Enabled() bool { return true }
+//
+// The one exception is SetUnavailable: Linear CONFIGURED but broken is a
+// different state from Linear absent, and spec §13 requires it to degrade
+// "with a reason" rather than vanish. Such a field is present-but-inert --
+// rendered, skipped by the focus ring.
+func (f *IssueField) Enabled() bool { return f.unavailable == "" }
+
+// SetUnavailable marks the field present-but-inert, showing reason instead
+// of a picker -- spec §13: "Linear/clauth/network failures degrade the
+// respective field to inert with a reason." "" restores the normal state.
+//
+// Added in the final fix wave (finding I5). linear.ResolveAPIKey
+// deliberately hard-errors when the user's own chosen key source fails (a
+// broken api_key_cmd, or an inline api_key in a config.toml wider than
+// 0600), but Bootstrap discarded that error and treated it as "no key
+// configured" -- so a typo in api_key_cmd made the entire Linear field
+// silently disappear with nothing anywhere saying why. Absent and broken
+// now render differently: absent is still not rendered at all (the static
+// precondition), broken is rendered inert, carrying its reason.
+func (f *IssueField) SetUnavailable(reason string) { f.unavailable = reason }
 
 // Focus gives the field input focus, returning the wrapped lineInput's own
 // blink tea.Cmd.
@@ -317,9 +346,17 @@ func (f *IssueField) View(inner, h int) string {
 	if inner < 1 {
 		inner = 1
 	}
-	rows := []string{f.renderHeader(inner), fitLine(dimHint(f.palette).Render(f.hint), inner)}
+	// An inert field (SetUnavailable) carries its reason on the hint row,
+	// where the full inner width is available for it, rather than sharing
+	// the header row with the label.
+	hint := f.hint
+	if f.unavailable != "" {
+		hint = f.unavailable
+	}
+
+	rows := []string{f.renderHeader(inner), fitLine(dimHint(f.palette).Render(hint), inner)}
 	if candidates := h - pickerChromeRows; candidates > 0 {
-		if f.focused {
+		if f.focused && f.unavailable == "" {
 			rows = append(rows, strings.Split(f.picker.MarkedView(inner, candidates, "row:"+f.ID()+":"), "\n")...)
 		} else {
 			rows = append(rows, blankRows(candidates, inner)...)
@@ -340,6 +377,8 @@ func (f *IssueField) renderHeader(inner int) string {
 
 	var body string
 	switch {
+	case f.unavailable != "":
+		body = fitLine(dimHint(f.palette).Render(issueUnavailableLabel), budget)
 	case f.focused:
 		body = f.input.View(budget)
 	case f.Selected() == nil:

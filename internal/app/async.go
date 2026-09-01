@@ -36,17 +36,21 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
+	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/pathx"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
@@ -98,7 +102,14 @@ func (m *Model) scheduleDirCheck(path string) tea.Cmd {
 // whether it's a git repo).
 func (m Model) runDirCheck(req request) tea.Cmd {
 	git := m.deps.Git
-	path := req.key
+	// req.key stays the RAW typed text -- DirField.SetValidity keys its own
+	// inline marker on it and only renders while it still equals Value().
+	// Only the path actually handed to the filesystem is expanded (finding
+	// I3): without this, typing "~/Projects/foo" was reported invalid, and
+	// on submit `herdr workspace create --cwd` (which, unlike `worktree
+	// create`, does no tilde expansion of its own) would have rooted a
+	// workspace at a directory literally named "~".
+	path := pathx.ExpandTilde(req.key)
 	return func() tea.Msg {
 		exists := git.DirExists(path)
 		isRepo := exists && git.IsGitRepo(path)
@@ -167,6 +178,13 @@ type baseDebounceMsg struct{ req request }
 type baseResultMsg struct {
 	req  request
 	refs []string
+	// head is the branch currently checked out in the target repo, for
+	// spec §6 field 4's own "row 0 `HEAD (<current branch>)`" (minor M4).
+	// "" for a detached HEAD -- gitx.CurrentBranch reports that as an
+	// empty name rather than an error -- or when the lookup failed, which
+	// is not worth failing the whole base list over: the row simply reads
+	// a bare "HEAD", exactly as it always did.
+	head string
 	err  bool
 }
 
@@ -188,7 +206,7 @@ func (m *Model) scheduleBaseCheck(path string) tea.Cmd {
 
 func (m Model) runBaseCheck(req request) tea.Cmd {
 	git := m.deps.Git
-	path := req.key
+	path := pathx.ExpandTilde(req.key) // see runDirCheck on why req.key itself stays raw
 	return func() tea.Msg {
 		if !git.IsGitRepo(path) {
 			return baseResultMsg{req: req, err: true}
@@ -197,7 +215,10 @@ func (m Model) runBaseCheck(req request) tea.Cmd {
 		if err != nil {
 			return baseResultMsg{req: req, err: true}
 		}
-		return baseResultMsg{req: req, refs: refs}
+		// Best-effort, in the same subprocess round trip as the ref list:
+		// a failure here only costs the HEAD row its parenthetical.
+		head, _ := git.CurrentBranch(context.Background(), path)
+		return baseResultMsg{req: req, refs: refs, head: head}
 	}
 }
 
@@ -224,6 +245,7 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 	}
 
 	m.baseItemsVersion++
+	m.worktree.SetHeadBranch(msg.head)
 	m.worktree.SetBaseItems(m.baseItemsVersion, msg.refs)
 	m.worktree.SetBaseStatus("")
 
@@ -246,7 +268,7 @@ func (m Model) runFetchPrune(path string) tea.Cmd {
 		// branchFetchDoneMsg, which carries no success/failure signal at
 		// all: completion alone is what matters, to re-list with whatever
 		// the fetch did or didn't change.
-		_ = git.FetchPrune(context.Background(), path)
+		_ = git.FetchPrune(context.Background(), pathx.ExpandTilde(path))
 		return fetchPruneDoneMsg{path: path}
 	}
 }
@@ -323,7 +345,7 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 
 		branchExists := false
 		if worktreeOn && branch != "" && dir != "" {
-			exists, err := git.BranchExists(context.Background(), dir, branch)
+			exists, err := git.BranchExists(context.Background(), pathx.ExpandTilde(dir), branch)
 			branchExists = err == nil && exists
 		}
 		return titleResultMsg{req: req, branchExists: branchExists, labelTaken: labelTaken}
@@ -581,14 +603,126 @@ func (m Model) handleSubmitProgress(msg submitProgressMsg) (Model, tea.Cmd) {
 // (runCleanCheckCmd) rather than called synchronously here.
 func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 	if msg.result.FailedIndex == -1 {
-		return m, tea.Quit
+		// Persist spec §12's state BEFORE quitting -- the quit is deferred
+		// to statePersistedMsg's own handler (updateSubmitting) rather than
+		// batched alongside the write, since tea.Batch runs its commands
+		// concurrently and tea.Quit would race the write to a finish. This
+		// is the hook the whole state layer was missing (finding I2):
+		// config.SaveState and State.TouchRecent were built and
+		// unit-tested and then called from nowhere, so recents.json and
+		// last-used.json were never written, spec §6 field 2's recents
+		// candidate source was permanently empty, and
+		// LastKind/LastPlacement/LastWorktree were dead on both sides.
+		return m, m.persistStateCmd()
 	}
 	if msg.result.Created == nil {
 		m.submitDeadEnd = true // see Model.submitDeadEnd's own doc comment.
 		return m, nil
 	}
 	m.submitCreated = *msg.result.Created
-	return m, runCleanCheckCmd(m.submitInput, *msg.result.Created, msg.result)
+	return m, tea.Batch(
+		runCleanCheckCmd(m.submitInput, *msg.result.Created, msg.result),
+		// A prompt that never reached the agent is the one piece of the
+		// user's own work this failure can destroy -- save it before the
+		// popup can close (finding I6). A no-op when there is none.
+		saveUnsentPromptCmd(m.stateDir, msg.result.PromptText),
+	)
+}
+
+// statePersistedMsg reports that persistStateCmd has finished (whether or
+// not the write itself succeeded) -- the signal updateSubmitting turns
+// into the tea.Quit that ends a successful submit.
+type statePersistedMsg struct{}
+
+// persistStateCmd writes the choices this submit was made with back to the
+// plugin state dir (spec §12): the project directory into recents.json's
+// most-recently-used list, and the agent kind/placement/worktree toggle
+// into last-used.json, so the next form-open defaults to what the user
+// actually launched with last time. Called only on a fully successful
+// submit -- a failed one says nothing about what the user wants next.
+//
+// The write happens in a Cmd rather than inline in the message handler,
+// matching every other I/O-performing source in this file, and its error
+// is deliberately dropped: state is loss-tolerant by spec §12, and there
+// is nothing useful to tell a user whose session just launched about a
+// recents file that did not save. The state SNAPSHOT is taken here, on the
+// Model, not inside the closure -- the same "capture the relevant state at
+// call time" discipline scheduleTitleCheck documents.
+//
+// It always returns a non-nil Cmd, even with no state dir to write to:
+// statePersistedMsg is what quits the program, so a nil Cmd here would
+// leave a successful submit hanging on screen forever.
+func (m Model) persistStateCmd() tea.Cmd {
+	stateDir := m.stateDir
+
+	st := m.state
+	if dir := m.submitInput.ProjectDir; dir != "" {
+		st.TouchRecent(dir)
+	}
+	st.LastKind = m.submitInput.AgentKind
+	st.LastPlacement = placementConfigValue(m.submitInput.Placement)
+	useWorktree := m.submitInput.UseWorktree
+	st.LastWorktree = &useWorktree
+
+	return func() tea.Msg {
+		if stateDir != "" {
+			_ = config.SaveState(stateDir, st)
+		}
+		return statePersistedMsg{}
+	}
+}
+
+// --- unsent prompt recovery (spec §9 step 3, finding I6) ------------------
+
+// unsentPromptFileName is where a prompt that never reached the agent is
+// written, under $HERDR_PLUGIN_STATE_DIR. A fixed name (rather than a
+// timestamped one) keeps the path the failure view shows short enough to
+// read and retype, and there is only ever one prompt worth recovering: the
+// one from the submit the user is looking at.
+const unsentPromptFileName = "unsent-prompt.txt"
+
+// promptSavedMsg reports where an unsent prompt was written, or why it
+// could not be.
+type promptSavedMsg struct {
+	path string
+	err  error
+}
+
+// saveUnsentPromptCmd writes text to $stateDir/unsent-prompt.txt so spec
+// §9 step 3's "prompt text surfaced back to the user for manual paste"
+// actually survives (finding I6). Before this, the failure view rendered
+// the whole prompt through fitLine -- Inline(true), which strips newlines,
+// then a hard clip to the popup width -- so a multi-paragraph
+// Linear-seeded prompt became one glued, truncated line, and then the
+// popup closed and it was gone.
+//
+// Returns nil for an empty text (every failure that is not an
+// OpAgentPrompt failure) or an unset state dir.
+func saveUnsentPromptCmd(stateDir, text string) tea.Cmd {
+	if text == "" || stateDir == "" {
+		return nil
+	}
+	path := filepath.Join(stateDir, unsentPromptFileName)
+	return func() tea.Msg {
+		if err := os.MkdirAll(stateDir, 0o700); err != nil {
+			return promptSavedMsg{err: fmt.Errorf("create %s: %w", stateDir, err)}
+		}
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			return promptSavedMsg{err: fmt.Errorf("write %s: %w", path, err)}
+		}
+		return promptSavedMsg{path: path}
+	}
+}
+
+// handlePromptSaved hands SubmitView the path the unsent prompt landed at
+// -- or the error, so a failed save is not itself silent: the view falls
+// back to showing the prompt's own (clipped) text inline, which is still
+// better than nothing.
+func (m Model) handlePromptSaved(msg promptSavedMsg) (Model, tea.Cmd) {
+	if m.submitView != nil {
+		m.submitView.SetUnsentPrompt(msg.path, msg.err)
+	}
+	return m, nil
 }
 
 // cleanCheckMsg carries plan.CleanCheck's own verdict for the space
@@ -718,6 +852,13 @@ func (m Model) updateSubmitting(msg tea.Msg) (Model, tea.Cmd) {
 		return m.handleSubmitDone(msg)
 	case cleanCheckMsg:
 		return m.handleCleanCheckResult(msg)
+	case promptSavedMsg:
+		return m.handlePromptSaved(msg)
+	case statePersistedMsg:
+		// A successful submit ends here, once spec §12's state is on disk
+		// (handleSubmitDone/persistStateCmd) -- the plugin's whole job was
+		// creating and launching the session, which is done.
+		return m, tea.Quit
 	case form.KeepMsg:
 		return m, tea.Quit
 	case form.CleanMsg:
@@ -754,6 +895,10 @@ func (gitxSource) ListBranches(ctx context.Context, dir string, limit int) ([]st
 
 func (gitxSource) BranchExists(ctx context.Context, dir, name string) (bool, error) {
 	return gitx.BranchExists(ctx, dir, name)
+}
+
+func (gitxSource) CurrentBranch(ctx context.Context, dir string) (string, error) {
+	return gitx.CurrentBranch(ctx, dir)
 }
 
 func (gitxSource) FetchPrune(ctx context.Context, dir string) error {

@@ -77,6 +77,12 @@ type SubmitView struct {
 	// no clean was ever attempted). Rendered as a short, always-visible
 	// line in the failure prompt -- see failureLines.
 	cleanErr error
+
+	// unsentPromptPath/unsentPromptErr are SetUnsentPrompt's own recorded
+	// recovery location for a prompt that never reached the agent, and the
+	// error if it could not be written at all -- see failureLines.
+	unsentPromptPath string
+	unsentPromptErr  error
 }
 
 // NewSubmitView returns an empty SubmitView (no progress, no failure)
@@ -126,6 +132,22 @@ func (v *SubmitView) SetFailure(res plan.ExecResult, clean plan.CleanDecision) {
 // choice stays available too -- "k" to give up and keep, or "c" to retry.
 func (v *SubmitView) SetCleanFailed(err error) {
 	v.cleanErr = err
+}
+
+// SetUnsentPrompt records where the app layer saved a prompt that never
+// reached the agent (spec §9 step 3: "prompt text surfaced back to the
+// user for manual paste"), or the error that stopped it from saving.
+//
+// Added in the final fix wave (finding I6). failureLines used to render
+// the WHOLE prompt inline, through fitLine -- whose Inline(true) strips
+// newlines and whose MaxWidth hard-clips to the popup width -- so a
+// multi-paragraph Linear-seeded prompt (spec §10's own template is three
+// paragraphs) collapsed into a single glued, truncated line, and then the
+// popup closed and the text was gone for good. A path the user can `cat`
+// survives the popup; the inline text never could, at any width.
+func (v *SubmitView) SetUnsentPrompt(path string, err error) {
+	v.unsentPromptPath = path
+	v.unsentPromptErr = err
 }
 
 // Update handles the keep-or-clean gate's own k/c keys -- a no-op ("no
@@ -280,10 +302,47 @@ func (v *SubmitView) failureLines(inner int) []string {
 		out = append(out, fitLine(errLine, inner))
 	}
 
-	if v.result.PromptText != "" {
-		note := dimHint(v.palette).Render("prompt not sent — copy manually: " + v.result.PromptText)
-		out = append(out, fitLine(note, inner))
-	}
+	out = append(out, v.unsentPromptLines(inner)...)
 
 	return out
+}
+
+// unsentPromptLines renders spec §9 step 3's recovery surface for a prompt
+// that never reached the agent: where it was saved, so the user can read
+// it back after this popup closes.
+//
+// The prompt's own text is deliberately NOT rendered here (finding I6).
+// Every line in this view goes through fitLine, whose Inline(true) strips
+// newlines and whose MaxWidth hard-clips to the popup's width -- so
+// rendering the text inline turned a multi-paragraph, Linear-seeded prompt
+// (spec §10's default template is three paragraphs) into one glued,
+// truncated line, and the popup then closed and took it with it. Only when
+// the save itself failed does the text appear inline, clipped, as a
+// last-resort better-than-nothing: at that point a partial copy is all
+// there is.
+func (v *SubmitView) unsentPromptLines(inner int) []string {
+	if v.result.PromptText == "" {
+		return nil
+	}
+
+	if v.unsentPromptErr != nil {
+		return []string{
+			fitLine(lipgloss.NewStyle().Foreground(v.palette.Danger).Render(
+				"prompt not sent, and could not be saved: "+v.unsentPromptErr.Error()), inner),
+			fitLine(dimHint(v.palette).Render("copy manually: "+v.result.PromptText), inner),
+		}
+	}
+	if v.unsentPromptPath == "" {
+		// The save is still in flight (its Cmd has not landed yet): say
+		// what happened without promising a path that may not exist.
+		return []string{fitLine(dimHint(v.palette).Render("prompt not sent — saving it for manual paste…"), inner)}
+	}
+	// The path gets a line to itself: a plugin state dir plus a filename
+	// routinely runs past 60 cells, and sharing a row with the explanation
+	// would clip the tail -- which is the half the user actually has to
+	// type.
+	return []string{
+		fitLine(dimHint(v.palette).Render("prompt not sent — saved for manual paste:"), inner),
+		fitLine(dimHint(v.palette).Render(v.unsentPromptPath), inner),
+	}
 }

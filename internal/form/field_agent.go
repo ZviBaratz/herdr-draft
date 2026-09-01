@@ -305,6 +305,47 @@ func (f *AgentField) SetKinds(kinds []string) {
 	f.setPickerItems(f.fullListItems())
 }
 
+// SetKind selects kind as the field's current value, e.g. to apply the
+// last agent kind the user actually launched with (config.State.LastKind,
+// spec §12's last-used.json). A kind not present in the current SetKinds
+// list, and "" , are both no-ops -- never override the configured default
+// with a guess at a stale or typo'd value, matching AccountField.SetPin's
+// own posture for the same class of persisted-preference input.
+//
+// A kind that has its own chip moves the chip cursor; one reachable only
+// through the "more…" list selects it there and parks the chip cursor on
+// "more…", which is where the user would have had to go to pick it by
+// hand.
+//
+// Added alongside the state-persistence wiring (finding I2): SetKinds'
+// "index 0 is the default" contract could express only the CONFIGURED
+// default, so LastKind had nowhere to be applied and last-used.json's
+// `kind` field was written by nobody and read by nobody.
+func (f *AgentField) SetKind(kind string) {
+	if kind == "" {
+		return
+	}
+	known := false
+	for _, k := range f.kinds {
+		if k == kind {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return
+	}
+
+	if f.chips.SelectID(kind) {
+		f.syncConfirmedFromChip()
+		return
+	}
+	if f.picker.SelectID(kind) {
+		f.lastConfirmed = kind
+		f.chips.SelectID(agentMoreChipID)
+	}
+}
+
 // fullListItems builds the full-kind-list picker's item set from f.kinds
 // -- every configured kind is reachable here, not just the ones excluded
 // from the chip row (see the file doc's design note).

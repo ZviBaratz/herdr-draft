@@ -3,14 +3,17 @@ package plan
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 )
 
@@ -727,5 +730,179 @@ func TestCleanCheckDeniesOnDisposableError(t *testing.T) {
 	}
 	if strings.TrimSpace(decision.Reason) == "" {
 		t.Fatal("expected a human-readable Reason describing the error")
+	}
+}
+
+// --- agent_name_taken dedupe retry (spec §9, finding I1) ------------------
+
+// nameTakenRunner is a mockRunner that answers AgentStart with herdr's own
+// agent_name_taken error for every name in taken, and records every name it
+// was asked for.
+type nameTakenRunner struct {
+	mockRunner
+	taken     map[string]bool
+	namesSeen []string
+}
+
+func (m *nameTakenRunner) AgentStart(_ context.Context, req herdrc.AgentStartReq) error {
+	m.namesSeen = append(m.namesSeen, req.Name)
+	if m.taken[req.Name] {
+		// The exact shape herdrc.CLIRunner surfaces: herdr's stderr error
+		// envelope wrapped into a plain Go error (there is no typed code).
+		return fmt.Errorf("herdr agent start: exit status 1: {\"error\":{\"code\":\"%s\",\"message\":\"agent name %s is already used\"}}",
+			nameTakenErrorCode, req.Name)
+	}
+	return nil
+}
+
+// TestExecuteRetriesTakenAgentName pins spec §9's "DuplicateName retried
+// with suffix", which had no implementation at all: herdr's
+// agent_name_taken is not agent_pane_busy, so retryBusy passed it through
+// and the whole submit failed at step 2 -- after the worktree already
+// existed. Opening a second session from the same Linear issue was enough
+// to hit it.
+func TestExecuteRetriesTakenAgentName(t *testing.T) {
+	m := &nameTakenRunner{taken: map[string]bool{"fix-pagination": true, "fix-pagination-2": true}}
+	m.topo = herdrc.CreatedTopology{WorkspaceID: "w9", PaneID: "w9:p1"}
+
+	ops := []Op{
+		{Kind: OpWorkspaceCreate, Label: "creating workspace", Workspace: &herdrc.WorkspaceCreateReq{}},
+		{Kind: OpAgentStart, Label: "starting agent", Agent: &herdrc.AgentStartReq{Name: "fix-pagination", Kind: "claude"}},
+	}
+
+	res := Execute(context.Background(), m, ops, nil)
+
+	if res.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1 -- a taken name must be retried with a suffix, not fail the submit", res.FailedIndex)
+	}
+	want := []string{"fix-pagination", "fix-pagination-2", "fix-pagination-3"}
+	if !reflect.DeepEqual(m.namesSeen, want) {
+		t.Fatalf("names attempted = %v, want %v", m.namesSeen, want)
+	}
+}
+
+// TestExecuteGivesUpAfterBoundedNameAttempts pins the retry's bound: a
+// server that rejects every candidate must surface a real failure, not
+// loop forever.
+func TestExecuteGivesUpAfterBoundedNameAttempts(t *testing.T) {
+	m := &nameTakenRunner{taken: nil}
+	m.topo = herdrc.CreatedTopology{WorkspaceID: "w9", PaneID: "w9:p1"}
+	// A nil map answers false for every key, so make one that says yes to
+	// everything instead.
+	m.taken = map[string]bool{}
+	for i := 1; i <= maxAgentNameAttempts+3; i++ {
+		m.taken[AgentNameWithSuffix("fix-pagination", i)] = true
+	}
+	m.taken["fix-pagination"] = true
+
+	ops := []Op{
+		{Kind: OpWorkspaceCreate, Label: "creating workspace", Workspace: &herdrc.WorkspaceCreateReq{}},
+		{Kind: OpAgentStart, Label: "starting agent", Agent: &herdrc.AgentStartReq{Name: "fix-pagination", Kind: "claude"}},
+	}
+
+	res := Execute(context.Background(), m, ops, nil)
+
+	if res.FailedIndex != 1 {
+		t.Fatalf("FailedIndex = %d, want 1 -- every candidate name was refused", res.FailedIndex)
+	}
+	if len(m.namesSeen) != maxAgentNameAttempts {
+		t.Fatalf("attempted %d names (%v), want exactly maxAgentNameAttempts=%d",
+			len(m.namesSeen), m.namesSeen, maxAgentNameAttempts)
+	}
+}
+
+// TestAgentNameWithSuffixStaysInsideHerdrsPattern pins that every name the
+// retry can produce is still one herdr will accept
+// ([a-z][a-z0-9_-]{0,31}), including for a base name already at
+// AgentName's own 30-rune cap with a suffix wider than the two runes that
+// cap reserves.
+func TestAgentNameWithSuffixStaysInsideHerdrsPattern(t *testing.T) {
+	pattern := regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+	bases := []string{
+		AgentName("Fix pagination"),
+		AgentName(strings.Repeat("a very long session title ", 4)),
+		AgentName("---"),
+	}
+	for _, base := range bases {
+		for n := 2; n <= 120; n++ {
+			got := AgentNameWithSuffix(base, n)
+			if !pattern.MatchString(got) {
+				t.Errorf("AgentNameWithSuffix(%q, %d) = %q, which herdr's own agent-name pattern rejects", base, n, got)
+			}
+		}
+	}
+}
+
+// --- the clean gate's "no commits beyond base" check (finding I4) ---------
+
+// mkWorktree adds a linked worktree on a new branch to repo, mirroring what
+// `herdr worktree create` does, and returns its checkout path.
+func mkWorktree(t *testing.T, repo, branch string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "wt")
+	gitIn(t, repo, "worktree", "add", "-q", "-b", branch, path)
+	return path
+}
+
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v (in %s): %v\n%s", args, dir, err, out)
+	}
+}
+
+// TestCleanCheckDeniesCommitsBeyondTheDefaultHeadBase is the regression for
+// I4: WorktreeField.Base() reports "" for its default HEAD row, and
+// CleanCheck passed that straight to gitx.Disposable, producing `git
+// rev-list --count ..HEAD` -- HEAD..HEAD, which counts 0 for every
+// worktree no matter what is in it. The "no commits beyond base" half of
+// spec §9's clean gate was therefore a no-op in the DEFAULT case, offering
+// to destroy a worktree carrying real commits.
+func TestCleanCheckDeniesCommitsBeyondTheDefaultHeadBase(t *testing.T) {
+	repo := mkRepo(t)
+	wt := mkWorktree(t, repo, "feature")
+
+	in := validInput()
+	in.UseWorktree = true
+	in.BaseRef = "" // WorktreeField.Base()'s own "" == HEAD sentinel
+	in.ProjectDir = repo
+	created := herdrc.CreatedTopology{CheckoutPath: wt}
+
+	if decision := CleanCheck(context.Background(), in, created); !decision.Allowed {
+		t.Fatalf("a pristine worktree at the default HEAD base was denied: %q", decision.Reason)
+	}
+
+	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "real work")
+
+	decision := CleanCheck(context.Background(), in, created)
+	if decision.Allowed {
+		t.Fatal("a worktree with a commit beyond its base was allowed to be destroyed")
+	}
+	if !strings.Contains(decision.Reason, "commit") {
+		t.Fatalf("Reason = %q, want it to name the commits that block cleanup", decision.Reason)
+	}
+}
+
+// TestDisposableRejectsAnEmptyBaseRef pins the hardening underneath that
+// fix at its own layer: gitx.Disposable must refuse an empty base rather
+// than silently answering "0 commits ahead" for every worktree it is ever
+// handed.
+func TestDisposableRejectsAnEmptyBaseRef(t *testing.T) {
+	repo := mkRepo(t)
+	wt := mkWorktree(t, repo, "feature")
+	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "real work")
+
+	ok, _, err := gitx.Disposable(context.Background(), wt, "")
+	if err == nil {
+		t.Fatalf("Disposable(worktree, \"\") returned ok=%v with no error, want a refusal", ok)
+	}
+	if ok {
+		t.Fatal("Disposable(worktree, \"\") reported a worktree with an extra commit as disposable")
 	}
 }

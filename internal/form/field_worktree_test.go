@@ -359,3 +359,53 @@ func TestWorktreeField_NoPanicOnDegenerateInputs(t *testing.T) {
 	w.SetBaseItems(1, nil)
 	w.SetBranch("", true)
 }
+
+// TestWorktreeField_HeadRowNamesTheCurrentBranch pins spec §6 field 4's
+// own "row 0 `HEAD (<current branch>)`" (minor M4): the row read a bare
+// "HEAD" because nothing ever supplied the branch -- gitx.CurrentBranch
+// existed and was tested, with no caller anywhere.
+func TestWorktreeField_HeadRowNamesTheCurrentBranch(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBaseItems(1, []string{"release/1.4"})
+
+	base := w.BaseSection()
+	if frame := ansi.Strip(base.View(60, base.Height(40))); strings.Contains(frame, "HEAD (") {
+		t.Fatalf("base picker = %q, want a bare HEAD before any branch is supplied", frame)
+	}
+
+	w.SetHeadBranch("main")
+
+	frame := ansi.Strip(base.View(60, base.Height(40)))
+	if !strings.Contains(frame, "HEAD (main)") {
+		t.Errorf("base picker = %q, want the HEAD row to name the current branch", frame)
+	}
+	// The selection display on the header row must agree with the row.
+	if !strings.Contains(strings.SplitN(frame, "\n", 2)[0], "HEAD (main)") {
+		t.Errorf("base header = %q, want it to show the same HEAD label as row 0", frame)
+	}
+	// The sentinel's own public contract is unchanged: HEAD still means "".
+	if got := w.Base(); got != "" {
+		t.Errorf("Base() = %q, want \"\" -- the HEAD row's label must not leak into the getter", got)
+	}
+}
+
+// TestWorktreeField_HeadRowKeepsTheUsersSelection pins that supplying the
+// branch name later (the base list arrives asynchronously) does not yank
+// the cursor back to HEAD from a ref the user already picked.
+func TestWorktreeField_HeadRowKeepsTheUsersSelection(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBaseItems(1, []string{"release/1.4"})
+	w.BaseSection().Update(key(tea.KeyDown, 0)) // HEAD -> release/1.4
+
+	if got := w.Base(); got != "release/1.4" {
+		t.Fatalf("Base() = %q, want the user's own selection before the head branch lands", got)
+	}
+	w.SetHeadBranch("main")
+	if got := w.Base(); got != "release/1.4" {
+		t.Fatalf("Base() = %q after SetHeadBranch, want the user's selection preserved", got)
+	}
+}

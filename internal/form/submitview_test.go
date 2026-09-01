@@ -143,14 +143,63 @@ func TestSubmitView_FailureReasonShownWhenCleanDenied(t *testing.T) {
 	}
 }
 
-func TestSubmitView_PromptTextSurfacedOnFailure(t *testing.T) {
+// multiParagraphPrompt is the shape spec §10's own default seeding
+// template produces -- identifier line, blank, URL, blank, description --
+// and the shape the old inline rendering destroyed: fitLine's Inline(true)
+// strips every newline and its MaxWidth clips the glued result to the
+// popup's width, so what reached the user was one truncated line, and then
+// the popup closed and took it with it.
+const multiParagraphPrompt = "Work on ENG-1: Fix login redirect loop\n\n" +
+	"https://linear.app/acme/issue/ENG-1\n\n" +
+	"The redirect loop reproduces whenever the session cookie is refreshed " +
+	"mid-request; see the attached HAR for the full sequence."
+
+// TestSubmitView_UnsentPromptSurfacedAsARecoverablePath pins spec §9 step
+// 3's "prompt text surfaced back to the user for manual paste" as
+// something that actually survives the popup (finding I6): the failure
+// view names the file the prompt was saved to, and deliberately does NOT
+// render the prompt itself.
+func TestSubmitView_UnsentPromptSurfacedAsARecoverablePath(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 1, PromptText: multiParagraphPrompt}, plan.CleanDecision{Allowed: true})
+
+	// Before the save lands, the view still says what happened.
+	if frame := ansi.Strip(v.ViewAt(80, 24)); !strings.Contains(frame, "prompt not sent") {
+		t.Errorf("ViewAt(80,24) before the save landed = %q, want it to say the prompt was not sent", frame)
+	}
+
+	v.SetUnsentPrompt("/state/unsent-prompt.txt", nil)
+
+	frame := ansi.Strip(v.ViewAt(80, 24))
+	if !strings.Contains(frame, "/state/unsent-prompt.txt") {
+		t.Errorf("ViewAt(80,24) = %q, want the path the unsent prompt was saved to", frame)
+	}
+	if !strings.Contains(frame, "prompt not sent") {
+		t.Errorf("ViewAt(80,24) = %q, want it to say the prompt was not sent", frame)
+	}
+	// The prompt's own body must stay out of the frame: it cannot survive
+	// fitLine, and a truncated copy is worse than a path.
+	if strings.Contains(frame, "reproduces whenever") {
+		t.Errorf("ViewAt(80,24) = %q, want the prompt BODY left out of the frame entirely", frame)
+	}
+}
+
+// TestSubmitView_UnsentPromptFallsBackToInlineTextWhenTheSaveFailed pins
+// the other half: when the prompt could not be written anywhere, a clipped
+// inline copy is all that is left, and it is still better than silence.
+func TestSubmitView_UnsentPromptFallsBackToInlineTextWhenTheSaveFailed(t *testing.T) {
 	v := NewSubmitView(theme.Default())
 	v.SetProgress(sampleProgressFailed())
 	v.SetFailure(plan.ExecResult{FailedIndex: 1, PromptText: "Work on ENG-1"}, plan.CleanDecision{Allowed: true})
+	v.SetUnsentPrompt("", errors.New("permission denied"))
 
 	frame := ansi.Strip(v.ViewAt(80, 24))
+	if !strings.Contains(frame, "permission denied") {
+		t.Errorf("ViewAt(80,24) = %q, want the save error surfaced rather than swallowed", frame)
+	}
 	if !strings.Contains(frame, "Work on ENG-1") {
-		t.Errorf("ViewAt(80,24) = %q, want the undelivered prompt text surfaced", frame)
+		t.Errorf("ViewAt(80,24) = %q, want the prompt text inline as the last-resort copy", frame)
 	}
 }
 

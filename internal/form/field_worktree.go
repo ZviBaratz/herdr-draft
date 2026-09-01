@@ -98,6 +98,13 @@ type WorktreeField struct {
 	baseRefs          []string
 	basePickerVersion int
 	baseStatus        string
+
+	// headBranch is the branch currently checked out in the target repo,
+	// shown alongside the base picker's HEAD row -- spec §6 field 4's own
+	// "row 0 `HEAD (<current branch>)`". "" (a detached HEAD, or before
+	// the app layer has resolved one) renders the bare "HEAD" the row
+	// always had. See SetHeadBranch.
+	headBranch string
 }
 
 // NewWorktreeField returns a WorktreeField defaulting to off, inert (no
@@ -223,7 +230,7 @@ func (w *WorktreeField) refreshBaseItems(bump bool) {
 		w.basePickerVersion++
 	}
 	items := make([]widgets.PickerItem, 0, len(w.baseRefs)+1)
-	items = append(items, widgets.PickerItem{ID: baseHeadID, Label: "HEAD"})
+	items = append(items, widgets.PickerItem{ID: baseHeadID, Label: w.headLabel()})
 	seen := map[string]bool{baseHeadID: true}
 	for _, r := range w.baseRefs {
 		if r == "" || seen[r] {
@@ -233,6 +240,35 @@ func (w *WorktreeField) refreshBaseItems(bump bool) {
 		items = append(items, widgets.PickerItem{ID: r, Label: r})
 	}
 	w.base.SetItems(w.basePickerVersion, items)
+}
+
+// SetHeadBranch records the branch currently checked out in the target
+// repo, so the base picker's row 0 reads `HEAD (<current branch>)` --
+// spec §6 field 4 verbatim. "" (a detached HEAD, which gitx.CurrentBranch
+// reports as an empty string rather than an error, or simply "not resolved
+// yet") leaves the row reading a bare "HEAD".
+//
+// Wired in the final fix wave (minor M4): gitx.CurrentBranch existed, was
+// tested, and had no caller at all, while this row showed a bare "HEAD"
+// that told the user nothing about what they were about to branch from.
+func (w *WorktreeField) SetHeadBranch(name string) {
+	if w.headBranch == name {
+		return
+	}
+	w.headBranch = name
+	// Same version, so widgets.Picker.SetItems takes its preserve-by-ID
+	// branch and a user who has already moved off HEAD stays where they
+	// were (refreshBaseItems' own bump=false contract).
+	w.refreshBaseItems(false)
+}
+
+// headLabel is the base picker's row-0 text: "HEAD" on its own, or
+// "HEAD (<branch>)" once SetHeadBranch has supplied one.
+func (w *WorktreeField) headLabel() string {
+	if w.headBranch == "" {
+		return "HEAD"
+	}
+	return "HEAD (" + w.headBranch + ")"
 }
 
 // SetBaseStatus sets the status text shown alongside the base row (e.g.
@@ -479,7 +515,7 @@ func (w *WorktreeField) renderBase(inner, h int) string {
 	if w.baseStatus != "" {
 		status = "  " + dimHint(w.palette).Render(w.baseStatus)
 	}
-	display := "HEAD"
+	display := w.headLabel()
 	if sel := w.Base(); sel != "" {
 		display = sel
 	}

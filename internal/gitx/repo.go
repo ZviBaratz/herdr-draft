@@ -128,11 +128,47 @@ func FetchPrune(ctx context.Context, repoDir string) error {
 	return nil
 }
 
+// ResolveRef resolves ref to a full commit id in repoDir (`git rev-parse
+// --verify <ref>^{commit}`). An unknown ref, or a ref naming something
+// that is not a commit, is an error rather than an empty result.
+//
+// This exists for plan.CleanCheck: the form's base picker reports "" for
+// its HEAD row, and passing that straight through to Disposable produced
+// `git rev-list --count ..HEAD`, which git reads as HEAD..HEAD and
+// therefore counts 0 for every worktree, however many commits it carries.
+// Callers resolve the sentinel against the ORIGIN repo first (resolving it
+// inside the worktree would be equally useless -- its own HEAD is exactly
+// the thing being counted), so the count runs against a commit the
+// worktree can actually be ahead of.
+func ResolveRef(ctx context.Context, repoDir, ref string) (string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return "", fmt.Errorf("resolve ref: empty ref in %s", repoDir)
+	}
+	out, err := runGit(ctx, repoDir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("resolve ref %q: %w", ref, err)
+	}
+	if out == "" {
+		return "", fmt.Errorf("resolve ref %q: no such commit in %s", ref, repoDir)
+	}
+	return out, nil
+}
+
 // Disposable reports whether the worktree at worktreeDir can be safely
 // discarded relative to baseRef: it must have no uncommitted changes and
 // no commits that baseRef doesn't already have. When ok is false, reason
 // explains which check failed.
+//
+// baseRef must name something git can resolve. An empty baseRef is
+// rejected outright rather than quietly becoming `git rev-list --count
+// ..HEAD` -- see ResolveRef's own doc comment for why that shape made this
+// function's second check unfailable for every caller holding nothing but
+// the form's own "" == HEAD sentinel.
 func Disposable(ctx context.Context, worktreeDir, baseRef string) (ok bool, reason string, err error) {
+	if strings.TrimSpace(baseRef) == "" {
+		return false, "", fmt.Errorf("disposable: empty base ref for worktree %s", worktreeDir)
+	}
+
 	status, err := runGit(ctx, worktreeDir, "status", "--porcelain")
 	if err != nil {
 		return false, "", fmt.Errorf("check worktree status: %w", err)

@@ -86,6 +86,22 @@ var (
 // other failure.
 const busyPaneErrorCode = "agent_pane_busy"
 
+// nameTakenErrorCode is the herdr error code for
+// AgentStartError::DuplicateName (herdr:src/app/agents.rs:165 raises it,
+// :266 encodes it): the requested agent name is already in use by a live
+// agent. Unlike busyPaneErrorCode this is not a timing race -- the name is
+// taken and stays taken -- so the fix is a different NAME, not a later
+// attempt with the same one. See startAgentWithDedupe.
+const nameTakenErrorCode = "agent_name_taken"
+
+// maxAgentNameAttempts bounds startAgentWithDedupe: the caller's own name
+// plus eight suffixed alternatives ("-2" through "-9", the two-rune
+// suffixes build.go's maxAgentNameLen already reserves room for). Nine
+// live sessions started from one title is already well past any plausible
+// use; beyond that, failing with herdr's own real error is more honest
+// than looping against a server that keeps saying no.
+const maxAgentNameAttempts = 9
+
 // malformedOpError reports an Op of the given Kind whose request field
 // (Worktree/Workspace/Tab/Split/Agent/Prompt) is nil. Build (build.go)
 // always populates the right field for each Kind it emits, but Execute
@@ -101,6 +117,47 @@ func malformedOpError(kind OpKind) error {
 // error code, so a substring match is the only signal available here.
 func isBusyPaneError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), busyPaneErrorCode)
+}
+
+// isNameTakenError reports whether err's text contains nameTakenErrorCode,
+// by the same substring match (and for the same reason) isBusyPaneError
+// uses: herdrc.CLIRunner surfaces herdr CLI failures as plain text, not as
+// a typed error code.
+func isNameTakenError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), nameTakenErrorCode)
+}
+
+// startAgentWithDedupe runs `herdr agent start` for req and, when herdr
+// rejects the name as already taken, retries with a numeric dedupe suffix
+// -- spec §9's "Name = title slug (deduped; DuplicateName retried with
+// suffix)", the retry plan.AgentName's own two reserved runes were always
+// for and which nothing ever performed. Without it, opening a second
+// session from the same Linear issue (or the same title) failed the whole
+// submit at step 2 -- AFTER the worktree or workspace had already been
+// created, leaving exactly the half-built mess spec §9's keep-or-clean
+// gate exists to clean up.
+//
+// Every other error, including agent_pane_busy, is returned unchanged on
+// the first attempt: busy is retried one level up by retryBusy (with the
+// same name, which is the correct response to a pane whose shell is still
+// starting), and this loop must not swallow it.
+func startAgentWithDedupe(ctx context.Context, r herdrc.Runner, req herdrc.AgentStartReq) error {
+	base := req.Name
+	var err error
+	for attempt := 1; attempt <= maxAgentNameAttempts; attempt++ {
+		if attempt > 1 {
+			req.Name = AgentNameWithSuffix(base, attempt)
+		}
+		err = r.AgentStart(ctx, req)
+		if err == nil || !isNameTakenError(err) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("agent name %q is taken, and so were %d suffixed alternatives: %w",
+		base, maxAgentNameAttempts-1, err)
 }
 
 // retryBusy runs op once and, while it keeps failing with an
@@ -222,7 +279,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 				if req.PaneID == "" && haveCreated {
 					req.PaneID = created.PaneID
 				}
-				err = r.AgentStart(ctx, req)
+				err = startAgentWithDedupe(ctx, r, req)
 			case OpClauthLaunch:
 				paneID := ""
 				if haveCreated {
@@ -297,7 +354,15 @@ func CleanCheck(ctx context.Context, in Input, created herdrc.CreatedTopology) C
 		return CleanDecision{Allowed: true}
 	}
 
-	ok, reason, err := gitx.Disposable(ctx, created.CheckoutPath, in.BaseRef)
+	base, err := resolveBaseRef(ctx, in)
+	if err != nil {
+		return CleanDecision{
+			Allowed: false,
+			Reason:  fmt.Sprintf("could not determine what this worktree branched from: %v", err),
+		}
+	}
+
+	ok, reason, err := gitx.Disposable(ctx, created.CheckoutPath, base)
 	if err != nil {
 		return CleanDecision{
 			Allowed: false,
@@ -308,6 +373,41 @@ func CleanCheck(ctx context.Context, in Input, created herdrc.CreatedTopology) C
 		return CleanDecision{Allowed: false, Reason: reason}
 	}
 	return CleanDecision{Allowed: true}
+}
+
+// resolveBaseRef turns Input.BaseRef into something gitx.Disposable can
+// actually count against.
+//
+// The form's base picker reports "" for its row-0 HEAD entry
+// (WorktreeField.Base()'s own documented "" == HEAD contract), and
+// `herdr worktree create` is likewise called with no --base in that case,
+// branching the new worktree from the ORIGIN repo's HEAD. Handing that ""
+// to gitx.Disposable produced `git rev-list --count ..HEAD`, which git
+// reads as HEAD..HEAD: zero, always, for every worktree -- so the
+// "no commits beyond base" half of spec §9's clean gate never once
+// refused a worktree carrying real work. That was the default case: HEAD
+// is row 0 of the picker, so a user who never touched the base field hit
+// it every time.
+//
+// The sentinel is resolved against Input.ProjectDir -- the repo the
+// worktree was created from -- to the commit its HEAD names now.
+// Disclosed approximation: "now" is when the keep-or-clean prompt is being
+// prepared, seconds after creation, not the instant of creation itself, so
+// a commit landing on the origin repo's HEAD in that window would shift
+// the base. Capturing the commit at creation time instead would mean
+// threading a resolved base through Build, Op, Execute and ExecResult for
+// a race no interactive submit can realistically hit; the trade is
+// deliberate. A non-empty BaseRef (any other picker row) is used as-is:
+// git resolves it in the worktree, which shares the origin repo's object
+// store.
+func resolveBaseRef(ctx context.Context, in Input) (string, error) {
+	if in.BaseRef != "" {
+		return in.BaseRef, nil
+	}
+	if in.ProjectDir == "" {
+		return "", fmt.Errorf("no project directory to resolve HEAD in")
+	}
+	return gitx.ResolveRef(ctx, in.ProjectDir, "HEAD")
 }
 
 // Clean removes the space Execute created for in, once CleanCheck has

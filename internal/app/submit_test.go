@@ -22,6 +22,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -297,9 +298,16 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 		t.Fatalf("runner.calls = %v, want %v", runner.calls, wantCalls)
 	}
 
-	_, finalCmd := m.handleSubmitDone(done)
-	if _, ok := finalCmd().(tea.QuitMsg); !ok {
-		t.Fatalf("handleSubmitDone on full success did not return tea.Quit")
+	// A successful submit now persists spec §12's state before it quits
+	// (finding I2), so the quit arrives one message later: handleSubmitDone
+	// returns the write, and statePersistedMsg is what ends the program.
+	m2, finalCmd := m.handleSubmitDone(done)
+	if _, ok := finalCmd().(statePersistedMsg); !ok {
+		t.Fatalf("handleSubmitDone on full success did not persist state first")
+	}
+	_, quitCmd := m2.updateSubmitting(statePersistedMsg{})
+	if _, ok := quitCmd().(tea.QuitMsg); !ok {
+		t.Fatalf("statePersistedMsg did not quit after a fully successful submit")
 	}
 }
 
@@ -878,4 +886,190 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return true
+}
+
+// --- finding I2: the state layer is finally called ------------------------
+
+// TestSubmit_PersistsStateAndFeedsItBackIntoTheNextFormOpen pins the hook
+// the whole state layer was missing: config.SaveState and
+// State.TouchRecent were built and unit-tested in Task 10 and then called
+// from nowhere, so recents.json and last-used.json were never written --
+// spec §6 field 2's recents candidate source was permanently empty, and
+// State.LastKind/LastPlacement/LastWorktree were dead on both sides.
+//
+// The test drives both halves: a successful submit writes the state, and a
+// fresh form-open reading that state back defaults to it.
+func TestSubmit_PersistsStateAndFeedsItBackIntoTheNextFormOpen(t *testing.T) {
+	m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo"},
+		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude", "codex"}}},
+	})
+	stateDir := m.stateDir
+
+	// Nothing on disk before a submit succeeds.
+	if before, _ := config.LoadState(stateDir); len(before.Recents) != 0 || before.LastKind != "" {
+		t.Fatalf("state dir was not empty before the submit: %+v", before)
+	}
+
+	m.submitInput = plan.Input{
+		ProjectDir:  "/repo/project",
+		Title:       "Fix pagination",
+		AgentKind:   "codex",
+		Placement:   plan.PlacementTabHere,
+		UseWorktree: true,
+	}
+	_, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{FailedIndex: -1}})
+	if _, ok := cmd().(statePersistedMsg); !ok {
+		t.Fatal("handleSubmitDone on success did not run the state write")
+	}
+
+	saved, _ := config.LoadState(stateDir)
+	if len(saved.Recents) != 1 || saved.Recents[0] != "/repo/project" {
+		t.Fatalf("Recents = %v, want the submitted project directory first", saved.Recents)
+	}
+	if saved.LastKind != "codex" {
+		t.Errorf("LastKind = %q, want %q", saved.LastKind, "codex")
+	}
+	if saved.LastPlacement != "tab-here" {
+		t.Errorf("LastPlacement = %q, want %q", saved.LastPlacement, "tab-here")
+	}
+	if saved.LastWorktree == nil || !*saved.LastWorktree {
+		t.Errorf("LastWorktree = %v, want a recorded true", saved.LastWorktree)
+	}
+
+	// The read side: a fresh form-open defaults to what was just recorded.
+	next := newTestModel(t, testSetup{
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo"},
+		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude", "codex"}}},
+		State:  saved,
+	})
+	if got := next.agent.Value(); got != "codex" {
+		t.Errorf("a fresh form's agent kind = %q, want the last-used %q", got, "codex")
+	}
+	if got := next.placement.Value(); got != plan.PlacementTabHere {
+		t.Errorf("a fresh form's placement = %v, want the last-used tab-here", got)
+	}
+	if !next.worktreeDefaultOn {
+		t.Error("a fresh form's worktree default = false, want the last-used true")
+	}
+	// The recents' own destination: New feeds State.Recents into
+	// buildDirCandidates, which is DirField's entire candidate pool (spec
+	// §6 field 2's third candidate source). That source was permanently
+	// empty for as long as nothing wrote recents.json.
+	candidates := buildDirCandidates(next.ctx, next.workspaces, next.state.Recents)
+	if !containsString(candidates, "/repo/project") {
+		t.Errorf("a fresh form's project candidates = %v, want the recent %q among them",
+			candidates, "/repo/project")
+	}
+}
+
+// TestSubmit_FailedSubmitPersistsNothing guards the other side: a failed
+// submit says nothing about what the user wants next time, so it must not
+// overwrite the state a previous successful one recorded.
+func TestSubmit_FailedSubmitPersistsNothing(t *testing.T) {
+	m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.submitInput = plan.Input{ProjectDir: "/repo/project", AgentKind: "codex"}
+
+	created := herdrc.CreatedTopology{WorkspaceID: "w1", PaneID: "w1:p1"}
+	_, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{FailedIndex: 1, Created: &created}})
+	if cmd != nil {
+		// Whatever the failure path returns, it must not be the state write.
+		if _, ok := cmd().(statePersistedMsg); ok {
+			t.Fatal("a failed submit persisted last-used state")
+		}
+	}
+
+	saved, _ := config.LoadState(m.stateDir)
+	if len(saved.Recents) != 0 || saved.LastKind != "" {
+		t.Fatalf("a failed submit wrote state: %+v", saved)
+	}
+}
+
+func containsString(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+// --- finding I6: an unsent prompt survives the popup ---------------------
+
+// TestSubmit_UnsentPromptIsSavedForManualPaste pins spec §9 step 3's
+// "prompt text surfaced back to the user for manual paste" as something
+// that outlives the popup. It used to be rendered inline through fitLine,
+// whose Inline(true) strips newlines and whose MaxWidth hard-clips to the
+// popup width -- so a multi-paragraph Linear-seeded prompt became one
+// glued, truncated line, and then the popup closed and it was gone.
+func TestSubmit_UnsentPromptIsSavedForManualPaste(t *testing.T) {
+	m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.submitView = form.NewSubmitView(m.palette)
+	m.submitting = true
+
+	prompt := "Work on ENG-1: Fix login\n\nhttps://linear.app/x/ENG-1\n\nLong description here."
+	created := herdrc.CreatedTopology{WorkspaceID: "w1", PaneID: "w1:p1"}
+	m.submitInput = plan.Input{ProjectDir: "/repo", Prompt: prompt}
+
+	m2, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{
+		FailedIndex: 2,
+		Created:     &created,
+		PromptText:  prompt,
+	}})
+	m = m2
+	if cmd == nil {
+		t.Fatal("a prompt-step failure returned no follow-up Cmd at all")
+	}
+
+	saved := findPromptSavedMsg(t, cmd)
+	if saved.err != nil {
+		t.Fatalf("saving the unsent prompt failed: %v", saved.err)
+	}
+	body, err := os.ReadFile(saved.path)
+	if err != nil {
+		t.Fatalf("read the saved prompt at %s: %v", saved.path, err)
+	}
+	if string(body) != prompt {
+		t.Fatalf("saved prompt = %q, want the full text including its newlines %q", string(body), prompt)
+	}
+
+	// The keep-or-clean gate is what actually puts the failure prompt on
+	// screen (handleCleanCheckResult -> SubmitView.SetFailure), so drive it
+	// before rendering -- the recovery line lives inside that prompt.
+	result := plan.ExecResult{FailedIndex: 2, Created: &created, PromptText: prompt}
+	m3, _ := m.handleCleanCheckResult(cleanCheckMsg{result: result, decision: plan.CleanDecision{Allowed: true}})
+	m4, _ := m3.handlePromptSaved(saved)
+	// The rendered path itself is pinned at the view layer
+	// (TestSubmitView_UnsentPromptSurfacedAsARecoverablePath, with a short
+	// path a popup width can hold); here it is enough that the failure view
+	// tells the user the prompt was kept rather than lost, and that the
+	// prompt's own body is not pasted into the frame.
+	frame := ansi.Strip(m4.submitView.ViewAt(80, 24))
+	if !strings.Contains(frame, "prompt not sent") {
+		t.Errorf("the failure view does not mention the unsent prompt:\n%s", frame)
+	}
+	if strings.Contains(frame, "Long description here.") {
+		t.Errorf("the failure view pasted the prompt body into the frame:\n%s", frame)
+	}
+}
+
+// findPromptSavedMsg runs cmd (a Cmd or a tea.BatchMsg of them) and returns
+// the promptSavedMsg it produced.
+func findPromptSavedMsg(t *testing.T, cmd tea.Cmd) promptSavedMsg {
+	t.Helper()
+	switch msg := cmd().(type) {
+	case promptSavedMsg:
+		return msg
+	case tea.BatchMsg:
+		for _, c := range msg {
+			if c == nil {
+				continue
+			}
+			if got, ok := c().(promptSavedMsg); ok {
+				return got
+			}
+		}
+	}
+	t.Fatal("no promptSavedMsg was produced for a failed prompt step")
+	return promptSavedMsg{}
 }

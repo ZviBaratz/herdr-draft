@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -68,10 +70,17 @@ type fakeGit struct {
 	dirExists, isGitRepo, branchExists bool
 	listBranchesResult                 []string
 	listBranchesErr                    error
+	currentBranchResult                string
+	currentBranchErr                   error
 	fetchPruneErr                      error
 
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
+	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
+	// dirsSeen records every directory path handed to a git/filesystem
+	// call, so a test can assert what the app layer actually passed
+	// through (e.g. that a "~/..." project directory was expanded first).
+	dirsSeen []string
 }
 
 var _ gitSource = (*fakeGit)(nil)
@@ -80,21 +89,30 @@ func newFakeGit() *fakeGit {
 	return &fakeGit{dirExists: true, isGitRepo: true}
 }
 
-func (g *fakeGit) DirExists(string) bool {
+func (g *fakeGit) DirExists(dir string) bool {
 	g.dirExistsCalls++
+	g.dirsSeen = append(g.dirsSeen, dir)
 	return g.dirExists
 }
-func (g *fakeGit) IsGitRepo(string) bool {
+func (g *fakeGit) IsGitRepo(dir string) bool {
 	g.isGitRepoCalls++
+	g.dirsSeen = append(g.dirsSeen, dir)
 	return g.isGitRepo
 }
-func (g *fakeGit) ListBranches(context.Context, string, int) ([]string, error) {
+func (g *fakeGit) ListBranches(_ context.Context, dir string, _ int) ([]string, error) {
 	g.listBranchesCalls++
+	g.dirsSeen = append(g.dirsSeen, dir)
 	return g.listBranchesResult, g.listBranchesErr
 }
-func (g *fakeGit) BranchExists(context.Context, string, string) (bool, error) {
+func (g *fakeGit) BranchExists(_ context.Context, dir, _ string) (bool, error) {
 	g.branchExistsCalls++
+	g.dirsSeen = append(g.dirsSeen, dir)
 	return g.branchExists, nil
+}
+func (g *fakeGit) CurrentBranch(_ context.Context, dir string) (string, error) {
+	g.currentBranchCalls++
+	g.dirsSeen = append(g.dirsSeen, dir)
+	return g.currentBranchResult, g.currentBranchErr
 }
 func (g *fakeGit) FetchPrune(_ context.Context, dir string) error {
 	g.fetchPruneCalls = append(g.fetchPruneCalls, dir)
@@ -1179,5 +1197,160 @@ func TestReactToChanges_AccountFocusReloadsClauth(t *testing.T) {
 		if _, ok := c().(clauthResultMsg); ok {
 			t.Fatalf("a second reactToChanges pass with no new focus change scheduled another clauth reload")
 		}
+	}
+}
+
+// --- finding I5: a broken [linear] api_key_cmd must say so ---------------
+
+// TestBootstrap_BrokenLinearKeyDegradesWithAReason pins spec §13's
+// "degrade ... with a reason" for the case that had no reason anywhere:
+// linear.ResolveAPIKey deliberately hard-errors when the user's own chosen
+// key source fails, and Bootstrap used to discard that error and treat it
+// as "Linear is not configured" -- so a typo in api_key_cmd made the whole
+// Linear field vanish, silently.
+func TestBootstrap_BrokenLinearKeyDegradesWithAReason(t *testing.T) {
+	configDir := t.TempDir()
+	cfg := "[linear]\napi_key_cmd = [\"/nonexistent/definitely-not-a-real-binary\"]\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	env := Env{ContextJSON: validContextJSON(), ConfigDir: configDir, StateDir: t.TempDir()}
+
+	m, err := Bootstrap(env, &fakeRunner{}, nil, newFakeGit(), noSleep)
+	if err != nil {
+		t.Fatalf("Bootstrap with a broken api_key_cmd refused outright, want it to degrade: %v", err)
+	}
+	if m.linearUnavailable == "" {
+		t.Fatal("Model.linearUnavailable is empty after a failed api_key_cmd, want the reason recorded")
+	}
+	if m.deps.Linear != nil {
+		t.Fatal("Deps.Linear is non-nil despite an unresolvable key")
+	}
+	if m.issue == nil {
+		t.Fatal("Model.issue is nil after a failed api_key_cmd -- the field must be present-but-inert, not absent")
+	}
+	if m.issue.Enabled() {
+		t.Error("the Linear field is enabled despite an unresolvable key, want present-but-inert")
+	}
+
+	// The user must be able to see WHY, on screen, not just in a field
+	// that quietly stopped working.
+	m.form.FocusByID("dir") // the inert Linear field cannot itself take focus
+	frame := ansi.Strip(m.form.ViewAt(120, 40))
+	if !strings.Contains(frame, "unavailable") {
+		t.Errorf("the rendered form does not mark Linear unavailable:\n%s", frame)
+	}
+	if !strings.Contains(frame, "api_key_cmd") {
+		t.Errorf("the rendered form does not say why Linear is unavailable:\n%s", frame)
+	}
+}
+
+// TestNew_LinearUnconfiguredStillRendersNoField guards the other half of
+// the same distinction: absent is still absent. Spec §6 is explicit that a
+// statically-unavailable field is "simply not rendered"; only the
+// configured-but-broken case became a visible inert one.
+func TestNew_LinearUnconfiguredStillRendersNoField(t *testing.T) {
+	m := newTestModel(t, testSetup{})
+	if m.issue != nil {
+		t.Fatal("Model.issue is non-nil with Linear neither configured nor broken, want nil")
+	}
+}
+
+// --- finding I3: tilde expansion at the subprocess boundary --------------
+
+// TestTildeProjectDirIsExpandedBeforeItLeavesThePlugin pins that a "~/..."
+// project directory is expanded before it reaches git or herdr, while the
+// field itself keeps the raw text the user typed (DirField.SetValidity
+// keys its inline marker on it).
+//
+// `herdr worktree create --cwd` expands a leading "~" server-side, but
+// `herdr workspace create --cwd` and `herdr pane split --cwd` do not: an
+// unexpanded path would have produced a workspace rooted at a directory
+// literally named "~".
+func TestTildeProjectDirIsExpandedBeforeItLeavesThePlugin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wantPath := filepath.Join(home, "Projects", "thing")
+
+	git := newFakeGit()
+	m := newTestModel(t, testSetup{Git: git})
+	m.dir.SetCandidates(2, []string{"~/Projects/thing"})
+
+	cmd := m.scheduleDirCheck(m.dir.Value())
+	debounce := cmd().(dirDebounceMsg)
+	if debounce.req.key != "~/Projects/thing" {
+		t.Fatalf("the debounce request key = %q, want the RAW typed text (DirField keys its own marker on it)", debounce.req.key)
+	}
+	m2, checkCmd := m.handleDirDebounce(debounce)
+	m = m2
+	checkCmd()
+
+	found := false
+	for _, seen := range git.dirsSeen {
+		if seen == wantPath {
+			found = true
+		}
+		if strings.HasPrefix(seen, "~") {
+			t.Errorf("an unexpanded path %q reached the git/filesystem layer", seen)
+		}
+	}
+	if !found {
+		t.Fatalf("git saw %v, want the expanded %q", git.dirsSeen, wantPath)
+	}
+
+	m.title.SetTitle("thing", false)
+	if got := m.buildPlanInput().ProjectDir; got != wantPath {
+		t.Fatalf("plan.Input.ProjectDir = %q, want the expanded %q -- this is the value that becomes `herdr workspace create --cwd`", got, wantPath)
+	}
+}
+
+// --- minor M4: the base picker's HEAD row names the current branch ------
+
+// TestBaseListNamesTheCurrentBranchOnTheHeadRow pins spec §6 field 4's own
+// "row 0 `HEAD (<current branch>)`", which read a bare "HEAD" because
+// gitx.CurrentBranch -- written and tested in Task 4 -- had no caller.
+func TestBaseListNamesTheCurrentBranchOnTheHeadRow(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main", "release/1.4"}
+	git.currentBranchResult = "main"
+	m := newTestModel(t, testSetup{Git: git})
+	m.worktree.SetGitTarget(true)
+	m.worktree.SetOn(true)
+
+	req := request{version: m.baseReqVersion, key: "/repo"}
+	result := m.runBaseCheck(req)().(baseResultMsg)
+	if result.head != "main" {
+		t.Fatalf("baseResultMsg.head = %q, want the current branch %q", result.head, "main")
+	}
+	m2, _ := m.handleBaseResult(result)
+	m = m2
+
+	frame := ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(40)))
+	if !strings.Contains(frame, "HEAD (main)") {
+		t.Errorf("base picker = %q, want its HEAD row to name the current branch", frame)
+	}
+}
+
+// TestBaseListFallsBackToABareHeadOnADetachedHead pins the degradation:
+// gitx.CurrentBranch reports a detached HEAD as an empty name rather than
+// an error, and the row must simply read "HEAD" rather than "HEAD ()".
+func TestBaseListFallsBackToABareHeadOnADetachedHead(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main"}
+	git.currentBranchResult = ""
+	m := newTestModel(t, testSetup{Git: git})
+	m.worktree.SetGitTarget(true)
+	m.worktree.SetOn(true)
+
+	req := request{version: m.baseReqVersion, key: "/repo"}
+	m2, _ := m.handleBaseResult(m.runBaseCheck(req)().(baseResultMsg))
+	m = m2
+
+	frame := ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(40)))
+	if strings.Contains(frame, "HEAD (") {
+		t.Errorf("base picker = %q, want a bare HEAD row on a detached HEAD", frame)
+	}
+	if !strings.Contains(frame, "HEAD") {
+		t.Errorf("base picker = %q, want the HEAD row still present", frame)
 	}
 }

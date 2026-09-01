@@ -28,6 +28,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/pathx"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
@@ -98,6 +99,7 @@ type gitSource interface {
 	IsGitRepo(dir string) bool
 	ListBranches(ctx context.Context, dir string, limit int) ([]string, error)
 	BranchExists(ctx context.Context, dir, name string) (bool, error)
+	CurrentBranch(ctx context.Context, dir string) (string, error)
 	FetchPrune(ctx context.Context, dir string) error
 }
 
@@ -141,6 +143,14 @@ type Setup struct {
 	Workspaces   []herdrc.WorkspaceInfo
 	ClauthStatus clauth.Status
 	LinearCache  []linear.Issue
+	// LinearUnavailable is non-empty when Linear is CONFIGURED but its API
+	// key could not be resolved (a broken [linear] api_key_cmd, or an
+	// inline api_key in a config.toml wider than 0600). Distinct from
+	// Deps.Linear == nil, which means Linear is not configured at all: the
+	// first renders spec §6 field 1's own field present-but-inert carrying
+	// this reason (spec §13, "degrade ... with a reason"), the second
+	// renders no field at all. See Bootstrap.
+	LinearUnavailable string
 }
 
 // Bootstrap performs spec §9's pre-open refusal plus every other piece of
@@ -186,19 +196,30 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 
 	palette := theme.LoadHerdrPalette(cfg.Palette)
 
+	// linear.ResolveAPIKey distinguishes three outcomes, and so does this
+	// (finding I5): a key (Linear works), no key and no error (Linear is
+	// not configured at all -- spec §6 field 1's "absent -> not rendered"),
+	// or an ERROR, which it raises deliberately when the user's own chosen
+	// key source fails: a broken api_key_cmd, or an inline api_key sitting
+	// in a config.toml readable by anyone but its owner. The last case used
+	// to be folded into the second, so a typo in api_key_cmd made the whole
+	// Linear field vanish with nothing anywhere saying why; spec §13
+	// requires it to degrade "with a reason" instead. Either way the plugin
+	// still opens -- an optional integration's misconfiguration never
+	// blocks manual-mode creation.
 	var linearSrc linearSource
 	var linearCache []linear.Issue
-	if key, kerr := linear.ResolveAPIKey(cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, env.ConfigDir); kerr == nil && key != "" {
+	var linearUnavailable string
+	key, kerr := linear.ResolveAPIKey(cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, env.ConfigDir)
+	switch {
+	case kerr != nil:
+		linearUnavailable = linearUnavailableReason(kerr)
+	case key != "":
 		linearSrc = &linear.Client{APIKey: key}
 		if cached, _, cerr := linear.LoadCache(env.StateDir); cerr == nil {
 			linearCache = cached
 		}
 	}
-	// A ResolveAPIKey error (e.g. a broken api_key_cmd) is treated the same
-	// as "no key resolved": the Linear field is simply not rendered (spec
-	// §6 field 1's own "absent -> not rendered" contract), rather than
-	// refusing the whole plugin over an optional integration's
-	// misconfiguration.
 
 	clauthEnabled := true
 	if cfg.Clauth.Enabled != nil {
@@ -213,16 +234,26 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 
 	deps := Deps{Runner: runner, Linear: linearSrc, Clauth: clauthSrc, Git: gitSrc, Clock: clock}
 	return New(Setup{
-		Deps:         deps,
-		Ctx:          ctx,
-		Config:       cfg,
-		State:        state,
-		Palette:      palette,
-		StateDir:     env.StateDir,
-		Workspaces:   workspaces,
-		ClauthStatus: clauthStatus,
-		LinearCache:  linearCache,
+		Deps:              deps,
+		Ctx:               ctx,
+		Config:            cfg,
+		State:             state,
+		Palette:           palette,
+		StateDir:          env.StateDir,
+		Workspaces:        workspaces,
+		ClauthStatus:      clauthStatus,
+		LinearCache:       linearCache,
+		LinearUnavailable: linearUnavailable,
 	}), nil
+}
+
+// linearUnavailableReason turns a linear.ResolveAPIKey error into the
+// short line IssueField.SetUnavailable renders on its hint row. The
+// package's own "resolve linear api key: " prefix is dropped -- the field
+// is already labeled "Issue:" and the user is looking at the Linear field;
+// repeating it costs cells the actual cause needs.
+func linearUnavailableReason(err error) string {
+	return strings.TrimPrefix(err.Error(), "resolve linear api key: ")
 }
 
 // Model is the real tea.Model herdr-draft runs: form.Model plus every
@@ -276,6 +307,12 @@ type Model struct {
 	// it to reseed a rebuilt IssueField without waiting on a fresh Linear
 	// round-trip.
 	linearIssues []linear.Issue
+
+	// linearUnavailable mirrors Setup.LinearUnavailable, kept so
+	// handleClearRequested (spec §6's ⌃R⌃R rebuild) reconstructs the same
+	// inert Linear field rather than silently promoting it back to a
+	// working one.
+	linearUnavailable string
 
 	// linearIssueSelected tracks IssueField's own "none" vs a real
 	// selection (spec §6 field 1: "In Linear mode branchName owns the
@@ -419,6 +456,9 @@ func New(s Setup) Model {
 		workspaces:   s.Workspaces,
 		clauthStatus: s.ClauthStatus,
 		linearIssues: s.LinearCache,
+
+		linearUnavailable: s.LinearUnavailable,
+
 		fetchedRepos: map[string]bool{},
 	}
 
@@ -441,7 +481,16 @@ func New(s Setup) Model {
 	// since a worktree turning on always snaps Placement back to New
 	// space anyway (spec §12's own config.toml comment: "when worktree is
 	// off").
+	// config.toml's own value first, then -- when a previous successful
+	// submit recorded one (spec §12's last-used.json, written by
+	// persistStateCmd) -- the placement the user actually launched with
+	// last time, which overrides it. State.LastPlacement was written by
+	// nobody and read by nobody before the state layer was wired up
+	// (finding I2); this is its read side.
 	if p, ok := placementFromConfigValue(s.Config.DefaultPlacement); ok {
+		m.placement.SetValue(p)
+	}
+	if p, ok := placementFromConfigValue(s.State.LastPlacement); ok {
 		m.placement.SetValue(p)
 	}
 
@@ -455,6 +504,14 @@ func New(s Setup) Model {
 			m.issueItemsVersion++
 			m.issue.SetIssues(m.issueItemsVersion, s.LinearCache)
 		}
+	} else if s.LinearUnavailable != "" {
+		// Configured but broken (finding I5): rendered present-but-inert
+		// with the reason, rather than silently absent -- see
+		// Setup.LinearUnavailable and IssueField.SetUnavailable. No
+		// linearSource exists, so nothing ever schedules a refresh for it
+		// (initCmds below gates on m.issue != nil AND Deps.Linear != nil).
+		m.issue = form.NewIssueField(palette)
+		m.issue.SetUnavailable(s.LinearUnavailable)
 	}
 
 	// Account (spec §6 field 7): rendered only when clauth is enabled AND
@@ -483,6 +540,10 @@ func New(s Setup) Model {
 	// full list stays reachable behind "more…" (AgentField's own doc: it
 	// derives its favorite chips from THIS list's leading entries).
 	m.agent.SetKinds(orderedAgentKinds(s.Config.Agents.Favorites))
+	// ... then the kind the user actually launched with last time, when a
+	// previous successful submit recorded one (spec §12's last-used.json).
+	// A kind no longer in the list is a no-op -- see AgentField.SetKind.
+	m.agent.SetKind(s.State.LastKind)
 
 	// Project (spec §6 field 2): current space's repo root, then the
 	// current workspace cwd, then every open workspace's own worktree
@@ -519,7 +580,7 @@ func New(s Setup) Model {
 	m.syncDerivedInertness()
 
 	m.initCmds = []tea.Cmd{m.scheduleDirCheck(m.lastDir), m.scheduleBaseCheck(m.lastDir)}
-	if m.issue != nil {
+	if m.issue != nil && s.Deps.Linear != nil {
 		m.initCmds = append(m.initCmds, m.refreshLinearCmd())
 	}
 
@@ -757,7 +818,13 @@ func (m Model) accountAuthBlocked() (pin, status string, blocked bool) {
 // blocking condition.
 func (m Model) buildPlanInput() plan.Input {
 	return plan.Input{
-		ProjectDir:       m.dir.Value(),
+		// Expanded here, at the boundary where the project directory stops
+		// being text the user typed and becomes an argument for herdr's CLI
+		// and git (finding I3): `herdr worktree create --cwd` expands a
+		// leading "~" server-side, but `herdr workspace create --cwd` and
+		// `herdr pane split --cwd` do not -- see internal/pathx's own
+		// package doc.
+		ProjectDir:       pathx.ExpandTilde(m.dir.Value()),
 		Title:            m.title.Value(),
 		Branch:           m.worktree.Branch(),
 		BaseRef:          m.worktree.Base(),
@@ -842,6 +909,8 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		Workspaces:   m.workspaces,
 		ClauthStatus: m.clauthStatus,
 		LinearCache:  m.linearIssues,
+
+		LinearUnavailable: m.linearUnavailable,
 	})
 	next, sizeCmd := fresh.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	fresh = next.(Model)
@@ -910,6 +979,23 @@ func (m *Model) syncDerivedInertness() {
 	m.lastWorktreeOn = m.worktree.On()
 	if m.account != nil {
 		m.account.SetAgentIsClaude(m.agent.Value() == claudeKind)
+	}
+}
+
+// placementConfigValue is placementFromConfigValue's inverse: it names a
+// plan.Placement in spec §12's own config.toml vocabulary, for writing
+// into last-used.json (persistStateCmd, async.go). Round-tripping through
+// the SAME vocabulary the config file uses is what lets New apply
+// State.LastPlacement through placementFromConfigValue, with no second
+// serialization format for the same three values.
+func placementConfigValue(p plan.Placement) string {
+	switch p {
+	case plan.PlacementTabHere:
+		return "tab-here"
+	case plan.PlacementSplitHere:
+		return "split-here"
+	default:
+		return "new-space"
 	}
 }
 

@@ -218,3 +218,48 @@ func TestIssueField_NoPanicBeforeSetIssues(t *testing.T) {
 	f.Update(key(tea.KeyUp, 0))
 	_ = f.Selected()
 }
+
+// TestIssueField_UnavailableIsInertAndCarriesTheReason pins spec §13's
+// "degrade ... with a reason" for a Linear integration that is configured
+// but broken (finding I5). Absent Linear is still not rendered at all --
+// that is the app layer's static precondition -- but a broken api_key_cmd
+// used to take the same path, so the field silently vanished with nothing
+// anywhere saying why.
+func TestIssueField_UnavailableIsInertAndCarriesTheReason(t *testing.T) {
+	f := NewIssueField(theme.Default())
+	f.SetIssues(1, sampleIssues())
+
+	if !f.Enabled() {
+		t.Fatal("Enabled() = false for a healthy field, want true")
+	}
+
+	const reason = "run api_key_cmd: exec: \"pass\": executable file not found"
+	f.SetUnavailable(reason)
+
+	if f.Enabled() {
+		t.Error("Enabled() = true while unavailable, want false (present-but-inert, skipped by the focus ring)")
+	}
+
+	frame := ansi.Strip(f.View(70, f.Height(40)))
+	if !strings.Contains(frame, "unavailable") {
+		t.Errorf("View = %q, want the field marked unavailable", frame)
+	}
+	if !strings.Contains(frame, "api_key_cmd") {
+		t.Errorf("View = %q, want the reason rendered", frame)
+	}
+	// A field that cannot reach Linear must not offer issues to pick.
+	if strings.Contains(frame, "ENG-1") {
+		t.Errorf("View = %q, want no candidate rows while unavailable", frame)
+	}
+	// Even focused (a click can still land on an inert section), the
+	// picker stays out of the way.
+	f.Focus()
+	if frame := ansi.Strip(f.View(70, f.Height(40))); strings.Contains(frame, "ENG-1") {
+		t.Errorf("View while focused = %q, want no candidate rows while unavailable", frame)
+	}
+
+	f.SetUnavailable("")
+	if !f.Enabled() {
+		t.Error("Enabled() = false after clearing the reason, want true")
+	}
+}

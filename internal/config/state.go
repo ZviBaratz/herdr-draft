@@ -121,6 +121,13 @@ func loadLastUsed(path string) (lastUsedOnDisk, bool) {
 // $stateDir/last-used.json, overwriting whatever was there. Unlike
 // LoadState, a write failure here is a real error -- there is no loss-
 // tolerant fallback for a save the caller explicitly asked for.
+//
+// Both files are written atomically (a temp file in the same directory,
+// then a rename), so a reader never sees a partial file and an interrupted
+// write leaves the previous contents intact. LoadState would discard a
+// truncated file silently, per spec §12's loss-tolerance rule -- which is
+// exactly why it is worth avoiding: the user would lose their whole
+// recents list to a crash mid-write with no error anywhere to explain it.
 func SaveState(stateDir string, st State) error {
 	recents := st.Recents
 	if recents == nil {
@@ -130,9 +137,8 @@ func SaveState(stateDir string, st State) error {
 	if err != nil {
 		return fmt.Errorf("save state: encode recents: %w", err)
 	}
-	path := filepath.Join(stateDir, recentsFileName)
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		return fmt.Errorf("save state: write %s: %w", path, err)
+	if err := writeFileAtomic(filepath.Join(stateDir, recentsFileName), b); err != nil {
+		return fmt.Errorf("save state: %w", err)
 	}
 
 	lu := lastUsedOnDisk{
@@ -144,10 +150,43 @@ func SaveState(stateDir string, st State) error {
 	if err != nil {
 		return fmt.Errorf("save state: encode last-used: %w", err)
 	}
-	path = filepath.Join(stateDir, lastUsedFileName)
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		return fmt.Errorf("save state: write %s: %w", path, err)
+	if err := writeFileAtomic(filepath.Join(stateDir, lastUsedFileName), b); err != nil {
+		return fmt.Errorf("save state: %w", err)
 	}
 
+	return nil
+}
+
+// writeFileAtomic writes data to path via a temp file in the same
+// directory followed by a rename. The temp file is created with
+// os.CreateTemp's own 0600 mode, which the renamed file inherits --
+// matching the permissions the state files were previously written with
+// directly.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file in %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup: a no-op once the rename below has succeeded,
+	// and the thing that keeps a failure anywhere in between from
+	// littering the state directory.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write %s: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", tmpName, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename %s to %s: %w", tmpName, path, err)
+	}
 	return nil
 }

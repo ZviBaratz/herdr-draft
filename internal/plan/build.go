@@ -7,6 +7,7 @@ package plan
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -278,6 +279,48 @@ func AgentName(title string) string {
 		return withAgentNamePrefix("")
 	}
 	return clamped
+}
+
+// maxHerdrAgentNameLen is the longest name herdr's own agent-name pattern
+// accepts: [a-z][a-z0-9_-]{0,31}, 32 runes in total
+// (agent-automation.mdx:38).
+const maxHerdrAgentNameLen = 32
+
+// AgentNameWithSuffix returns name with a numeric dedupe suffix appended
+// -- spec §9's "Name = title slug (deduped; DuplicateName retried with
+// suffix)". maxAgentNameLen above has always reserved two runes for
+// exactly this, but nothing ever appended one: herdr answers a colliding
+// name with error code agent_name_taken
+// (herdr:src/app/agents.rs:165,266), which is NOT agent_pane_busy, so
+// exec.go's busy retry passed it straight through and the whole submit
+// failed at step 2 -- after the worktree/workspace had already been
+// created. exec.go's startAgentWithDedupe is the caller this function
+// exists for.
+//
+// The result always stays inside herdr's own [a-z][a-z0-9_-]{0,31}: the
+// base name is trimmed (and any trailing "-"/"_" that trim exposes
+// removed, matching AgentName's own rule) whenever the suffix would push
+// it past 32 runes, so even a suffix wider than the two runes
+// maxAgentNameLen reserved stays legal.
+func AgentNameWithSuffix(name string, n int) string {
+	suffix := "-" + strconv.Itoa(n)
+
+	runes := []rune(name)
+	if room := maxHerdrAgentNameLen - len([]rune(suffix)); len(runes) > room {
+		if room < 1 {
+			room = 1
+		}
+		runes = runes[:room]
+	}
+
+	trimmed := strings.TrimRight(string(runes), "-_")
+	if trimmed == "" {
+		// Unreachable for any AgentName output (which always begins with a
+		// lowercase letter TrimRight never removes) -- a defensive fallback
+		// rather than ever returning a bare, regex-invalid suffix.
+		trimmed = withAgentNamePrefix("")
+	}
+	return trimmed + suffix
 }
 
 // withAgentNamePrefix prefixes slug with "s-" when its first rune is not a

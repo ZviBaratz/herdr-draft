@@ -301,3 +301,67 @@ func TestState_TouchRecent_MostRecentFirstDedupeCappedAt20(t *testing.T) {
 		}
 	}
 }
+
+// TestSaveState_IsAtomicAndLeavesNoDebris pins the atomic write (finding
+// I2): each state file is written via a temp file in the same directory
+// and renamed, so a reader never observes a partial file and an
+// interrupted write leaves the previous contents intact. LoadState would
+// discard a truncated file silently (spec §12's loss-tolerance rule),
+// which is exactly why it is worth avoiding -- the user would lose their
+// whole recents list to a crash mid-write with nothing to explain it.
+//
+// The observable consequences are that no temp file is left behind, and
+// that an overwrite replaces the file's contents completely rather than
+// appending to or partially overwriting them.
+func TestSaveState_IsAtomicAndLeavesNoDebris(t *testing.T) {
+	dir := t.TempDir()
+
+	first := State{Recents: []string{"/a/very/long/original/path", "/second"}, LastKind: "codex"}
+	if err := SaveState(dir, first); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	// A strictly shorter second write: a non-atomic implementation that
+	// truncated in place and failed midway would leave a tail of the first.
+	second := State{Recents: []string{"/b"}, LastKind: "pi"}
+	if err := SaveState(dir, second); err != nil {
+		t.Fatalf("SaveState (overwrite): %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read state dir: %v", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("SaveState left a temp file behind: %s", e.Name())
+		}
+	}
+	if len(names) != 2 {
+		t.Fatalf("state dir contains %v, want exactly recents.json and last-used.json", names)
+	}
+
+	got, _ := LoadState(dir)
+	if len(got.Recents) != 1 || got.Recents[0] != "/b" {
+		t.Fatalf("Recents after overwrite = %v, want exactly the second write's %v", got.Recents, second.Recents)
+	}
+	if got.LastKind != "pi" {
+		t.Fatalf("LastKind after overwrite = %q, want %q", got.LastKind, "pi")
+	}
+}
+
+// TestSaveState_CreatesTheStateDirIfMissing pins that a first-ever save
+// works: $HERDR_PLUGIN_STATE_DIR may not exist yet when the plugin's very
+// first submit succeeds.
+func TestSaveState_CreatesTheStateDirIfMissing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state", "nested")
+
+	if err := SaveState(dir, State{Recents: []string{"/x"}}); err != nil {
+		t.Fatalf("SaveState into a missing directory: %v", err)
+	}
+	got, _ := LoadState(dir)
+	if len(got.Recents) != 1 || got.Recents[0] != "/x" {
+		t.Fatalf("Recents = %v, want the saved entry", got.Recents)
+	}
+}
