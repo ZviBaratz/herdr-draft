@@ -184,3 +184,28 @@ func TestListSubdirsOnAnUnreadablePathIsEmpty(t *testing.T) {
 		t.Errorf("ListSubdirs(a file) = %v, want empty", got)
 	}
 }
+
+// TestListSubdirsReturnsTheAlphabeticallyFirstLimit pins that the sort
+// happens BEFORE the truncation: bounding the scan first and sorting the
+// survivors returns an arbitrary readdir-order window, so which
+// directories a user can see would depend on the filesystem's iteration
+// order rather than on their names.
+func TestListSubdirsReturnsTheAlphabeticallyFirstLimit(t *testing.T) {
+	root := t.TempDir()
+	for i := range 60 {
+		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("d%03d", i)), 0o755); err != nil {
+			t.Fatalf("Mkdir: %v", err)
+		}
+	}
+
+	got := ListSubdirs(root, 50)
+	if len(got) != 50 {
+		t.Fatalf("ListSubdirs returned %d entries, want 50", len(got))
+	}
+	for i, p := range got {
+		want := filepath.Join(root, fmt.Sprintf("d%03d", i))
+		if p != want {
+			t.Fatalf("entry %d = %q, want %q (the alphabetically first 50)", i, p, want)
+		}
+	}
+}

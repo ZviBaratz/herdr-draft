@@ -228,12 +228,25 @@ func (m Model) handleBrowseDebounce(msg browseDebounceMsg) (Model, tea.Cmd) {
 // directory must clear the previous one's children rather than leave them
 // on screen under a path they do not belong to -- DirField's own
 // literal-path fallback row is what remains selectable.
+//
+// It then runs reactToChanges, which every OTHER value-mutating handler in
+// this package also does (handleIssueChosen explicitly, handleDirResult by
+// hand for the one field it moves). This is the only source that moves
+// DirField's SELECTION without a keystroke behind it: installing a pool
+// goes through widgets.Picker.SetItems, which re-anchors by item ID and
+// falls back to the numeric cursor position when the previous selection is
+// no longer on offer -- so Value() can change here. Messages handled in
+// this switch bypass routeToForm, so without this call nothing would
+// notice: the (invalid)/(direct) marker, WorktreeField's git-target gate,
+// the base-ref list and the submit-blocking dirInvalid flag would all keep
+// describing the previous selection, and a submit in that window would
+// hand herdr a directory nothing had ever checked.
 func (m Model) handleBrowseResult(msg browseResultMsg) (Model, tea.Cmd) {
 	if msg.req.version != m.browseReqVersion {
 		return m, nil // a newer request landed while this one was in flight
 	}
 	m.supplyDirCandidates(msg.entries)
-	return m, nil
+	return m, tea.Batch(m.reactToChanges()...)
 }
 
 // --- base-ref list + once-per-repo git fetch --prune (spec §6 field 4) --

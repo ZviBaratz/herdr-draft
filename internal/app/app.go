@@ -345,8 +345,10 @@ type Model struct {
 	projectCandidates []string
 
 	// browseDir is the RAW (un-expanded) directory portion of the typed
-	// text whose listing DirField currently holds, or "" when the field is
-	// in fragment mode. It is the memoization atrium's DirectoryPicker got
+	// text whose listing DirField currently holds -- or is waiting for,
+	// during the debounce-and-read window, when it holds no listing at all
+	// (reactToTypedDir empties the pool on every parent change) -- or "" when
+	// the field is in fragment mode. It is the memoization atrium's DirectoryPicker got
 	// from its own cachedDir: typing WITHIN one directory re-ranks the
 	// listing already on hand instead of re-reading it, and only a change
 	// of parent schedules a fresh one.
@@ -887,12 +889,15 @@ func (m Model) buildPlanInput() plan.Input {
 		Ctx:              m.ctx,
 		DetectionTimeout: time.Duration(m.cfg.Timeouts.DetectionMS) * time.Millisecond,
 		PromptTimeout:    time.Duration(m.cfg.Timeouts.PromptWaitMS) * time.Millisecond,
-		// TrustRepository has no config.toml key today: spec §9 mentions
-		// "--trust-repository per config" but internal/config.Config never
-		// gained a matching field across Tasks 1-20 (config.go's own
-		// struct has no trust_repository/[worktree] table at all). Always
-		// false until that config gap is filled -- flagged in this task's
-		// own report as a real, disclosed limitation, not invented here.
+		// TrustRepository is blocked upstream, not merely unwired -- see
+		// spec §9's note and the README's known limitations. herdr added
+		// `--trust-repository` to `worktree create` in commit 095f1337
+		// (#3344), which is on master and in no release; herdr 0.8.2, this
+		// plugin's min_herdr_version, answers `unknown option:
+		// --trust-repository`, so a config key feeding this field would
+		// break worktree creation for anyone who set it. Wire it -- key,
+		// this field, and a min_herdr_version bump together -- once a herdr
+		// release contains that commit.
 		TrustRepository: false,
 	}
 }
@@ -1032,10 +1037,19 @@ func (m *Model) reactToChanges() []tea.Cmd {
 //     unrelated project directories ranked by basename during the ~150ms
 //     before the first listing lands. What the user sees meanwhile is the
 //     literal-path fallback row alone, which is the honest answer.
-//   - path -> path, same parent: nothing. Typing "he" after "~/Projects/"
-//     re-ranks the listing DirField already holds -- atrium's own
-//     per-directory memoization, expressed here as a diff on browseDir
-//     rather than a cache inside the field.
+//   - path -> path, a DIFFERENT parent: drop the pool for the same reason,
+//     and this one matters more. The previous directory's children look
+//     like plausible children of what was just typed, and DirField would
+//     not merely display them: it would SELECT one (Value() feeds the
+//     submitted project directory) and Tab-complete from them, assembling
+//     a path out of a directory that was never listed. atrium cannot
+//     exhibit this -- its read is synchronous and its memo is keyed on the
+//     current directory -- so the window is a consequence of making the
+//     listing asynchronous, and it closes here.
+//   - path -> path, the SAME parent: nothing. Typing "he" after
+//     "~/Projects/" re-ranks the listing DirField already holds --
+//     atrium's own per-directory memoization, expressed here as a diff on
+//     browseDir rather than a cache inside the field.
 //   - path -> fragment: put the project pool back, and invalidate any
 //     listing still in flight (bumping the browse counter) so a slow
 //     os.ReadDir cannot land afterwards and clobber it.
@@ -1054,11 +1068,8 @@ func (m *Model) reactToTypedDir(typed string) []tea.Cmd {
 	if m.browseDir == dir {
 		return nil
 	}
-	entering := m.browseDir == ""
 	m.browseDir = dir
-	if entering {
-		m.supplyDirCandidates(nil)
-	}
+	m.supplyDirCandidates(nil)
 	return []tea.Cmd{m.scheduleBrowse(dir)}
 }
 

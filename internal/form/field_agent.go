@@ -337,6 +337,16 @@ func (f *AgentField) SetKind(kind string) {
 	}
 
 	if f.chips.SelectID(kind) {
+		// Collapse: a kind with its own chip is fully described by the chip
+		// row, and an expanded list left over from an EARLIER SetKind call
+		// would highlight a kind that is no longer the selected one --
+		// while also swallowing Left/Right, since those belong to the chip
+		// row only while the list is collapsed (see Update). Seeding
+		// callers may legitimately call SetKind more than once (app.New
+		// applies `[agents] default`, then last-used), so this method has
+		// to leave the field coherent on its own rather than relying on
+		// SetKinds having just reset the flag.
+		f.expanded = false
 		f.syncConfirmedFromChip()
 		return
 	}

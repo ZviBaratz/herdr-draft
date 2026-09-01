@@ -1778,3 +1778,158 @@ func TestAgentKindSeedingPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// TestAgentSeedingLeavesTheFieldCoherent covers the combination the
+// precedence table above misses: a `[agents] default` outside the
+// favorites row followed by a favorite last-used kind. The two SetKind
+// calls used to leave the "more…" list expanded on the default while the
+// chip row showed the last-used kind, so the chip keys were inert and the
+// first Down jumped to an unrelated kind.
+func TestAgentSeedingLeavesTheFieldCoherent(t *testing.T) {
+	m := newTestModel(t, testSetup{
+		Config: config.Config{Agents: config.AgentsConfig{
+			Favorites: []string{"claude", "codex"},
+			Default:   "gemini",
+		}},
+		State: config.State{LastKind: "claude"},
+	})
+
+	if got := m.agent.Value(); got != "claude" {
+		t.Fatalf("agent kind = %q, want %q (last-used wins)", got, "claude")
+	}
+
+	m.agent.Focus()
+	m.agent.Update(key(tea.KeyRight, 0))
+	if got := m.agent.Value(); got != "codex" {
+		t.Errorf("Right moved to %q, want %q -- the chip row is inert while the more… list is expanded", got, "codex")
+	}
+}
+
+// pumpAsync runs cmds the app itself produced and feeds every async
+// message they yield back through Update, until the pipelines settle.
+// Nothing is fabricated: a check the app never scheduled never runs, which
+// is the whole point when the assertion is "did the app notice?". Blink
+// timers and other unrelated cmds are dropped rather than run.
+func pumpAsync(t *testing.T, m Model, cmds []tea.Cmd) Model {
+	t.Helper()
+	queue := append([]tea.Cmd(nil), cmds...)
+	for range 32 {
+		if len(queue) == 0 {
+			return m
+		}
+		cmd := queue[0]
+		queue = queue[1:]
+		if cmd == nil {
+			continue
+		}
+		switch msg := cmd().(type) {
+		case dirDebounceMsg, dirResultMsg, baseDebounceMsg, baseResultMsg,
+			browseDebounceMsg, browseResultMsg:
+			next, out := m.Update(msg)
+			m = next.(Model)
+			queue = append(queue, out)
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		}
+	}
+	t.Fatalf("async pipelines did not settle")
+	return m
+}
+
+// TestSelectionStaysValidatedAcrossPoolChanges pins the consequence of
+// the browse source being the first one that moves DirField's SELECTION
+// on its own: every pool swap goes through widgets.Picker.SetItems, which
+// re-anchors the cursor by ID and falls back to the numeric position when
+// the previous selection is gone -- so Value() can change with no
+// keystroke behind it. reactToChanges is the only thing in this package
+// that notices a value change, and message handlers that bypass
+// routeToForm never run it. Without that, the validity marker, the
+// worktree git-target gate, the base-ref list and the submit-blocking
+// dirInvalid flag all keep describing a directory the user has left, and
+// submit can hand herdr a path nothing ever checked.
+func TestSelectionStaysValidatedAcrossPoolChanges(t *testing.T) {
+	m, git := browseModel(t)
+
+	assertValidated := func(step string) {
+		t.Helper()
+		selected := m.dir.Value()
+		if m.lastDir != selected {
+			t.Fatalf("%s: lastDir = %q but the selection is %q -- the app never noticed it moved", step, m.lastDir, selected)
+		}
+		for _, dir := range git.dirsSeen {
+			if dir == selected {
+				return
+			}
+		}
+		t.Errorf("%s: %q was never handed to DirExists/IsGitRepo; dirs seen: %v", step, selected, git.dirsSeen)
+	}
+
+	typeDir(&m, "~/Projects/")
+	m = pumpAsync(t, m, m.reactToChanges())
+	assertValidated("after the first listing")
+
+	// Move onto a real browsed child, then leave path mode: restoring the
+	// project pool drops that child, so the picker re-anchors onto a
+	// project the validity pipeline has never been asked about.
+	m.dir.Update(key(tea.KeyDown, 0))
+	m = pumpAsync(t, m, m.reactToChanges())
+	assertValidated("after selecting a browsed child")
+
+	backspaceDir(&m, len("~/Projects/"))
+	typeDir(&m, "repo")
+	m = pumpAsync(t, m, m.reactToChanges())
+	assertValidated("after leaving path mode")
+
+	// A listing that DISPLACES the selection: the picker cannot re-anchor
+	// by ID, falls back to the numeric position, and Value() moves with no
+	// keystroke behind it. Only handleBrowseResult can notice.
+	backspaceDir(&m, len("repo"))
+	typeDir(&m, "~/Projects/")
+	m = pumpAsync(t, m, m.reactToChanges())
+	m.dir.Update(key(tea.KeyUp, 0))
+	m.dir.Update(key(tea.KeyUp, 0))
+	m = pumpAsync(t, m, m.reactToChanges())
+	if m.dir.Value() != "/home/test/Projects/atrium" {
+		t.Fatalf("setup: selection is %q, want a real browsed child", m.dir.Value())
+	}
+
+	req := m.scheduleBrowse("~/Projects/")().(browseDebounceMsg).req
+	next, cmd := m.Update(browseResultMsg{req: req, entries: []string{"/home/test/Projects/zeta"}})
+	m = next.(Model)
+	m = pumpAsync(t, m, []tea.Cmd{cmd})
+	assertValidated("after a re-listing dropped the selected entry")
+}
+
+// TestChangingParentDropsThePreviousDirectorysChildren pins the fourth
+// path-mode transition (path -> path, a DIFFERENT parent). Leaving the
+// old listing on offer for the debounce window means the picker shows,
+// and can SELECT, a sibling of the directory the user typed past -- so a
+// submit in that window creates the session in the wrong directory, and
+// Tab completes a path assembled from a directory that was never listed.
+func TestChangingParentDropsThePreviousDirectorysChildren(t *testing.T) {
+	m, _ := browseModel(t)
+
+	typeDir(&m, "~/Projects/")
+	m = pumpAsync(t, m, m.reactToChanges())
+	if rows := dirRows(m); !strings.Contains(rows, "atrium") {
+		t.Fatalf("setup: the first listing did not land:\n%s", rows)
+	}
+
+	// Descend: the new parent has not been listed yet.
+	typeDir(&m, "herdr-draft/")
+	m.reactToChanges()
+
+	if got := m.dir.Value(); got != "/home/test/Projects/herdr-draft" {
+		t.Errorf("while the listing is in flight the selection is %q, want the typed path itself", got)
+	}
+	if rows := dirRows(m); strings.Contains(rows, "atrium") {
+		t.Errorf("the previous parent's children are still on offer:\n%s", rows)
+	}
+
+	// Tab must not complete from a directory that was never listed.
+	typeDir(&m, "at")
+	m.reactToChanges()
+	if m.dir.Complete() {
+		t.Errorf("Complete() built %q out of the previous directory's children", m.dir.Typed())
+	}
+}

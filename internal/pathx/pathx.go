@@ -93,8 +93,12 @@ func Resolve(path string) string {
 }
 
 // ListSubdirs returns the absolute paths of dir's immediate
-// subdirectories, sorted by name, at most limit of them. dir is used as
-// given -- callers pass a Resolve'd path.
+// subdirectories, sorted by name, at most limit of them -- the
+// alphabetically FIRST limit of them, which is why the sort happens before
+// the truncation rather than after: bounding the scan and then sorting
+// what survived would return an arbitrary window of the directory in
+// readdir order (atrium's own listSubdirs does exactly that, and
+// documents it). dir is used as given -- callers pass a Resolve'd path.
 //
 // Any error (missing, permission denied, not a directory) yields no
 // entries rather than a reported failure: the Project field's own
@@ -126,21 +130,17 @@ func ListSubdirs(dir string, limit int) []string {
 	}
 	defer func() { _ = f.Close() }() // read-only handle; a close error is not actionable
 
-	names := make([]string, 0, limit)
+	var names []string
 	scanned := 0
-	for len(names) < limit && scanned < maxEntriesScanned {
+	for scanned < maxEntriesScanned {
 		// ReadDir(n) returns up to n entries, reporting io.EOF once the
 		// directory is exhausted; a short read without an error simply
 		// means "no more right now", which for a directory means done.
 		entries, readErr := f.ReadDir(readChunk)
 		for _, e := range entries {
 			scanned++
-			if !isDir(dir, e) {
-				continue
-			}
-			names = append(names, e.Name())
-			if len(names) == limit {
-				break
+			if isDir(dir, e) {
+				names = append(names, e.Name())
 			}
 		}
 		if readErr != nil || len(entries) == 0 {
@@ -149,6 +149,9 @@ func ListSubdirs(dir string, limit int) []string {
 	}
 
 	sort.Strings(names)
+	if len(names) > limit {
+		names = names[:limit]
+	}
 	paths := make([]string, len(names))
 	for i, n := range names {
 		paths[i] = filepath.Join(dir, n)

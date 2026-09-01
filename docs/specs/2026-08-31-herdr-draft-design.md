@@ -156,10 +156,13 @@ Atrium:
   section ~2 rows, so no picker — Project, Base, Linear issue, Agent,
   Account — could ever display a single candidate row: 5 of 10 fields
   would be unusable at the smallest supported size. Measured behavior
-  after the change: moving focus shifts a section's start by 0 to −6 rows
-  at h=24, always upward or unchanged, with the key-hint footer and the
-  Create button pinned at h−2/h−1 so the two fixed reference points never
-  move.
+  after the change, at h=24 with every section focused in turn: each
+  section's start sits within a 6-row band (0 to −6 relative to the
+  form's opening focus; between two arbitrary focus states it moves either
+  way within that band — upward as focus travels down the ring, downward
+  as it travels back up), every section stays rendered in every focus
+  state, and the key-hint footer and Create button stay pinned at h−2 and
+  h−1, so the two fixed reference points never move.
 
 - Strings width-budgeted with hint ladders; graceful degradation order:
   truncate → drop blanks → drop dividers → drop heading → clip tail but

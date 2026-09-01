@@ -227,3 +227,35 @@ func TestAgentField_SetKindSelectsAFavoriteOrExpandsToReachIt(t *testing.T) {
 		t.Errorf("Value() after SetKind(\"\") = %q, want it unchanged", got)
 	}
 }
+
+// TestAgentFieldSetKindCollapsesWhenTheKindHasAChip pins the invariant a
+// second SetKind call depends on: after SetKind, the expanded "more…"
+// list must never be left highlighting a kind other than the selected
+// one. Before this, seeding a non-favorite default and then a favorite
+// last-used kind opened the form with the list expanded on the default,
+// the chip row showing the last-used kind, and Left/Right doing nothing.
+func TestAgentFieldSetKindCollapsesWhenTheKindHasAChip(t *testing.T) {
+	f := NewAgentField(theme.Default())
+	f.SetKinds([]string{"claude", "codex", "pi", "gemini", "cursor"})
+
+	f.SetKind("gemini") // outside the chip row: expands the full list
+	if !f.expanded {
+		t.Fatalf("SetKind(non-favorite) did not expand the list, so this test proves nothing")
+	}
+
+	f.SetKind("claude") // has a chip: must collapse again
+	if f.expanded {
+		t.Errorf("SetKind(favorite) left the more… list expanded")
+	}
+	if got := f.Value(); got != "claude" {
+		t.Errorf("Value() = %q, want %q", got, "claude")
+	}
+
+	// The chip row owns Left/Right only while collapsed -- the observable
+	// symptom of the stale flag.
+	f.Focus()
+	f.Update(key(tea.KeyRight, 0))
+	if got := f.Value(); got != "codex" {
+		t.Errorf("Right after seeding moved to %q, want %q (chip row inert while expanded)", got, "codex")
+	}
+}

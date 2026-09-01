@@ -9,7 +9,11 @@ Zvi-authored on their surviving lines (git blame --line-porcelain,
 as porting sources. The following files in this repository contain code
 derived from atrium:
 
-  internal/app/async.go             <- app/app_branchsearch.go (pattern)
+  internal/app/app.go               <- ui/overlay/directoryPicker.go (pattern:
+                                        per-directory listing memoization)
+  internal/app/async.go             <- app/app_branchsearch.go (pattern),
+                                        ui/overlay/directoryPicker.go
+                                        (listing entry cap)
   internal/form/field_dir.go        <- ui/overlay/directoryPicker.go
   internal/form/focus.go            <- ui/overlay/textInput_focus.go
   internal/form/keys.go             <- ui/overlay/textInput_keys.go
