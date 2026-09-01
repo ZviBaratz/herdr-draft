@@ -369,6 +369,73 @@ func TestExecuteBusyRetryExhaustsBudget(t *testing.T) {
 	}
 }
 
+// TestExecuteClauthLaunchThreadsPaneID covers Path B (spec §9 step 2): a
+// pinned claude account launches through clauth via Runner.PaneRun rather
+// than Runner.AgentStart, followed by an explicit OpAwaitDetection --
+// build.go's launchOps emits this two-op sequence only when AccountPin is
+// set. Both ops target the pane the topology op created, but neither op's
+// request carries a PaneID field to fill in (RunArgv is a plain argv
+// slice, OpAwaitDetection only carries a Timeout) -- Execute must instead
+// pass created.PaneID as PaneRun/AwaitDetection's explicit paneID
+// argument. Nothing previously asserted that argument was the *threaded*
+// id rather than an empty or stale string.
+func TestExecuteClauthLaunchThreadsPaneID(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.AccountPin = "work"
+	in.ExtraArgs = []string{"--model", "opus"}
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}}
+
+	result := Execute(context.Background(), m, ops, nil)
+	if result.FailedIndex != -1 {
+		t.Fatalf("unexpected failure: %+v", result)
+	}
+
+	wantCalls := []string{
+		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"PaneRun(pane-1,clauth,start,work,--,--model,opus)",
+		"AwaitDetection(pane-1," + in.DetectionTimeout.String() + ")",
+	}
+	if !reflect.DeepEqual(m.calls, wantCalls) {
+		t.Fatalf("calls = %v, want %v", m.calls, wantCalls)
+	}
+}
+
+// TestExecuteMalformedOpDoesNotPanic proves Execute fails gracefully,
+// rather than panicking on a nil dereference, when an Op's Kind requires a
+// request field (here, OpAgentStart's Agent) that is nil. Build never
+// produces such an Op, but Execute's contract does not get to assume that
+// of every caller.
+func TestExecuteMalformedOpDoesNotPanic(t *testing.T) {
+	ops := []Op{{Kind: OpAgentStart, Label: "starting agent"}} // Agent left nil
+
+	m := &mockRunner{}
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+
+	if result.FailedIndex != 0 {
+		t.Fatalf("FailedIndex = %d, want 0", result.FailedIndex)
+	}
+	if len(m.calls) != 0 {
+		t.Fatalf("calls = %v, want none: a malformed op must fail before ever reaching the runner", m.calls)
+	}
+	if len(progressed) == 0 {
+		t.Fatal("no progress reported")
+	}
+	last := progressed[len(progressed)-1]
+	if last.State != StepFailed {
+		t.Fatalf("last progress state = %v, want StepFailed", last.State)
+	}
+	if last.Err == nil || !strings.Contains(last.Err.Error(), "malformed op") {
+		t.Fatalf("last progress Err = %v, want it to mention \"malformed op\"", last.Err)
+	}
+}
+
 func TestExecuteFailureAtAgentPromptSurfacesPromptText(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true

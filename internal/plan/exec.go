@@ -86,6 +86,15 @@ var (
 // other failure.
 const busyPaneErrorCode = "agent_pane_busy"
 
+// malformedOpError reports an Op of the given Kind whose request field
+// (Worktree/Workspace/Tab/Split/Agent/Prompt) is nil. Build (build.go)
+// always populates the right field for each Kind it emits, but Execute
+// must not simply trust that contract: a hand-constructed or corrupted Op
+// has to fail gracefully here instead of panicking on a nil dereference.
+func malformedOpError(kind OpKind) error {
+	return fmt.Errorf("malformed op: %s missing its request", kind)
+}
+
 // isBusyPaneError reports whether err's text contains busyPaneErrorCode.
 // herdrc.CLIRunner surfaces herdr CLI failures as plain text (the
 // subcommand's stderr wrapped into the error message), not as a typed
@@ -132,7 +141,9 @@ func emitProgress(onProgress func(Progress), index, total int, label string, sta
 // -- since Build (build.go) leaves those fields empty for exactly this
 // reason. Execute reports Progress before and after each op and stops at
 // the first op that fails, after that op's busy retry budget (if any) is
-// exhausted. It never panics.
+// exhausted. It never panics: an Op whose Kind requires a request field
+// that is nil (see malformedOpError) fails that op gracefully instead of
+// dereferencing nil.
 func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Progress)) ExecResult {
 	result := ExecResult{FailedIndex: -1}
 
@@ -151,18 +162,33 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 			var err error
 			switch op.Kind {
 			case OpWorktreeCreate:
+				if op.Worktree == nil {
+					return malformedOpError(op.Kind)
+				}
 				topo, err = r.WorktreeCreate(ctx, *op.Worktree)
 				gotTopo = err == nil
 			case OpWorkspaceCreate:
+				if op.Workspace == nil {
+					return malformedOpError(op.Kind)
+				}
 				topo, err = r.WorkspaceCreate(ctx, *op.Workspace)
 				gotTopo = err == nil
 			case OpTabCreate:
+				if op.Tab == nil {
+					return malformedOpError(op.Kind)
+				}
 				topo, err = r.TabCreate(ctx, *op.Tab)
 				gotTopo = err == nil
 			case OpPaneSplit:
+				if op.Split == nil {
+					return malformedOpError(op.Kind)
+				}
 				topo, err = r.PaneSplit(ctx, *op.Split)
 				gotTopo = err == nil
 			case OpAgentStart:
+				if op.Agent == nil {
+					return malformedOpError(op.Kind)
+				}
 				req := *op.Agent
 				if req.PaneID == "" && haveCreated {
 					req.PaneID = created.PaneID
@@ -181,6 +207,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 				}
 				err = r.AwaitDetection(ctx, paneID, op.Timeout)
 			case OpAgentPrompt:
+				if op.Prompt == nil {
+					return malformedOpError(op.Kind)
+				}
 				req := *op.Prompt
 				if req.Target == "" && haveCreated {
 					req.Target = created.PaneID
