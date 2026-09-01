@@ -8,6 +8,15 @@
 // client boundary guardrail) and this package's existing widget/grammar
 // conventions:
 //
+//   - dedupePaths is ported near-verbatim (drops empty and duplicate
+//     candidates, preserving first-seen order), applied by SetCandidates
+//     -- unlike Atrium's own NewDirectoryPicker/UpdateCandidates call
+//     sites, which apply it once at construction/refresh time over a
+//     picker whose PickerItem has no ID concept at all, this port applies
+//     it for a second, load-bearing reason too: widgets.Picker's own
+//     carried fact requires unique, non-empty PickerItem.IDs (see
+//     refreshItems' own doc comment), and a duplicate or empty candidate
+//     reaching visibleItems would otherwise violate that.
 //   - Atrium's DirectoryPicker performs real filesystem I/O directly
 //     (os.Open/ReadDir in listSubdirs, os.UserHomeDir/filepath.Abs in
 //     expandPath) to browse the filesystem in path mode. DirField instead
@@ -260,8 +269,30 @@ func (d *DirField) SetCandidates(version int, candidates []string) {
 	}
 	d.haveCandVersion = true
 	d.candVersion = version
-	d.candidates = append([]string(nil), candidates...)
+	d.candidates = dedupePaths(candidates)
 	d.refreshItems(false)
+}
+
+// dedupePaths drops empty and duplicate entries, preserving first-seen
+// order -- ported near-verbatim from Atrium's own dedupePaths
+// (directoryPicker.go; the file doc's Adaptations list originally omitted
+// this helper -- added in review round 1 to keep the port record
+// accurate). SetCandidates applies it so a caller-supplied duplicate (or
+// empty-string) candidate can never reach visibleItems/refreshItems and
+// produce two widgets.PickerItem rows sharing the same ID -- the same
+// unique-non-empty-ID invariant field_worktree.go's baseHeadID fix
+// addresses on the base-picker side.
+func dedupePaths(paths []string) []string {
+	seen := make(map[string]bool, len(paths))
+	deduped := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		deduped = append(deduped, p)
+	}
+	return deduped
 }
 
 // SetValidity records the app layer's own verdict for path, shown as an
@@ -368,8 +399,17 @@ func (d *DirField) refreshItems(bump bool) {
 	for i, it := range items {
 		// PickerItem.ID has no uniqueness contract of its own
 		// (widgets/picker.go's own doc); using the full path/candidate
-		// string as ID (this task's own "verified fact") guarantees
-		// uniqueness here.
+		// string as ID (this task's own "verified fact") is unique here
+		// PROVIDED items itself holds no duplicate -- which it doesn't, by
+		// construction of every visibleItems() branch: the empty-filter
+		// branch and fragment mode both return a subset/reorder of
+		// d.candidates, itself deduped by SetCandidates' own dedupePaths;
+		// path mode (pathModeItems) explicitly dedupes by full path via
+		// its own seen map, for both the ranked results and the literal
+		// fallback. Softened from an earlier, unqualified "guarantees
+		// uniqueness here" after review round 1 found a real duplicate-ID
+		// path through pathModeItems this claim had not yet accounted for
+		// -- see pathModeItems' and dedupePaths' own doc comments.
 		pickerItems[i] = widgets.PickerItem{ID: it, Label: it}
 	}
 	d.picker.SetItems(d.pickerVersion, pickerItems)
@@ -390,32 +430,50 @@ func (d *DirField) visibleItems() []string {
 	return d.pathModeItems(raw)
 }
 
-// pathModeItems ranks the candidate pool's basenames against splitPath's
-// own base component (fuzzyRank, not a plain prefix match -- matching
-// Atrium's own path-mode ranking, `fuzzy.Rank(names, base)`), maps each
-// ranked basename back to its full candidate path, then appends the
-// literal typed path as a fallback if it isn't already present -- so a
-// complete or not-yet-listed path stays selectable even when nothing on
-// offer matches it (ported in spirit from Atrium's own literal-fallback
-// comment in visibleItems).
+// pathModeItems ranks the FULL candidate list against splitPath's own base
+// component, matching each candidate by its OWN basename (fuzzyRank, not a
+// plain prefix match -- matching Atrium's own path-mode ranking,
+// `fuzzy.Rank(names, base)`), then appends the literal typed path as a
+// fallback if it isn't already present -- so a complete or not-yet-listed
+// path stays selectable even when nothing on offer matches it (ported in
+// spirit from Atrium's own literal-fallback comment in visibleItems).
+//
+// Ranking is done by feeding fuzzyRank every candidate's basename WITHOUT
+// first collapsing duplicate basenames into one representative candidate
+// (a real bug an earlier version of this function had, caught in review
+// round 1: two distinct candidates sharing a basename, e.g. "~/work/api"
+// and "~/oss/api", would silently collapse to whichever one a
+// name->single-path map happened to keep). Instead, byName maps each
+// basename to the ORDERED bucket of every candidate sharing it; since two
+// candidates with an IDENTICAL basename always score identically against
+// the same query (fuzzyMatch's result depends only on the string content,
+// not the candidate's position), fuzzyRank's own documented tiebreak on
+// original input order keeps same-named entries in their original
+// relative order within its result -- so popping each bucket FIFO as
+// pathModeItems walks that result always re-associates the correct
+// distinct candidate with each ranked occurrence of its basename,
+// regardless of how many differently-named candidates are interspersed.
 func (d *DirField) pathModeItems(raw string) []string {
 	_, base := splitPath(raw)
 
 	names := make([]string, len(d.candidates))
-	byName := make(map[string]string, len(d.candidates))
+	byName := make(map[string][]string, len(d.candidates))
 	for i, c := range d.candidates {
 		n := basename(c)
 		names[i] = n
-		if _, exists := byName[n]; !exists {
-			byName[n] = c
-		}
+		byName[n] = append(byName[n], c)
 	}
 
 	ranked := fuzzyRank(names, base)
 	items := make([]string, 0, len(ranked)+1)
 	seen := make(map[string]bool, len(ranked)+1)
 	for _, n := range ranked {
-		p := byName[n]
+		bucket := byName[n]
+		if len(bucket) == 0 {
+			continue // defensive: cannot happen, every ranked name came from names
+		}
+		p := bucket[0]
+		byName[n] = bucket[1:]
 		if !seen[p] {
 			seen[p] = true
 			items = append(items, p)

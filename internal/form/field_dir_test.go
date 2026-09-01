@@ -87,6 +87,42 @@ func TestDirField_PathModeLiteralFallback(t *testing.T) {
 	}
 }
 
+// TestDirField_PathModeKeepsDistinctCandidatesSharingABasename pins review
+// round 1's second Important finding directly: two DIFFERENT candidates
+// that happen to share a basename (different parent directories, same
+// leaf name -- e.g. two separate checkouts both named "api") must both
+// stay selectable in path mode. An earlier version of pathModeItems
+// deduped by basename BEFORE ranking, which silently dropped every
+// same-named candidate but the first.
+func TestDirField_PathModeKeepsDistinctCandidatesSharingABasename(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.Focus()
+	d.SetCandidates(1, []string{"/home/zvi/work/api", "/home/zvi/oss/api"})
+
+	typeInto(d, "/a")
+
+	// Walk every visible row from the top (Down clamps at the last row --
+	// widgets.Picker's own documented contract -- so a repeated Value()
+	// means the walk has reached the end), collecting each row's Value().
+	seen := map[string]bool{d.Value(): true}
+	prev := d.Value()
+	for range 5 { // generous bound: only a handful of rows are possible here
+		d.Update(key(tea.KeyDown, 0))
+		cur := d.Value()
+		if cur == prev {
+			break
+		}
+		seen[cur] = true
+		prev = cur
+	}
+
+	for _, want := range []string{"/home/zvi/work/api", "/home/zvi/oss/api"} {
+		if !seen[want] {
+			t.Fatalf("visible rows = %v, want both same-basename candidates present (missing %q)", seen, want)
+		}
+	}
+}
+
 // TestDirField_CompleteExtendsToLongestCommonPrefix pins Tab's
 // "shell-completion-then-advance" contract in path mode: typing a base
 // prefix that matches multiple children extends the filter to their

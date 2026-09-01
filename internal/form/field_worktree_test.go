@@ -168,6 +168,52 @@ func TestWorktreeField_BaseDefaultsToHEAD(t *testing.T) {
 	}
 }
 
+// TestWorktreeField_BaseSentinelHasNonEmptyID pins review round 1's first
+// Important finding directly: the HEAD row's own widgets.PickerItem.ID
+// must be non-empty (widgets.Picker's own carried fact -- Task 14 --
+// requires unique, non-empty IDs from every caller), even though the
+// PUBLIC Base() contract still reports "" for that row.
+func TestWorktreeField_BaseSentinelHasNonEmptyID(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetBaseItems(1, []string{"main"})
+
+	sel, ok := w.base.Selected() // cursor starts on the HEAD sentinel row
+	if !ok {
+		t.Fatalf("base picker has no selection on a freshly seeded field")
+	}
+	if sel.ID == "" {
+		t.Fatalf("HEAD sentinel PickerItem.ID = \"\", want a non-empty internal sentinel (widgets.Picker requires unique, non-empty IDs)")
+	}
+	if got := w.Base(); got != "" {
+		t.Fatalf("Base() = %q for the HEAD row, want \"\" (the internal sentinel ID must not leak through the public getter)", got)
+	}
+}
+
+// TestWorktreeField_SetBaseItemsRefreshPreservesSelectionByID pins review
+// round 1's requirement directly: a same-version SetBaseItems refresh that
+// REORDERS the ref list must keep the same ref selected by ID (inherited
+// from widgets.Picker.SetItems' own same-version contract -- see
+// field_dir.go's identical DirField test for the analogous candidate-pool
+// case), not silently move the cursor onto whatever ref now sits at the
+// same row.
+func TestWorktreeField_SetBaseItemsRefreshPreservesSelectionByID(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetBaseItems(1, []string{"main", "develop", "release"})
+	w.BaseSection().Update(key(tea.KeyDown, 0)) // HEAD -> main
+	w.BaseSection().Update(key(tea.KeyDown, 0)) // main -> develop
+	if got := w.Base(); got != "develop" {
+		t.Fatalf("setup: Base() = %q, want %q", got, "develop")
+	}
+
+	// Same version (1), reordered -- "develop" now sits where "main" used
+	// to be.
+	w.SetBaseItems(1, []string{"develop", "main", "release"})
+
+	if got := w.Base(); got != "develop" {
+		t.Fatalf("Base() after a same-version reordering refresh = %q, want %q (selection preserved by ID)", got, "develop")
+	}
+}
+
 func TestWorktreeField_SetBaseItemsAndSelect(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 	w.SetGitTarget(true)

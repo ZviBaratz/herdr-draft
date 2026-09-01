@@ -50,6 +50,23 @@ const (
 	// alone.
 	worktreeNonGitPlaceholder = "not a git repository"
 	worktreeOffPlaceholder    = "off"
+
+	// baseHeadID is the base picker's internal sentinel PickerItem.ID for
+	// "use HEAD" (Base()'s own "" == HEAD contract). It must be a
+	// non-empty string: widgets.Picker's own carried fact (Task 14) is
+	// that callers must supply unique, non-empty IDs -- its ID-preserving
+	// cursor (SetItems' same-version-refresh behavior) is a first-match
+	// -wins lookup, and an empty ID here previously coincided with the
+	// zero value Selected() falls back to on a miss, which is exactly the
+	// ambiguity the carried fact warns against (fix, review round 1:
+	// "Base-picker sentinel violates the unique-non-empty-ID invariant").
+	// "HEAD" itself can never collide with a real caller-supplied ref:
+	// git refuses to let a branch or tag be named "HEAD" (it's a reserved
+	// symbolic-ref name), so this doubles as an always-safe sentinel
+	// rather than an arbitrary unlikely-to-collide string. Base()
+	// translates it back to "" at the getter boundary, so the public
+	// "" == HEAD contract is unchanged.
+	baseHeadID = "HEAD"
 )
 
 var worktreeChips = []widgets.Chip{
@@ -162,8 +179,9 @@ func (w *WorktreeField) SetBranch(v string, seeded bool) {
 // app layer has resolved for the current project), tagged with a
 // caller-assigned monotonic version -- the same staleness guard
 // field_dir.go's SetCandidates documents, for the same reason. A synthetic
-// "HEAD" row (ID "") is always kept first, ahead of every caller-supplied
-// ref -- see Base()'s own doc comment ("" == HEAD).
+// "HEAD" row (ID baseHeadID, a non-empty sentinel -- see its own doc
+// comment) is always kept first, ahead of every caller-supplied ref --
+// see Base()'s own doc comment ("" == HEAD).
 func (w *WorktreeField) SetBaseItems(version int, refs []string) {
 	if w.haveBaseVersion && version < w.baseVersion {
 		return
@@ -186,8 +204,8 @@ func (w *WorktreeField) refreshBaseItems(bump bool) {
 		w.basePickerVersion++
 	}
 	items := make([]widgets.PickerItem, 0, len(w.baseRefs)+1)
-	items = append(items, widgets.PickerItem{ID: "", Label: "HEAD"})
-	seen := map[string]bool{"": true}
+	items = append(items, widgets.PickerItem{ID: baseHeadID, Label: "HEAD"})
+	seen := map[string]bool{baseHeadID: true}
 	for _, r := range w.baseRefs {
 		if r == "" || seen[r] {
 			continue
@@ -204,10 +222,14 @@ func (w *WorktreeField) refreshBaseItems(bump bool) {
 func (w *WorktreeField) SetBaseStatus(s string) { w.baseStatus = s }
 
 // Base returns the currently selected base ref, or "" to mean HEAD (the
-// always-first sentinel row -- see refreshBaseItems).
+// always-first sentinel row -- see refreshBaseItems). The sentinel's own
+// PickerItem.ID is the non-empty baseHeadID (see its own doc comment for
+// why it can't be "" internally); this getter is the one place that
+// translates it back to "", so the public "" == HEAD contract holds
+// regardless of the internal ID's own value.
 func (w *WorktreeField) Base() string {
 	sel, ok := w.base.Selected()
-	if !ok {
+	if !ok || sel.ID == baseHeadID {
 		return ""
 	}
 	return sel.ID
