@@ -287,3 +287,39 @@ func TestDisposable(t *testing.T) {
 		t.Errorf("expected a reason when not disposable")
 	}
 }
+
+// TestFetchPrune pins the happy path (a repo with a remote configured, even
+// a local-path one; also a repo with no remote at all -- git itself treats
+// "nothing to fetch" as success, not an error) and the "error surfaced not
+// swallowed" contract for a remote git genuinely can't reach -- see
+// FetchPrune's own doc comment on why it returns the error rather than
+// discarding it like Atrium's own FetchBranches does.
+func TestFetchPrune(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("no remote configured", func(t *testing.T) {
+		repo := mkRepo(t)
+		if err := FetchPrune(ctx, repo); err != nil {
+			t.Errorf("FetchPrune with no remote configured: %v, want nil (git treats this as a no-op success)", err)
+		}
+	})
+
+	t.Run("local remote", func(t *testing.T) {
+		remote := mkRepo(t)
+		repo := t.TempDir()
+		gitRun(t, repo, "init", "-q", "-b", "main")
+		gitRun(t, repo, "remote", "add", "origin", remote)
+		if err := FetchPrune(ctx, repo); err != nil {
+			t.Fatalf("FetchPrune with a real remote configured: %v", err)
+		}
+	})
+
+	t.Run("unreachable remote", func(t *testing.T) {
+		repo := t.TempDir()
+		gitRun(t, repo, "init", "-q", "-b", "main")
+		gitRun(t, repo, "remote", "add", "origin", filepath.Join(t.TempDir(), "does-not-exist"))
+		if err := FetchPrune(ctx, repo); err == nil {
+			t.Errorf("FetchPrune with an unreachable remote = nil error, want a wrapped git error")
+		}
+	})
+}

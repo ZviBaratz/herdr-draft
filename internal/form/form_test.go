@@ -176,6 +176,38 @@ func TestModel_FocusRingSkipsDisabledAndWraps(t *testing.T) {
 	}
 }
 
+// TestModel_FocusedID pins FocusedID (added in Task 20 for the app layer's
+// own "clauth: load ... on account focus" reaction, see its own doc
+// comment): it must track the ring's own current section across Tab moves,
+// and degrade to "" for an unconstructed zero-value Model.
+func TestModel_FocusedID(t *testing.T) {
+	var zero Model
+	if got := zero.FocusedID(); got != "" {
+		t.Fatalf("zero-value Model.FocusedID() = %q, want \"\"", got)
+	}
+
+	a := newStub("a")
+	c := newStub("c")
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{a, c}})
+	m.Init()
+
+	if got := m.FocusedID(); got != "a" {
+		t.Fatalf("FocusedID() after Init = %q, want %q", got, "a")
+	}
+
+	next, _ := m.Update(keyTab)
+	m = next.(Model)
+	if got := m.FocusedID(); got != "c" {
+		t.Fatalf("FocusedID() after 1 Tab = %q, want %q", got, "c")
+	}
+
+	next, _ = m.Update(keyTab)
+	m = next.(Model)
+	if got := m.FocusedID(); got != "create" {
+		t.Fatalf("FocusedID() after 2 Tabs = %q, want %q", got, "create")
+	}
+}
+
 // --- MapKey wiring: Submit/Cancel/Clear/ActionNone forwarding ----------
 
 // TestModel_CtrlSSubmitsFromAnyZone checks handleKey's ActionSubmit wiring:

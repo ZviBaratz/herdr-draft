@@ -140,6 +140,25 @@ func (w *WorktreeField) Enabled() bool { return w.isGitRepo }
 // On reports whether the chip row is currently toggled to "on".
 func (w *WorktreeField) On() bool { return w.chips.Selected().ID == "on" }
 
+// SetOn sets the chip row's on/off toggle to on, e.g. to apply spec §6
+// field 4's "default from config" (config.Config.DefaultWorktree, or a
+// state.State.LastWorktree override) at form construction -- worktreeChips
+// has exactly two entries (off, on), so a single ChipRow.Next() call always
+// toggles between them regardless of direction; a call that already matches
+// the current state is a no-op.
+//
+// Added in Task 20 (the app layer): unlike SetBranch/SetBaseItems/
+// SetBaseStatus, this field previously had no way to set its initial
+// toggle programmatically at all (only the user's own Left/Right/Up/Down
+// through worktreeChipsSection.Update could move it) -- see
+// field_title.go's SetTitle doc comment for the fuller writeup of this
+// class of gap.
+func (w *WorktreeField) SetOn(on bool) {
+	if w.On() != on {
+		w.chips.Next()
+	}
+}
+
 // SetGitTarget records whether the currently selected project directory
 // is a git repository, gating every part of this field: the chip row
 // itself goes inert (worktreeNonGitPlaceholder) when isRepo is false, and

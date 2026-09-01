@@ -32,9 +32,62 @@ func TestPromptField_ImplementsNewliner(t *testing.T) {
 
 func TestPromptField_ValueRoundTrips(t *testing.T) {
 	f := NewPromptField(theme.Default())
-	f.SetValue("Work on ENG-1: Fix login bug")
+	f.SetValue("Work on ENG-1: Fix login bug", false)
 	if got := f.Value(); got != "Work on ENG-1: Fix login bug" {
 		t.Errorf("Value() = %q, want the seeded text", got)
+	}
+}
+
+// TestPromptField_TouchedBlocksFurtherSeeding pins SetValue's
+// touched-vs-preselected rule: once the user has edited the field
+// (Touched() == true), a further seeded == true call must be silently
+// ignored, matching field_worktree.go's identical WorktreeField.SetBranch
+// contract.
+func TestPromptField_TouchedBlocksFurtherSeeding(t *testing.T) {
+	f := NewPromptField(theme.Default())
+	if f.Touched() {
+		t.Fatalf("Touched() = true before any input, want false")
+	}
+
+	f.SetValue("seed one", true)
+	if got := f.Value(); got != "seed one" {
+		t.Fatalf("Value() after first seed = %q, want %q", got, "seed one")
+	}
+
+	f.Focus()
+	f.Update(rn('!'))
+	if !f.Touched() {
+		t.Fatalf("Touched() = false after typing, want true")
+	}
+
+	f.SetValue("seed two", true)
+	if got := f.Value(); got != "seed one!" {
+		t.Fatalf("Value() after a seeded call post-touch = %q, want the user's own edit %q unclobbered", got, "seed one!")
+	}
+
+	// A hard (seeded == false) set always applies and clears touched, so a
+	// later seed can apply again.
+	f.SetValue("hard reset", false)
+	if got := f.Value(); got != "hard reset" {
+		t.Fatalf("Value() after a hard set = %q, want %q", got, "hard reset")
+	}
+	if f.Touched() {
+		t.Fatalf("Touched() = true after a hard set, want false (cleared)")
+	}
+	f.SetValue("seed three", true)
+	if got := f.Value(); got != "seed three" {
+		t.Fatalf("Value() after re-seeding post-hard-reset = %q, want %q", got, "seed three")
+	}
+}
+
+// TestPromptField_InsertNewlineTouches pins that InsertNewline -- which
+// bypasses Update entirely (see its own doc comment) -- still marks the
+// field touched, so a newline-only edit blocks further seeding too.
+func TestPromptField_InsertNewlineTouches(t *testing.T) {
+	f := NewPromptField(theme.Default())
+	f.InsertNewline()
+	if !f.Touched() {
+		t.Fatalf("Touched() = false after InsertNewline, want true")
 	}
 }
 
@@ -43,7 +96,7 @@ func TestPromptField_ValueRoundTrips(t *testing.T) {
 // newline ... without going through Update").
 func TestPromptField_InsertNewlineAddsALiteralNewline(t *testing.T) {
 	f := NewPromptField(theme.Default())
-	f.SetValue("first line")
+	f.SetValue("first line", false)
 	f.InsertNewline()
 	if got := f.Value(); !strings.Contains(got, "\n") {
 		t.Errorf("Value() after InsertNewline = %q, want it to contain a newline", got)
@@ -64,7 +117,7 @@ func TestPromptField_HeightIsConstant(t *testing.T) {
 		t.Errorf("Height(24) = %d, want %d", base, 1+widgets.PromptAreaPreferredRows)
 	}
 
-	f.SetValue("some text\nacross multiple lines\nof content")
+	f.SetValue("some text\nacross multiple lines\nof content", false)
 	if got := f.Height(24); got != base {
 		t.Errorf("Height(24) after SetValue = %d, want %d", got, base)
 	}

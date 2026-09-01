@@ -276,6 +276,27 @@ func (m Model) Init() tea.Cmd {
 	return m.ring.set(m.ring.index)
 }
 
+// FocusedID returns the ID() of the section currently holding focus (see
+// Section's own doc comment on the ID() convention), or "" for a zero-value
+// Model (nil ring) or an empty ring. This is a minimal read accessor for
+// the app layer, added in Task 20: unlike form.go's setter-oriented
+// surface (Setup.Sections, each field's own SetXxx methods), nothing in
+// this package previously let the app layer observe WHICH section is
+// currently focused at all -- needed for spec §11's "clauth: load ... on
+// account focus", which the app layer can only react to by polling this
+// after every Update and diffing against what it last saw (the same
+// before/after-comparison discipline every Section's own Update already
+// uses for its own value, applied here one level up).
+func (m Model) FocusedID() string {
+	if m.ring == nil {
+		return ""
+	}
+	if s := m.ring.current(); s != nil {
+		return s.ID()
+	}
+	return ""
+}
+
 // Update dispatches an incoming message: tea.WindowSizeMsg is stored for
 // View/ViewAt; tea.KeyPressMsg is run through MapKey (keys.go, "the
 // grammar you dispatch on") and acted on by handleKey; tea.PasteMsg

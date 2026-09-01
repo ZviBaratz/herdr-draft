@@ -98,6 +98,37 @@ func TestWorktreeField_ChipsToggleOnOff(t *testing.T) {
 	}
 }
 
+// TestWorktreeField_SetOn pins the app-layer setter Task 20 added (see
+// SetOn's own doc comment): it must apply the requested state regardless of
+// starting position, and be a no-op when already there.
+func TestWorktreeField_SetOn(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true) // ChipRow.Next()/Prev() -- what SetOn uses -- are no-ops while inert.
+	if w.On() {
+		t.Fatalf("On() = true on a fresh WorktreeField, want false (defaults off)")
+	}
+
+	w.SetOn(true)
+	if !w.On() {
+		t.Fatalf("On() = false after SetOn(true), want true")
+	}
+
+	// Already on: a further SetOn(true) must be a no-op, not toggle back off.
+	w.SetOn(true)
+	if !w.On() {
+		t.Fatalf("On() = false after a redundant SetOn(true), want true (no-op)")
+	}
+
+	w.SetOn(false)
+	if w.On() {
+		t.Fatalf("On() = true after SetOn(false), want false")
+	}
+	w.SetOn(false)
+	if w.On() {
+		t.Fatalf("On() = true after a redundant SetOn(false), want false (no-op)")
+	}
+}
+
 // TestWorktreeField_TouchedRule is the brief's own literal requirement,
 // verbatim: SetBranch("zvi/from-linear", true) seeds a value; the user
 // then types; a LATER SetBranch(..., true) call (another seed attempt,

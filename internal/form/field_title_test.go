@@ -133,6 +133,46 @@ func TestTitleField_HeightIsConstant(t *testing.T) {
 	}
 }
 
+// TestTitleField_SetTitleTouchedRule pins SetTitle's touched-vs-preselected
+// discipline (added in Task 20, mirroring field_worktree.go's
+// WorktreeField.SetBranch): a seeded set applies only until the user
+// types, after which further seeded sets are ignored, but a hard
+// (seeded == false) set always applies and clears Touched().
+func TestTitleField_SetTitleTouchedRule(t *testing.T) {
+	f := NewTitleField(theme.Default())
+
+	f.SetTitle("Fix login bug", true)
+	if got := f.Value(); got != "Fix login bug" {
+		t.Fatalf("Value() after first seed = %q, want %q", got, "Fix login bug")
+	}
+	if f.Touched() {
+		t.Fatalf("Touched() = true after a seeded set, want false")
+	}
+
+	f.Focus()
+	f.Update(rn('!'))
+	if !f.Touched() {
+		t.Fatalf("Touched() = false after typing, want true")
+	}
+
+	f.SetTitle("Fix login bug v2", true)
+	if got := f.Value(); got != "Fix login bug!" {
+		t.Fatalf("Value() after a seeded call post-touch = %q, want the user's own edit %q unclobbered", got, "Fix login bug!")
+	}
+
+	f.SetTitle("hard reset", false)
+	if got := f.Value(); got != "hard reset" {
+		t.Fatalf("Value() after a hard set = %q, want %q", got, "hard reset")
+	}
+	if f.Touched() {
+		t.Fatalf("Touched() = true after a hard set, want false (cleared)")
+	}
+	f.SetTitle("seeded again", true)
+	if got := f.Value(); got != "seeded again" {
+		t.Fatalf("Value() after re-seeding post-hard-reset = %q, want %q", got, "seeded again")
+	}
+}
+
 func TestTitleField_FocusBlurWiring(t *testing.T) {
 	f := NewTitleField(theme.Default())
 	if cmd := f.Focus(); cmd == nil {

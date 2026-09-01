@@ -151,6 +151,32 @@ func (f *TitleField) Value() string { return f.input.Value() }
 // gesture is expected to construct a fresh TitleField instead).
 func (f *TitleField) Touched() bool { return f.touched }
 
+// SetTitle sets the input's value, honoring the same touched-vs-preselected
+// rule field_worktree.go's WorktreeField.SetBranch documents: when seeded
+// is true, this is a SUGGESTION (e.g. a chosen Linear issue's own title)
+// applied only if the user has not yet typed into the field themselves
+// (Touched() == false) -- once touched, every further seeded call is
+// silently ignored, so a later re-suggestion never clobbers the user's own
+// edit. seeded == false is a hard, authoritative set that always applies
+// and clears touched, so a subsequent seed can apply again.
+//
+// Added in Task 20 (the app layer) alongside WorktreeField.SetBranch and
+// PromptField.SetValue -- IssueChosenMsg's own doc comment already
+// documents the app layer calling "TitleField/WorktreeField/PromptField's
+// own setters", but Title had no programmatic setter at all until this one;
+// see task-20-report.md for the full write-up of this gap and why the fix
+// mirrors SetBranch's existing, already-reviewed discipline rather than
+// inventing a new one.
+func (f *TitleField) SetTitle(v string, seeded bool) {
+	if seeded && f.touched {
+		return
+	}
+	f.input.SetValue(v)
+	if !seeded {
+		f.touched = false
+	}
+}
+
 // SetVerdict records the app layer's own live-validation message for the
 // title text that was current when it was computed (key): a short note
 // (e.g. the branch name a title would produce, or a "title already in

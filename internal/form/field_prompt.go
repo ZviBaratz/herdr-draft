@@ -53,6 +53,7 @@ type PromptField struct {
 	palette theme.Palette
 	area    *widgets.PromptArea
 	focused bool
+	touched bool
 }
 
 // NewPromptField returns an empty, blurred PromptField at
@@ -95,25 +96,62 @@ func (f *PromptField) Blur() {
 // widgets/textarea.go's own doc comment warns that forwarding a raw Enter
 // to Update would let bubbles' own DefaultKeyMap swallow it as a newline,
 // defeating "bare Enter in the prompt zone advances"), so only genuine
-// text-editing messages reach here.
+// text-editing messages reach here. touched is set to true only when this
+// call actually CHANGES the value -- the same before/after Value()
+// discipline field_title.go's TitleField.Update and
+// field_worktree.go's worktreeBranchSection.Update use, so a non-edit
+// message (e.g. a cursor-blink tick) never spuriously flips Touched().
 func (f *PromptField) Update(msg tea.Msg) tea.Cmd {
-	return f.area.Update(msg)
+	before := f.area.Value()
+	cmd := f.area.Update(msg)
+	if f.area.Value() != before {
+		f.touched = true
+	}
+	return cmd
 }
 
 // InsertNewline implements form.go's newliner capability (ZonePrompt is
 // the only zone MapKey ever returns ActionNewline for): inserts a literal
 // newline at the cursor via the wrapped PromptArea's own InsertNewline,
-// which -- per its own doc comment -- deliberately bypasses Update.
-func (f *PromptField) InsertNewline() { f.area.InsertNewline() }
+// which -- per its own doc comment -- deliberately bypasses Update. touched
+// is set directly here too (Update's own before/after comparison never
+// runs for this path, since MapKey's ActionNewline calls this instead of
+// forwarding to Update -- see form.go's handleKey), otherwise a
+// newline-only edit would leave Touched() incorrectly false.
+func (f *PromptField) InsertNewline() {
+	f.area.InsertNewline()
+	f.touched = true
+}
 
 // Value returns the textarea's current text.
 func (f *PromptField) Value() string { return f.area.Value() }
 
-// SetValue replaces the textarea's text, e.g. to seed the prompt from a
-// chosen Linear issue's template (spec §10) once the app layer has
-// composed it from an IssueChosenMsg -- see field_issue.go's own doc
-// comment on why IssueField never calls this itself.
-func (f *PromptField) SetValue(s string) { f.area.SetValue(s) }
+// Touched reports whether the user has edited this field (typed or
+// inserted a newline) since construction -- never reset once true, mirroring
+// field_title.go's TitleField.Touched().
+func (f *PromptField) Touched() bool { return f.touched }
+
+// SetValue replaces the textarea's text, honoring the same
+// touched-vs-preselected rule field_worktree.go's WorktreeField.SetBranch
+// and field_title.go's TitleField.SetTitle document: when seeded is true,
+// this is a SUGGESTION (e.g. a chosen Linear issue's own prompt template,
+// spec §10) applied only if the user has not yet edited the field
+// themselves (Touched() == false); seeded == false is a hard, authoritative
+// set that always applies and clears touched.
+//
+// The seeded parameter is added in Task 20 (the app layer) -- see
+// field_title.go's SetTitle doc comment for the fuller writeup of why this
+// field, like Title, needed touched-respecting seeding it didn't originally
+// have.
+func (f *PromptField) SetValue(s string, seeded bool) {
+	if seeded && f.touched {
+		return
+	}
+	f.area.SetValue(s)
+	if !seeded {
+		f.touched = false
+	}
+}
 
 // Height reports PromptField's constant footprint -- independent of winH
 // or content (see the type doc comment).

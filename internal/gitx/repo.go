@@ -109,6 +109,25 @@ func CurrentBranch(ctx context.Context, repoDir string) (string, error) {
 	return out, nil
 }
 
+// FetchPrune runs `git fetch --prune` in repoDir -- spec §6 field 4's
+// background "fires once per repo per form-open" refresh of remote-tracking
+// branches, ported in spirit from Atrium's own git.FetchBranches
+// (app/app_branchsearch.go, on this task's clean list): best-effort, so a
+// remoteless or offline repo simply keeps its local view rather than
+// failing the caller. Unlike Atrium's FetchBranches (which swallows the
+// error itself, returning nothing), FetchPrune returns it so the app layer
+// can log it -- see the app package's own doc on why: it wraps the call in
+// a tea.Cmd that reports completion regardless of outcome, mirroring
+// Atrium's own branchFetchDoneMsg's "completion always re-triggers a
+// search" contract, which needs no separate success/failure signal.
+func FetchPrune(ctx context.Context, repoDir string) error {
+	_, err := runGit(ctx, repoDir, "fetch", "--prune")
+	if err != nil {
+		return fmt.Errorf("fetch --prune: %w", err)
+	}
+	return nil
+}
+
 // Disposable reports whether the worktree at worktreeDir can be safely
 // discarded relative to baseRef: it must have no uncommitted changes and
 // no commits that baseRef doesn't already have. When ok is false, reason
