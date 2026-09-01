@@ -173,14 +173,40 @@ func TestTitleField_SetTitleTouchedRule(t *testing.T) {
 	}
 }
 
+// TestTitleField_FocusBlurWiring pins that Focus()/Blur() actually reach
+// the wrapped lineInput, through the one observable difference they make:
+// bubbles' textinput only accepts keystrokes while focused, so typing is
+// what proves the wiring -- not the tea.Cmd Focus happens to return, which
+// may legitimately be nil depending on cursor mode.
+//
+// Rewritten in the final fix wave (minor M6): the previous version called
+// Focus() and Blur() and asserted nothing whatsoever, deferring in its own
+// comment to "the focused-state assertion below" -- which did not exist.
 func TestTitleField_FocusBlurWiring(t *testing.T) {
 	f := NewTitleField(theme.Default())
-	if cmd := f.Focus(); cmd == nil {
-		// Not fatal -- bubbles' textinput.Focus may or may not return a
-		// blink Cmd depending on cursor mode, but Focus() must not panic
-		// and must be callable; recorded via the focused-state assertion
-		// below instead of requiring a non-nil Cmd specifically.
-		_ = cmd
+
+	// Blurred by construction: keystrokes must not reach the input.
+	f.Update(rn('a'))
+	if got := f.Value(); got != "" {
+		t.Fatalf("Value() after typing while blurred = %q, want %q", got, "")
 	}
+	if f.Touched() {
+		t.Fatal("Touched() = true after a keystroke that never reached the input")
+	}
+
+	f.Focus()
+	f.Update(rn('a'))
+	f.Update(rn('b'))
+	if got := f.Value(); got != "ab" {
+		t.Fatalf("Value() after typing while focused = %q, want %q", got, "ab")
+	}
+	if !f.Touched() {
+		t.Fatal("Touched() = false after the user typed into a focused field")
+	}
+
 	f.Blur()
+	f.Update(rn('c'))
+	if got := f.Value(); got != "ab" {
+		t.Fatalf("Value() after typing post-Blur = %q, want %q (Blur did not reach the input)", got, "ab")
+	}
 }
