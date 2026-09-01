@@ -571,9 +571,18 @@ func New(s Setup) Model {
 	// full list stays reachable behind "more…" (AgentField's own doc: it
 	// derives its favorite chips from THIS list's leading entries).
 	m.agent.SetKinds(orderedAgentKinds(s.Config.Agents.Favorites))
+	// ... then `[agents] default`, which spec §12 lists but nothing read
+	// until now: SetKinds' own "index 0 is the default" contract can only
+	// ever express favorites[0], so a config naming a default OUTSIDE the
+	// favorites row -- or a different one within it -- had no effect at
+	// all.
+	m.agent.SetKind(s.Config.Agents.Default)
 	// ... then the kind the user actually launched with last time, when a
 	// previous successful submit recorded one (spec §12's last-used.json).
-	// A kind no longer in the list is a no-op -- see AgentField.SetKind.
+	// Last-used wins over the configured default, the same precedence
+	// worktreeDefaultOn applies just below for `default_worktree` vs
+	// State.LastWorktree. Either call is a no-op for an empty or unknown
+	// kind -- see AgentField.SetKind.
 	m.agent.SetKind(s.State.LastKind)
 
 	// Project (spec §6 field 2): current space's repo root, then the

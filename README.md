@@ -175,12 +175,13 @@ least two profiles exist (a static, startup-time check).
 
 - `favorites` (default: `["claude"]`) — the chip row of agent kinds shown
   up front. herdr's full kind list (23 as of this writing) is reachable
-  behind the row regardless of what's listed here. The **first** entry in
-  `favorites` is what the Agent field actually starts on when the form
-  opens.
-- `default` — parsed from config but currently has no effect on which
-  agent kind starts selected; use ordering in `favorites` for that instead
-  (see above).
+  behind the row regardless of what's listed here.
+- `default` — which kind the Agent field starts on. It may name a kind
+  outside `favorites` (it will be selected in the "more…" list); an
+  unknown kind is ignored rather than guessed at. Three layers decide the
+  starting kind, each overriding the one before: `favorites[0]`, then
+  `default`, then the kind of your last successful launch
+  (`last-used.json`).
 - `[agents.extra_args]` — a sub-table mapping agent kind to extra CLI args
   appended at launch, e.g. `claude = ["--model", "sonnet"]`. Empty by
   default for every kind.

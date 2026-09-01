@@ -1719,3 +1719,62 @@ func flatten(cmd tea.Cmd) []tea.Msg {
 	}
 	return msgs
 }
+
+// TestAgentKindSeedingPrecedence pins the three-layer default for the
+// Agent field: favorites[0], then `[agents] default` (spec §12, which
+// nothing read until 2026-09-01), then the last kind actually launched.
+func TestAgentKindSeedingPrecedence(t *testing.T) {
+	favorites := []string{"claude", "codex"}
+
+	cases := []struct {
+		name    string
+		cfg     config.AgentsConfig
+		state   config.State
+		want    string
+		wantWhy string
+	}{
+		{
+			name:    "favorites[0] when nothing else is set",
+			cfg:     config.AgentsConfig{Favorites: favorites},
+			want:    "claude",
+			wantWhy: "SetKinds' own index-0 default",
+		},
+		{
+			name:    "[agents] default overrides favorites[0]",
+			cfg:     config.AgentsConfig{Favorites: favorites, Default: "codex"},
+			want:    "codex",
+			wantWhy: "the configured default",
+		},
+		{
+			name:    "[agents] default may name a kind outside the favorites row",
+			cfg:     config.AgentsConfig{Favorites: favorites, Default: "gemini"},
+			want:    "gemini",
+			wantWhy: "a default reachable only through more…",
+		},
+		{
+			name:    "last-used wins over the configured default",
+			cfg:     config.AgentsConfig{Favorites: favorites, Default: "codex"},
+			state:   config.State{LastKind: "claude"},
+			want:    "claude",
+			wantWhy: "last-used.json",
+		},
+		{
+			name:    "an unknown configured default is ignored, not guessed at",
+			cfg:     config.AgentsConfig{Favorites: favorites, Default: "not-an-agent"},
+			want:    "claude",
+			wantWhy: "SetKind's own unknown-kind no-op",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModel(t, testSetup{
+				Config: config.Config{Agents: tc.cfg},
+				State:  tc.state,
+			})
+			if got := m.agent.Value(); got != tc.want {
+				t.Errorf("agent kind = %q, want %q (%s)", got, tc.want, tc.wantWhy)
+			}
+		})
+	}
+}
