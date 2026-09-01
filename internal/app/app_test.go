@@ -55,6 +55,7 @@ func (r *fakeRunner) PaneSplit(context.Context, herdrc.PaneSplitReq) (herdrc.Cre
 }
 func (r *fakeRunner) AgentStart(context.Context, herdrc.AgentStartReq) error      { return nil }
 func (r *fakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) error    { return nil }
+func (r *fakeRunner) AgentRead(context.Context, string) (string, error)           { return "", nil }
 func (r *fakeRunner) AwaitDetection(context.Context, string, time.Duration) error { return nil }
 func (r *fakeRunner) PaneRun(context.Context, string, []string) error             { return nil }
 func (r *fakeRunner) WorktreeRemove(context.Context, string) error                { return nil }

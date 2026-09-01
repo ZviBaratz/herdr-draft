@@ -53,6 +53,11 @@ type submitFakeRunner struct {
 	failAt  string
 	failErr error
 
+	// readText is what AgentRead returns on success (default "": no
+	// dialog present -- the pre-existing happy-path scenario's implicit
+	// assumption, that the pane is a normal ready state, still holds).
+	readText string
+
 	calls []string
 }
 
@@ -110,6 +115,13 @@ func (r *submitFakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) e
 		return r.failErr
 	}
 	return nil
+}
+
+func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
+	if r.shouldFail("AgentRead") {
+		return "", r.failErr
+	}
+	return r.readText, nil
 }
 
 func (r *submitFakeRunner) AwaitDetection(context.Context, string, time.Duration) error {
@@ -280,7 +292,7 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 		t.Fatalf("ExecResult.FailedIndex = %d, want -1 (success): %+v", done.result.FailedIndex, done.result)
 	}
 
-	wantCalls := []string{"WorktreeCreate", "PaneRun", "AwaitDetection", "AgentPrompt"}
+	wantCalls := []string{"WorktreeCreate", "PaneRun", "AwaitDetection", "AgentRead", "AgentPrompt"}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("runner.calls = %v, want %v", runner.calls, wantCalls)
 	}

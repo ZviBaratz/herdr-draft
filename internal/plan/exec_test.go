@@ -25,6 +25,11 @@ type mockRunner struct {
 
 	failedSoFar int
 	topo        herdrc.CreatedTopology
+
+	// readText is what AgentRead returns on success (default "": no
+	// dialog present, matching the pre-existing test scenarios' implicit
+	// assumption that the pane is a normal ready state).
+	readText string
 }
 
 var _ herdrc.Runner = (*mockRunner)(nil)
@@ -97,6 +102,14 @@ func (m *mockRunner) AgentPrompt(ctx context.Context, req herdrc.AgentPromptReq)
 		return m.failErr
 	}
 	return nil
+}
+
+func (m *mockRunner) AgentRead(ctx context.Context, target string) (string, error) {
+	m.record("AgentRead", target)
+	if m.shouldFail("AgentRead") {
+		return "", m.failErr
+	}
+	return m.readText, nil
 }
 
 func (m *mockRunner) AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error {
@@ -228,6 +241,7 @@ func TestExecuteHappyPathThreadsPaneID(t *testing.T) {
 	wantCalls := []string{
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
+		"AgentRead(pane-1)",
 		"AgentPrompt(pane-1,start work)",
 	}
 	if !reflect.DeepEqual(m.calls, wantCalls) {
@@ -459,6 +473,123 @@ func TestExecuteFailureAtAgentPromptSurfacesPromptText(t *testing.T) {
 	}
 	if result.PromptText != in.Prompt {
 		t.Fatalf("PromptText = %q, want %q", result.PromptText, in.Prompt)
+	}
+}
+
+// containsCall reports whether calls contains want verbatim -- a small
+// helper for the promptIfReady tests below, which care about whether one
+// particular call happened at all (not the full ordered sequence every
+// other wantCalls-style test in this file asserts).
+func containsCall(calls []string, want string) bool {
+	for _, c := range calls {
+		if c == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestExecutePromptSentWhenPaneIsReady is promptIfReady's (exec.go) clean
+// branch: AgentRead's text carries no blockingDialogSignature match, so
+// AgentPrompt is called exactly as it always was -- the task 19 fix
+// round's own required "clean ready state -> prompt sent as before"
+// scenario, isolated as its own named test (TestExecuteHappyPathThreadsPaneID
+// already proves the same sequence via its own wantCalls, incidentally).
+func TestExecutePromptSentWhenPaneIsReady(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "start work"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:     herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText: "> Sonnet 5 · claude-code\n  Type your message...\n",
+	}
+
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: %+v", result.FailedIndex, result)
+	}
+	if !containsCall(m.calls, "AgentRead(pane-1)") {
+		t.Fatalf("calls = %v, want it to contain the AgentRead check", m.calls)
+	}
+	if !containsCall(m.calls, "AgentPrompt(pane-1,start work)") {
+		t.Fatalf("calls = %v, want it to contain the AgentPrompt call", m.calls)
+	}
+}
+
+// TestExecuteAgentPromptSkippedWhenDialogDetected is promptIfReady's core
+// defect-fix scenario (task 19's live checkpoint, task-19-report.md):
+// AgentRead's text contains a known blocking-dialog signature (Claude
+// Code's real first-run trust-confirmation screen, verbatim from the live
+// transcript), so AgentPrompt must never be called at all -- the agent is
+// never sent the trailing Enter that, on the real screen, was what
+// actually confirmed "No, exit" and killed it. The op still fails exactly
+// like any other OpAgentPrompt failure: FailedIndex points at it and
+// PromptText surfaces the prompt for manual paste (spec §9 step 3).
+func TestExecuteAgentPromptSkippedWhenDialogDetected(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
+	}
+
+	result := Execute(context.Background(), m, ops, nil)
+
+	wantFailedIndex := len(ops) - 1 // Build always appends OpAgentPrompt last when Prompt != ""
+	if result.FailedIndex != wantFailedIndex {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, wantFailedIndex, result)
+	}
+	if result.PromptText != in.Prompt {
+		t.Fatalf("PromptText = %q, want %q (surfaced for manual paste)", result.PromptText, in.Prompt)
+	}
+	if !containsCall(m.calls, "AgentRead(pane-1)") {
+		t.Fatalf("calls = %v, want it to contain the AgentRead check", m.calls)
+	}
+	if containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
+		t.Fatalf("calls = %v, want NO AgentPrompt call -- a detected dialog must block it entirely", m.calls)
+	}
+}
+
+// TestExecuteAgentPromptSkippedWhenAgentReadFails is promptIfReady's
+// fail-safe branch: a pane whose screen cannot even be read is treated the
+// same as a detected dialog -- "when in doubt, keep the session and
+// surface the text" -- rather than assumed safe to prompt.
+func TestExecuteAgentPromptSkippedWhenAgentReadFails(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt:    "AgentRead",
+		failErr:   errors.New("agent target pane-1 not found"),
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+	}
+
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.PromptText != in.Prompt {
+		t.Fatalf("PromptText = %q, want %q (surfaced for manual paste)", result.PromptText, in.Prompt)
+	}
+	if containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
+		t.Fatalf("calls = %v, want NO AgentPrompt call -- an unreadable pane must block it too", m.calls)
 	}
 }
 

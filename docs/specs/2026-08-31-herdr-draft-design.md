@@ -481,6 +481,18 @@ integer `1`.
       was detected as `agent: "claude"` within ≤5 s of launch (one poll
       window; single-shot probe, see task-2b-report.md); comfortably inside
       the 30 s default.
+      **Fixed and re-validated live 2026-09-01 (task 19 fix round):** task
+      2b's probe called the herdr CLI's `pane run` directly, bypassing
+      `CLIRunner.PaneRun`; task 19's own first closeout pass (before this
+      fix) found `PaneRun` routed through `runJSON`, which requires a JSON
+      envelope on stdout that `herdr pane run` never actually prints,
+      making every real Path B submission fail at the launch step. Fixed
+      by giving `PaneRun` its own exit-code-only run path (`runOK`); a
+      full real Path B run afterward showed `launching claude via
+      clauth… ✓` and `waiting for agent detection… ✓` in the popup, with
+      `herdr pane list` confirming `agent: "claude"`,
+      `tokens.clauth: "quantivly-2"` on the launched pane — see
+      task-19-report.md's fix section for the full transcript.
 - [x] Exact JSON field names in creation responses (`workspace_id`, pane ids)
       across `worktree create` / `workspace create` / `tab create` /
       `pane split`. **Live-probed 2026-08-31 (task 2b):** captured verbatim

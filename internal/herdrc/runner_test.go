@@ -37,6 +37,28 @@ func fakeHerdrFail(t *testing.T, stderr string) string {
 	return bin
 }
 
+// fakeHerdrOK writes a disposable shell script that logs its argv and
+// exits 0 printing NOTHING at all -- neither stdout nor stderr -- matching
+// herdr's real `send_ok_request`-backed subcommands (herdr:src/cli.rs;
+// `pane run` is the one CLIRunner.PaneRun uses, herdr:src/cli/pane.rs
+// pane_run): success is reported by exit code alone, with no JSON
+// envelope. Task 19's live checkpoint found the original fakeHerdr-based
+// PaneRun test modeled the wrong contract (a canned JSON stdout the real
+// `pane run` never actually prints), which is exactly why a PaneRun that
+// unconditionally failed against the real CLI still passed its own unit
+// test -- this fake exists so that class of gap can't recur silently.
+func fakeHerdrOK(t *testing.T) (bin, argvLog string) {
+	t.Helper()
+	dir := t.TempDir()
+	argvLog = filepath.Join(dir, "argv")
+	bin = filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\necho \"$@\" >> " + argvLog + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, argvLog
+}
+
 // fakeHerdrHang writes a disposable shell script that ignores its arguments
 // and sleeps for sleepSeconds before ever exiting -- used to prove that a
 // poll bound to a deadline-limited context gets killed at the deadline
@@ -396,6 +418,42 @@ func TestCLIRunnerAgentPromptNonZeroExit(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerAgentRead exercises AgentRead's runText path -- unlike
+// runJSON-backed methods, AgentRead's stdout IS the payload (plain text,
+// no envelope), so this test's fixture is deliberately non-JSON text, to
+// prove runText doesn't try to parse it as JSON the way runJSON would.
+func TestCLIRunnerAgentRead(t *testing.T) {
+	screen := "some pane text\nsecond line"
+	bin, argvLog := fakeHerdr(t, screen)
+	r := &CLIRunner{Bin: bin}
+
+	got, err := r.AgentRead(context.Background(), "w1:p1")
+	if err != nil {
+		t.Fatalf("AgentRead: %v", err)
+	}
+	if !strings.Contains(got, screen) {
+		t.Errorf("AgentRead text = %q, want it to contain %q", got, screen)
+	}
+
+	wantArgv := "agent read w1:p1 --source detection --format text"
+	if gotArgv := readArgvLog(t, argvLog); gotArgv != wantArgv {
+		t.Errorf("argv = %q, want %q", gotArgv, wantArgv)
+	}
+}
+
+func TestCLIRunnerAgentReadNonZeroExit(t *testing.T) {
+	bin := fakeHerdrFail(t, "agent target w1:p1 not found")
+	r := &CLIRunner{Bin: bin}
+
+	_, err := r.AgentRead(context.Background(), "w1:p1")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "agent target w1:p1 not found") {
+		t.Errorf("error %q does not contain stderr content", err.Error())
+	}
+}
+
 func TestCLIRunnerWorktreeRemove(t *testing.T) {
 	stdout := `{"id":"cli:worktree:remove","result":{"type":"worktree_removed","workspace_id":"w3","path":"/x","forced":false}}`
 	bin, argvLog := fakeHerdr(t, stdout)
@@ -485,9 +543,14 @@ func TestCLIRunnerAwaitDetectionTimeoutKillsHangingPoll(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerPaneRun models the real `herdr pane run` contract
+// (send_ok_request, herdr:src/cli.rs): success is reported by exit code
+// alone, with NOTHING printed on stdout. This replaced a fixture that
+// echoed a canned JSON envelope `pane run` never actually prints -- task
+// 19's live checkpoint found that gap let a PaneRun which unconditionally
+// failed against the real CLI still pass this test.
 func TestCLIRunnerPaneRun(t *testing.T) {
-	stdout := `{"id":"cli:pane:run","result":{"type":"pane_run"}}`
-	bin, argvLog := fakeHerdr(t, stdout)
+	bin, argvLog := fakeHerdrOK(t)
 	r := &CLIRunner{Bin: bin}
 
 	err := r.PaneRun(context.Background(), "w1:p2", []string{"clauth", "start", "alpha", "--"})
@@ -498,6 +561,21 @@ func TestCLIRunnerPaneRun(t *testing.T) {
 	wantArgv := "pane run w1:p2 clauth start alpha --"
 	if got := readArgvLog(t, argvLog); got != wantArgv {
 		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerPaneRunToleratesNonEmptyStdout is a defensive companion to
+// TestCLIRunnerPaneRun: PaneRun's contract (via runOK) is exit-code-only,
+// so it must not start failing if some future herdr version's `pane run`
+// happens to print something (JSON or otherwise) on success -- runOK never
+// inspects stdout at all, unlike runJSON.
+func TestCLIRunnerPaneRunToleratesNonEmptyStdout(t *testing.T) {
+	stdout := `{"id":"cli:pane:run","result":{"type":"pane_run"}}`
+	bin, _ := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.PaneRun(context.Background(), "w1:p2", []string{"echo", "hi"}); err != nil {
+		t.Fatalf("PaneRun: %v", err)
 	}
 }
 

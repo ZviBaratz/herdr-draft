@@ -99,6 +99,7 @@ type Runner interface {
 	PaneSplit(ctx context.Context, req PaneSplitReq) (CreatedTopology, error)
 	AgentStart(ctx context.Context, req AgentStartReq) error
 	AgentPrompt(ctx context.Context, req AgentPromptReq) error
+	AgentRead(ctx context.Context, target string) (string, error)
 	AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error
 	PaneRun(ctx context.Context, paneID string, argv []string) error
 	WorktreeRemove(ctx context.Context, workspaceID string) error
@@ -148,6 +149,17 @@ type paneRef struct {
 // payload for the caller to unmarshal further. A non-zero exit is reported
 // as an error naming the herdr subcommand invoked and including its stderr
 // output.
+//
+// Only use this for a subcommand that actually prints a JSON envelope on
+// success -- herdr's own CLI has two distinct success-reporting shapes
+// (herdr:src/cli.rs): `print_response(&send_request(...))`, which every
+// method runJSON is used for goes through, and `send_ok_request(...)`,
+// which reports success by exit code ALONE and prints nothing at all on
+// stdout (`pane run`'s contract -- see runOK's own doc comment, and
+// task-19-report.md's live checkpoint, which found this the hard way:
+// PaneRun used to route through runJSON and therefore failed every single
+// real invocation with "parse response: unexpected end of JSON input",
+// even though the underlying `pane run` had already succeeded).
 func (r *CLIRunner) runJSON(ctx context.Context, args ...string) (json.RawMessage, error) {
 	verb := strings.Join(args, " ")
 
@@ -166,6 +178,51 @@ func (r *CLIRunner) runJSON(ctx context.Context, args ...string) (json.RawMessag
 		return nil, fmt.Errorf("herdr %s: parse response: %w", verb, err)
 	}
 	return envelope.Result, nil
+}
+
+// runOK runs `herdr <args...>` for a subcommand whose success contract is
+// exit code alone, with no JSON envelope (or any other output) printed on
+// stdout -- herdr's own `send_ok_request` helper (herdr:src/cli.rs), which
+// `pane run` (herdr:src/cli/pane.rs `pane_run`) is built on. Unlike
+// runJSON, this never touches stdout at all (any bytes a future herdr
+// version happens to print there are simply discarded, not required to be
+// empty or valid JSON -- the contract this function relies on is exit code
+// only). A non-zero exit is reported the same way runJSON reports one:
+// naming the subcommand invoked and including its stderr output (a failed
+// send_ok_request call writes its JSON error envelope to stderr, not
+// stdout -- see send_ok_request's own body -- so that text still reaches
+// the caller here exactly as it does for every runJSON-backed method).
+func (r *CLIRunner) runOK(ctx context.Context, args ...string) error {
+	verb := strings.Join(args, " ")
+
+	cmd := exec.CommandContext(ctx, r.Bin, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("herdr %s: %w: %s", verb, err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+// runText runs `herdr <args...>` for a subcommand that prints its own
+// plain-text payload directly to stdout on success -- no JSON envelope --
+// herdr's own `print_read_response` helper (herdr:src/cli.rs), which
+// `agent read`/`pane read` (with `--format text`) are built on. Returns
+// stdout verbatim (including empty). A non-zero exit is reported the same
+// way runJSON/runOK report one: naming the subcommand invoked and
+// including its stderr output (print_read_response writes its JSON error
+// envelope to stderr on failure, not stdout, exactly like send_ok_request).
+func (r *CLIRunner) runText(ctx context.Context, args ...string) (string, error) {
+	verb := strings.Join(args, " ")
+
+	cmd := exec.CommandContext(ctx, r.Bin, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("herdr %s: %w: %s", verb, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
 }
 
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement
@@ -360,6 +417,21 @@ func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 	return err
 }
 
+// AgentRead runs `herdr agent read <target> --source detection --format
+// text`, returning the pane's current detection-source screen as plain
+// text. Used by internal/plan's Execute to check for a blocking
+// confirmation/selection dialog before ever calling AgentPrompt (spec §9
+// step 3's own principle, hardened by task 19's live checkpoint: herdr's
+// own agent detection can report a pane idle/interactive_ready while it is
+// actually showing a screen like Claude Code's first-run trust
+// confirmation, so "detected" alone is not proof a prompt is safe to
+// send). `--source detection` matches this project's own established
+// convention for screen-state evidence (see CLAUDE.md's "Screen detection
+// is evidence-based").
+func (r *CLIRunner) AgentRead(ctx context.Context, target string) (string, error) {
+	return r.runText(ctx, "agent", "read", target, "--source", "detection", "--format", "text")
+}
+
 // pollDetection runs `herdr agent get <paneID>` and reports only whether it
 // exited zero. AwaitDetection only needs a detected/not-yet boolean signal
 // -- any status counts as detected -- so this bypasses runJSON's response
@@ -421,10 +493,13 @@ func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout t
 // PaneRun runs `herdr pane run <paneID> <argv...>`, which types argv into
 // the pane's shell and submits it atomically (send-text + Enter; spec §9
 // Path B's launch primitive -- no raw socket use anywhere in the plugin).
+// This goes through runOK, not runJSON: `pane run` prints nothing on
+// success (see runOK's own doc comment) -- routing it through runJSON was
+// task 19's live-checkpoint defect, unconditionally failing every real
+// Path B launch.
 func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, argv []string) error {
 	args := append([]string{"pane", "run", paneID}, argv...)
-	_, err := r.runJSON(ctx, args...)
-	return err
+	return r.runOK(ctx, args...)
 }
 
 // WorktreeRemove runs `herdr worktree remove --workspace <workspaceID>`.

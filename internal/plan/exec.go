@@ -134,6 +134,35 @@ func emitProgress(onProgress func(Progress), index, total int, label string, sta
 	onProgress(Progress{Index: index, Total: total, Label: label, State: state, Err: err})
 }
 
+// promptIfReady reads req.Target's current detection-source screen
+// (Runner.AgentRead) and checks it for a blocking confirmation/selection
+// dialog (blockingDialogSignature, dialog.go) before ever sending req's
+// prompt text via Runner.AgentPrompt -- spec §9 step 3's own principle,
+// hardened by task 19's live checkpoint finding that herdr's own agent
+// detection can report a pane idle/interactive_ready while it is actually
+// showing a screen like this: never send input into a state that has not
+// been positively confirmed safe to type into. A pane whose screen cannot
+// be read at all is treated the same as a detected dialog -- when in
+// doubt, keep the session and surface the prompt text for manual paste,
+// rather than assume "unreadable" means "safe".
+//
+// Neither failure mode calls Runner.AgentPrompt at all, so the agent is
+// never sent text (and never sent the trailing Enter that, on the
+// trust-dialog screen, was what actually killed it) -- Execute's existing
+// OpAgentPrompt failure path (result.PromptText, the keep-or-clean gate)
+// takes over exactly as it does for a "real" AgentPrompt error, since from
+// Execute's point of view this is just another error from this op.
+func promptIfReady(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptReq) error {
+	screen, err := r.AgentRead(ctx, req.Target)
+	if err != nil {
+		return fmt.Errorf("could not confirm the agent is ready for a prompt: %w", err)
+	}
+	if sig := blockingDialogSignature(screen); sig != "" {
+		return fmt.Errorf("agent is waiting on a dialog (%q) -- prompt not sent", sig)
+	}
+	return r.AgentPrompt(ctx, req)
+}
+
 // Execute runs ops in order against r. It threads each op's step-1 output
 // (the topology op's workspace/tab/pane ids) into every later op that
 // needs it -- OpAgentStart's Agent.PaneID, OpClauthLaunch's PaneRun target
@@ -215,7 +244,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 					req.Target = created.PaneID
 				}
 				promptText = req.Text
-				err = r.AgentPrompt(ctx, req)
+				err = promptIfReady(ctx, r, req)
 			default:
 				err = fmt.Errorf("plan: execute: unknown op kind %v", op.Kind)
 			}
