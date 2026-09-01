@@ -354,6 +354,20 @@ type Model struct {
 	// on it entirely (SubmitView is not a form.Section and takes no part
 	// in form.Model's focus ring).
 	submitting bool
+	// submitDeadEnd is true only in the one submitting state that has no
+	// other way out: step 1 (topology creation) itself failed, so
+	// SubmitView never gets a SetFailure call at all (spec §9 scopes the
+	// keep-or-clean prompt to "after step 1 succeeded") -- its own k/c
+	// grammar stays permanently inert. updateSubmitting's Esc/Ctrl+C
+	// escape hatch is scoped to exactly this state (see its own doc
+	// comment): at every OTHER point in the submitting lifecycle --
+	// actively streaming, waiting on plan.CleanCheck, or showing a real
+	// keep-or-clean prompt -- Esc/Ctrl+C must NOT quit, or it would either
+	// strand plan.Execute's own background goroutine forever blocked on
+	// an unbuffered channel send nobody is left to drain (fix round 1,
+	// reviewer-measured: a permanently elevated goroutine count), or let
+	// the user bypass an intentional keep/clean choice silently.
+	submitDeadEnd bool
 	// submitInput/submitCreated/submitCleanDecision are the running
 	// submit attempt's own state, threaded across the several async Cmds
 	// spec §9's staged pipeline needs (plan.Execute's own streamed
@@ -645,8 +659,15 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 //     grammar only blocks a bare Enter from submitting an empty Title
 //     (form.go's titleValuer/TitleEmpty), while ⌃S submits from ANY zone
 //     regardless (keys.go), and plan.Build itself rejects an empty title
-//     outright. Checked first: every other check either doesn't apply or
-//     doesn't matter without a title.
+//     outright. Disclosed judgment call (flagged by review): this
+//     re-orders spec §9's own literal validation list, which names
+//     directory validity FIRST -- empty-title is checked before it here,
+//     deliberately, because every check below it either doesn't apply
+//     (workspace-label duplicate is defined as false for an empty title)
+//     or doesn't matter (a valid-but-unused directory) without a title
+//     at all; there is no scenario where showing a directory-invalid
+//     verdict ahead of "title required" would be more useful to the
+//     user.
 //   - Directory validity (dirInvalid, kept live by handleDirResult).
 //   - Branch/workspace-label duplicates (titleDupBlocked, kept live by
 //     handleTitleResult) -- the SAME live verdict TitleField is already
@@ -666,7 +687,15 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 	if m.titleDupBlocked {
 		return m.form.FocusByID("title"), true
 	}
-	if m.accountAuthBlocked() {
+	if pin, status, blocked := m.accountAuthBlocked(); blocked {
+		// Fix round 1 (reviewer finding -- silent failure): the row
+		// marker Task 18 already renders for this profile was already
+		// visible BEFORE this blocked Create press, so it alone gave no
+		// new signal that anything happened; AccountField.SetVerdict
+		// (fix round 1) pushes a fresh, submit-time message, the same
+		// "the field itself shows why" pattern Title's own dup verdict
+		// already used.
+		m.account.SetVerdict(pin, fmt.Sprintf("blocked — auth: %s", status))
 		return m.form.FocusByID("account"), true
 	}
 	return nil, false
@@ -689,26 +718,38 @@ func (m Model) accountPin() string {
 
 // accountAuthBlocked reports whether the currently pinned profile (see
 // accountPin) has a known, non-"ok" auth_status (spec §9: "pinned account
-// auth_status != ok -> blocking verdict") -- consulting m.clauthStatus,
-// the last clauth feed New/handleClauthResult recorded (AccountField
-// itself exposes no per-profile AuthStatus getter, only the always-
-// visible inline row marker Task 18 already renders -- see
-// checkSubmitValidation's own doc comment on why blocking here re-focuses
-// Account rather than pushing a new message of its own). A pin naming a
-// profile clauth's own feed doesn't currently list (e.g. one removed
-// since the last reload) is not blocked here -- there is nothing to judge
-// it against.
-func (m Model) accountAuthBlocked() bool {
-	pin := m.accountPin()
+// auth_status != ok -> blocking verdict"), and that raw status text when
+// it does (fix round 1: checkSubmitValidation threads it into
+// AccountField.SetVerdict's own new blocking message) -- consulting
+// m.clauthStatus, the last clauth feed New/handleClauthResult recorded
+// (AccountField itself exposes no per-profile AuthStatus getter of its
+// own). A pin naming a profile clauth's own feed doesn't currently list
+// (e.g. one removed since the last reload) is not blocked here -- there
+// is nothing to judge it against.
+//
+// Disclosed judgment call (flagged by review, not explicitly specified
+// by spec §9): an EMPTY AuthStatus is treated as non-blocking, same as
+// "ok" -- mirroring accountRow's own accountWarning helper (Task 18),
+// which already treats "" the same way for the picker row's own inline
+// marker. Consistency with that already-shipped, already-reviewed
+// behavior was chosen over inventing a stricter "unknown status blocks"
+// rule this task was never asked to add; an empty AuthStatus would
+// otherwise disagree with what the row itself is already showing (an
+// unmarked, unwarned row) about the very same profile.
+func (m Model) accountAuthBlocked() (pin, status string, blocked bool) {
+	pin = m.accountPin()
 	if pin == "" {
-		return false
+		return "", "", false
 	}
 	for _, p := range m.clauthStatus.Profiles {
 		if p.Name == pin {
-			return p.AuthStatus != "" && p.AuthStatus != "ok"
+			if p.AuthStatus != "" && p.AuthStatus != "ok" {
+				return pin, p.AuthStatus, true
+			}
+			return pin, "", false
 		}
 	}
-	return false
+	return pin, "", false
 }
 
 // buildPlanInput composes plan.Input from the form's current field state
@@ -772,6 +813,24 @@ func (m Model) startSubmit(ops []plan.Op, in plan.Input) (Model, tea.Cmd) {
 // the same debounced dir/base checks and Linear refresh a real form-open
 // schedules, which is what re-seeds candidate lists/verdicts rather than
 // leaving them stale from the discarded Model.
+//
+// Fix round 1 (reviewer finding, empirically confirmed: a 4496-byte view
+// before Clear, 0 bytes after): New's own Model -- and, more precisely,
+// the form.Model nested inside it -- both start with a zero-value 0x0
+// width/height, set only by a real tea.WindowSizeMsg arriving through
+// Update. A real terminal only ever sends that message on startup/resize,
+// never on a Clear, so the ORIGINAL version of this method (just `return
+// fresh, fresh.Init()`) rebuilt a Model that would render "" until the
+// next real resize -- field values reset correctly, but the screen went
+// blank, defeating the whole feature. The fix replays the CURRENT size
+// (m.width/m.height, this Model's own top-level copy, captured by every
+// Update call -- see their own doc comment) through fresh.Update as a
+// synthesized tea.WindowSizeMsg: routed through Update's own top-level
+// capture (sets fresh's copy) and, since fresh isn't submitting yet,
+// routeToForm's default case (forwards to fresh.form.Update, which sets
+// the nested form.Model's own private width/height) -- the same two
+// places a real WindowSizeMsg would reach, just synthesized instead of
+// waited for.
 func (m Model) handleClearRequested() (Model, tea.Cmd) {
 	fresh := New(Setup{
 		Deps:         m.deps,
@@ -784,7 +843,9 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		ClauthStatus: m.clauthStatus,
 		LinearCache:  m.linearIssues,
 	})
-	return fresh, fresh.Init()
+	next, sizeCmd := fresh.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	fresh = next.(Model)
+	return fresh, tea.Batch(fresh.Init(), sizeCmd)
 }
 
 // reactToChanges diffs every getter this package needs to react to against

@@ -584,6 +584,7 @@ func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	if msg.result.Created == nil {
+		m.submitDeadEnd = true // see Model.submitDeadEnd's own doc comment.
 		return m, nil
 	}
 	m.submitCreated = *msg.result.Created
@@ -634,11 +635,7 @@ func (m Model) handleCleanRequested() (Model, tea.Cmd) {
 	return m, runCleanCmd(m.deps.Runner, m.submitInput, m.submitCreated)
 }
 
-// cleanDoneMsg reports plan.Clean's own outcome. err is captured (not
-// silently discarded at the source) but currently unread by
-// handleCleanDone -- SubmitView's existing API has no "clean failed"
-// state for it to surface into (see this task's own report's Concerns
-// section).
+// cleanDoneMsg reports plan.Clean's own outcome.
 type cleanDoneMsg struct{ err error }
 
 func runCleanCmd(r herdrc.Runner, in plan.Input, created herdrc.CreatedTopology) tea.Cmd {
@@ -648,31 +645,67 @@ func runCleanCmd(r herdrc.Runner, in plan.Input, created herdrc.CreatedTopology)
 	}
 }
 
-// handleCleanDone finishes the submit pipeline once plan.Clean returns,
-// success or failure: the created space is left in SOME terminal state
-// either way (removed on success, or exactly Keep's own outcome on
-// failure), so this quits regardless -- see cleanDoneMsg's own doc
-// comment on why its error goes no further than this.
-func (m Model) handleCleanDone(cleanDoneMsg) (Model, tea.Cmd) {
+// handleCleanDone finishes plan.Clean's own attempt. Success quits (the
+// created space is gone; the plugin's job is done, matching
+// handleSubmitDone's own full-success posture). A failure does NOT quit
+// -- fix round 1 (reviewer finding -- silent failure): an earlier version
+// quit here regardless of msg.err, which made a failed Clean
+// indistinguishable from a successful one (the created space was left
+// behind either way, but only the failure case should have been silent
+// about it). SubmitView.SetCleanFailed now surfaces a short error line,
+// and staying in the failure state (no cmd) keeps the k/c choice
+// available -- "c" retries plan.Clean via handleCleanRequested, "k" gives
+// up and keeps the space as-is, the same choice the user already had for
+// the ORIGINAL step failure.
+func (m Model) handleCleanDone(msg cleanDoneMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		if m.submitView != nil {
+			m.submitView.SetCleanFailed(msg.err)
+		}
+		return m, nil
+	}
 	return m, tea.Quit
 }
 
 // updateSubmitting is Update's own dispatch table while m.submitting is
 // true (form.Model's own key grammar is bypassed entirely during submit
 // -- SubmitView is not a form.Section and takes no part in its focus
-// ring, per submitview.go's own file doc comment). Esc/Ctrl+C are this
-// state's own escape hatch (form.Model's ActionCancel equivalent, since
-// MapKey never runs here) -- needed in particular for a step-1 failure,
-// which otherwise leaves the user with no way to close the popup at all
-// (see handleSubmitDone). Every other key is forwarded to SubmitView's
-// own Update (its k/c keep-or-clean grammar); every async submit-pipeline
-// message is dispatched to its own handler above; anything else
-// (e.g. a stray tea.WindowSizeMsg, already captured by Update's own
-// top-level width/height snapshot) is ignored.
+// ring, per submitview.go's own file doc comment). Esc/Ctrl+C only quit
+// when m.submitDeadEnd is true (form.Model's ActionCancel equivalent,
+// since MapKey never runs here) -- the ONE submitting state that has no
+// other way out at all (step 1 itself failed; see handleSubmitDone/
+// Model.submitDeadEnd's own doc comments).
+//
+// Fix round 1 (reviewer finding): an earlier version of this method quit
+// on Esc/Ctrl+C unconditionally, for the WHOLE m.submitting lifetime, not
+// just the dead end. Since runSubmitCmd's progress channel is unbuffered
+// and only ever re-armed by a fresh Update call (see its own file-doc
+// comment), quitting mid-stream stops that draining outright --
+// permanently, not just delayed -- which leaves plan.Execute's own
+// background goroutine forever blocked on a channel send nobody is left
+// to read (reviewer-measured: a permanently elevated goroutine count) AND
+// abandons whatever plan.Execute had already created with no CleanCheck,
+// no Clean, no keep/clean prompt at all: exactly the "never silent"
+// guarantee spec §9 exists to prevent. Every other submitting state (an
+// active stream, the CleanCheck wait, or the keep/clean prompt already
+// showing) now ignores Esc/Ctrl+C entirely -- forwarded to SubmitView's
+// own Update like any other key, which no-ops for anything but "k"/"c"
+// once SetFailure has been called (submitview.go), and is a no-op before
+// that too (SubmitView's own "zero-value safety" contract).
+//
+// Adding context cancellation to unblock plan.Execute on demand instead
+// was explicitly ruled out for this fix round: it's a bigger, separately-
+// reviewable change this late, not a one-line scoping fix.
+//
+// Every other key is forwarded to SubmitView's own Update (its k/c
+// keep-or-clean grammar); every async submit-pipeline message is
+// dispatched to its own handler above; anything else (e.g. a stray
+// tea.WindowSizeMsg, already captured by Update's own top-level
+// width/height snapshot) is ignored.
 func (m Model) updateSubmitting(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if s := msg.String(); s == "esc" || s == "ctrl+c" {
+		if s := msg.String(); m.submitDeadEnd && (s == "esc" || s == "ctrl+c") {
 			return m, tea.Quit
 		}
 		if m.submitView != nil {

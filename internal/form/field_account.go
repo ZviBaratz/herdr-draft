@@ -106,6 +106,17 @@ type AccountField struct {
 
 	agentIsClaude bool
 	degraded      bool
+
+	// verdictKey/verdictText are SetVerdict's own staleness guard, the
+	// same "clears the moment the underlying value changes" discipline
+	// field_title.go's TitleField.verdictKey/field_dir.go's
+	// DirField.validityPath document: verdictLine (View) only shows
+	// verdictText when verdictKey still equals the CURRENT Pin(), so a
+	// verdict computed for a pin the user has since moved away from (Up/
+	// Down, or a later SetPin) stops rendering on its own, with no
+	// separate Clear call needed.
+	verdictKey  string
+	verdictText string
 }
 
 // NewAccountField returns an AccountField with only the "active" sentinel
@@ -308,6 +319,28 @@ func (f *AccountField) SetPin(pin string) {
 	f.picker.SelectID(pin)
 }
 
+// SetVerdict records the app layer's own live-validation message for the
+// pin (key, a profile name or "" for the "active" sentinel -- the same
+// shape Pin() returns) that was current when it was computed: a short
+// note shown on the always-reserved hint row, taking priority there over
+// the degraded-status hint (View's own doc comment) -- e.g. spec §9's "a
+// pinned account whose auth_status != ok blocks with an account verdict."
+// A later call whose key no longer matches Pin() (the user has since
+// moved to a different profile) is stored but never rendered -- see
+// verdictKey's own doc comment; there is no separate Clear method,
+// matching TitleField.SetVerdict's identical staleness-by-comparison
+// design.
+//
+// Added in fix round 1 (Task 20b review): the auth-blocked case
+// previously surfaced no NEW message at all -- only the picker row's own
+// pre-existing "! auth failed" marker (Task 18), which was already
+// visible before the blocked submit attempt, making a blocked Create
+// press look like it silently did nothing.
+func (f *AccountField) SetVerdict(key, text string) {
+	f.verdictKey = key
+	f.verdictText = text
+}
+
 // Pin returns the currently selected profile name, or "" when the
 // selection is the "active" sentinel row (spec: "don't pin — use
 // whatever profile is live") -- the getter-boundary translation
@@ -346,15 +379,22 @@ func (f *AccountField) View(inner int) string {
 		return header + "\n" + fitLine("", inner) + "\n" + strings.Join(blanks, "\n")
 	}
 
+	pin := f.Pin()
 	display := accountActiveLabel
-	if pin := f.Pin(); pin != "" {
+	if pin != "" {
 		display = pin
 	}
 	body := fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(display), budget)
 	header := fitLine(labelStyled+body, inner)
 
+	// SetVerdict's own live message takes priority over the degraded
+	// hint when both would otherwise apply -- a blocking submit-time
+	// verdict (spec §9) is the more urgent of the two.
 	hintLine := fitLine("", inner)
-	if f.degraded {
+	switch {
+	case f.verdictKey == pin && f.verdictText != "":
+		hintLine = fitLine(lipgloss.NewStyle().Foreground(f.palette.Danger).Render(f.verdictText), inner)
+	case f.degraded:
 		hintLine = fitLine(dimHint(f.palette).Render(accountDegradedHint), inner)
 	}
 

@@ -154,6 +154,44 @@ func TestSubmitView_PromptTextSurfacedOnFailure(t *testing.T) {
 	}
 }
 
+// TestSubmitView_CleanFailedSurfacesError pins SetCleanFailed (fix round
+// 1: a failed "c" attempt was previously indistinguishable from a
+// successful one -- the app layer captured plan.Clean's own error but
+// had nowhere to put it). Nothing renders before SetCleanFailed is
+// called (zero-value safety); afterward, a short error line appears
+// alongside the still-available k/c choice.
+func TestSubmitView_CleanFailedSurfacesError(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 1}, plan.CleanDecision{Allowed: true})
+
+	before := ansi.Strip(v.ViewAt(80, 24))
+	if strings.Contains(before, "clean failed") {
+		t.Errorf("ViewAt(80,24) before SetCleanFailed already mentions a clean failure: %q", before)
+	}
+
+	v.SetCleanFailed(errors.New("herdr: workspace not found"))
+	after := ansi.Strip(v.ViewAt(80, 24))
+	if !strings.Contains(after, "clean failed") || !strings.Contains(after, "herdr: workspace not found") {
+		t.Errorf("ViewAt(80,24) after SetCleanFailed = %q, want it to surface the clean error", after)
+	}
+	if !strings.Contains(after, "k keep") || !strings.Contains(after, "c clean") {
+		t.Errorf("ViewAt(80,24) after SetCleanFailed = %q, want the k/c choice to stay available (retry)", after)
+	}
+}
+
+func TestSubmitView_NoPanicBeforeSetCleanFailed(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("SubmitView panicked: %v", r)
+		}
+	}()
+	v := NewSubmitView(theme.Default())
+	_ = v.ViewAt(80, 24)
+	v.SetCleanFailed(errors.New("boom"))
+	_ = v.ViewAt(80, 24)
+}
+
 func TestSubmitView_NoPanicOnDegenerateSize(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {

@@ -71,6 +71,12 @@ type SubmitView struct {
 	haveFailure bool
 	result      plan.ExecResult
 	clean       plan.CleanDecision
+
+	// cleanErr is SetCleanFailed's own recorded error, or nil before that
+	// setter is ever called (the common case: keep succeeds silently, or
+	// no clean was ever attempted). Rendered as a short, always-visible
+	// line in the failure prompt -- see failureLines.
+	cleanErr error
 }
 
 // NewSubmitView returns an empty SubmitView (no progress, no failure)
@@ -100,6 +106,26 @@ func (v *SubmitView) SetFailure(res plan.ExecResult, clean plan.CleanDecision) {
 	v.haveFailure = true
 	v.result = res
 	v.clean = clean
+}
+
+// SetCleanFailed records that a "c" (clean) attempt itself failed -- the
+// herdr CLI call plan.Clean issued (spec §9: `herdr worktree remove` /
+// `herdr workspace close`) returned a non-nil error, even though
+// CleanCheck had already said it was safe to try. Rendered as a short,
+// always-visible error line in the failure prompt once haveFailure is
+// true (a no-op before SetFailure, same zero-value safety as SetFailure
+// itself; see Update's identical guard).
+//
+// Added in fix round 1 (Task 20b review -- silent failure): before this,
+// a failed Clean was indistinguishable from a successful one -- the app
+// layer captured the error but had nowhere to put it, so it quit either
+// way, exactly the same "never silent" guarantee spec §9 exists to
+// protect for the ORIGINAL step failure. The app layer's own
+// handleCleanDone (async.go) now calls this and stays on the failure
+// prompt (instead of quitting) when Clean itself fails, so the k/c
+// choice stays available too -- "k" to give up and keep, or "c" to retry.
+func (v *SubmitView) SetCleanFailed(err error) {
+	v.cleanErr = err
 }
 
 // Update handles the keep-or-clean gate's own k/c keys -- a no-op ("no
@@ -220,12 +246,14 @@ func progressLine(p plan.Progress, palette theme.Palette) string {
 // failureLines renders the keep-or-clean gate's own lines: a header, the
 // k/c choice (or, when CleanDecision.Allowed is false, "k keep" alone plus
 // the denial reason on its own line -- spec §9: "the clean option is
-// disabled with the reason shown"), and, when ExecResult.PromptText is
-// non-empty (only set on an OpAgentPrompt failure -- exec.go's own doc
-// comment), a note surfacing it for manual paste (spec §9 step 3:
-// "timeout ... prompt text surfaced back to the user for manual paste").
+// disabled with the reason shown"), a short error line when SetCleanFailed
+// has recorded a Clean attempt that itself failed, and, when
+// ExecResult.PromptText is non-empty (only set on an OpAgentPrompt
+// failure -- exec.go's own doc comment), a note surfacing it for manual
+// paste (spec §9 step 3: "timeout ... prompt text surfaced back to the
+// user for manual paste").
 func (v *SubmitView) failureLines(inner int) []string {
-	out := make([]string, 0, 4)
+	out := make([]string, 0, 5)
 
 	header := lipgloss.NewStyle().Foreground(v.palette.Danger).Bold(true).Render("Step failed — choose how to proceed:")
 	out = append(out, fitLine(header, inner))
@@ -238,6 +266,11 @@ func (v *SubmitView) failureLines(inner int) []string {
 		out = append(out, fitLine(keep, inner))
 		reason := dimHint(v.palette).Render("clean disabled: " + v.clean.Reason)
 		out = append(out, fitLine(reason, inner))
+	}
+
+	if v.cleanErr != nil {
+		errLine := lipgloss.NewStyle().Foreground(v.palette.Danger).Render("clean failed: " + v.cleanErr.Error())
+		out = append(out, fitLine(errLine, inner))
 	}
 
 	if v.result.PromptText != "" {

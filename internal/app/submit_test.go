@@ -354,6 +354,20 @@ func TestSubmit_PinnedProfileAuthFailedBlocksWithAccountVerdict(t *testing.T) {
 	if len(runner.calls) != 0 {
 		t.Fatalf("runner.calls = %v after a blocked submit, want none (nothing created)", runner.calls)
 	}
+
+	// Fix round 1 (reviewer finding -- silent failure): before this fix,
+	// the only cue was the picker row's own marker/label -- which already
+	// mentions "expired" regardless (accountRow's own "name · tier ·
+	// auth_status" format) and was ALREADY visible before the click, so
+	// checking for "expired" alone would pass even without the fix.
+	// AccountField.SetVerdict pushes a NEW hint-row message with a
+	// "blocked" prefix nothing else in the view ever renders -- that's
+	// the actual signal this fix adds.
+	frame := ansi.Strip(m.account.View(60))
+	wantVerdict := "blocked — auth: expired"
+	if !strings.Contains(frame, wantVerdict) {
+		t.Fatalf("AccountField.View(60) after a blocked submit = %q, want it to contain the new blocking verdict %q", frame, wantVerdict)
+	}
 }
 
 // TestSubmit_FailedStepShowsFailureWithCleanCheckReasonThreaded pins the
@@ -531,6 +545,66 @@ func TestSubmit_StepOneFailureHasNoKeepOrCleanPrompt(t *testing.T) {
 	}
 }
 
+// TestUpdateSubmitting_EscDuringActiveStreamingDoesNotQuit is fix round
+// 1's own regression test (reviewer finding): an earlier version of
+// updateSubmitting quit on Esc/Ctrl+C for the WHOLE m.submitting
+// lifetime, not just the step-1-failure dead end that was actually
+// approved. Since runSubmitCmd's progress channel is unbuffered and only
+// re-armed by a fresh Update call, quitting mid-stream permanently
+// strands plan.Execute's own background goroutine (still blocked
+// mid-run, trying to send its next progress event to nobody) and
+// abandons whatever it already created with no CleanCheck/Clean/prompt
+// at all -- the reviewer measured a permanently elevated goroutine count
+// from exactly this. Esc/Ctrl+C while a submit is actively streaming (well
+// before submitDoneMsg, let alone the dead end) must now be a no-op, and
+// the pipeline must still be able to run to completion afterward.
+func TestUpdateSubmitting_EscDuringActiveStreamingDoesNotQuit(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.title.SetTitle("Fix pagination", false)
+	m.worktree.SetGitTarget(true)
+	m.worktree.SetOn(true)
+	m.worktree.SetBranch("zvi/fix-pagination", false)
+	m.prompt.SetValue("do it", false) // more than one op, so there's real "mid-stream" room.
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if !m.submitting {
+		t.Fatal("submit did not start")
+	}
+
+	// Apply exactly the FIRST streamed event -- plan.Execute's own
+	// background goroutine is genuinely still running now, nowhere near
+	// done, exactly the state the original bug quit out from under.
+	msg := cmd()
+	pm, ok := msg.(submitProgressMsg)
+	if !ok {
+		t.Fatalf("first submit message = %#v, want submitProgressMsg", msg)
+	}
+	var nextCmd tea.Cmd
+	m, nextCmd = m.handleSubmitProgress(pm)
+	if m.submitDeadEnd {
+		t.Fatal("submitDeadEnd is true mid-stream, want false (nothing has failed yet)")
+	}
+
+	for _, escKey := range []tea.KeyPressMsg{{Code: tea.KeyEscape}, key('c', tea.ModCtrl)} {
+		_, escCmd := m.updateSubmitting(escKey)
+		if escCmd == nil {
+			continue
+		}
+		if _, isQuit := escCmd().(tea.QuitMsg); isQuit {
+			t.Fatalf("updateSubmitting(%v) mid-stream returned tea.Quit, want it ignored (would strand plan.Execute's own goroutine)", escKey)
+		}
+	}
+
+	// The pipeline must still run to completion afterward -- nothing was
+	// actually interrupted by the ignored Esc/Ctrl+C above.
+	_, _, done := drainSubmitProgress(t, m, nextCmd)
+	if done.result.FailedIndex != -1 {
+		t.Fatalf("unexpected failure after ignored Esc/Ctrl+C mid-stream: %+v", done.result)
+	}
+}
+
 // TestSubmit_CleanAllowedCallsPlanCleanAndQuits covers the ALLOWED half of
 // handleCleanRequested (the denied half is TestSubmit_CleanMsgOnDeniedCheckDoesNothing
 // above): a CleanMsg with an allowing decision must actually call
@@ -564,6 +638,54 @@ func TestSubmit_CleanAllowedCallsPlanCleanAndQuits(t *testing.T) {
 	}
 	if _, ok := quitCmd().(tea.QuitMsg); !ok {
 		t.Fatal("updateSubmitting(cleanDoneMsg) did not return tea.Quit")
+	}
+}
+
+// TestSubmit_CleanFailureSurfacesErrorAndStaysInPrompt is fix round 1's
+// own regression test (reviewer finding -- silent failure): a failed
+// plan.Clean call must NOT quit -- quitting either way made a failed
+// clean indistinguishable from a successful one. It must instead surface
+// the error on SubmitView (SetCleanFailed) and stay on the failure
+// prompt, so the k/c choice ("c" retry, "k" give up and keep) is still
+// available.
+func TestSubmit_CleanFailureSurfacesErrorAndStaysInPrompt(t *testing.T) {
+	cleanErr := errors.New("herdr: workspace not found")
+	runner := &submitFakeRunner{failAt: "WorkspaceClose", failErr: cleanErr}
+	m := newSubmitTestModel(t, runner, testSetup{})
+	m.submitting = true
+	m.submitCleanDecision = plan.CleanDecision{Allowed: true}
+	m.submitInput = plan.Input{UseWorktree: false}
+	m.submitCreated = herdrc.CreatedTopology{WorkspaceID: "ws-1"}
+	m.submitView = form.NewSubmitView(m.palette)
+	m.submitView.SetFailure(plan.ExecResult{FailedIndex: 0}, m.submitCleanDecision)
+
+	next, cmd := m.Update(form.CleanMsg{})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("Update(CleanMsg{}) returned a nil cmd, want the plan.Clean cmd")
+	}
+	msg := cmd()
+	cdMsg, ok := msg.(cleanDoneMsg)
+	if !ok {
+		t.Fatalf("Update(CleanMsg{})'s cmd produced %#v, want cleanDoneMsg", msg)
+	}
+	if cdMsg.err == nil {
+		t.Fatal("cleanDoneMsg.err = nil, want the configured failure")
+	}
+
+	m, doneCmd := m.updateSubmitting(cdMsg)
+	if doneCmd != nil {
+		if _, isQuit := doneCmd().(tea.QuitMsg); isQuit {
+			t.Fatal("updateSubmitting(cleanDoneMsg) after a Clean failure returned tea.Quit, want it to stay on the failure prompt")
+		}
+	}
+
+	frame := ansi.Strip(m.submitView.ViewAt(80, 24))
+	if !strings.Contains(frame, "clean failed") || !strings.Contains(frame, "herdr: workspace not found") {
+		t.Fatalf("SubmitView.ViewAt(80,24) after a Clean failure = %q, want the error surfaced", frame)
+	}
+	if !strings.Contains(frame, "k keep") || !strings.Contains(frame, "c clean") {
+		t.Fatalf("SubmitView.ViewAt(80,24) after a Clean failure = %q, want the k/c choice still available", frame)
 	}
 }
 
@@ -648,6 +770,48 @@ func TestNew_AppliesConfigDefaultClauthPin(t *testing.T) {
 	}
 	if got := m.account.Pin(); got != "work" {
 		t.Fatalf("account.Pin() after New with [clauth] default=%q = %q, want %q", "work", got, "work")
+	}
+}
+
+// TestHandleClearRequested_ViewNonEmptyAfterClear is fix round 1's own
+// regression test (reviewer finding, empirically confirmed against a
+// running Model: a 4496-byte View() before Clear, 0 bytes after): New's
+// own Model -- and, critically, the form.Model NESTED inside it -- both
+// start with a zero-value 0x0 width/height, set only by a real
+// tea.WindowSizeMsg reaching Update. A real terminal only ever sends one
+// on startup/resize, never on a Clear, so the ORIGINAL handleClearRequested
+// (just `return fresh, fresh.Init()`) rebuilt a Model whose nested
+// form.Model had never seen a size at all -- View() rendered "" until the
+// next real resize. Field values reset correctly underneath; the screen
+// just went blank, defeating the whole feature. This pins that View()
+// stays non-empty AND keeps showing the (re-seeded) context-derived
+// project directory across a Clear, once a real size has already been
+// established.
+func TestHandleClearRequested_ViewNonEmptyAfterClear(t *testing.T) {
+	m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{
+		Ctx: herdrc.Context{WorkspaceCwd: "/repo"},
+	})
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
+
+	before := m.View().Content
+	if before == "" {
+		t.Fatal("test setup: View() is empty even BEFORE Clear -- fix the test, it can't distinguish the bug from a broken setup")
+	}
+
+	next, cmd := m.Update(form.ClearRequestedMsg{})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("Update(ClearRequestedMsg{}) returned a nil cmd, want the rebuilt form's own Init cmd")
+	}
+
+	after := m.View().Content
+	if after == "" {
+		t.Fatalf("View() is empty after Clear (was %d bytes before), want it to stay rendered at the last-known %dx%d size", len(before), 120, 40)
+	}
+	if got := ansi.Strip(after); !strings.Contains(got, "/repo") {
+		t.Fatalf("View() after Clear = %q, want it to contain the re-seeded, context-derived project dir %q", got, "/repo")
 	}
 }
 

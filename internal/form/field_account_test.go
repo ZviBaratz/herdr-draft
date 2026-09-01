@@ -123,6 +123,40 @@ func TestAccountField_SetPin(t *testing.T) {
 	}
 }
 
+// TestAccountField_SetVerdict pins the new submit-time blocking verdict
+// (fix round 1: an auth-blocked submit previously surfaced no NEW
+// message at all -- only the picker row's own pre-existing marker, which
+// was already visible before the blocked Create press, making the block
+// look like it silently did nothing). The verdict must render on the
+// hint row while it still matches the CURRENT pin, and stop rendering
+// the moment the pin moves away -- the same staleness-by-comparison
+// discipline TitleField.SetVerdict already uses, with no separate Clear
+// call.
+func TestAccountField_SetVerdict(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus())
+	f.SetPin("beta")
+
+	frame := ansi.Strip(f.View(60))
+	if strings.Contains(frame, "auth") && !strings.Contains(frame, "expired") {
+		t.Fatalf("View(60) before SetVerdict unexpectedly mentions auth: %q", frame)
+	}
+
+	f.SetVerdict(f.Pin(), "blocked — auth: expired")
+	frame = ansi.Strip(f.View(60))
+	if !strings.Contains(frame, "blocked — auth: expired") {
+		t.Fatalf("View(60) after SetVerdict = %q, want it to contain the verdict text", frame)
+	}
+
+	// Moving the pin away must silently drop the now-stale verdict.
+	f.SetPin("gamma")
+	frame = ansi.Strip(f.View(60))
+	if strings.Contains(frame, "blocked — auth: expired") {
+		t.Fatalf("View(60) after moving the pin away still shows the stale verdict: %q", frame)
+	}
+}
+
 // TestAccountField_SetProfilesRefreshPreservesPinByName mirrors
 // field_worktree.go's identical same-version-refresh test: a later
 // SetProfiles call (e.g. a re-poll on account focus, spec §8) must not
