@@ -256,19 +256,38 @@ const maxAgentNameLen = 30
 // AgentName sanitizes title like a branch slug (gitx.SanitizeBranch),
 // prefixes "s-" when the result's first rune is not a lowercase letter
 // (SanitizeBranch only ever emits [a-z0-9-], so this covers a leading
-// digit or an empty/all-symbol title), then clamps to maxAgentNameLen
-// runes.
+// digit or an empty/all-symbol title), clamps to maxAgentNameLen runes,
+// then trims any trailing "-"/"_" the clamp exposed -- names surface in the
+// UI, and a hyphen dangling off a hard truncation reads as broken rather
+// than intentional.
 func AgentName(title string) string {
-	slug := gitx.SanitizeBranch(title)
-
-	first, _ := utf8.DecodeRuneInString(slug)
-	if first < 'a' || first > 'z' {
-		slug = "s-" + slug
-	}
+	slug := withAgentNamePrefix(gitx.SanitizeBranch(title))
 
 	runes := []rune(slug)
 	if len(runes) > maxAgentNameLen {
 		runes = runes[:maxAgentNameLen]
 	}
-	return string(runes)
+
+	clamped := strings.TrimRight(string(runes), "-_")
+	if clamped == "" {
+		// The prefixed slug always starts with a lowercase letter (see
+		// withAgentNamePrefix), which TrimRight never removes, so this is
+		// unreachable with the current maxAgentNameLen -- kept as a
+		// defensive fallback (e.g. against a future maxAgentNameLen of 0)
+		// rather than ever returning an empty, regex-invalid name.
+		return withAgentNamePrefix("")
+	}
+	return clamped
+}
+
+// withAgentNamePrefix prefixes slug with "s-" when its first rune is not a
+// lowercase letter -- gitx.SanitizeBranch only ever emits [a-z0-9-], so
+// this covers a leading digit or an empty/all-symbol slug. The prefixed
+// result always starts with a lowercase letter.
+func withAgentNamePrefix(slug string) string {
+	first, _ := utf8.DecodeRuneInString(slug)
+	if first < 'a' || first > 'z' {
+		return "s-" + slug
+	}
+	return slug
 }

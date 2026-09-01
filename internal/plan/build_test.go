@@ -74,6 +74,12 @@ func TestBuildWorktreePinPrompt(t *testing.T) {
 	if wt.TrustRepository != in.TrustRepository {
 		t.Errorf("Worktree.TrustRepository = %v, want %v", wt.TrustRepository, in.TrustRepository)
 	}
+	if wt.Label != in.Title {
+		t.Errorf("Worktree.Label = %q, want %q", wt.Label, in.Title)
+	}
+	if !wt.Focus {
+		t.Error("Worktree.Focus = false, want true")
+	}
 
 	wantArgv := []string{"clauth", "start", "work", "--", "--model", "opus"}
 	if got := ops[1].RunArgv; !reflect.DeepEqual(got, wantArgv) {
@@ -156,6 +162,9 @@ func TestBuildTabHereCodexNoPrompt(t *testing.T) {
 	if tab.Cwd != in.ProjectDir {
 		t.Errorf("Tab.Cwd = %q, want %q", tab.Cwd, in.ProjectDir)
 	}
+	if !tab.Focus {
+		t.Error("Tab.Focus = false, want true")
+	}
 
 	if ops[1].Agent == nil || ops[1].Agent.Kind != "codex" {
 		t.Errorf("Agent op wrong: %+v", ops[1].Agent)
@@ -180,6 +189,40 @@ func TestBuildSplitHere(t *testing.T) {
 	}
 	if split.PaneID != in.Ctx.FocusedPaneID {
 		t.Errorf("Split.PaneID = %q, want %q", split.PaneID, in.Ctx.FocusedPaneID)
+	}
+	if !split.Focus {
+		t.Error("Split.Focus = false, want true")
+	}
+}
+
+func TestBuildNewSpacePlacement(t *testing.T) {
+	in := validInput()
+	// Placement left at its zero value, PlacementNewSpace; UseWorktree left
+	// false. This is the default, most common real-world path (a brand new
+	// workspace, in-place).
+
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	want := []OpKind{OpWorkspaceCreate, OpAgentStart}
+	if got := kindsOf(ops); !reflect.DeepEqual(got, want) {
+		t.Fatalf("op kinds = %v, want %v", got, want)
+	}
+
+	ws := ops[0].Workspace
+	if ws == nil {
+		t.Fatal("ops[0].Workspace is nil")
+	}
+	if ws.Cwd != in.ProjectDir {
+		t.Errorf("Workspace.Cwd = %q, want %q", ws.Cwd, in.ProjectDir)
+	}
+	if ws.Label != in.Title {
+		t.Errorf("Workspace.Label = %q, want %q", ws.Label, in.Title)
+	}
+	if !ws.Focus {
+		t.Error("Workspace.Focus = false, want true")
 	}
 }
 
@@ -255,6 +298,27 @@ func TestAgentNameClampsLongTitles(t *testing.T) {
 	got := AgentName(title)
 	if n := len([]rune(got)); n > 30 {
 		t.Fatalf("AgentName(40-rune title) = %q (%d runes), want <= 30 runes", got, n)
+	}
+}
+
+func TestAgentNameTrimsTrailingSeparatorAtClampBoundary(t *testing.T) {
+	// SanitizeBranch("a-" * 40) is "a-a-a-...-a" (79 runes, alternating
+	// a/-), and the 30-rune clamp lands exactly on a '-' (index 29): the
+	// clamp alone would produce "...a-a-" with a dangling trailing hyphen.
+	title := strings.Repeat("a-", 40)
+	got := AgentName(title)
+
+	if strings.HasSuffix(got, "-") || strings.HasSuffix(got, "_") {
+		t.Fatalf("AgentName(%q) = %q, ends with a separator", title, got)
+	}
+	if got == "" {
+		t.Fatalf("AgentName(%q) = %q, want non-empty", title, got)
+	}
+	if n := len([]rune(got)); n > 30 {
+		t.Fatalf("AgentName(%q) = %q (%d runes), want <= 30 runes", title, got, n)
+	}
+	if !agentNamePattern.MatchString(got) {
+		t.Fatalf("AgentName(%q) = %q, does not match %s", title, got, agentNamePattern.String())
 	}
 }
 
