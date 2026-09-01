@@ -100,3 +100,33 @@ Rulings made while building it:
   latent stranding in title/branch seeding. Ruling: fix it in
   `lineInput.SetValue` rather than at the one call site — every caller
   there replaces the whole value rather than editing around a cursor.
+
+## Follow-up: backlog closeout (2026-09-01)
+
+- Ruling: spec §6's "constant-height sections" bullet is AMENDED in place
+  (preferred/minimum heights, stable per window-size-and-focus pair)
+  rather than left as a known deviation, with the measured focus-shift
+  numbers and the popup-budget arithmetic that forced it recorded inline.
+  This was the standing spec-amendment candidate from the v1 fix wave.
+- Ruling: `[worktree] trust_repository` is NOT implemented, and the reason
+  changes from "we never added the key" to "blocked upstream". herdr added
+  `--trust-repository` to `worktree create` in `095f1337` (#3344), which
+  is on master and in no release; herdr 0.8.2 — this plugin's
+  `min_herdr_version`, and what Zvi runs — answers `unknown option:
+  --trust-repository` (verified live against `worktree list`, the
+  read-only sibling that carries the same flag). Wiring the key today
+  would break worktree creation for anyone who set it. A capability probe
+  (parse `worktree create --help`, pass the flag only when advertised) was
+  considered and rejected: it cannot be verified end-to-end against any
+  released herdr, so it would ship untestable code for an unreleased flag.
+  Removal condition recorded in spec §9 and the README: wire it when a
+  herdr release contains `095f1337`, raising `min_herdr_version` in the
+  same change. Cost if wrong: a user who needs `safe.directory` runs one
+  git command themselves.
+- Ruling: `[agents] default` IS implemented — spec §12 lists it and
+  nothing read it, so a config naming a default outside the favorites row
+  (or a different one within it) did nothing. Precedence is favorites[0] <
+  `[agents] default` < `last-used.json`, mirroring the existing
+  `default_worktree` < `State.LastWorktree` chain. Cost if wrong: the
+  Agent field starts on a different kind than before for configs that set
+  the key — which is the point.

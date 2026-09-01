@@ -143,12 +143,33 @@ Atrium:
   cancel; `⌃R ⌃R` double-tap clears; `⌃J`/`⇧↵`/`⌥↵` newline in the prompt.
 - Paste routed separately from keys (a clipboard containing "esc" must not
   cancel the form).
-- Constant-height sections for a given window size; strings width-budgeted
-  with hint ladders; graceful degradation order: truncate → drop blanks →
-  drop dividers → drop heading → clip tail but never the Create button.
+- Each section declares a PREFERRED height and a MINIMUM height; the form
+  allocates the window's row budget between them, giving the focused
+  section its preferred height and shedding the others toward their
+  minimum when the budget is short. Layout is therefore stable for a given
+  (window size, focused section) pair — not for window size alone.
+
+  *Amended 2026-09-01, from "constant-height sections for a given window
+  size".* Atrium's form owned a full-height screen; herdr-draft's owns an
+  80%-of-terminal popup, which on an 80×24 terminal is ~19 usable rows
+  across up to 10 sections. A genuinely constant layout gives every
+  section ~2 rows, so no picker — Project, Base, Linear issue, Agent,
+  Account — could ever display a single candidate row: 5 of 10 fields
+  would be unusable at the smallest supported size. Measured behavior
+  after the change: moving focus shifts a section's start by 0 to −6 rows
+  at h=24, always upward or unchanged, with the key-hint footer and the
+  Create button pinned at h−2/h−1 so the two fixed reference points never
+  move.
+
+- Strings width-budgeted with hint ladders; graceful degradation order:
+  truncate → drop blanks → drop dividers → drop heading → clip tail but
+  never the Create button.
 - Fields whose applicability can change **while the form is open** (non-git
   target, non-claude agent) go **present-but-inert** with an explanatory
-  placeholder, never absent, so the form never reflows under the user. Fields
+  placeholder, never absent, so a field never vanishes from under the user
+  (its rows may shrink toward its minimum when another section takes
+  focus — see the height bullet above — but the field itself stays on
+  screen and stays reachable in the focus ring). Fields
   whose precondition is static at startup (Linear unconfigured, fewer than two
   clauth profiles) are simply not rendered.
 
@@ -256,6 +277,17 @@ Staged creation, with per-step progress lines rendered in the popup
 
 **Step 1 — topology** (herdr CLI; all creation output is JSON, IDs parsed
 from it):
+
+> *Note, 2026-09-01:* `--trust-repository` is **blocked upstream**, not
+> merely unimplemented. herdr added the flag to `worktree create` in
+> commit `095f1337` ("fix: trust worktree repositories per request",
+> #3344, 2026-08-28), which is on herdr `master` and in no release —
+> herdr 0.8.2, this plugin's `min_herdr_version`, answers
+> `unknown option: --trust-repository`. Passing it today would break
+> worktree creation outright. The `[worktree] trust_repository` config key
+> is therefore deliberately absent rather than inert; wire it when a herdr
+> release contains `095f1337`, and raise `min_herdr_version` in the same
+> change.
 
 - Worktree on: `herdr worktree create --cwd <project> --branch <b>
   --base <ref> --label <title> --focus [--trust-repository per config]` →
