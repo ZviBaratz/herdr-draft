@@ -1,0 +1,20 @@
+{
+  "workspace_id": "w6",
+  "workspace_label": "probe-ctx",
+  "workspace_cwd": "/home/user/.herdr/worktrees/throwaway-repo/probe-ctx",
+  "worktree": {
+    "repo_key": "/var/tmp/throwaway-repo/.git",
+    "repo_name": "throwaway-repo",
+    "repo_root": "/var/tmp/throwaway-repo",
+    "checkout_path": "/home/user/.herdr/worktrees/throwaway-repo/probe-ctx",
+    "is_linked_worktree": true
+  },
+  "tab_id": "w6:t1",
+  "tab_label": "1",
+  "focused_pane_id": "w6:p1",
+  "focused_pane_cwd": "/home/user/.herdr/worktrees/throwaway-repo/probe-ctx",
+  "focused_pane_agent": "claude",
+  "focused_pane_status": "idle",
+  "invocation_source": "cli",
+  "correlation_id": "cli:plugin"
+}

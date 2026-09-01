@@ -1,0 +1,22 @@
+id = "draft"
+name = "herdr-draft"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "new session creation dialog"
+
+[[build]]
+command = ["go", "build", "-o", "bin/herdr-draft", "./cmd/herdr-draft"]
+
+[[panes]]
+id = "open"
+title = "New session"
+placement = "popup"
+width = "80%"
+height = "80%"
+command = ["./bin/herdr-draft"]
+
+[[actions]]
+id = "open"
+title = "New session"
+contexts = ["global"]
+command = ["sh", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin draft --entrypoint open"]

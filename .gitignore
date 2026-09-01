@@ -1,0 +1,10 @@
+bin/
+coverage.out
+.superpowers/
+
+# local scratch (upstream comment drafts, notes)
+.local/
+# Working notes: implementation plans and the execution decisions log.
+# Kept on disk, deliberately not versioned -- they are process records, not
+# part of the published project.
+docs/superpowers/

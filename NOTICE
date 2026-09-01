@@ -1,0 +1,41 @@
+herdr-draft
+Copyright 2026 Zvi Baratz
+
+Portions derived from atrium (https://github.com/ZviBaratz/atrium),
+© Zvi Baratz, relicensed by the author. Atrium is otherwise licensed
+AGPL-3.0 with multiple copyright holders; only files verified 100%
+Zvi-authored on their surviving lines (git blame --line-porcelain,
+2026-08-31 — see docs/specs/2026-08-31-herdr-draft-design.md §14) were used
+as porting sources. The following files in this repository contain code
+derived from atrium:
+
+  internal/app/app.go               <- ui/overlay/directoryPicker.go (pattern:
+                                        per-directory listing memoization)
+  internal/app/async.go             <- app/app_branchsearch.go (pattern),
+                                        ui/overlay/directoryPicker.go
+                                        (listing entry cap)
+  internal/form/field_dir.go        <- ui/overlay/directoryPicker.go
+  internal/form/focus.go            <- ui/overlay/textInput_focus.go
+  internal/form/keys.go             <- ui/overlay/textInput_keys.go
+  internal/form/sizes.go            <- ui/overlay/textInput_size.go,
+                                        ui/overlay/textInput_render.go
+  internal/form/widgets/chiprow.go  <- ui/overlay/chiprow.go
+  internal/form/widgets/picker.go   <- ui/overlay/picker.go
+  internal/gitx/repo.go             <- app/app_branchsearch.go (pattern)
+  internal/pathx/pathx.go           <- ui/overlay/directoryPicker.go
+                                        (listSubdirs, expandPath)
+
+atrium's ui/overlay/textInput.go and ui/overlay/branchPicker.go are not on
+the clean list (each carries surviving third-party lines from other atrium
+contributors) and were never opened as porting sources. Two files in this
+repository provide equivalent functionality as independent reimplementations
+instead of ports: internal/form/widgets/textarea.go (prompt/title text
+widget, built directly against charm.land/bubbles/v2's textarea) and
+internal/form/field_worktree.go (worktree base-ref picker, built on this
+repository's own widgets.Picker). Every other file in this repository is
+original work.
+
+Visual conventions and default palette values are translated from herdr
+(https://github.com/herdrdev/herdr), Copyright the herdr contributors,
+licensed under the Apache License, Version 2.0, at herdr commit
+b1ff4582e9688f52ffb943cfa8bee4871ae122e4.

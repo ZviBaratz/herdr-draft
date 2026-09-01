@@ -75,7 +75,7 @@ v1).
    (§7). Full mouse support — herdr is mouse-first.
 5. Atrium's interaction quality: focus ring, debounced+versioned async,
    inline verdicts, present-but-inert fields, width-budgeted strings.
-6. Config-driven; nothing Quantivly- or user-specific hardcoded.
+6. Config-driven; nothing employer- or user-specific hardcoded.
 
 **Non-goals (v1)** — see §16 for the full future-work list: variant fan-out,
 draft persistence, Linear writes, model/effort/permission chip fields,
@@ -143,12 +143,36 @@ Atrium:
   cancel; `⌃R ⌃R` double-tap clears; `⌃J`/`⇧↵`/`⌥↵` newline in the prompt.
 - Paste routed separately from keys (a clipboard containing "esc" must not
   cancel the form).
-- Constant-height sections for a given window size; strings width-budgeted
-  with hint ladders; graceful degradation order: truncate → drop blanks →
-  drop dividers → drop heading → clip tail but never the Create button.
+- Each section declares a PREFERRED height and a MINIMUM height; the form
+  allocates the window's row budget between them, giving the focused
+  section its preferred height and shedding the others toward their
+  minimum when the budget is short. Layout is therefore stable for a given
+  (window size, focused section) pair — not for window size alone.
+
+  *Amended 2026-09-01, from "constant-height sections for a given window
+  size".* Atrium's form owned a full-height screen; herdr-draft's owns an
+  80%-of-terminal popup, which on an 80×24 terminal is ~19 usable rows
+  across up to 10 sections. A genuinely constant layout gives every
+  section ~2 rows, so no picker — Project, Base, Linear issue, Agent,
+  Account — could ever display a single candidate row: 5 of 10 fields
+  would be unusable at the smallest supported size. Measured behavior
+  after the change, at h=24 with every section focused in turn: each
+  section's start sits within a 6-row band (0 to −6 relative to the
+  form's opening focus; between two arbitrary focus states it moves either
+  way within that band — upward as focus travels down the ring, downward
+  as it travels back up), every section stays rendered in every focus
+  state, and the key-hint footer and Create button stay pinned at h−2 and
+  h−1, so the two fixed reference points never move.
+
+- Strings width-budgeted with hint ladders; graceful degradation order:
+  truncate → drop blanks → drop dividers → drop heading → clip tail but
+  never the Create button.
 - Fields whose applicability can change **while the form is open** (non-git
   target, non-claude agent) go **present-but-inert** with an explanatory
-  placeholder, never absent, so the form never reflows under the user. Fields
+  placeholder, never absent, so a field never vanishes from under the user
+  (its rows may shrink toward its minimum when another section takes
+  focus — see the height bullet above — but the field itself stays on
+  screen and stays reachable in the focus ring). Fields
   whose precondition is static at startup (Linear unconfigured, fewer than two
   clauth profiles) are simply not rendered.
 
@@ -256,6 +280,17 @@ Staged creation, with per-step progress lines rendered in the popup
 
 **Step 1 — topology** (herdr CLI; all creation output is JSON, IDs parsed
 from it):
+
+> *Note, 2026-09-01:* `--trust-repository` is **blocked upstream**, not
+> merely unimplemented. herdr added the flag to `worktree create` in
+> commit `095f1337` ("fix: trust worktree repositories per request",
+> #3344, 2026-08-28), which is on herdr `master` and in no release —
+> herdr 0.8.2, this plugin's `min_herdr_version`, answers
+> `unknown option: --trust-repository`. Passing it today would break
+> worktree creation outright. The `[worktree] trust_repository` config key
+> is therefore deliberately absent rather than inert; wire it when a herdr
+> release contains `095f1337`, and raise `min_herdr_version` in the same
+> change.
 
 - Worktree on: `herdr worktree create --cwd <project> --branch <b>
   --base <ref> --label <title> --focus [--trust-repository per config]` →
@@ -474,19 +509,87 @@ socket-api.mdx — making it wrong for this use anyway); pane-id targeting of
 detected agents is documented (cli-reference.mdx:308); clauth `schema` is the
 integer `1`.
 
-- [ ] `pane run` launch of `clauth start <profile>` in a fresh worktree pane:
+- [x] `pane run` launch of `clauth start <profile>` in a fresh worktree pane:
       detection recognizes claude through the wrapper; measure latency
-      (affects the 30 s default).
-- [ ] Exact JSON field names in creation responses (`workspace_id`, pane ids)
+      (affects the 30 s default). **Live-probed 2026-08-31 (task 2b):**
+      `herdr pane run <pane> clauth start quantivly-2 --` in a worktree pane
+      was detected as `agent: "claude"` within ≤5 s of launch (one poll
+      window; single-shot probe, see task-2b-report.md); comfortably inside
+      the 30 s default.
+      **Fixed and re-validated live 2026-09-01 (task 19 fix round):** task
+      2b's probe called the herdr CLI's `pane run` directly, bypassing
+      `CLIRunner.PaneRun`; task 19's own first closeout pass (before this
+      fix) found `PaneRun` routed through `runJSON`, which requires a JSON
+      envelope on stdout that `herdr pane run` never actually prints,
+      making every real Path B submission fail at the launch step. Fixed
+      by giving `PaneRun` its own exit-code-only run path (`runOK`); a
+      full real Path B run afterward showed `launching claude via
+      clauth… ✓` and `waiting for agent detection… ✓` in the popup, with
+      `herdr pane list` confirming `agent: "claude"`,
+      `tokens.clauth: "quantivly-2"` on the launched pane — see
+      task-19-report.md's fix section for the full transcript.
+- [x] Exact JSON field names in creation responses (`workspace_id`, pane ids)
       across `worktree create` / `workspace create` / `tab create` /
-      `pane split`.
-- [ ] herdr user-config location and theme resolution for palette parsing
+      `pane split`. **Live-probed 2026-08-31 (task 2b):** captured verbatim
+      (sanitized) in `internal/herdrc/testdata/live/{worktree_create,
+      workspace_create,tab_create,pane_split}.json`; confirmed
+      `worktree create` also opens a second, non-worktree workspace for the
+      origin repo alongside the linked-worktree workspace (both need
+      cleanup).
+- [x] herdr user-config location and theme resolution for palette parsing
       (§7); translate the built-in palettes from `src/app/state.rs`
       (`Palette::from_name`, ~line 562) at the pinned herdr version.
-- [ ] Popup PTY background behavior: whether terminal-default-bg cells render
+      **Live-probed 2026-09-01 (task 19):** the user's real
+      `~/.config/herdr/config.toml` has `[theme] name = "tokyo-night"`;
+      `herdr pane read <popup-host> --format ansi` on a real popup shows
+      `\x1b[48;2;26;27;38m`/`\x1b[38;2;122;162;247m` throughout the form's
+      content, matching `internal/theme/palette.go`'s `tokyo-night` entry
+      (`PanelBG #1a1b26`, `Accent #7aa2f7`) exactly, byte-for-byte the same
+      RGB values herdr's own native border chrome uses in the same capture
+      — confirms config location, name resolution, and color translation
+      all correct end to end.
+- [x] Popup PTY background behavior: whether terminal-default-bg cells render
       as `panel_bg` (paint explicitly regardless).
-- [ ] Popup mouse forwarding on the user's terminal (source says yes:
+      **Live-probed 2026-09-01 (task 19):** in the same ANSI capture, every
+      interior row — including the blank vertical-padding row directly
+      under the top border — carries an explicit `48;2;26;27;38`
+      reassertion after each embedded reset, with no gap where a
+      terminal-default background would show through; no palette fallout
+      found, nothing to fix.
+- [x] Popup mouse forwarding on the user's terminal (source says yes:
       `handle_popup_mouse`, `src/app/input/mod.rs:482`) — one manual probe.
+      **Live-probed 2026-08-31 (task 2b):** could not drive a real physical
+      mouse in this environment, so injected raw SGR sequences
+      (`\x1b[<0;51;21M`/`m` for a click, `\x1b[<65;51;21M` for wheel-down)
+      via `herdr pane send-text` into the popup's host pane (the pane
+      running the nested herdr TUI client) while the smoke binary was
+      temporarily patched to enable `tea.MouseModeAllMotion` and print
+      received events. Both a click and a wheel event were received and
+      rendered inside the popup (`mouse: left`, `mouse: wheeldown`),
+      confirming `handle_popup_mouse` correctly forwards translated,
+      coordinate-relative mouse bytes into the popup PTY. This exercises
+      Herdr's own SGR-decode-and-forward path end to end, not a physical
+      terminal's mouse reporting, so a from-hardware click is still worth a
+      spot-check at Task 19, but the code path itself is confirmed working.
 - [ ] `agent_pane_busy` retry: start an agent immediately after
       `worktree create` and confirm the bounded retry rides it out.
-- [ ] Pin the minimum supported clauth version in README.
+      **Probed 2026-08-31 (task 2b):** busy state did not reproduce at
+      ~90 ms creation-to-start gap; retry path itself remains unconfirmed
+      live — recheck opportunistically at Task 19.
+      **Re-probed 2026-09-01 (task 19):** 5 back-to-back `worktree create`
+      → `agent start` pairs with no artificial delay at all (the pane id
+      read straight from `worktree create`'s own JSON response and used
+      immediately) still did not reproduce `agent_pane_busy` in this
+      environment; still leaving this unticked per the task brief ("if not,
+      reproduced, leave it and say so") — the retry path remains
+      unconfirmed live, covered only by Task 9's mock-runner unit tests.
+- [x] Pin the minimum supported clauth version in README. **Recorded
+      2026-09-01 (task 19) for Task 22:** clauth 0.14.1 (`clauth --version`)
+      is the version installed and exercised throughout this live
+      checkpoint — `clauth status --json` schema `1` parsed correctly by
+      `internal/clauth`, and `clauth start <profile> --` launches
+      correctly under `pane run`. No older clauth version was available to
+      test in this environment, so 0.14.1 is the empirically-confirmed
+      floor, not a verified absolute minimum — Task 22 should phrase the
+      README accordingly ("tested with clauth 0.14.1+") rather than
+      implying earlier 0.x releases were checked and rejected.

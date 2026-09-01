@@ -1,0 +1,22 @@
+{
+  "id": "cli:pane:split",
+  "result": {
+    "pane": {
+      "agent_status": "unknown",
+      "cwd": "/tmp",
+      "focused": false,
+      "foreground_cwd": "/tmp",
+      "pane_id": "w4:p3",
+      "revision": 0,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 40
+      },
+      "tab_id": "w4:t2",
+      "terminal_id": "term_65a5cfd8e373c7",
+      "workspace_id": "w4"
+    },
+    "type": "pane_info"
+  }
+}
