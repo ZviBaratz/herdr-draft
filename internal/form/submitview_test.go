@@ -1,0 +1,178 @@
+package form
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
+	"github.com/ZviBaratz/herdr-draft/internal/theme"
+)
+
+// assertSubmitFrame mirrors form_test.go's own assertFrame (same *update
+// flag, same testdata/frames path convention), adapted for *SubmitView
+// rather than Model since SubmitView is deliberately not a form.Section/
+// Model (see submitview.go's own file doc comment).
+func assertSubmitFrame(t *testing.T, name string, v *SubmitView, w, h int) {
+	t.Helper()
+	got := v.ViewAt(w, h)
+	path := filepath.Join("testdata", "frames", name+".txt")
+	if *update {
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil || string(want) != got {
+		t.Errorf("frame %s mismatch (run with -update to regenerate)\n%s", name, got)
+	}
+}
+
+func sampleProgressDone() []plan.Progress {
+	return []plan.Progress{
+		{Index: 0, Total: 2, Label: "creating worktree", State: plan.StepDone},
+		{Index: 1, Total: 2, Label: "starting agent", State: plan.StepRunning},
+	}
+}
+
+func sampleProgressFailed() []plan.Progress {
+	return []plan.Progress{
+		{Index: 0, Total: 2, Label: "creating worktree", State: plan.StepDone},
+		{Index: 1, Total: 2, Label: "starting claude", State: plan.StepFailed, Err: errors.New("agent_pane_busy")},
+	}
+}
+
+func TestFrames_Progress(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressDone())
+	assertSubmitFrame(t, "progress-80x24", v, 80, 24)
+}
+
+func TestFrames_FailureCleanDenied(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 1}, plan.CleanDecision{Allowed: false, Reason: "uncommitted changes"})
+	assertSubmitFrame(t, "failure-clean-denied-80x24", v, 80, 24)
+}
+
+func TestSubmitView_NoFailureBeforeSetFailure(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressDone())
+	frame := ansi.Strip(v.ViewAt(80, 24))
+	if strings.Contains(frame, "keep") || strings.Contains(frame, "clean") {
+		t.Errorf("ViewAt(80,24) before SetFailure = %q, want no keep/clean prompt", frame)
+	}
+}
+
+func TestSubmitView_KPressEmitsKeepMsg(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 1}, plan.CleanDecision{Allowed: true})
+
+	cmd := v.Update(key('k', 0))
+	if cmd == nil {
+		t.Fatalf("Update('k') returned nil, want a Cmd emitting KeepMsg")
+	}
+	if _, ok := cmd().(KeepMsg); !ok {
+		t.Fatalf("Update('k')() = %T, want KeepMsg", cmd())
+	}
+}
+
+func TestSubmitView_CPressEmitsCleanMsgWhenAllowed(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 1}, plan.CleanDecision{Allowed: true})
+
+	cmd := v.Update(key('c', 0))
+	if cmd == nil {
+		t.Fatalf("Update('c') returned nil, want a Cmd emitting CleanMsg")
+	}
+	if _, ok := cmd().(CleanMsg); !ok {
+		t.Fatalf("Update('c')() = %T, want CleanMsg", cmd())
+	}
+}
+
+// TestSubmitView_CPressNoOpWhenCleanDenied pins spec §9's "the clean
+// option is disabled with the reason shown" -- "c" must not emit CleanMsg
+// when CleanDecision.Allowed is false.
+func TestSubmitView_CPressNoOpWhenCleanDenied(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 1}, plan.CleanDecision{Allowed: false, Reason: "uncommitted changes"})
+
+	if cmd := v.Update(key('c', 0)); cmd != nil {
+		t.Errorf("Update('c') with clean denied returned a non-nil Cmd, want nil")
+	}
+	// "k" must still work even when clean is denied.
+	cmd := v.Update(key('k', 0))
+	if cmd == nil {
+		t.Fatalf("Update('k') with clean denied returned nil, want KeepMsg still available")
+	}
+	if _, ok := cmd().(KeepMsg); !ok {
+		t.Fatalf("Update('k')() = %T, want KeepMsg", cmd())
+	}
+}
+
+func TestSubmitView_KeyBeforeFailureIsNoOp(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressDone())
+	if cmd := v.Update(key('k', 0)); cmd != nil {
+		t.Errorf("Update('k') before SetFailure returned a non-nil Cmd, want nil")
+	}
+	if cmd := v.Update(key('c', 0)); cmd != nil {
+		t.Errorf("Update('c') before SetFailure returned a non-nil Cmd, want nil")
+	}
+}
+
+func TestSubmitView_FailureReasonShownWhenCleanDenied(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 1}, plan.CleanDecision{Allowed: false, Reason: "uncommitted changes"})
+
+	frame := ansi.Strip(v.ViewAt(80, 24))
+	if !strings.Contains(frame, "uncommitted changes") {
+		t.Errorf("ViewAt(80,24) = %q, want it to contain the denial reason", frame)
+	}
+	if strings.Contains(frame, "c clean") {
+		t.Errorf("ViewAt(80,24) = %q, want no active clean choice when denied", frame)
+	}
+}
+
+func TestSubmitView_PromptTextSurfacedOnFailure(t *testing.T) {
+	v := NewSubmitView(theme.Default())
+	v.SetProgress(sampleProgressFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 1, PromptText: "Work on ENG-1"}, plan.CleanDecision{Allowed: true})
+
+	frame := ansi.Strip(v.ViewAt(80, 24))
+	if !strings.Contains(frame, "Work on ENG-1") {
+		t.Errorf("ViewAt(80,24) = %q, want the undelivered prompt text surfaced", frame)
+	}
+}
+
+func TestSubmitView_NoPanicOnDegenerateSize(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("SubmitView panicked: %v", r)
+		}
+	}()
+	v := NewSubmitView(theme.Default())
+	_ = v.ViewAt(0, 0)
+	_ = v.ViewAt(-3, -3)
+	_ = v.ViewAt(80, 0)
+}
+
+func TestSubmitView_NoPanicBeforeSetProgress(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("SubmitView panicked before SetProgress: %v", r)
+		}
+	}()
+	v := NewSubmitView(theme.Default())
+	_ = v.ViewAt(80, 24)
+	_ = v.Update(key('k', 0))
+}

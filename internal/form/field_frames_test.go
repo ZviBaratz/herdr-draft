@@ -1,8 +1,11 @@
 package form
 
 import (
-	"github.com/ZviBaratz/herdr-draft/internal/theme"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
 // buildDirBrowseForm puts DirField into focused path-browse mode over an
@@ -81,4 +84,40 @@ func buildPlacementInertForm(palette theme.Palette) Model {
 
 func TestFrames_PlacementInert(t *testing.T) {
 	assertFrame(t, "placement-inert-80x24", buildPlacementInertForm(theme.Default()), 80, 24)
+}
+
+// buildIssuePickerForm focuses IssueField over a small assigned-issue set,
+// for the "issue-picker-120x40" golden frame the task-18 brief names
+// explicitly.
+func buildIssuePickerForm(palette theme.Palette) Model {
+	f := NewIssueField(palette)
+	f.SetIssues(1, sampleIssues())
+	f.Focus()
+	f.Update(key(tea.KeyDown, 0)) // none -> ENG-1
+
+	m := New(Setup{Palette: palette, Sections: []Section{f}})
+	m.Init()
+	return m
+}
+
+func TestFrames_IssuePicker(t *testing.T) {
+	assertFrame(t, "issue-picker-120x40", buildIssuePickerForm(theme.Default()), 120, 40)
+}
+
+// buildAccountForm enables AccountField (agent kind claude) over a mixed
+// healthy/warned profile set, for the "account-80x24" golden frame.
+func buildAccountForm(palette theme.Palette) Model {
+	f := NewAccountField(palette)
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus())
+	f.Focus()
+	f.Update(key(tea.KeyDown, 0)) // active -> alpha
+
+	m := New(Setup{Palette: palette, Sections: []Section{f}})
+	m.Init()
+	return m
+}
+
+func TestFrames_Account(t *testing.T) {
+	assertFrame(t, "account-80x24", buildAccountForm(theme.Default()), 80, 24)
 }
