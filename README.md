@@ -129,6 +129,12 @@ herdr plugin config-dir draft
 If no Linear API key resolves from any of the three sources, the Linear
 issue field is simply not rendered — manual mode is unaffected.
 
+If a key source is *configured but fails* — `api_key_cmd` exits non-zero or
+isn't on `$PATH`, or `api_key` sits in a `config.toml` readable by anyone
+but you — the issue field is rendered, marked `unavailable`, with the
+reason on the line beneath it. It can't be focused, and everything else in
+the form still works.
+
 ### `[clauth]`
 
 - `enabled` (default: auto-detected) — explicitly force clauth integration
@@ -254,6 +260,31 @@ route from [Keybinding](#keybinding).
 configured *and* at least two profiles exist, checked once at form
 startup. Fewer than two profiles, or clauth not detected at all, means the
 field is simply absent — this is a static, by-design check, not a bug.
+
+**Linear field says `unavailable`.** Your key source is configured but
+failed; the reason is on the line beneath the field. See
+[`[linear]`](#linear).
+
+**"prompt not sent" after a submit.** The session was created and the agent
+started, but the prompt couldn't be delivered (the agent was showing a
+dialog, or `agent prompt --wait` timed out). Your prompt text is saved to
+`unsent-prompt.txt` in the plugin state directory — the failure screen
+shows the full path — so you can paste it into the agent by hand. The
+session itself is fine; choose *keep*.
+
+## State
+
+herdr-draft keeps a small amount of loss-tolerant state in
+`$HERDR_PLUGIN_STATE_DIR`, all of it safe to delete:
+
+- `recents.json` — recently used project directories, offered as Project
+  candidates. Written after each successful submit.
+- `last-used.json` — the agent kind, placement, and worktree toggle from
+  your last successful submit; the form defaults to them next time.
+- `linear-cache.json` — the last Linear issue list, rendered instantly at
+  form-open while a fresh one loads.
+- `unsent-prompt.txt` — a prompt that couldn't be delivered, kept for
+  manual paste (see Troubleshooting above). Overwritten by the next one.
 
 ## Testing
 

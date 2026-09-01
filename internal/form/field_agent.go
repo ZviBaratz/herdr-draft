@@ -340,10 +340,14 @@ func (f *AgentField) SetKind(kind string) {
 		f.syncConfirmedFromChip()
 		return
 	}
-	if f.picker.SelectID(kind) {
-		f.lastConfirmed = kind
-		f.chips.SelectID(agentMoreChipID)
-	}
+	// Not a favorite, so it only exists behind "more…". Park the chip
+	// cursor there and expand the list around it: leaving the list
+	// collapsed would show a highlighted "more…" chip and no indication
+	// anywhere of which kind is actually selected. expand() seeds the
+	// picker's cursor from lastConfirmed, so set that first.
+	f.lastConfirmed = kind
+	f.chips.SelectID(agentMoreChipID)
+	f.expand()
 }
 
 // fullListItems builds the full-kind-list picker's item set from f.kinds

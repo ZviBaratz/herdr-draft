@@ -424,6 +424,15 @@ type linearResultMsg struct {
 // form ever renders.
 func (m Model) refreshLinearCmd() tea.Cmd {
 	src := m.deps.Linear
+	if src == nil {
+		// Defense in depth alongside New's own Deps.Linear != nil gate on
+		// scheduling this at all -- the same posture reloadClauthCmd's nil
+		// guard already takes, and it matters more since finding I5: an
+		// IssueField now exists in a state where Deps.Linear is nil (the
+		// configured-but-broken, present-but-inert one), so "the field
+		// exists" is no longer proof that a source does.
+		return nil
+	}
 	return func() tea.Msg {
 		issues, err := src.AssignedIssues(context.Background())
 		if err != nil {

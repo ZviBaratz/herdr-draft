@@ -417,15 +417,21 @@ func TestZoneFor_TitleEmpty(t *testing.T) {
 
 // --- constant-height invariant -------------------------------------------
 
-// TestModel_ConstantHeightAcrossFocusMoves pins spec §6's core promise --
-// "constant-height sections for a given window size" -- directly: at a
-// FIXED (w, h), moving focus between sections must not change the
-// composed content's own line count. Nothing in this package's design
-// varies a Section's reported Height() (or the number of physical lines
-// its View emits) by whether it currently has focus (see decorateFocus's
-// own doc comment), so this holds by construction; this test is the
-// cheap, direct check of that promise, not merely inferred from the
-// design.
+// TestModel_ConstantHeightAcrossFocusMoves pins what survives of spec §6's
+// "constant-height sections for a given window size": at a FIXED (w, h),
+// moving focus never changes the composed render's own line count -- it is
+// always exactly h, so nothing above or below the form shifts as the user
+// Tabs.
+//
+// What it deliberately does NOT claim any more is that each SECTION keeps
+// a fixed height as focus moves. sizes.go's allocateHeights refills the
+// focused section to its full preference when the popup cannot afford
+// every section's, which reflows the form -- a disclosed trade, made
+// because at 80x24 the ten-field form has roughly two rows per field, and
+// a layout that keeps every section fixed at that size is a layout in
+// which no picker ever shows a single candidate. Section.Height() itself
+// is still focus-independent (see its own doc comment); the arbitration
+// lives in the allocator, one level up.
 func TestModel_ConstantHeightAcrossFocusMoves(t *testing.T) {
 	m := New(Setup{Palette: theme.Default(), Sections: []Section{newStub("a"), newStub("b")}})
 	m.Init()

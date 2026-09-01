@@ -185,3 +185,45 @@ func TestAgentField_NoPanicBeforeSetKinds(t *testing.T) {
 		t.Errorf("Value() before SetKinds = %q, want \"\"", got)
 	}
 }
+
+// TestAgentField_SetKindSelectsAFavoriteOrExpandsToReachIt pins the setter
+// the state layer needed (finding I2): SetKinds' "index 0 is the default"
+// contract could express only the CONFIGURED default, so
+// config.State.LastKind had nowhere to be applied.
+func TestAgentField_SetKindSelectsAFavoriteOrExpandsToReachIt(t *testing.T) {
+	f := NewAgentField(theme.Default())
+	f.SetKinds([]string{"claude", "codex", "pi", "gemini", "cursor"})
+
+	if got := f.Value(); got != "claude" {
+		t.Fatalf("Value() = %q, want the configured default %q", got, "claude")
+	}
+
+	// A kind with its own chip: the chip cursor moves, the list stays shut.
+	f.SetKind("codex")
+	if got := f.Value(); got != "codex" {
+		t.Fatalf("Value() after SetKind(codex) = %q, want %q", got, "codex")
+	}
+	if frame := ansi.Strip(f.View(60, f.Height(40))); strings.Contains(frame, "gemini") {
+		t.Errorf("View = %q, want the full list still collapsed for a favorite", frame)
+	}
+
+	// A kind only reachable behind "more…": the list opens on it, so the
+	// user can see what is selected rather than a bare highlighted "more…".
+	f.SetKind("gemini")
+	if got := f.Value(); got != "gemini" {
+		t.Fatalf("Value() after SetKind(gemini) = %q, want %q", got, "gemini")
+	}
+	if frame := ansi.Strip(f.View(60, f.Height(40))); !strings.Contains(frame, "gemini") {
+		t.Errorf("View = %q, want the expanded list showing the selected kind", frame)
+	}
+
+	// A stale or typo'd persisted value never overrides the default.
+	f.SetKind("no-such-agent")
+	if got := f.Value(); got != "gemini" {
+		t.Errorf("Value() after SetKind of an unknown kind = %q, want it unchanged", got)
+	}
+	f.SetKind("")
+	if got := f.Value(); got != "gemini" {
+		t.Errorf("Value() after SetKind(\"\") = %q, want it unchanged", got)
+	}
+}
