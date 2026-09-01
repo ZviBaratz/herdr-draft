@@ -208,6 +208,36 @@ func TestModel_FocusedID(t *testing.T) {
 	}
 }
 
+// TestModel_SectionIDs pins SectionIDs' own reason for existing (Task 20
+// fix round 1): unlike Tab-driven navigation, it must include a DISABLED
+// section too, at its real construction position -- a plain Tab-walk would
+// silently skip it (focus.go's nextEnabled), which is exactly the gap that
+// let a real construction-order regression slip past an earlier version of
+// this test suite undetected.
+func TestModel_SectionIDs(t *testing.T) {
+	var zero Model
+	if got := zero.SectionIDs(); got != nil {
+		t.Fatalf("zero-value Model.SectionIDs() = %v, want nil", got)
+	}
+
+	a := newStub("a")
+	b := newStub("b")
+	b.enabled = false
+	c := newStub("c")
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{a, b, c}})
+
+	got := m.SectionIDs()
+	want := []string{"a", "b", "c", "create"}
+	if len(got) != len(want) {
+		t.Fatalf("SectionIDs() = %v, want %v", got, want)
+	}
+	for i, id := range want {
+		if got[i] != id {
+			t.Fatalf("SectionIDs()[%d] = %q, want %q (full: %v)", i, got[i], id, got)
+		}
+	}
+}
+
 // --- MapKey wiring: Submit/Cancel/Clear/ActionNone forwarding ----------
 
 // TestModel_CtrlSSubmitsFromAnyZone checks handleKey's ActionSubmit wiring:

@@ -420,9 +420,16 @@ func (m Model) handleLinearResult(msg linearResultMsg) (Model, tea.Cmd) {
 
 // --- clauth: reload on account focus (spec §11) ---------------------------
 
+// clauthResultMsg is versioned like every other async source in this file
+// (fix round 1: rapid re-focus of Account could otherwise let a slow
+// reload's result land AFTER a fresher one and silently overwrite it --
+// there is no debounce phase for this source, unlike dir/base/title, so
+// version is bumped directly by reloadClauthCmd rather than by a separate
+// scheduleX; see handleClauthResult's own staleness check).
 type clauthResultMsg struct {
-	status clauth.Status
-	err    bool
+	version int
+	status  clauth.Status
+	err     bool
 }
 
 // reloadClauthCmd re-loads clauth's status feed -- spec §11: "load at open
@@ -430,22 +437,37 @@ type clauthResultMsg struct {
 // Bootstrap/New (it gates whether AccountField is even constructed, a
 // static precondition that must be known before the form renders); this
 // is the focus-triggered reload (see reactToChanges' own FocusedID diff).
-func (m Model) reloadClauthCmd() tea.Cmd {
+//
+// Returns nil when m.deps.Clauth is nil -- defense in depth alongside
+// New's own Deps.Clauth != nil gate on constructing AccountField at all
+// (fix round 1: a reviewer reproduced a nil-interface panic here by
+// constructing a Model with clauth profiles present but no clauthSource,
+// bypassing that gate; both are now closed, but this guard means a future
+// caller of reloadClauthCmd that doesn't route through the m.account != nil
+// check in reactToChanges still can't panic).
+func (m *Model) reloadClauthCmd() tea.Cmd {
 	src := m.deps.Clauth
+	if src == nil {
+		return nil
+	}
+	m.clauthReqVersion++
+	v := m.clauthReqVersion
 	return func() tea.Msg {
 		st, err := src.Status(context.Background())
 		if err != nil {
-			return clauthResultMsg{err: true}
+			return clauthResultMsg{version: v, err: true}
 		}
-		return clauthResultMsg{status: st}
+		return clauthResultMsg{version: v, status: st}
 	}
 }
 
-// handleClauthResult applies a successful reload to AccountField -- a
-// no-op when the field wasn't constructed at all or the reload failed
-// (spec §13: clauth failures degrade, never block).
+// handleClauthResult applies a successful, current reload to AccountField
+// -- a no-op when the field wasn't constructed at all, the reload failed
+// (spec §13: clauth failures degrade, never block), or a fresher reload
+// has since been scheduled (msg.version != m.clauthReqVersion -- see
+// clauthResultMsg's own doc comment).
 func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
-	if msg.err || m.account == nil {
+	if msg.version != m.clauthReqVersion || msg.err || m.account == nil {
 		return m, nil
 	}
 	m.account.SetProfiles(msg.status)

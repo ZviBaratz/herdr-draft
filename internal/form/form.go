@@ -297,6 +297,29 @@ func (m Model) FocusedID() string {
 	return ""
 }
 
+// SectionIDs returns every section's own ID(), in construction order --
+// added alongside FocusedID (Task 20 fix round 1) for the same reason:
+// external verification of New's own assembled order (e.g. "the three
+// worktree zones must read as ONE visual group," a Task 20 carried
+// requirement) needs a way to see the FULL list, including a
+// present-but-inert section. Tab-driven navigation alone can't answer
+// this: focus.go's ring skips disabled sections entirely (nextEnabled),
+// so a section that's inert in whatever state a test put the form into
+// (e.g. Placement, always inert while Worktree is on) would silently and
+// misleadingly drop out of a Tab-walk, even though it's still really
+// there, in its real construction position. Returns nil for a zero-value
+// Model (nil ring).
+func (m Model) SectionIDs() []string {
+	if m.ring == nil {
+		return nil
+	}
+	ids := make([]string, len(m.ring.sections))
+	for i, s := range m.ring.sections {
+		ids[i] = s.ID()
+	}
+	return ids
+}
+
 // Update dispatches an incoming message: tea.WindowSizeMsg is stored for
 // View/ViewAt; tea.KeyPressMsg is run through MapKey (keys.go, "the
 // grammar you dispatch on") and acted on by handleKey; tea.PasteMsg

@@ -197,34 +197,6 @@ func rn(r rune) tea.KeyPressMsg                     { return tea.KeyPressMsg{Cod
 
 var keyTab = key(tea.KeyTab, 0)
 
-// sectionOrder walks m's focus ring forward via Tab, starting from
-// whatever FocusedID() already is, collecting IDs until the walk wraps
-// back to the start -- the tab-navigable ORDER of every currently ENABLED
-// section (a disabled/inert section is skipped by Tab, same as a real
-// user's own navigation, so it never appears here -- see individual
-// callers for how they arrange for the sections under test to be
-// enabled first).
-func sectionOrder(t *testing.T, m form.Model) []string {
-	t.Helper()
-	first := m.FocusedID()
-	if first == "" {
-		return nil
-	}
-	order := []string{first}
-	for i := 0; i < 32; i++ {
-		next, _ := m.Update(keyTab)
-		fm := next.(form.Model)
-		id := fm.FocusedID()
-		if id == first {
-			return order
-		}
-		order = append(order, id)
-		m = fm
-	}
-	t.Fatalf("sectionOrder: did not wrap back to %q within 32 Tabs", first)
-	return nil
-}
-
 // --- Step 1's four required scenarios --------------------------------
 
 // TestDebounceCoalesces pins the brief's own literal requirement: two rapid
@@ -394,6 +366,40 @@ func TestDupVerdicts_BranchExistsSkippedWhenWorktreeOff(t *testing.T) {
 	}
 }
 
+// TestTitleResult_StaleVersionDropped pins the title-duplicate pipeline's
+// own version staleness gate at the RESULT level (fix round 1: the review
+// found only the dir-validity pipeline had an equivalent test, despite the
+// report's own "Plus: stale-drop coverage for the base-list and
+// title-check pipelines individually" claim) -- a v1 result reporting a
+// collision that resolves AFTER a v2 result reporting none must be
+// dropped, not overwrite the fresher, clean verdict.
+func TestTitleResult_StaleVersionDropped(t *testing.T) {
+	m := newTestModel(t, testSetup{})
+	m.title.SetTitle("t", false)
+
+	cmd1 := m.scheduleTitleCheck("t", "b1", "/repo", true)
+	cmd2 := m.scheduleTitleCheck("t", "b2", "/repo", true)
+	v1 := cmd1().(titleDebounceMsg).req.version
+	v2 := cmd2().(titleDebounceMsg).req.version
+
+	// v2 (fresher) resolves first: no duplicates.
+	m2, _ := m.handleTitleResult(titleResultMsg{req: request{version: v2, key: "t"}})
+	m = m2
+	frame := ansi.Strip(m.title.View(60))
+	if strings.Contains(frame, "exists") || strings.Contains(frame, "in use") {
+		t.Fatalf("TitleField.View(60) = %q, fresh v2's clean verdict was not applied", frame)
+	}
+
+	// v1 (stale) resolves second, reporting a collision -- must be dropped,
+	// not overwriting v2's already-applied clean verdict.
+	m2, _ = m.handleTitleResult(titleResultMsg{req: request{version: v1, key: "t"}, branchExists: true, labelTaken: true})
+	m = m2
+	frame = ansi.Strip(m.title.View(60))
+	if strings.Contains(frame, "in use") {
+		t.Fatalf("TitleField.View(60) = %q, stale v1 result was wrongly applied", frame)
+	}
+}
+
 // TestIssueSelectionSeedsAndRespectsTouchedBranch pins the brief's own
 // literal requirement: choosing a Linear issue seeds Title/Branch/Prompt,
 // but a Branch the user has already typed into is left unclobbered.
@@ -504,6 +510,41 @@ func TestBaseResult_ErrorSetsCouldNotList(t *testing.T) {
 	frame := ansi.Strip(m.worktree.BaseSection().View(60))
 	if !strings.Contains(frame, "couldn't list") {
 		t.Fatalf("BaseSection View = %q, want it to contain the \"couldn't list\" status", frame)
+	}
+}
+
+// TestBaseResult_StaleVersionDropped pins the base-list pipeline's own
+// version staleness gate at the RESULT level (fix round 1 -- see
+// TestTitleResult_StaleVersionDropped's own doc comment for why this test
+// exists now and didn't before): a v1 result reporting failure that
+// resolves AFTER a v2 result reporting success must be dropped, not
+// clobber the fresher, successful state with "couldn't list".
+func TestBaseResult_StaleVersionDropped(t *testing.T) {
+	git := newFakeGit()
+	m := newTestModel(t, testSetup{Git: git})
+	m.worktree.SetGitTarget(true)
+	m.worktree.SetOn(true)
+
+	cmd1 := m.scheduleBaseCheck("old")
+	cmd2 := m.scheduleBaseCheck("new")
+	v1 := cmd1().(baseDebounceMsg).req.version
+	v2 := cmd2().(baseDebounceMsg).req.version
+
+	// v2 (fresher) resolves first, successfully.
+	m2, _ := m.handleBaseResult(baseResultMsg{req: request{version: v2, key: "new"}, refs: []string{"main"}})
+	m = m2
+	frame := ansi.Strip(m.worktree.BaseSection().View(60))
+	if strings.Contains(frame, "couldn't list") {
+		t.Fatalf("BaseSection View = %q, fresh v2's success was not applied", frame)
+	}
+
+	// v1 (stale) resolves second, with an error -- must be dropped, not
+	// clobbering v2's already-applied success with "couldn't list".
+	m2, _ = m.handleBaseResult(baseResultMsg{req: request{version: v1, key: "old"}, err: true})
+	m = m2
+	frame = ansi.Strip(m.worktree.BaseSection().View(60))
+	if strings.Contains(frame, "couldn't list") {
+		t.Fatalf("BaseSection View = %q, stale v1 result was wrongly applied", frame)
 	}
 }
 
@@ -677,39 +718,87 @@ func TestNew_LinearFieldOnlyWhenConfigured(t *testing.T) {
 }
 
 func TestNew_AccountFieldOnlyWithTwoOrMoreProfiles(t *testing.T) {
-	zero := newTestModel(t, testSetup{})
+	zero := newTestModel(t, testSetup{Clauth: &fakeClauth{}})
 	if zero.account != nil {
 		t.Fatalf("Model.account is non-nil with zero clauth profiles, want nil")
 	}
 
-	one := newTestModel(t, testSetup{ClauthStatus: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}}}})
+	one := newTestModel(t, testSetup{
+		Clauth:       &fakeClauth{},
+		ClauthStatus: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}}},
+	})
 	if one.account != nil {
 		t.Fatalf("Model.account is non-nil with exactly one clauth profile, want nil")
 	}
 
-	two := newTestModel(t, testSetup{ClauthStatus: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}, {Name: "b"}}}})
+	two := newTestModel(t, testSetup{
+		Clauth:       &fakeClauth{},
+		ClauthStatus: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}, {Name: "b"}}},
+	})
 	if two.account == nil {
-		t.Fatalf("Model.account is nil with two clauth profiles, want non-nil")
+		t.Fatalf("Model.account is nil with two clauth profiles and a clauthSource configured, want non-nil")
+	}
+}
+
+// TestNew_AccountFieldRequiresClauthSource pins fix round 1's own repro:
+// a caller constructing Setup directly (bypassing Bootstrap, whose own
+// clauthEnabled gate is what normally keeps ClauthStatus empty when clauth
+// is disabled/absent) could still hand in >= 2 profiles with Deps.Clauth
+// == nil. Before this fix, that constructed AccountField anyway; focusing
+// it then panicked in reloadClauthCmd (a nil-interface method call) --
+// reproduced directly by the reviewer using the same testSetup shape
+// TestSyncDerivedInertness_AccountFollowsAgentKind already used. Now the
+// gate itself prevents construction, so the field simply isn't there.
+func TestNew_AccountFieldRequiresClauthSource(t *testing.T) {
+	m := newTestModel(t, testSetup{
+		ClauthStatus: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}, {Name: "b"}}},
+		// Clauth deliberately left nil.
+	})
+	if m.account != nil {
+		t.Fatalf("Model.account is non-nil with >= 2 profiles but no clauthSource, want nil")
+	}
+}
+
+// TestReloadClauthCmd_NilSourceDoesNotPanic is the reviewer's own repro,
+// one level down: even bypassing the New-time gate above and calling
+// reloadClauthCmd directly against a Model whose deps.Clauth is nil (the
+// exact call reactToChanges made when Account somehow ended up focused
+// without a configured clauthSource) must not panic -- it must return a
+// nil cmd instead. Defense in depth alongside the construction gate.
+func TestReloadClauthCmd_NilSourceDoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("reloadClauthCmd panicked with a nil clauthSource: %v", r)
+		}
+	}()
+	m := newTestModel(t, testSetup{}) // Clauth left nil
+	if cmd := m.reloadClauthCmd(); cmd != nil {
+		t.Fatalf("reloadClauthCmd() with a nil clauthSource returned a non-nil cmd, want nil")
 	}
 }
 
 // TestNew_WorktreeSectionsAreAdjacent pins the carried requirement: the
 // three worktree zones must still read as ONE visual group in the
-// assembled section list -- walked via Tab once the zones are all enabled
-// (worktree on, over a git target).
+// assembled section list.
+//
+// Fix round 1: this used to (a) rebuild m.form from a hand-written
+// Sections list, discarding the real one New() assembled, and (b) even
+// after fixing that, rely on a Tab-walk (sectionOrder) -- but Tab
+// navigation SKIPS disabled sections (focus.go's nextEnabled), and
+// Placement is disabled whenever Worktree is on (the exact state this test
+// puts the form in to make Branch/Base enabled), so an inserted-in-between
+// regression on Placement specifically would have kept passing even after
+// fix (a) alone -- verified directly: temporarily inserting m.placement
+// between ChipsSection and BranchSection in app.go's own New still passed
+// the Tab-walk version of this test. form.Model.SectionIDs() (added
+// alongside this fix) returns the real construction order INCLUDING
+// disabled sections, closing that gap for good.
 func TestNew_WorktreeSectionsAreAdjacent(t *testing.T) {
 	m := newTestModel(t, testSetup{})
-	m.worktree.SetGitTarget(true)
-	m.worktree.SetOn(true)
-	m.syncDerivedInertness()
-	m.form = form.New(form.Setup{Palette: theme.Default(), Sections: []form.Section{
-		m.dir, m.title, m.worktree.ChipsSection(), m.worktree.BranchSection(), m.worktree.BaseSection(), m.placement, m.agent,
-	}})
-	m.form.Init()
 
-	order := sectionOrder(t, m.form)
+	ids := m.form.SectionIDs()
 	idx := func(id string) int {
-		for i, v := range order {
+		for i, v := range ids {
 			if v == id {
 				return i
 			}
@@ -718,10 +807,10 @@ func TestNew_WorktreeSectionsAreAdjacent(t *testing.T) {
 	}
 	w, b, base := idx("worktree"), idx("branch"), idx("base")
 	if w < 0 || b < 0 || base < 0 {
-		t.Fatalf("section order %v is missing one of worktree/branch/base", order)
+		t.Fatalf("SectionIDs() %v is missing one of worktree/branch/base", ids)
 	}
 	if b != w+1 || base != b+1 {
-		t.Fatalf("worktree sections are not adjacent in order %v (worktree=%d branch=%d base=%d)", order, w, b, base)
+		t.Fatalf("worktree sections are not adjacent in %v (worktree=%d branch=%d base=%d)", ids, w, b, base)
 	}
 }
 
@@ -781,6 +870,7 @@ func TestNew_AgentKindsFavoritesFirst(t *testing.T) {
 func TestSyncDerivedInertness_AccountFollowsAgentKind(t *testing.T) {
 	m := newTestModel(t, testSetup{
 		Config:       config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude", "codex"}}},
+		Clauth:       &fakeClauth{},
 		ClauthStatus: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}, {Name: "b"}}},
 	})
 	if !m.account.Enabled() {

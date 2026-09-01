@@ -281,6 +281,12 @@ type Model struct {
 	dirReqVersion   int
 	baseReqVersion  int
 	titleReqVersion int
+	// clauthReqVersion is the clauth-reload source's own version counter --
+	// bumped directly by reloadClauthCmd (there is no separate debounce
+	// phase for this source, unlike the three above), and compared against
+	// by handleClauthResult (fix round 1: closes a rapid-refocus staleness
+	// gap -- see clauthResultMsg's own doc comment in async.go).
+	clauthReqVersion int
 
 	// baseItemsVersion/issueItemsVersion are the monotonic version
 	// parameters WorktreeField.SetBaseItems/IssueField.SetIssues expect
@@ -356,9 +362,17 @@ func New(s Setup) Model {
 	}
 
 	// Account (spec §6 field 7): rendered only when clauth is enabled AND
-	// >= 2 profiles exist -- both folded into ClauthStatus.Profiles by
-	// Bootstrap (a disabled or absent clauth simply never populates it).
-	if len(s.ClauthStatus.Profiles) >= 2 {
+	// >= 2 profiles exist. Bootstrap folds "enabled" into ClauthStatus.
+	// Profiles (a disabled clauth simply never populates it), but a caller
+	// constructing Setup directly (as this package's own tests do) could
+	// still hand in a non-empty ClauthStatus with Deps.Clauth == nil --
+	// gating on BOTH, mirroring the Deps.Linear != nil gate above, is what
+	// keeps reloadClauthCmd (spec §11: "load ... on account focus") from
+	// ever being scheduled against a nil clauthSource in the first place
+	// (reloadClauthCmd/handleClauthResult are also defensively guarded on
+	// their own -- see async.go -- but this is the gate that matters: with
+	// it, m.account is simply never non-nil when Deps.Clauth is nil).
+	if s.Deps.Clauth != nil && len(s.ClauthStatus.Profiles) >= 2 {
 		m.account = form.NewAccountField(palette)
 		m.account.SetProfiles(s.ClauthStatus)
 	}
