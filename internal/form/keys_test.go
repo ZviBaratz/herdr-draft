@@ -38,6 +38,78 @@ var (
 	keyX          = rn('x')
 )
 
+// allZoneKinds lists every ZoneKind keys.go defines, in declaration order.
+// It is this file's single canonical zone list -- TestMapKey_CtrlRArmsRegardlessOfZone
+// below iterates it directly, and pickerZoneKinds/nonPickerZoneKinds
+// partition it for the Tab-completion tests. Adding a new ZoneKind to
+// keys.go without adding it here is caught by nothing automatically (Go
+// has no way to enumerate a package's own const block at compile time),
+// so this list -- not isPicker() itself, and not a reflection trick -- is
+// the thing a reviewer/future editor is expected to update by hand
+// alongside keys.go's own const block.
+var allZoneKinds = []ZoneKind{
+	ZoneIssue, ZoneDir, ZoneTitle, ZoneWorktree, ZoneBranch, ZoneBase,
+	ZonePlacement, ZoneAgent, ZoneAccount, ZonePrompt, ZoneCreate,
+}
+
+// pickerZoneKinds are exactly the zones this test suite expects
+// ZoneKind.isPicker() to report true for -- Tab tries to complete before
+// advancing there (ActionComplete), per spec §6's field-order prose
+// calling exactly these three fields "picker"s (see isPicker's doc in
+// keys.go). This list is independent of isPicker()'s own switch -- it is
+// not read off isPicker() -- so TestMapKey_TabCompletesInEveryPickerZone
+// below is a real regression check against keys.go's classification, not
+// a tautology: a future edit that drops (or adds) a zone in isPicker()
+// without updating this list fails that test.
+var pickerZoneKinds = []ZoneKind{ZoneIssue, ZoneDir, ZoneBase}
+
+// nonPickerZoneKinds is every other zone spec §6 defines, listed
+// explicitly opposite pickerZoneKinds rather than computed by subtracting
+// it from allZoneKinds -- so the two sit next to each other in the source
+// as visibly one partition, and TestZoneKindPartition_IsExhaustiveAndDisjoint
+// below checks that partition actually holds (covers allZoneKinds exactly
+// once between the two lists). That check is what makes "add a zone to
+// isPicker() without updating the tests" loud: a zone missing from both
+// lists fails the partition test directly, and a zone left in the wrong
+// list makes either TestMapKey_TabCompletesInEveryPickerZone or
+// TestMapKey_TabPlainAdvanceOutsidePickerZones fail against the real
+// MapKey behavior.
+var nonPickerZoneKinds = []ZoneKind{
+	ZoneTitle, ZoneWorktree, ZoneBranch, ZonePlacement, ZoneAgent,
+	ZoneAccount, ZonePrompt, ZoneCreate,
+}
+
+// TestZoneKindPartition_IsExhaustiveAndDisjoint guards the opposition
+// between pickerZoneKinds and nonPickerZoneKinds: together they must name
+// every zone in allZoneKinds exactly once. Without this, a ZoneKind added
+// to keys.go's const block but left out of both lists here would silently
+// go untested by both TestMapKey_TabCompletesInEveryPickerZone and
+// TestMapKey_TabPlainAdvanceOutsidePickerZones -- passing the whole suite
+// while its Tab behavior (complete or advance) is never asserted at all.
+func TestZoneKindPartition_IsExhaustiveAndDisjoint(t *testing.T) {
+	seenIn := make(map[ZoneKind]string, len(pickerZoneKinds)+len(nonPickerZoneKinds))
+	for _, z := range pickerZoneKinds {
+		if prior, ok := seenIn[z]; ok {
+			t.Fatalf("zone %v listed in both %s and pickerZoneKinds", z, prior)
+		}
+		seenIn[z] = "pickerZoneKinds"
+	}
+	for _, z := range nonPickerZoneKinds {
+		if prior, ok := seenIn[z]; ok {
+			t.Fatalf("zone %v listed in both %s and nonPickerZoneKinds", z, prior)
+		}
+		seenIn[z] = "nonPickerZoneKinds"
+	}
+	for _, z := range allZoneKinds {
+		if _, ok := seenIn[z]; !ok {
+			t.Errorf("ZoneKind %v is in neither pickerZoneKinds nor nonPickerZoneKinds -- add it to exactly one so its Tab behavior is tested", z)
+		}
+	}
+	if got, want := len(seenIn), len(allZoneKinds); got != want {
+		t.Errorf("pickerZoneKinds+nonPickerZoneKinds together name %d zones, want exactly %d (len(allZoneKinds)) -- one of the lists has a stale or duplicate entry not in allZoneKinds", got, want)
+	}
+}
+
 // sanity-check the fixtures themselves once, up front: if String() ever
 // stops matching what MapKey switches on (e.g. an ultraviolet upgrade
 // changes Keystroke() formatting), every table test below would silently
@@ -170,11 +242,8 @@ func TestMapKey_CtrlRThenOtherKeyDisarms(t *testing.T) {
 // "isCreateForm", not any particular focused field, and herdr-draft's form
 // is always the create form (task 16 strips Atrium's other overlay roles).
 func TestMapKey_CtrlRArmsRegardlessOfZone(t *testing.T) {
-	for _, zone := range []FocusZone{
-		{Kind: ZoneIssue}, {Kind: ZoneDir}, {Kind: ZoneTitle}, {Kind: ZoneWorktree},
-		{Kind: ZoneBranch}, {Kind: ZoneBase}, {Kind: ZonePlacement}, {Kind: ZoneAgent},
-		{Kind: ZoneAccount}, {Kind: ZonePrompt}, {Kind: ZoneCreate},
-	} {
+	for _, kind := range allZoneKinds {
+		zone := FocusZone{Kind: kind}
 		action, armed := MapKey(keyCtrlR, zone, false)
 		if action != ActionArmClear || !armed {
 			t.Errorf("zone %+v: MapKey(ctrl+r, armed=false) = (%v, armed=%v), want (ActionArmClear, true)", zone, action, armed)
@@ -200,15 +269,35 @@ func TestMapKey_EveryNonCtrlRKeyDisarms(t *testing.T) {
 
 // TestMapKey_TabPlainAdvanceOutsidePickerZones pins the other half of "Tab
 // = complete-then-advance in pickers, plain advance elsewhere" (spec §6):
-// a non-picker zone gets ActionAdvance on Tab, never ActionComplete.
+// a non-picker zone gets ActionAdvance on Tab, never ActionComplete. Its
+// zone list is nonPickerZoneKinds, kept in explicit opposition to
+// pickerZoneKinds -- see TestMapKey_TabCompletesInEveryPickerZone
+// immediately below for the other half, and
+// TestZoneKindPartition_IsExhaustiveAndDisjoint for the check that the two
+// lists actually partition every zone.
 func TestMapKey_TabPlainAdvanceOutsidePickerZones(t *testing.T) {
-	for _, zone := range []FocusZone{
-		{Kind: ZoneTitle}, {Kind: ZoneWorktree}, {Kind: ZoneBranch},
-		{Kind: ZonePlacement}, {Kind: ZoneAgent}, {Kind: ZoneAccount},
-		{Kind: ZonePrompt}, {Kind: ZoneCreate},
-	} {
+	for _, kind := range nonPickerZoneKinds {
+		zone := FocusZone{Kind: kind}
 		if got, _ := MapKey(keyTab, zone, false); got != ActionAdvance {
 			t.Errorf("zone %+v: MapKey(tab) = %v, want ActionAdvance", zone, got)
+		}
+	}
+}
+
+// TestMapKey_TabCompletesInEveryPickerZone is the picker-side half of "Tab
+// = complete-then-advance in pickers, plain advance elsewhere" (spec §6),
+// covering all three zones ZoneKind.isPicker() reports true for
+// (pickerZoneKinds: ZoneIssue, ZoneDir, ZoneBase). Before this test, only
+// ZoneDir was asserted (via TestMapKey_GrammarTable's literal brief-table
+// row), so a regression dropping ZoneIssue or ZoneBase from isPicker()
+// (keys.go) would have passed the entire suite -- this closes that gap by
+// asserting ActionComplete for every zone the list names, symmetric with
+// TestMapKey_TabPlainAdvanceOutsidePickerZones above.
+func TestMapKey_TabCompletesInEveryPickerZone(t *testing.T) {
+	for _, kind := range pickerZoneKinds {
+		zone := FocusZone{Kind: kind}
+		if got, _ := MapKey(keyTab, zone, false); got != ActionComplete {
+			t.Errorf("zone %+v: MapKey(tab) = %v, want ActionComplete", zone, got)
 		}
 	}
 }

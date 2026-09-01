@@ -55,6 +55,19 @@
 //     isDepsField (Atrium's claude-shaped fields, spec §16 non-goal 3) have
 //     no equivalent zone here at all -- herdr-draft does not re-ship "the
 //     Claude-shaped form."
+//   - The "ctrl+j" case (MapKey below) is a real addition beyond the
+//     ported source, not an adaptation of anything Atrium's
+//     HandleKeyPress switches on directly: Atrium never special-cases
+//     Ctrl+J at all, because its wrapped v1 bubbles textarea binds it to
+//     insert-newline by default, so a Ctrl+J that reaches Atrium's
+//     switch's default branch falls straight through to
+//     `t.textarea, _ = t.textarea.Update(msg)` and the widget's own v1
+//     keymap handles it. herdr-draft's wrapped charm.land/bubbles/v2
+//     textarea does NOT bind ctrl+j to InsertNewline by default (verified
+//     against DefaultKeyMap in the vendored v2.1.1 source -- only
+//     "enter"/"ctrl+m" do), so spec §6's "⌃J ... newline" requirement has
+//     no widget-level binding to fall back on, and this grammar layer
+//     supplies it directly instead.
 //   - HandlePaste's guard is preserved by construction rather than by
 //     porting its body: Atrium's HandlePaste is a second function,
 //     entirely separate from HandleKeyPress's msg.String()-keyed switch,
