@@ -102,7 +102,18 @@ func (l *lineInput) Value() string { return l.ti.Value() }
 // SetValue replaces the input's text and moves the cursor to the end --
 // matching textinput.Model.SetValue's own documented behavior (verified in
 // the vendored source: SetValue calls SetCursor(len(m.value)) internally).
-func (l *lineInput) SetValue(v string) { l.ti.SetValue(v) }
+// SetValue replaces the text. The cursor is moved to the END, which
+// bubbles' own SetValue does NOT do on its own: it only repositions a
+// cursor that would be out of bounds (setValueInternal), so replacing
+// text with a LONGER string leaves the cursor wherever it was. Every
+// caller here is replacing the whole value rather than editing around a
+// cursor -- DirField.Complete's Tab-completion most visibly, where a
+// stranded cursor made the next keystroke insert into the middle of the
+// path just completed (found in live validation, 2026-09-01).
+func (l *lineInput) SetValue(v string) {
+	l.ti.SetValue(v)
+	l.ti.CursorEnd()
+}
 
 // SetPlaceholder sets the text shown when Value() == "".
 func (l *lineInput) SetPlaceholder(s string) { l.ti.Placeholder = s }

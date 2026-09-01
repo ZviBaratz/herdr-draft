@@ -304,3 +304,135 @@ func TestDirField_NoPanicOnDegenerateInputs(t *testing.T) {
 	d.SetCandidates(1, nil)
 	_ = d.View(1, d.Height(24))
 }
+
+// TestDirFieldTypedIsTheRawTextNotTheSelection pins the distinction the
+// app layer's browse source depends on: Typed() is what the user has
+// entered, Value() is the row that entry currently highlights.
+func TestDirFieldTypedIsTheRawTextNotTheSelection(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetCandidates(1, []string{"/home/z/Projects/herdr", "/home/z/Projects/atrium"})
+
+	if got := d.Typed(); got != "" {
+		t.Errorf("Typed() on a fresh field = %q, want empty", got)
+	}
+	if got := d.Value(); got != "/home/z/Projects/herdr" {
+		t.Errorf("Value() = %q, want the first candidate", got)
+	}
+
+	d.Focus()
+	typeInto(d, "atr")
+	if got := d.Typed(); got != "atr" {
+		t.Errorf("Typed() = %q, want %q", got, "atr")
+	}
+	if got := d.Value(); got != "/home/z/Projects/atrium" {
+		t.Errorf("Value() = %q, want the ranked selection", got)
+	}
+}
+
+// TestDirFieldLiteralFallbackUsesTheInstalledExpander pins why
+// SetPathExpander exists: without it the fallback row is the raw "~/x"
+// while every browsed row around it is absolute, so the same directory
+// can appear twice and a "~" selection can reach a herdr CLI that does
+// not expand it.
+func TestDirFieldLiteralFallbackUsesTheInstalledExpander(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetPathExpander(func(raw string) string {
+		return strings.Replace(raw, "~", "/home/z", 1)
+	})
+	// What a browse of "~/Projects/" supplies: absolute child paths.
+	d.SetCandidates(1, []string{"/home/z/Projects/herdr", "/home/z/Projects/atrium"})
+
+	d.Focus()
+	typeInto(d, "~/Projects/nope")
+	items := d.visibleItems()
+	last := items[len(items)-1]
+	if last != "/home/z/Projects/nope" {
+		t.Errorf("literal fallback = %q, want the expanded path", last)
+	}
+
+	// A fully typed path that IS on offer must not appear twice, once
+	// browsed and once as its own literal fallback.
+	d.input.SetValue("")
+	typeInto(d, "~/Projects/herdr")
+	seen := 0
+	for _, it := range d.visibleItems() {
+		if it == "/home/z/Projects/herdr" {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Errorf("%q appears %d times in %v, want exactly once", "/home/z/Projects/herdr", seen, d.visibleItems())
+	}
+}
+
+// TestDirFieldWithoutAnExpanderKeepsTheRawFallback pins the default: no
+// expander installed means no expansion, which is what every other test
+// in this file (and every golden frame) observes.
+func TestDirFieldWithoutAnExpanderKeepsTheRawFallback(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetCandidates(1, []string{"/srv/a"})
+	d.Focus()
+	typeInto(d, "~/b")
+
+	items := d.visibleItems()
+	if last := items[len(items)-1]; last != "~/b" {
+		t.Errorf("literal fallback = %q, want the raw typed text", last)
+	}
+}
+
+// TestLooksLikePathAndSplitPathAreTheSharedGrammar pins the exported
+// pair the app layer's browse source reads -- one definition of path
+// mode, not two.
+func TestLooksLikePathAndSplitPathAreTheSharedGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		path bool
+	}{
+		{"/srv/x", true}, {"~/x", true}, {"./x", true}, {"../x", true},
+		{"~", true}, {".", true},
+		{"herdr", false}, {"", false}, {"my-project", false},
+	} {
+		if got := LooksLikePath(tc.in); got != tc.path {
+			t.Errorf("LooksLikePath(%q) = %v, want %v", tc.in, got, tc.path)
+		}
+	}
+
+	for _, tc := range []struct{ in, dir, base string }{
+		{"~/Projects/he", "~/Projects/", "he"},
+		{"~/Projects/", "~/Projects/", ""},
+		{"~", "~", ""},
+		{".", ".", ""},
+		// A single leading separator: the root IS the directory to browse.
+		{"/srv", "/", "srv"},
+		{"/srv/", "/srv/", ""},
+	} {
+		dir, base := SplitPath(tc.in)
+		if dir != tc.dir || base != tc.base {
+			t.Errorf("SplitPath(%q) = (%q, %q), want (%q, %q)", tc.in, dir, base, tc.dir, tc.base)
+		}
+	}
+}
+
+// TestDirFieldCompleteLeavesTheCursorAtTheEnd pins a bug live validation
+// found: bubbles' textinput.SetValue only repositions a cursor that would
+// be out of bounds, so completing "/srv/gam" to "/srv/gamma-tools" left
+// the cursor after "gam" and the next keystroke landed in the middle of
+// the path.
+func TestDirFieldCompleteLeavesTheCursorAtTheEnd(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetCandidates(1, []string{"/srv/gamma-tools", "/srv/alpha"})
+	d.Focus()
+	typeInto(d, "/srv/gam")
+
+	if !d.Complete() {
+		t.Fatalf("Complete() = false, want a completion to %q", "/srv/gamma-tools")
+	}
+	if got := d.Typed(); got != "/srv/gamma-tools" {
+		t.Fatalf("after Complete(), Typed() = %q", got)
+	}
+
+	typeInto(d, "/")
+	if got := d.Typed(); got != "/srv/gamma-tools/" {
+		t.Errorf("after typing past a completion, Typed() = %q, want the keystroke at the END", got)
+	}
+}
