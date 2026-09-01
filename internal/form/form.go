@@ -320,6 +320,27 @@ func (m Model) SectionIDs() []string {
 	return ids
 }
 
+// FocusByID moves the focus ring directly to the section whose ID() ==
+// id, regardless of that section's own Enabled() state, syncing every
+// section's Focus()/Blur() the same way Tab navigation does (focus.go's
+// own set), and returns whatever tea.Cmd the newly focused section's own
+// Focus() produces. A no-op (nil Cmd) for a zero-value Model (nil ring)
+// or an id with no matching section.
+//
+// This is a minimal public entry point over focusRing's own
+// already-existing, already-documented focusByID (focus.go: "used e.g.
+// by spec §6's 'a failing submit re-focuses Title' rule once a concrete
+// Title section exists") -- added in Task 20b since nothing in this
+// package previously exposed it beyond this file, and the app layer's
+// own submit-time validation (spec §9) is exactly that rule's first real
+// caller.
+func (m Model) FocusByID(id string) tea.Cmd {
+	if m.ring == nil {
+		return nil
+	}
+	return m.ring.focusByID(id)
+}
+
 // Update dispatches an incoming message: tea.WindowSizeMsg is stored for
 // View/ViewAt; tea.KeyPressMsg is run through MapKey (keys.go, "the
 // grammar you dispatch on") and acted on by handleKey; tea.PasteMsg

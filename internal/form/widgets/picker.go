@@ -197,6 +197,27 @@ func (p *Picker) Selected() (PickerItem, bool) {
 	return p.filtered[p.cursor], true
 }
 
+// SelectID moves the cursor directly to the filtered item whose ID == id,
+// leaving the cursor unchanged (and returning false) when no such item is
+// present. Added in Task 20b for a caller that needs to select an item by
+// IDENTITY rather than by position -- e.g. AccountField.SetPin applying
+// spec §12's config.toml `[clauth] default` profile name at form
+// construction, before the user has navigated the picker at all. This is
+// the same first-match linear scan SetItems' own indexOfIDOrFallback
+// already performs internally for a same-version refresh; SelectID is
+// just a direct, caller-invoked entry point to it, for a caller that
+// already knows the target ID up front rather than discovering it via a
+// refresh.
+func (p *Picker) SelectID(id string) bool {
+	for i, it := range p.filtered {
+		if it.ID == id {
+			p.cursor = i
+			return true
+		}
+	}
+	return false
+}
+
 // CursorNext moves the cursor down one row, clamping at the last row --
 // ported from Atrium's handleKey KeyDown branch (no wraparound).
 func (p *Picker) CursorNext() {

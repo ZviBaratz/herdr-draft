@@ -24,6 +24,28 @@ func TestPlacementField_IDAndDefault(t *testing.T) {
 	}
 }
 
+// TestPlacementField_SetValue pins the new config-default pre-selection
+// setter (Task 20b, spec §12's `default_placement`): each of the three
+// values moves the cursor to the matching chip.
+func TestPlacementField_SetValue(t *testing.T) {
+	f := NewPlacementField(theme.Default())
+
+	f.SetValue(plan.PlacementSplitHere)
+	if got := f.Value(); got != plan.PlacementSplitHere {
+		t.Fatalf("Value() after SetValue(SplitHere) = %v, want %v", got, plan.PlacementSplitHere)
+	}
+
+	f.SetValue(plan.PlacementTabHere)
+	if got := f.Value(); got != plan.PlacementTabHere {
+		t.Fatalf("Value() after SetValue(TabHere) = %v, want %v", got, plan.PlacementTabHere)
+	}
+
+	f.SetValue(plan.PlacementNewSpace)
+	if got := f.Value(); got != plan.PlacementNewSpace {
+		t.Fatalf("Value() after SetValue(NewSpace) = %v, want %v", got, plan.PlacementNewSpace)
+	}
+}
+
 func TestPlacementField_ArrowsCycleChipsAndValue(t *testing.T) {
 	f := NewPlacementField(theme.Default())
 

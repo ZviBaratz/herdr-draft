@@ -983,18 +983,32 @@ func TestUpdate_CancelQuits(t *testing.T) {
 	}
 }
 
-// TestUpdate_SubmitAndClearAreNoOpsInTask20 pins this task's own declared
-// scope boundary: form.SubmitMsg (Task 20b's job) and
-// form.ClearRequestedMsg (deferred -- see Update's own case comment) are
-// both intercepted without panicking and without forwarding to the form.
-func TestUpdate_SubmitAndClearAreNoOpsInTask20(t *testing.T) {
+// TestUpdate_SubmitAndClearNowActInsteadOfNoOp supersedes this task's own
+// prior TestUpdate_SubmitAndClearAreNoOpsInTask20: Task 20's own declared
+// scope boundary (form.SubmitMsg deferred to Task 20b, form.ClearRequestedMsg
+// deferred entirely) is closed by this task -- see submit_test.go for the
+// full submit-pipeline/validation/clear coverage; this only pins that both
+// messages reach real handling via Update's own top-level dispatch, not
+// just when called directly. A zero-value form (empty title, nothing else
+// configured) is BLOCKED by checkSubmitValidation's own empty-title guard
+// -- still a non-nil cmd (the blocking re-focus), just not the submit
+// pipeline starting.
+func TestUpdate_SubmitAndClearNowActInsteadOfNoOp(t *testing.T) {
 	m := newTestModel(t, testSetup{})
-	if _, cmd := m.Update(form.SubmitMsg{}); cmd != nil {
-		t.Fatalf("Update(SubmitMsg{}) returned a non-nil cmd, want nil (Task 20b's own job)")
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	if cmd == nil {
+		t.Fatalf("Update(SubmitMsg{}) with an empty title returned a nil cmd, want the blocking re-focus")
 	}
-	if _, cmd := m.Update(form.ClearRequestedMsg{}); cmd != nil {
-		t.Fatalf("Update(ClearRequestedMsg{}) returned a non-nil cmd, want nil (deferred)")
+	if m2 := next.(Model); m2.submitting {
+		t.Fatalf("Update(SubmitMsg{}) with an empty title started submitting, want it blocked")
 	}
+
+	next, cmd = m.Update(form.ClearRequestedMsg{})
+	if cmd == nil {
+		t.Fatalf("Update(ClearRequestedMsg{}) returned a nil cmd, want the rebuilt form's own Init cmd")
+	}
+	_ = next.(Model)
 }
 
 // TestUpdate_IssueChosenRoutesThroughTopLevelDispatch pins that

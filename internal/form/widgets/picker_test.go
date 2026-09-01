@@ -255,3 +255,28 @@ func TestPicker_CursorNextPrevClampWithoutWrapping(t *testing.T) {
 		t.Fatalf("Selected().ID after CursorNext() past the last row = %q, want %q (clamp, not wrap)", got.ID, "2")
 	}
 }
+
+// TestPicker_SelectID pins SelectID (added in Task 20b for
+// AccountField.SetPin's own config-default pre-selection, spec §12's
+// `[clauth] default`): it must move the cursor to the matching item
+// regardless of the item's own position, report true on a match, and
+// leave the cursor exactly where it was (reporting false) for an id that
+// isn't present.
+func TestPicker_SelectID(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{{ID: "active"}, {ID: "alpha"}, {ID: "beta"}, {ID: "gamma"}})
+
+	if !p.SelectID("gamma") {
+		t.Fatalf("SelectID(%q) = false, want true", "gamma")
+	}
+	if got, _ := p.Selected(); got.ID != "gamma" {
+		t.Fatalf("Selected().ID after SelectID(%q) = %q, want %q", "gamma", got.ID, "gamma")
+	}
+
+	if p.SelectID("does-not-exist") {
+		t.Fatalf("SelectID(%q) = true, want false (not present)", "does-not-exist")
+	}
+	if got, _ := p.Selected(); got.ID != "gamma" {
+		t.Fatalf("Selected().ID after a missed SelectID = %q, want unchanged %q", got.ID, "gamma")
+	}
+}

@@ -95,6 +95,34 @@ func TestAccountField_PinCyclesThroughProfiles(t *testing.T) {
 	}
 }
 
+// TestAccountField_SetPin pins the new config-default pre-selection
+// setter (Task 20b, spec §12's `[clauth] default`): a real profile name
+// moves the pin; "" and the config's own "active" sentinel are both
+// no-ops; an unknown name is also a no-op (never guess).
+func TestAccountField_SetPin(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus())
+
+	f.SetPin("")
+	if got := f.Pin(); got != "" {
+		t.Fatalf("Pin() after SetPin(\"\") = %q, want \"\" (no-op)", got)
+	}
+	f.SetPin("active")
+	if got := f.Pin(); got != "" {
+		t.Fatalf("Pin() after SetPin(\"active\") = %q, want \"\" (no-op)", got)
+	}
+	f.SetPin("does-not-exist")
+	if got := f.Pin(); got != "" {
+		t.Fatalf("Pin() after SetPin(\"does-not-exist\") = %q, want \"\" (no-op, never guess)", got)
+	}
+
+	f.SetPin("beta")
+	if got := f.Pin(); got != "beta" {
+		t.Fatalf("Pin() after SetPin(\"beta\") = %q, want %q", got, "beta")
+	}
+}
+
 // TestAccountField_SetProfilesRefreshPreservesPinByName mirrors
 // field_worktree.go's identical same-version-refresh test: a later
 // SetProfiles call (e.g. a re-poll on account focus, spec §8) must not

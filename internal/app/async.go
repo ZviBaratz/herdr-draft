@@ -47,6 +47,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
 // debounceDelay is spec §8's shared 150ms debounce window every versioned
@@ -132,6 +133,10 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		validity = form.ValidityDirect
 	}
 	m.dir.SetValidity(msg.req.key, validity)
+	// dirInvalid mirrors the marker DirField itself is now showing --
+	// checkSubmitValidation (app.go, spec §9) reads this directly rather
+	// than DirField exposing its own Validity() getter back out.
+	m.dirInvalid = validity == form.ValidityInvalid
 	m.worktree.SetGitTarget(msg.isGitRepo)
 
 	worktreeOnBefore := m.worktree.On()
@@ -358,6 +363,11 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.title.SetVerdict(msg.req.key, titleVerdictText(msg.branchExists, msg.labelTaken))
+	// titleDupBlocked mirrors the SAME verdict just pushed above --
+	// checkSubmitValidation (app.go, spec §9) reads this directly rather
+	// than re-deriving it from TitleField's own (unexported) verdict
+	// state.
+	m.titleDupBlocked = msg.branchExists || msg.labelTaken
 	return m, nil
 }
 
@@ -414,6 +424,7 @@ func (m Model) handleLinearResult(msg linearResultMsg) (Model, tea.Cmd) {
 	}
 	m.issueItemsVersion++
 	m.issue.SetIssues(m.issueItemsVersion, msg.issues)
+	m.linearIssues = msg.issues                  // see Model.linearIssues' own doc comment (handleClearRequested's reseed source).
 	_ = linear.SaveCache(m.stateDir, msg.issues) // best-effort; state is loss-tolerant (spec §12).
 	return m, nil
 }
@@ -471,7 +482,218 @@ func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.account.SetProfiles(msg.status)
+	m.clauthStatus = msg.status // see Model.clauthStatus' own doc comment (accountAuthBlocked's lookup source).
 	return m, nil
+}
+
+// --- submit pipeline (spec §9) --------------------------------------------
+//
+// This section is the mechanical half of app.go's submit orchestration
+// (handleSubmit/checkSubmitValidation/buildPlanInput/startSubmit): the
+// Cmd/message plumbing that runs plan.Execute (Task 13) in the
+// background and streams its plan.Progress callbacks back into
+// updateSubmitting one message at a time, then -- on failure past step 1
+// -- runs plan.CleanCheck and, on a CleanMsg, plan.Clean the same way.
+//
+// plan.Execute's own onProgress callback fires synchronously and
+// REPEATEDLY from WITHIN one long blocking call (through every op,
+// including any busy retry and the detection/prompt waits); a bubbletea
+// Cmd, however, only ever delivers ONE message per invocation. The only
+// way to surface each progress event to Update as it happens -- "progress
+// must appear incrementally, not all at once at the end," this task's own
+// carried requirement -- rather than only the final state once Execute
+// returns, is a producer/consumer channel bridge: runSubmitCmd starts
+// Execute in a background goroutine that forwards every onProgress call
+// onto an unbuffered channel, and waitForSubmitProgress returns a Cmd
+// that reads exactly one value off it, re-arming itself (via the message
+// it returns) for the next one -- a standard bubbletea idiom for a
+// long-running background process with incremental progress.
+
+// submitProgressMsg carries one plan.Progress event from a running
+// plan.Execute call, plus the channel handles needed to keep draining the
+// rest.
+type submitProgressMsg struct {
+	progress   plan.Progress
+	progressCh <-chan plan.Progress
+	resultCh   <-chan plan.ExecResult
+}
+
+// submitDoneMsg reports plan.Execute's own final ExecResult, delivered
+// once progressCh above has been fully drained (closed).
+type submitDoneMsg struct{ result plan.ExecResult }
+
+// runSubmitCmd starts ops running against r in a background goroutine and
+// returns the first Cmd of waitForSubmitProgress's self-re-arming chain
+// -- see this section's own file-doc comment for why.
+func runSubmitCmd(ctx context.Context, r herdrc.Runner, ops []plan.Op) tea.Cmd {
+	progressCh := make(chan plan.Progress)
+	resultCh := make(chan plan.ExecResult, 1)
+	go func() {
+		res := plan.Execute(ctx, r, ops, func(p plan.Progress) { progressCh <- p })
+		close(progressCh)
+		resultCh <- res
+	}()
+	return waitForSubmitProgress(progressCh, resultCh)
+}
+
+// waitForSubmitProgress returns a Cmd that reads exactly one value off
+// progressCh, or -- once the producer goroutine has closed it -- the
+// final result off resultCh. progressCh is unbuffered, so the producer
+// goroutine (runSubmitCmd) naturally blocks between events until this
+// side is ready for the next one; no separate backpressure mechanism is
+// needed, and no event can ever be dropped.
+func waitForSubmitProgress(progressCh <-chan plan.Progress, resultCh <-chan plan.ExecResult) tea.Cmd {
+	return func() tea.Msg {
+		if p, ok := <-progressCh; ok {
+			return submitProgressMsg{progress: p, progressCh: progressCh, resultCh: resultCh}
+		}
+		return submitDoneMsg{result: <-resultCh}
+	}
+}
+
+// handleSubmitProgress applies one streamed plan.Progress event to the
+// working progress slice startSubmit seeded (by Index, replacing the row
+// it originally seeded at StepPending) and re-renders SubmitView, then
+// re-arms waitForSubmitProgress for the next event.
+func (m Model) handleSubmitProgress(msg submitProgressMsg) (Model, tea.Cmd) {
+	if msg.progress.Index >= 0 && msg.progress.Index < len(m.submitProgress) {
+		m.submitProgress[msg.progress.Index] = msg.progress
+	}
+	if m.submitView != nil {
+		m.submitView.SetProgress(m.submitProgress)
+	}
+	return m, waitForSubmitProgress(msg.progressCh, msg.resultCh)
+}
+
+// handleSubmitDone applies plan.Execute's own final ExecResult. A fully
+// successful run (FailedIndex == -1) has nothing further to show -- the
+// plugin's whole job was creating and launching the session, which is now
+// done -- so it quits, mirroring form.CancelMsg's own tea.Quit posture. A
+// failure before step 1 (topology creation) ever succeeded (Created ==
+// nil) has nothing to keep or clean either: spec §9's keep-or-clean gate
+// is explicitly scoped to "after step 1 succeeded," so the failed
+// progress line (already streamed) is simply left showing, with
+// updateSubmitting's own Esc/Ctrl+C handling as this state's only way out
+// (SubmitView's own k/c grammar never activates -- SetFailure is never
+// called). Otherwise, plan.CleanCheck needs to run first -- real git I/O
+// for a worktree space, via gitx.Disposable -- before SubmitView's
+// failure prompt can be shown at all, so that's deferred to its own Cmd
+// (runCleanCheckCmd) rather than called synchronously here.
+func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
+	if msg.result.FailedIndex == -1 {
+		return m, tea.Quit
+	}
+	if msg.result.Created == nil {
+		return m, nil
+	}
+	m.submitCreated = *msg.result.Created
+	return m, runCleanCheckCmd(m.submitInput, *msg.result.Created, msg.result)
+}
+
+// cleanCheckMsg carries plan.CleanCheck's own verdict for the space
+// Execute just failed to finish setting up, alongside the ExecResult it
+// was computed for (SubmitView.SetFailure wants both together).
+type cleanCheckMsg struct {
+	result   plan.ExecResult
+	decision plan.CleanDecision
+}
+
+// runCleanCheckCmd runs plan.CleanCheck in the background -- it performs
+// real git I/O for a worktree space (gitx.Disposable), so it is never
+// called directly from a message handler in this package, matching every
+// other I/O-performing source in this file.
+func runCleanCheckCmd(in plan.Input, created herdrc.CreatedTopology, result plan.ExecResult) tea.Cmd {
+	return func() tea.Msg {
+		decision := plan.CleanCheck(context.Background(), in, created)
+		return cleanCheckMsg{result: result, decision: decision}
+	}
+}
+
+// handleCleanCheckResult applies plan.CleanCheck's own verdict to
+// SubmitView, switching it into its keep-or-clean failure prompt (spec
+// §9) -- and records the decision on Model itself so a later CleanMsg
+// (handleCleanRequested) can re-check Allowed before ever calling
+// plan.Clean, rather than trusting SubmitView's own k/c gating alone (the
+// same defense-in-depth posture reloadClauthCmd's nil-source guard
+// already applies elsewhere in this package).
+func (m Model) handleCleanCheckResult(msg cleanCheckMsg) (Model, tea.Cmd) {
+	m.submitCleanDecision = msg.decision
+	if m.submitView != nil {
+		m.submitView.SetFailure(msg.result, msg.decision)
+	}
+	return m, nil
+}
+
+// handleCleanRequested implements form.CleanMsg (the "c" keypress from
+// SubmitView's own failure prompt): re-checks
+// m.submitCleanDecision.Allowed before running plan.Clean at all.
+func (m Model) handleCleanRequested() (Model, tea.Cmd) {
+	if !m.submitCleanDecision.Allowed {
+		return m, nil
+	}
+	return m, runCleanCmd(m.deps.Runner, m.submitInput, m.submitCreated)
+}
+
+// cleanDoneMsg reports plan.Clean's own outcome. err is captured (not
+// silently discarded at the source) but currently unread by
+// handleCleanDone -- SubmitView's existing API has no "clean failed"
+// state for it to surface into (see this task's own report's Concerns
+// section).
+type cleanDoneMsg struct{ err error }
+
+func runCleanCmd(r herdrc.Runner, in plan.Input, created herdrc.CreatedTopology) tea.Cmd {
+	return func() tea.Msg {
+		err := plan.Clean(context.Background(), r, in, created)
+		return cleanDoneMsg{err: err}
+	}
+}
+
+// handleCleanDone finishes the submit pipeline once plan.Clean returns,
+// success or failure: the created space is left in SOME terminal state
+// either way (removed on success, or exactly Keep's own outcome on
+// failure), so this quits regardless -- see cleanDoneMsg's own doc
+// comment on why its error goes no further than this.
+func (m Model) handleCleanDone(cleanDoneMsg) (Model, tea.Cmd) {
+	return m, tea.Quit
+}
+
+// updateSubmitting is Update's own dispatch table while m.submitting is
+// true (form.Model's own key grammar is bypassed entirely during submit
+// -- SubmitView is not a form.Section and takes no part in its focus
+// ring, per submitview.go's own file doc comment). Esc/Ctrl+C are this
+// state's own escape hatch (form.Model's ActionCancel equivalent, since
+// MapKey never runs here) -- needed in particular for a step-1 failure,
+// which otherwise leaves the user with no way to close the popup at all
+// (see handleSubmitDone). Every other key is forwarded to SubmitView's
+// own Update (its k/c keep-or-clean grammar); every async submit-pipeline
+// message is dispatched to its own handler above; anything else
+// (e.g. a stray tea.WindowSizeMsg, already captured by Update's own
+// top-level width/height snapshot) is ignored.
+func (m Model) updateSubmitting(msg tea.Msg) (Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if s := msg.String(); s == "esc" || s == "ctrl+c" {
+			return m, tea.Quit
+		}
+		if m.submitView != nil {
+			return m, m.submitView.Update(msg)
+		}
+		return m, nil
+	case submitProgressMsg:
+		return m.handleSubmitProgress(msg)
+	case submitDoneMsg:
+		return m.handleSubmitDone(msg)
+	case cleanCheckMsg:
+		return m.handleCleanCheckResult(msg)
+	case form.KeepMsg:
+		return m, tea.Quit
+	case form.CleanMsg:
+		return m.handleCleanRequested()
+	case cleanDoneMsg:
+		return m.handleCleanDone(msg)
+	default:
+		return m, nil
+	}
 }
 
 // --- production gitSource: internal/gitx + os.Stat ------------------------

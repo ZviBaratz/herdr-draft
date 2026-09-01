@@ -285,6 +285,29 @@ func accountWindowHint(p clauth.Profile) string {
 	return accountWindowLabel + " —"
 }
 
+// SetPin moves the account picker's cursor directly to the profile row
+// whose ID (Name) matches pin -- e.g. to apply spec §12's config.toml
+// `[clauth] default` value at form construction. "" and "active" (the
+// config's own documented sentinel for "don't pin -- use whatever
+// profile is live") are both no-ops: the picker already starts on the
+// "active" row by construction (refreshItems/SetProfiles), matching
+// Pin()'s own "" == active contract, so there is nothing to move for
+// either. A pin naming a profile not present in the current item set
+// (e.g. a stale or typo'd config value) is also a no-op --
+// widgets.Picker.SelectID leaves the cursor wherever it already was
+// rather than guessing.
+//
+// Added in Task 20b (the app layer) alongside PlacementField.SetValue --
+// see field_title.go's SetTitle doc comment for the fuller writeup of
+// this class of gap: a config-derived default value with no way to
+// pre-select the field it configures.
+func (f *AccountField) SetPin(pin string) {
+	if pin == "" || pin == "active" {
+		return
+	}
+	f.picker.SelectID(pin)
+}
+
 // Pin returns the currently selected profile name, or "" when the
 // selection is the "active" sentinel row (spec: "don't pin — use
 // whatever profile is live") -- the getter-boundary translation

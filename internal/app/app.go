@@ -8,11 +8,10 @@
 // form.go's own package doc assigns to "the app layer" rather than the
 // form itself, which stays a dumb view with no I/O of its own (spec §4).
 //
-// Task 20 stops short of the submit pipeline (spec §9's staged creation):
-// plan.Build/Execute wiring is Task 20b's job. app.Model is nonetheless the
-// seam that work extends from -- form.SubmitMsg (emitted by form.Model on
-// Enter/Ctrl+S) is already intercepted in Update below, just not yet acted
-// on; see the case comment there.
+// Task 20b wires spec §9's submit pipeline on top of this: validation,
+// then plan.Build/Execute in a tea.Cmd, streaming plan.Progress into a
+// form.SubmitView (see the handleSubmit/updateSubmitting doc comments in
+// this file and async.go).
 package app
 
 import (
@@ -29,6 +28,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -259,6 +259,24 @@ type Model struct {
 	// both DirField's candidate pool and the title-duplicate label check.
 	workspaces []herdrc.WorkspaceInfo
 
+	// clauthStatus is the last clauth status feed this Model has seen --
+	// New's own Setup.ClauthStatus, refreshed by handleClauthResult
+	// alongside its m.account.SetProfiles call. AccountField itself
+	// exposes no per-profile AuthStatus getter (only Pin(), the selected
+	// profile's NAME), so submit-time validation (accountAuthBlocked)
+	// keeps its own copy to look a pinned name up against, and
+	// handleClearRequested reuses it to reseed a rebuilt AccountField
+	// without a real clauth reload.
+	clauthStatus clauth.Status
+
+	// linearIssues is the last Linear issue list this Model has seen --
+	// New's own Setup.LinearCache, refreshed by handleLinearResult
+	// alongside its m.issue.SetIssues call. Kept for the same reason as
+	// clauthStatus: handleClearRequested (spec §6's ⌃R⌃R rebuild) needs
+	// it to reseed a rebuilt IssueField without waiting on a fresh Linear
+	// round-trip.
+	linearIssues []linear.Issue
+
 	// linearIssueSelected tracks IssueField's own "none" vs a real
 	// selection (spec §6 field 1: "In Linear mode branchName owns the
 	// branch and the title is free text") -- reactToChanges only derives a
@@ -313,6 +331,52 @@ type Model struct {
 	worktreeDefaultOn      bool
 	worktreeDefaultApplied bool
 
+	// dirInvalid/titleDupBlocked mirror the last dir-validity/title-dup
+	// verdict each already pushed into DirField/TitleField (handleDirResult/
+	// handleTitleResult), kept as plain booleans on Model too because
+	// neither field exposes a getter back for its own pushed verdict --
+	// only a rendered marker/text. checkSubmitValidation (submit orchestration,
+	// spec §9) reads these directly rather than re-deriving them, since
+	// they're already exactly what the form is currently SHOWING the user.
+	dirInvalid      bool
+	titleDupBlocked bool
+
+	// width/height are this Model's own copy of the last tea.WindowSizeMsg
+	// (form.Model keeps its own copy internally, unreachable from here) --
+	// needed so View can render form.SubmitView.ViewAt at the right size
+	// once m.submitting is true and m.form.View() is no longer what's on
+	// screen.
+	width, height int
+
+	// submitting is true from form.SubmitMsg's own validation passing
+	// (handleSubmit/startSubmit) until the popup quits -- see
+	// updateSubmitting's own doc comment for why message routing branches
+	// on it entirely (SubmitView is not a form.Section and takes no part
+	// in form.Model's focus ring).
+	submitting bool
+	// submitInput/submitCreated/submitCleanDecision are the running
+	// submit attempt's own state, threaded across the several async Cmds
+	// spec §9's staged pipeline needs (plan.Execute's own streamed
+	// progress, then plan.CleanCheck, then -- on a CleanMsg -- plan.Clean)
+	// -- see async.go's runSubmitCmd/runCleanCheckCmd/runCleanCmd.
+	submitInput         plan.Input
+	submitCreated       herdrc.CreatedTopology
+	submitCleanDecision plan.CleanDecision
+	// submitProgress is the full, Total-length working progress list
+	// startSubmit seeds at StepPending and handleSubmitProgress updates
+	// in place by Index as each streamed plan.Progress event arrives --
+	// SubmitView.SetProgress REPLACES its own displayed list on every
+	// call, so this is what makes "every step, including ones not yet
+	// started, visible from the first frame" possible (plan.Execute's own
+	// onProgress never itself emits a StepPending event for a step that
+	// hasn't started yet).
+	submitProgress []plan.Progress
+	// submitView is constructed fresh by startSubmit for each submit
+	// attempt (nil before the first one) -- a *form.SubmitView, not a
+	// form.Section: it takes no part in form.Model's own focus ring (see
+	// submitview.go's own file doc comment).
+	submitView *form.SubmitView
+
 	// initCmds carries the very first debounced dir-validity/base-list
 	// requests (plus the Linear async refresh, when configured), scheduled
 	// in New rather than Init -- see Init's own doc comment for why: Init()
@@ -339,6 +403,8 @@ func New(s Setup) Model {
 		stateDir:     s.StateDir,
 		deps:         s.Deps,
 		workspaces:   s.Workspaces,
+		clauthStatus: s.ClauthStatus,
+		linearIssues: s.LinearCache,
 		fetchedRepos: map[string]bool{},
 	}
 
@@ -348,6 +414,22 @@ func New(s Setup) Model {
 	m.placement = form.NewPlacementField(palette)
 	m.agent = form.NewAgentField(palette)
 	m.prompt = form.NewPromptField(palette)
+
+	// [default_placement] (spec §12), when set to something other than
+	// "new-space" (PlacementField's own natural starting default -- no
+	// call needed for that case): the two folded-in Task 20 gaps this
+	// task's brief names ("[clauth] default and a non-default
+	// [default_placement] have no pre-selection path"). "off"/on-then-
+	// snapped-back-to-New's own interaction with worktree defaulting on
+	// is handled the same way it already was before this gap was closed
+	// -- see PlacementField.SetValue's own doc comment: applying this now
+	// is safe regardless of where worktreeDefaultOn will later land,
+	// since a worktree turning on always snaps Placement back to New
+	// space anyway (spec §12's own config.toml comment: "when worktree is
+	// off").
+	if p, ok := placementFromConfigValue(s.Config.DefaultPlacement); ok {
+		m.placement.SetValue(p)
+	}
 
 	// Linear (spec §6 field 1): rendered only when Linear is configured --
 	// decided entirely by whether Bootstrap resolved an API key at all
@@ -375,6 +457,11 @@ func New(s Setup) Model {
 	if s.Deps.Clauth != nil && len(s.ClauthStatus.Profiles) >= 2 {
 		m.account = form.NewAccountField(palette)
 		m.account.SetProfiles(s.ClauthStatus)
+		// [clauth] default (spec §12), when set to a real profile name --
+		// "" and the config's own documented "active" sentinel are both
+		// no-ops (AccountField.SetPin's own doc comment): the picker
+		// already starts on the "active" row by construction.
+		m.account.SetPin(s.Config.Clauth.Default)
 	}
 
 	// Agent (spec §6 field 6, carried requirement): favorites first, then
@@ -434,35 +521,37 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(append([]tea.Cmd{m.form.Init()}, m.initCmds...)...)
 }
 
-// Update dispatches an incoming message: the app-level messages this
-// package itself defines or intercepts (form.IssueChosenMsg seeding,
-// form.CancelMsg/SubmitMsg/ClearRequestedMsg, and every async.go debounce/
-// result message) are handled directly; everything else is routed through
-// form.Model's own Update (routeToForm), which also runs reactToChanges
-// afterward to notice any value change that needs its own debounced
-// reaction or dynamic-inertness sync.
+// Update dispatches an incoming message. tea.WindowSizeMsg is captured
+// into this Model's own width/height copy first, unconditionally (see
+// their own doc comment on Model), regardless of what else the message
+// dispatch below does with it. Once m.submitting is true (see
+// startSubmit), every message is routed to updateSubmitting instead --
+// form.Model's own key grammar and every debounce/result source below are
+// all bypassed entirely, since SubmitView has replaced the form on screen
+// and takes no part in form.Model's focus ring (submitview.go's file doc
+// comment). Otherwise: the app-level messages this package itself defines
+// or intercepts (form.IssueChosenMsg seeding, form.CancelMsg/SubmitMsg/
+// ClearRequestedMsg, and every async.go debounce/result message) are
+// handled directly; everything else is routed through form.Model's own
+// Update (routeToForm), which also runs reactToChanges afterward to
+// notice any value change that needs its own debounced reaction or
+// dynamic-inertness sync.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width, m.height = wsm.Width, wsm.Height
+	}
+	if m.submitting {
+		return m.updateSubmitting(msg)
+	}
 	switch msg := msg.(type) {
 	case form.IssueChosenMsg:
 		return m.handleIssueChosen(msg)
 	case form.CancelMsg:
 		return m, tea.Quit
 	case form.SubmitMsg:
-		// Task 20b wires spec §9's submit pipeline (validation, then
-		// plan.Build/Execute) here. Task 20's own scope stops at
-		// validation STATE (the inline verdicts this package already
-		// computes and pushes into TitleField/AccountField); it does not
-		// act on a submit attempt.
-		return m, nil
+		return m.handleSubmit()
 	case form.ClearRequestedMsg:
-		// Rebuilding the form to its default state (form.go's own doc
-		// comment: "rebuilding the form... is the app layer's job") is
-		// deferred past Task 20 -- see task-20-report.md's concerns
-		// section for why (rebuilding would need to safely re-apply every
-		// already-fetched async result -- candidates, issues, clauth
-		// profiles -- onto fresh field instances, which is real work this
-		// task's explicit responsibility list doesn't name).
-		return m, nil
+		return m.handleClearRequested()
 	case dirDebounceMsg:
 		return m.handleDirDebounce(msg)
 	case dirResultMsg:
@@ -513,6 +602,189 @@ func (m Model) handleIssueChosen(msg form.IssueChosenMsg) (Model, tea.Cmd) {
 	}
 	cmds := m.reactToChanges()
 	return m, tea.Batch(cmds...)
+}
+
+// handleSubmit is form.SubmitMsg's own handler (spec §9's submit
+// pipeline): runs every blocking validation FIRST (checkSubmitValidation),
+// refusing to create anything at all when one fires -- no plan.Build call,
+// no plan.Execute, nothing -- and only once every check clears does it
+// build the plan and start the staged execution (startSubmit).
+func (m Model) handleSubmit() (Model, tea.Cmd) {
+	if cmd, blocked := m.checkSubmitValidation(); blocked {
+		return m, cmd
+	}
+
+	in := m.buildPlanInput()
+	ops, err := plan.Build(in)
+	if err != nil {
+		// Every precondition plan.Build itself checks (non-empty title,
+		// worktree-requires-git-repo, pin-requires-claude) is already
+		// enforced above or by construction (accountPin never returns a
+		// pin for a non-claude kind; UseWorktree can only be true once
+		// WorktreeField.Enabled() -- its own git-repo gate -- is true) --
+		// this is a defensive fallback for a future Build rule this
+		// package hasn't anticipated, not a path exercised today.
+		m.title.SetVerdict(m.title.Value(), "could not build plan: "+err.Error())
+		return m, m.form.FocusByID("title")
+	}
+
+	return m.startSubmit(ops, in)
+}
+
+// checkSubmitValidation runs spec §9's submit-time validation list, in
+// order, stopping at the first blocking condition and re-focusing the
+// offending section -- form.Model.FocusByID's own doc comment names
+// exactly this rule ("a failing submit re-focuses Title"), generalized
+// here to the other two blocking fields for the same "point at the
+// problem" reason (a controller judgment call beyond the brief's literal
+// wording, which names re-focus only for the title-duplicate case --
+// flagged in this task's own report):
+//
+//   - An empty title: not one of spec §9's own three named validations,
+//     but a real gap this package must still guard -- MapKey's own
+//     grammar only blocks a bare Enter from submitting an empty Title
+//     (form.go's titleValuer/TitleEmpty), while ⌃S submits from ANY zone
+//     regardless (keys.go), and plan.Build itself rejects an empty title
+//     outright. Checked first: every other check either doesn't apply or
+//     doesn't matter without a title.
+//   - Directory validity (dirInvalid, kept live by handleDirResult).
+//   - Branch/workspace-label duplicates (titleDupBlocked, kept live by
+//     handleTitleResult) -- the SAME live verdict TitleField is already
+//     showing; this does not compute a new message, only blocks.
+//   - A pinned clauth profile whose auth_status isn't "ok"
+//     (accountAuthBlocked).
+//
+// Returns (nil, false) when nothing blocks.
+func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
+	if strings.TrimSpace(m.title.Value()) == "" {
+		m.title.SetVerdict(m.title.Value(), "title required")
+		return m.form.FocusByID("title"), true
+	}
+	if m.dirInvalid {
+		return m.form.FocusByID("dir"), true
+	}
+	if m.titleDupBlocked {
+		return m.form.FocusByID("title"), true
+	}
+	if m.accountAuthBlocked() {
+		return m.form.FocusByID("account"), true
+	}
+	return nil, false
+}
+
+// accountPin returns the Input.AccountPin plan.Build should receive:
+// AccountField's own Pin() only when the currently selected agent kind is
+// claude (spec §6 field 7 -- pinning is meaningless, and plan.Build itself
+// rejects, any other kind) -- "" (unpinned) otherwise, even if the
+// picker's own cursor still sits on a stale pin from before the agent
+// kind changed (AccountField's present-but-inert state, driven by
+// SetAgentIsClaude, does not reset the underlying picker selection, only
+// its own visibility).
+func (m Model) accountPin() string {
+	if m.account == nil || m.agent.Value() != claudeKind {
+		return ""
+	}
+	return m.account.Pin()
+}
+
+// accountAuthBlocked reports whether the currently pinned profile (see
+// accountPin) has a known, non-"ok" auth_status (spec §9: "pinned account
+// auth_status != ok -> blocking verdict") -- consulting m.clauthStatus,
+// the last clauth feed New/handleClauthResult recorded (AccountField
+// itself exposes no per-profile AuthStatus getter, only the always-
+// visible inline row marker Task 18 already renders -- see
+// checkSubmitValidation's own doc comment on why blocking here re-focuses
+// Account rather than pushing a new message of its own). A pin naming a
+// profile clauth's own feed doesn't currently list (e.g. one removed
+// since the last reload) is not blocked here -- there is nothing to judge
+// it against.
+func (m Model) accountAuthBlocked() bool {
+	pin := m.accountPin()
+	if pin == "" {
+		return false
+	}
+	for _, p := range m.clauthStatus.Profiles {
+		if p.Name == pin {
+			return p.AuthStatus != "" && p.AuthStatus != "ok"
+		}
+	}
+	return false
+}
+
+// buildPlanInput composes plan.Input from the form's current field state
+// (spec §9) -- called only once checkSubmitValidation has cleared every
+// blocking condition.
+func (m Model) buildPlanInput() plan.Input {
+	return plan.Input{
+		ProjectDir:       m.dir.Value(),
+		Title:            m.title.Value(),
+		Branch:           m.worktree.Branch(),
+		BaseRef:          m.worktree.Base(),
+		UseWorktree:      m.worktree.Enabled() && m.worktree.On(),
+		IsGitRepo:        m.worktree.Enabled(), // WorktreeField.Enabled() IS "is the target a git repo" (its own doc comment).
+		Placement:        m.placement.Value(),
+		AgentKind:        m.agent.Value(),
+		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],
+		AccountPin:       m.accountPin(),
+		Prompt:           m.prompt.Value(),
+		Ctx:              m.ctx,
+		DetectionTimeout: time.Duration(m.cfg.Timeouts.DetectionMS) * time.Millisecond,
+		PromptTimeout:    time.Duration(m.cfg.Timeouts.PromptWaitMS) * time.Millisecond,
+		// TrustRepository has no config.toml key today: spec §9 mentions
+		// "--trust-repository per config" but internal/config.Config never
+		// gained a matching field across Tasks 1-20 (config.go's own
+		// struct has no trust_repository/[worktree] table at all). Always
+		// false until that config gap is filled -- flagged in this task's
+		// own report as a real, disclosed limitation, not invented here.
+		TrustRepository: false,
+	}
+}
+
+// startSubmit begins the staged plan.Execute run for ops (already built
+// from in): seeds SubmitView with one StepPending row per op -- so the
+// user sees the full staged checklist immediately, not just whichever
+// step happens to be running, since plan.Execute's own onProgress never
+// itself emits a StepPending event for a step that hasn't started yet --
+// then hands off to runSubmitCmd (async.go) for the actual streamed
+// execution.
+func (m Model) startSubmit(ops []plan.Op, in plan.Input) (Model, tea.Cmd) {
+	m.submitting = true
+	m.submitInput = in
+	m.submitProgress = make([]plan.Progress, len(ops))
+	for i, op := range ops {
+		m.submitProgress[i] = plan.Progress{Index: i, Total: len(ops), Label: op.Label, State: plan.StepPending}
+	}
+	m.submitView = form.NewSubmitView(m.palette)
+	m.submitView.SetProgress(m.submitProgress)
+	return m, runSubmitCmd(context.Background(), m.deps.Runner, ops)
+}
+
+// handleClearRequested implements form.ClearRequestedMsg (spec §6's ⌃R⌃R
+// double-tap, Task 20's own documented no-op gap -- see
+// task-20-report.md's Concerns #2, and this task's own brief: "reset the
+// fields to their startup/seeded state (config defaults + context-derived
+// values), not to empty zero values"): rebuilds the form from scratch via
+// New, reusing every already-fetched async result this Model currently
+// holds (workspaces, clauthStatus, linearIssues) exactly as Bootstrap's
+// own first call to New would have, rather than resetting to New's own
+// empty-Setup zero values. New performs no I/O, so this is safe to call
+// synchronously here; the returned Model's own Init() reproduces exactly
+// the same debounced dir/base checks and Linear refresh a real form-open
+// schedules, which is what re-seeds candidate lists/verdicts rather than
+// leaving them stale from the discarded Model.
+func (m Model) handleClearRequested() (Model, tea.Cmd) {
+	fresh := New(Setup{
+		Deps:         m.deps,
+		Ctx:          m.ctx,
+		Config:       m.cfg,
+		State:        m.state,
+		Palette:      m.palette,
+		StateDir:     m.stateDir,
+		Workspaces:   m.workspaces,
+		ClauthStatus: m.clauthStatus,
+		LinearCache:  m.linearIssues,
+	})
+	return fresh, fresh.Init()
 }
 
 // reactToChanges diffs every getter this package needs to react to against
@@ -580,6 +852,25 @@ func (m *Model) syncDerivedInertness() {
 	}
 }
 
+// placementFromConfigValue translates spec §12's config.toml
+// `default_placement` string ("new-space"/"tab-here"/"split-here") to
+// internal/plan's own Placement enum. ok is false for "" (config omitted
+// the key) and "new-space" (PlacementField's own natural starting
+// default already matches it, so New has nothing to apply) alike, and
+// for any unrecognized value (never override the field's default with a
+// guess at a typo'd config string) -- only "tab-here"/"split-here" (the
+// two placements PlacementField does NOT already start on) return true.
+func placementFromConfigValue(s string) (plan.Placement, bool) {
+	switch s {
+	case "tab-here":
+		return plan.PlacementTabHere, true
+	case "split-here":
+		return plan.PlacementSplitHere, true
+	default:
+		return plan.PlacementNewSpace, false
+	}
+}
+
 // View renders the form and enables the popup chrome bubbletea v2 controls
 // entirely through the returned tea.View (v2.0.8 has no
 // tea.WithAltScreen()/mouse-enabling tea.NewProgram option at all --
@@ -594,8 +885,21 @@ func (m *Model) syncDerivedInertness() {
 // reports hover/motion events with no button held, which Task 21's own
 // mouse-driven hit-testing may want for focus-follows-hover or drag
 // affordances; there is no discovered downside to enabling it now.
+//
+// Once m.submitting is true (form.SubmitMsg's own validation has passed --
+// see handleSubmit), this renders m.submitView instead of the form: spec
+// §9's staged-progress/keep-or-clean display replaces the form entirely
+// rather than appearing alongside it, matching SubmitView's own "not a
+// form.Section" design (submitview.go's file doc comment). AltScreen/
+// MouseMode stay the same either way -- this is still the same popup, just
+// showing a different pure view over it.
 func (m Model) View() tea.View {
-	v := m.form.View()
+	var v tea.View
+	if m.submitting && m.submitView != nil {
+		v = tea.NewView(m.submitView.ViewAt(m.width, m.height))
+	} else {
+		v = m.form.View()
+	}
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
 	return v

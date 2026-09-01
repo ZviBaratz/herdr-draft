@@ -238,6 +238,51 @@ func TestModel_SectionIDs(t *testing.T) {
 	}
 }
 
+// TestModel_FocusByID pins FocusByID (added in Task 20b for the app
+// layer's own submit-time validation, spec §9: "a failing submit
+// re-focuses Title" -- see focus.go's own already-existing focusByID doc
+// comment, which named exactly this use case before this public entry
+// point existed): it must move the ring directly to the named section
+// (skipping the wrap/skip-disabled walk Tab uses), work even when that
+// section is currently DISABLED (focusByID's own documented contract,
+// unlike Tab navigation), and degrade to a nil Cmd for both an unknown id
+// and a zero-value Model.
+func TestModel_FocusByID(t *testing.T) {
+	var zero Model
+	if cmd := zero.FocusByID("a"); cmd != nil {
+		t.Fatalf("zero-value Model.FocusByID(\"a\") returned a non-nil Cmd, want nil")
+	}
+
+	a := newStub("a")
+	b := newStub("b")
+	b.enabled = false
+	c := newStub("c")
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{a, b, c}})
+	m.Init()
+
+	if got := m.FocusedID(); got != "a" {
+		t.Fatalf("FocusedID() after Init = %q, want %q", got, "a")
+	}
+
+	m.FocusByID("c")
+	if got := m.FocusedID(); got != "c" {
+		t.Fatalf("FocusedID() after FocusByID(\"c\") = %q, want %q", got, "c")
+	}
+
+	// Unlike Tab, FocusByID reaches a DISABLED section directly.
+	m.FocusByID("b")
+	if got := m.FocusedID(); got != "b" {
+		t.Fatalf("FocusedID() after FocusByID(\"b\") (disabled) = %q, want %q", got, "b")
+	}
+
+	if cmd := m.FocusByID("no-such-id"); cmd != nil {
+		t.Fatalf("FocusByID(\"no-such-id\") returned a non-nil Cmd, want nil")
+	}
+	if got := m.FocusedID(); got != "b" {
+		t.Fatalf("FocusedID() after an unknown FocusByID = %q, want unchanged %q", got, "b")
+	}
+}
+
 // --- MapKey wiring: Submit/Cancel/Clear/ActionNone forwarding ----------
 
 // TestModel_CtrlSSubmitsFromAnyZone checks handleKey's ActionSubmit wiring:

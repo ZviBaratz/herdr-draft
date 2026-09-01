@@ -112,6 +112,45 @@ func (f *PlacementField) SetWorktreeOn(on bool) {
 	f.chips.SetInert(on, placementInertHint)
 }
 
+// SetValue moves the chip cursor directly to the chip matching v -- e.g.
+// to apply spec §12's config.toml `default_placement` value at form
+// construction. SetChips (NewPlacementField) always starts the cursor at
+// index 0 ("New space", plan.PlacementNewSpace's own zero value), so this
+// only needs to move it for a configured value OTHER than the default;
+// walking forward with ChipRow's own wrapping Next() is safe here (unlike
+// a non-wrapping Picker) because placementChips is a small, fixed,
+// three-entry list -- at most two Next() calls always reaches any of the
+// three, and a no-op while inert (widgets.ChipRow.Next()'s own contract)
+// simply leaves the cursor wherever it already was, matching this
+// field's other setters' "present but not yet meaningful" posture.
+//
+// Added in Task 20b (the app layer) alongside AccountField.SetPin -- see
+// field_title.go's SetTitle doc comment for the fuller writeup of this
+// class of gap: a config-derived default value with no way to
+// pre-select the field it configures.
+func (f *PlacementField) SetValue(v plan.Placement) {
+	id := placementChipID(v)
+	for range placementChips {
+		if f.chips.Selected().ID == id {
+			return
+		}
+		f.chips.Next()
+	}
+}
+
+// placementChipID translates plan's own Placement enum to this field's
+// internal placementChips IDs -- the inverse of Value()'s own switch.
+func placementChipID(v plan.Placement) string {
+	switch v {
+	case plan.PlacementTabHere:
+		return "tab"
+	case plan.PlacementSplitHere:
+		return "split"
+	default:
+		return "new"
+	}
+}
+
 // Value returns the chip currently under the cursor, translated to
 // internal/plan's own Placement enum. An unrecognized (or absent) chip ID
 // defaults to PlacementNewSpace, the safe/zero-value choice.
