@@ -617,18 +617,31 @@ func (f *AccountField) resetHint(p clauth.Profile) string {
 	return ""
 }
 
-// accountResetText renders resetsAt relative to now: `in 2h11m`, `in 45m`,
-// or `due` for a window whose reset has already come round (clauth's feed
-// can be a couple of minutes behind the clock, and a negative countdown
-// says nothing a reader can use).
+// accountResetText renders resetsAt relative to now: `in 4d14h`,
+// `in 2h11m`, `in 45m`, or `due` for a window whose reset has already
+// come round (clauth's feed can be a couple of minutes behind the clock,
+// and a negative countdown says nothing a reader can use).
 //
-// Minutes are zero-padded past the first hour so `2h05m` and `2h11m` are
-// the same width, which is what stops the column shifting under a list
-// that re-renders every keystroke.
+// The DAY tier is here because the live panel produced `in 110h07m` on
+// the author's own account the first time this was run against real
+// clauth data: accountWindowLabels' second entry is a SEVEN-DAY window,
+// so a reset four days out is an ordinary reading and not a corner. Two
+// significant units is the whole rule -- days and hours, or hours and
+// minutes, or minutes -- because a third says nothing a reader waiting on
+// a quota can act on.
+//
+// The lower unit is zero-padded so `2h05m` never appears beside `2h11m`
+// and the readings sort by eye. It does NOT make every reading the same
+// width -- `in 10h00m` is a cell wider than `in 2h47m` -- and it does not
+// need to: the column is measured over the whole filtered set, so the
+// widths differ per PROFILE, which is stable, rather than per keystroke.
 func accountResetText(resetsAt, now time.Time) string {
 	d := resetsAt.Sub(now).Round(time.Minute)
 	if d <= 0 {
 		return accountResetDue
+	}
+	if days := int(d / (24 * time.Hour)); days > 0 {
+		return fmt.Sprintf("%s%dd%02dh", accountResetPrefix, days, int(d/time.Hour)%24)
 	}
 	if h := int(d / time.Hour); h > 0 {
 		return fmt.Sprintf("%s%dh%02dm", accountResetPrefix, h, int(d/time.Minute)%60)

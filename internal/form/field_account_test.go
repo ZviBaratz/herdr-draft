@@ -1,6 +1,7 @@
 package form
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -428,6 +429,14 @@ func TestAccountResetText(t *testing.T) {
 		in   time.Duration
 		want string
 	}{
+		// The day tier, which the live panel is what asked for: clauth's
+		// second window is SEVEN days, so `in 110h07m` was an ordinary
+		// reading rather than a corner.
+		{"days and hours", 4*24*time.Hour + 14*time.Hour, "in 4d14h"},
+		{"exactly a day", 24 * time.Hour, "in 1d00h"},
+		{"one minute short of a day stays in hours", 24*time.Hour - time.Minute, "in 23h59m"},
+		{"a full seven-day window", 7 * 24 * time.Hour, "in 7d00h"},
+
 		{"hours and minutes", 2*time.Hour + 11*time.Minute, "in 2h11m"},
 		{"minutes are zero padded past the first hour", 2*time.Hour + 5*time.Minute, "in 2h05m"},
 		{"exactly an hour", time.Hour, "in 1h00m"},
@@ -450,16 +459,20 @@ func TestAccountResetText(t *testing.T) {
 		})
 	}
 
-	// Every hour-and-minute reading is the same width, which is what the
-	// padding is for.
-	width := -1
-	for m := 60; m < 600; m++ {
-		got := ansi.StringWidth(accountResetText(now.Add(time.Duration(m)*time.Minute), now))
-		if width < 0 {
-			width = got
-		}
-		if got != width {
-			t.Fatalf("at %d minutes the reset cell is %d cells wide, want %d like every other", m, got, width)
+	// The padding's real promise, swept rather than sampled: the LOWER
+	// unit is always two digits, so `2h5m` never appears beside `2h11m`
+	// and the readings sort by eye.
+	//
+	// It is not that every reading is the same width -- `in 10h00m` is a
+	// cell wider than `in 2h47m`, and a seven-day window reaches both.
+	// The column absorbs that, because it is measured over the whole
+	// filtered set: the widths differ per PROFILE, which is stable, not
+	// per keystroke.
+	lower := regexp.MustCompile(`^in \d+[dh]\d\d[hm]$`)
+	for m := 60; m < 9*24*60; m++ {
+		got := accountResetText(now.Add(time.Duration(m)*time.Minute), now)
+		if !lower.MatchString(got) {
+			t.Fatalf("at %d minutes the reset cell = %q, want a two-digit lower unit", m, got)
 		}
 	}
 }
