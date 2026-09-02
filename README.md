@@ -206,9 +206,10 @@ accent = "#89b4fa"
 panel_bg = "#1e1e2e"
 ```
 
-Recognized keys mirror `internal/theme.Palette`'s seven fields: `accent`,
-`panel_bg`, `text`, `dim_text`, `danger`, `success`, `border` (matching
-case-insensitively, underscore-optional). Values must be a strict `#RGB` or
+Recognized keys mirror `internal/theme.Palette`'s eleven fields: `accent`,
+`panel_bg`, `text`, `dim_text`, `danger`, `success`, `border`, `surface`,
+`active_row_bg`, `warning`, `branch` (matching case-insensitively,
+underscore-optional). Values must be a strict `#RGB` or
 `#RRGGBB` hex literal — anything else (a named color, an ANSI code, a
 malformed string) is silently ignored and that field keeps its previous
 value.

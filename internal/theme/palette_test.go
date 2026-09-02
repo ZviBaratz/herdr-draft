@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -43,6 +44,57 @@ func TestResolve_UnknownKeysAreIgnored(t *testing.T) {
 	got := Resolve(base, map[string]string{"not_a_field": "#ffffff"})
 	if !samePalette(got, base) {
 		t.Errorf("Resolve with unknown key changed the palette: got %+v, want unchanged %+v", got, base)
+	}
+}
+
+// TestResolve_V2PaletteKeys covers the four fields the v2 form added
+// (spec §7): each must be reachable from a `[palette]` override, and
+// active_row_bg must accept the underscore-optional spelling the rest of
+// applyOverrideKey's multi-word keys do.
+func TestResolve_V2PaletteKeys(t *testing.T) {
+	cases := []struct {
+		key string
+		get func(Palette) Color
+	}{
+		{"surface", func(p Palette) Color { return p.Surface }},
+		{"active_row_bg", func(p Palette) Color { return p.ActiveRowBG }},
+		{"activerowbg", func(p Palette) Color { return p.ActiveRowBG }},
+		{"warning", func(p Palette) Color { return p.Warning }},
+		{"branch", func(p Palette) Color { return p.Branch }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.key, func(t *testing.T) {
+			base := Default()
+			want := parseHexColorForTest(t, "#123456")
+
+			got := Resolve(base, map[string]string{tc.key: "#123456"})
+
+			if !colorEqual(tc.get(got), want) {
+				t.Errorf("Resolve with %q override = %v, want %v", tc.key, tc.get(got), want)
+			}
+			if colorEqual(tc.get(base), want) {
+				t.Fatalf("test is vacuous: base palette already has %v for %q", want, tc.key)
+			}
+		})
+	}
+}
+
+// TestBuiltinPalettes_EveryFieldIsSet walks Palette's fields by reflection
+// rather than naming them, so a field added later is covered here
+// automatically. lipgloss.NoColor{} (herdr's Color::Reset, used by the
+// terminal palette) is a legitimate value; only a nil field is a hole.
+func TestBuiltinPalettes_EveryFieldIsSet(t *testing.T) {
+	if len(builtinPalettes) != 18 {
+		t.Fatalf("builtinPalettes has %d entries, want 18 (one per herdr Palette::from_name arm)", len(builtinPalettes))
+	}
+	paletteType := reflect.TypeOf(Palette{})
+	for name, palette := range builtinPalettes {
+		value := reflect.ValueOf(palette)
+		for i := range value.NumField() {
+			if value.Field(i).IsNil() {
+				t.Errorf("builtinPalettes[%q].%s is nil, want a translated color", name, paletteType.Field(i).Name)
+			}
+		}
 	}
 }
 
@@ -176,6 +228,45 @@ panel_bg = "#101010"
 	}
 }
 
+// TestLoadHerdrPaletteFrom_V2CustomKeys pins the [theme.custom] half of the
+// v2 palette addition: herdr's surface0/active_row_bg/peach/mauve are real
+// customization keys, so a user who retunes them in herdr must get the same
+// colors here rather than the builtin's.
+func TestLoadHerdrPaletteFrom_V2CustomKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	writeFile(t, path, `
+[theme]
+name = "dracula"
+
+[theme.custom]
+surface0 = "#111111"
+active_row_bg = "#222222"
+peach = "#333333"
+mauve = "#444444"
+`)
+
+	got := LoadHerdrPaletteFrom(path, nil)
+
+	cases := []struct {
+		herdrKey  string
+		draftName string
+		hex       string
+		got       Color
+	}{
+		{"surface0", "Surface", "#111111", got.Surface},
+		{"active_row_bg", "ActiveRowBG", "#222222", got.ActiveRowBG},
+		{"peach", "Warning", "#333333", got.Warning},
+		{"mauve", "Branch", "#444444", got.Branch},
+	}
+	for _, tc := range cases {
+		want := parseHexColorForTest(t, tc.hex)
+		if !colorEqual(tc.got, want) {
+			t.Errorf("%s = %v, want %v (from [theme.custom] %s)", tc.draftName, tc.got, want, tc.herdrKey)
+		}
+	}
+}
+
 func TestLoadHerdrPaletteFrom_DraftOverrideWinsOverCustomAndBuiltin(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -304,14 +395,19 @@ name = "nord"
 	}
 }
 
+// samePalette compares every Palette field by reflection rather than naming
+// them, so a field added to Palette later is compared here without anyone
+// having to remember to extend this helper.
 func samePalette(a, b Palette) bool {
-	return colorEqual(a.Accent, b.Accent) &&
-		colorEqual(a.PanelBG, b.PanelBG) &&
-		colorEqual(a.Text, b.Text) &&
-		colorEqual(a.DimText, b.DimText) &&
-		colorEqual(a.Danger, b.Danger) &&
-		colorEqual(a.Success, b.Success) &&
-		colorEqual(a.Border, b.Border)
+	av, bv := reflect.ValueOf(a), reflect.ValueOf(b)
+	for i := range av.NumField() {
+		ac, _ := av.Field(i).Interface().(color.Color)
+		bc, _ := bv.Field(i).Interface().(color.Color)
+		if !colorEqual(ac, bc) {
+			return false
+		}
+	}
+	return true
 }
 
 func writeFile(t *testing.T, path, contents string) {
