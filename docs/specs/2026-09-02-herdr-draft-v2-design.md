@@ -1,7 +1,10 @@
 # herdr-draft v2 — new-session dialog redesign
 
 - **Date:** 2026-09-02
-- **Status:** approved, not yet implemented
+- **Status:** implemented
+- **Errata:** five corrections found during implementation are marked
+  **ERRATUM** in place, below. Each replaces the sentence it follows; the
+  original wording is left standing so a comment citing it still resolves.
 - **Supersedes:** §6 (the form) and §7 (skin & mouse) of
   `docs/specs/2026-08-31-herdr-draft-design.md`. Every other section of the
   v1 spec stays authoritative and its `spec §N` citations keep resolving.
@@ -85,7 +88,7 @@ Resting, fully configured, at the 80×24 floor:
    prompt     —
    project    ~/Projects/herdr-draft
    worktree   on · zvi/fix-login-redirect-loop ← main
-   placement  —  a worktree opens its own space
+   placement  worktree opens as its own space
    agent      claude
    account    active · max · 12%
  ──────────────────────────────────────────────────────────────────
@@ -108,7 +111,7 @@ With focus on the project row, nothing above the rule moves:
    prompt     —
  ▎ project    ~/Projects/her▏
    worktree   on · zvi/fix-login-redirect-loop ← main
-   placement  —  a worktree opens its own space
+   placement  worktree opens as its own space
    agent      claude
    account    active · max · 12%
  ──────────────────────────────────────────────────────────────────
@@ -127,11 +130,27 @@ own label column aligns with the stack above it:
  ──────────────────────────────────────────────────────────────────
      worktree   off · [on]
    ▸ branch     zvi/fix-login-redirect-loop
-     base       HEAD (main)
+     base
+                  HEAD (main)
                   main
                   release/1.4
  ↑↓ part · ←→ toggle                      ↵ create · esc cancel
 ```
+
+> **ERRATUM, the placement row's inert copy.** These mockups originally read
+> `placement  —  a worktree opens its own space`, against §6's table's
+> `worktree opens as its own space`. Two wordings for one state, and the
+> `—` is a second unset marker beside a sentence that already explains
+> itself. The code follows the table; the mockups above have been corrected
+> to match it.
+>
+> **ERRATUM, the worktree panel's base list.** The mockup originally carried
+> `HEAD (main)` on the `base` part line *and* omitted it from the list
+> below. That list shape is not reachable: dropping the `HEAD` row from the
+> picker would remove the only way back to it. What ships is the shape above
+> — while the base list is on screen it is what says which base is selected,
+> so the part line yields to it rather than repeating its selection. The
+> line fills in again when the list is not being shown.
 
 ## 5. The `Section` interface and layout arithmetic
 
@@ -214,10 +233,24 @@ so one `⇧⇥` reaches it. This order is declared in exactly one place,
 | `title` | the text, cursor inline | dim `untitled` | — |
 | `prompt` | first line truncated, plus dim ` +N more` | `—` | — |
 | `project` | path, `~`-shortened, head-truncated | — | `invalid` / `not a repository` |
-| `worktree` | `on · <branch> ← <base>` | `off` | `not a git repository` |
+| `worktree` | `on · <branch> ← <base>`, or `on · from <base>` with no branch yet | `off` | `not a git repository` |
 | `placement` | `new space` / `tab here` / `split here` | — | `worktree opens as its own space` |
 | `agent` | `claude` | — | — |
 | `account` | `personal · max · ok`, or `active · max · 12%` | — | `account pinning only applies to claude` |
+
+> **ERRATUM, the worktree row with no branch yet.** The table originally had
+> no cell for the state the form *opens* in: worktree on, in a repository,
+> with no title typed and therefore nothing to derive a branch from. Only
+> `on · <branch> ← <base>` was specified, so the row rendered the branch
+> editor's own placeholder into it and named a branch called "branch name".
+> Fifteen green commits shipped past it, because every golden frame typed a
+> title first. The row now changes *shape* rather than filling in a name:
+> `on · from <base>`. The `←` is a relation between a branch and the ref it
+> forks from, and with nothing on its left there is no relation to draw.
+>
+> The general rule the gap illustrates: a row table needs a cell for every
+> state a value can be in, and "unset" is a state a *derived* value reaches
+> too, not only a typed one.
 
 Panels: `issue`, `project`, `agent`, `account` show their candidate list;
 `prompt` shows the textarea; `title` shows its verdict line; `placement`
@@ -261,6 +294,12 @@ cells.
   profiles, remain static startup checks that omit the row entirely. With
   neither configured the form is eight rows; that is the shape most adopters
   will see and it must look deliberate.
+
+  > **ERRATUM.** Six, not eight. Eight is the *full* count, with both
+  > configured. Dropping `issue` and `account` leaves `title`, `prompt`,
+  > `project`, `worktree`, `placement`, `agent` — six rows in the stack,
+  > plus Create on the footer. `assembled-minimal-80x24` is the frame that
+  > pins it.
 - **Nothing to choose.** An empty panel list speaks in the field's own terms
   (`no branches yet`, `no assigned issues`), never a bare `no matches`.
 
@@ -324,6 +363,12 @@ Mostly unchanged, so muscle memory survives.
 - Paste stays routed away from the key grammar.
 
 `ZoneCreate` is removed with the Create section.
+
+> **ERRATUM.** It is not. This line predates §5's own decision — and issue
+> #3's authoritative Revision — to keep Create as a Section rendered on the
+> footer line rather than remove it from the ring. The section stayed, so
+> `ZoneCreate` stayed with it: it is still the ring's last stop, still the
+> zone `↵` submits from, and still carries `button:create`.
 
 ## 9. Degradation
 
