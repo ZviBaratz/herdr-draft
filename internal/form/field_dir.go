@@ -196,6 +196,14 @@ func NewDirField(palette theme.Palette) *DirField {
 		picker:  widgets.NewPicker(palette),
 	}
 	d.input.SetPlaceholder("type to search, or / ~ . to browse")
+	// One column, and the one place in the form where a picker cell
+	// elides at its HEAD (v3 spec §8.1's ElideMode): these are paths, and
+	// the last segments are what distinguish "~/Projects/herdr" from
+	// "~/Projects/herdr-draft" while the shared prefix is what every row
+	// on screen already has in common. Before v3 an over-long candidate
+	// was clipped silently at its tail by the row style, which is exactly
+	// the MISREAD sizes.go's file doc warns about.
+	d.picker.SetColumns(widgets.PickerColumn{Elide: widgets.ElideHead})
 	d.refreshItems(true)
 	return d
 }
@@ -624,10 +632,10 @@ func (d *DirField) refreshItems(bump bool) {
 		// path through pathModeItems this claim had not yet accounted for
 		// -- see pathModeItems' and dedupePaths' own doc comments.
 		// ID is the REAL path (Value()/SetValidity/every app-layer read go
-		// through it); Label is what the panel shows, with the home prefix
-		// collapsed to "~" -- see SetHomeDir. The two differ only in
-		// presentation, which is exactly the split PickerItem is for.
-		pickerItems[i] = widgets.PickerItem{ID: it, Label: d.collapseHome(it)}
+		// through it); the cell is what the panel shows, with the home
+		// prefix collapsed to "~" -- see SetHomeDir. The two differ only
+		// in presentation, which is exactly the split PickerItem is for.
+		pickerItems[i] = widgets.PickerItem{ID: it, Cells: []string{d.collapseHome(it)}}
 	}
 	d.picker.SetItems(d.pickerVersion, pickerItems)
 }

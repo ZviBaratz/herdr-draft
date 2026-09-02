@@ -13,14 +13,14 @@ import (
 func testPalette() theme.Palette { return theme.Default() }
 
 // TestPicker_FilterNarrows covers the brief's "filter narrows" case: SetQuery
-// must shrink the visible/navigable set to items whose label matches, in
+// must shrink the visible/navigable set to items whose cells match, in
 // input order, without touching the underlying item set SetItems stored.
 func TestPicker_FilterNarrows(t *testing.T) {
 	p := NewPicker(testPalette())
 	p.SetItems(1, []PickerItem{
-		{ID: "1", Label: "Alpha"},
-		{ID: "2", Label: "Beta"},
-		{ID: "3", Label: "Alphabet"},
+		{ID: "1", Cells: []string{"Alpha"}},
+		{ID: "2", Cells: []string{"Beta"}},
+		{ID: "3", Cells: []string{"Alphabet"}},
 	})
 
 	p.SetQuery("alpha")
@@ -50,17 +50,17 @@ func TestPicker_FilterNarrows(t *testing.T) {
 func TestPicker_CursorSurvivesSameVersionRefresh(t *testing.T) {
 	p := NewPicker(testPalette())
 	p.SetItems(1, []PickerItem{
-		{ID: "1", Label: "A"},
-		{ID: "2", Label: "B"},
-		{ID: "3", Label: "C"},
+		{ID: "1", Cells: []string{"A"}},
+		{ID: "2", Cells: []string{"B"}},
+		{ID: "3", Cells: []string{"C"}},
 	})
 	p.CursorNext() // cursor -> row 1 ("B")
 
 	// Same version 1, refreshed content.
 	p.SetItems(1, []PickerItem{
-		{ID: "1", Label: "A2"},
-		{ID: "2", Label: "B2"},
-		{ID: "3", Label: "C2"},
+		{ID: "1", Cells: []string{"A2"}},
+		{ID: "2", Cells: []string{"B2"}},
+		{ID: "3", Cells: []string{"C2"}},
 	})
 
 	got, ok := p.Selected()
@@ -78,18 +78,18 @@ func TestPicker_CursorSurvivesSameVersionRefresh(t *testing.T) {
 func TestPicker_SameVersionRefreshPreservesSelectionByIDAcrossReorder(t *testing.T) {
 	p := NewPicker(testPalette())
 	p.SetItems(1, []PickerItem{
-		{ID: "1", Label: "A"},
-		{ID: "2", Label: "B"},
-		{ID: "3", Label: "C"},
+		{ID: "1", Cells: []string{"A"}},
+		{ID: "2", Cells: []string{"B"}},
+		{ID: "3", Cells: []string{"C"}},
 	})
 	p.CursorNext() // cursor -> row 1, selects ID "2"
 
 	// Same version 1, refreshed AND reordered: "2" is now first, "3" now
 	// sits at the row "2" used to occupy.
 	p.SetItems(1, []PickerItem{
-		{ID: "2", Label: "B2"},
-		{ID: "3", Label: "C2"},
-		{ID: "1", Label: "A2"},
+		{ID: "2", Cells: []string{"B2"}},
+		{ID: "3", Cells: []string{"C2"}},
+		{ID: "1", Cells: []string{"A2"}},
 	})
 
 	got, ok := p.Selected()
@@ -106,17 +106,17 @@ func TestPicker_SameVersionRefreshPreservesSelectionByIDAcrossReorder(t *testing
 func TestPicker_SameVersionRefreshFallsBackToClampedIndexWhenSelectedIDIsGone(t *testing.T) {
 	p := NewPicker(testPalette())
 	p.SetItems(1, []PickerItem{
-		{ID: "1", Label: "A"},
-		{ID: "2", Label: "B"},
-		{ID: "3", Label: "C"},
+		{ID: "1", Cells: []string{"A"}},
+		{ID: "2", Cells: []string{"B"}},
+		{ID: "3", Cells: []string{"C"}},
 	})
 	p.CursorNext() // cursor -> row 1, selects ID "2"
 
 	// Same version 1, "2" is gone; only 2 items remain, so the old row-1
 	// position is still in range and should be kept (now "y").
 	p.SetItems(1, []PickerItem{
-		{ID: "x", Label: "X"},
-		{ID: "y", Label: "Y"},
+		{ID: "x", Cells: []string{"X"}},
+		{ID: "y", Cells: []string{"Y"}},
 	})
 
 	got, ok := p.Selected()
@@ -127,7 +127,7 @@ func TestPicker_SameVersionRefreshFallsBackToClampedIndexWhenSelectedIDIsGone(t 
 	// Now the old row-1 position is out of range entirely (only 1 item
 	// left): the fallback must clamp, not panic or leave a stale index.
 	p.SetItems(1, []PickerItem{
-		{ID: "solo", Label: "Solo"},
+		{ID: "solo", Cells: []string{"Solo"}},
 	})
 	got, ok = p.Selected()
 	if !ok || got.ID != "solo" {
@@ -141,9 +141,9 @@ func TestPicker_SameVersionRefreshFallsBackToClampedIndexWhenSelectedIDIsGone(t 
 // seen must be dropped outright, leaving the newer items and cursor intact.
 func TestPicker_StaleVersionIgnored(t *testing.T) {
 	p := NewPicker(testPalette())
-	p.SetItems(2, []PickerItem{{ID: "fresh", Label: "Fresh"}})
+	p.SetItems(2, []PickerItem{{ID: "fresh", Cells: []string{"Fresh"}}})
 
-	p.SetItems(1, []PickerItem{{ID: "stale", Label: "Stale"}})
+	p.SetItems(1, []PickerItem{{ID: "stale", Cells: []string{"Stale"}}})
 
 	got, ok := p.Selected()
 	if !ok || got.ID != "fresh" {
@@ -167,7 +167,7 @@ func TestPicker_StaleVersionIgnored(t *testing.T) {
 // above View.
 func TestPicker_EmptyResultSaysNothing(t *testing.T) {
 	p := NewPicker(testPalette())
-	p.SetItems(1, []PickerItem{{ID: "1", Label: "Alpha"}})
+	p.SetItems(1, []PickerItem{{ID: "1", Cells: []string{"Alpha"}}})
 	p.SetQuery("no-such-item")
 
 	if _, ok := p.Selected(); ok {
@@ -193,7 +193,7 @@ func TestPicker_EmptyResultSaysNothing(t *testing.T) {
 // popup is being resized.
 func TestPicker_ViewDoesNotPanicOnDegenerateDimensions(t *testing.T) {
 	p := NewPicker(testPalette())
-	p.SetItems(1, []PickerItem{{ID: "1", Label: "Alpha"}})
+	p.SetItems(1, []PickerItem{{ID: "1", Cells: []string{"Alpha"}}})
 	for _, dims := range [][2]int{{0, 0}, {-5, -5}, {0, 5}, {5, 0}, {5, -1}} {
 		_ = p.View(dims[0], dims[1])
 	}
@@ -212,8 +212,8 @@ func TestPicker_ViewTruncatesOverflowingRowInsteadOfWrapping(t *testing.T) {
 	p.SetItems(1, []PickerItem{
 		{
 			ID:    "1",
-			Label: "this label is far longer than the ten-cell width given to View",
-			Hint:  "and this hint is also much longer than ten cells",
+			Cells: []string{"this label is far longer than the ten-cell width given to View"},
+			Badge: "and this hint is also much longer than ten cells",
 		},
 	})
 
@@ -234,9 +234,9 @@ func TestPicker_ViewTruncatesOverflowingRowInsteadOfWrapping(t *testing.T) {
 func TestPicker_ViewOverflowingRowsHoldExactHeightAcrossMultipleRows(t *testing.T) {
 	p := NewPicker(testPalette())
 	p.SetItems(1, []PickerItem{
-		{ID: "1", Label: "first label is much longer than the given width for sure"},
-		{ID: "2", Label: "second label is also much longer than the given width"},
-		{ID: "3", Label: "third"},
+		{ID: "1", Cells: []string{"first label is much longer than the given width for sure"}},
+		{ID: "2", Cells: []string{"second label is also much longer than the given width"}},
+		{ID: "3", Cells: []string{"third"}},
 	})
 
 	view := p.View(8, 3)
@@ -304,9 +304,9 @@ func TestPicker_FilteredLen(t *testing.T) {
 	}
 
 	p.SetItems(1, []PickerItem{
-		{ID: "1", Label: "Alpha"},
-		{ID: "2", Label: "Beta"},
-		{ID: "3", Label: "Alphabet"},
+		{ID: "1", Cells: []string{"Alpha"}},
+		{ID: "2", Cells: []string{"Beta"}},
+		{ID: "3", Cells: []string{"Alphabet"}},
 	})
 	if got := p.FilteredLen(); got != 3 {
 		t.Errorf("FilteredLen() = %d, want 3", got)
@@ -328,9 +328,9 @@ func TestPicker_Len(t *testing.T) {
 	}
 
 	p.SetItems(1, []PickerItem{
-		{ID: "1", Label: "Alpha"},
-		{ID: "2", Label: "Beta"},
-		{ID: "3", Label: "Alphabet"},
+		{ID: "1", Cells: []string{"Alpha"}},
+		{ID: "2", Cells: []string{"Beta"}},
+		{ID: "3", Cells: []string{"Alphabet"}},
 	})
 	if got := p.Len(); got != 3 {
 		t.Errorf("Len() = %d, want 3", got)
@@ -360,7 +360,7 @@ func TestPicker_Len(t *testing.T) {
 func TestPicker_CursorRowIsTheInverseOfSelectVisibleRow(t *testing.T) {
 	items := make([]PickerItem, 9)
 	for i := range items {
-		items[i] = PickerItem{ID: string(rune('a' + i)), Label: string(rune('a' + i))}
+		items[i] = PickerItem{ID: string(rune('a' + i)), Cells: []string{string(rune('a' + i))}}
 	}
 
 	for _, height := range []int{1, 2, 3, 5, 9, 20} {
@@ -399,7 +399,7 @@ func TestPicker_CursorRowWithoutASelection(t *testing.T) {
 		t.Errorf("CursorRow(4) on an empty Picker = %d, want -1", got)
 	}
 
-	p.SetItems(1, []PickerItem{{ID: "1", Label: "Alpha"}})
+	p.SetItems(1, []PickerItem{{ID: "1", Cells: []string{"Alpha"}}})
 	p.SetQuery("no such thing")
 	if got := p.CursorRow(4); got != -1 {
 		t.Errorf("CursorRow(4) with everything filtered out = %d, want -1", got)
@@ -408,6 +408,240 @@ func TestPicker_CursorRowWithoutASelection(t *testing.T) {
 	p.SetQuery("")
 	if got := p.CursorRow(0); got != 0 {
 		t.Errorf("CursorRow(0) = %d, want 0 -- a degenerate height is floored at 1, matching View", got)
+	}
+}
+
+// rowsOf renders a picker and returns its plain-text rows, color and
+// zone markers stripped -- the alignment claims below are about which
+// CELL a character lands in, which is exactly what the escape sequences
+// hide.
+func rowsOf(p *Picker, width, height int) []string {
+	return strings.Split(ansi.Strip(p.View(width, height)), "\n")
+}
+
+// cellIndexOf reports which CELL sub starts at within line, or -1 when it
+// is absent. strings.Index answers in bytes, and the mark column's own
+// glyphs are three bytes each, so a byte offset is the wrong unit for
+// every alignment claim in this file.
+func cellIndexOf(line, sub string) int {
+	at := strings.Index(line, sub)
+	if at < 0 {
+		return -1
+	}
+	return ansi.StringWidth(line[:at])
+}
+
+// cellsOf slices the first n cells off line.
+func cellsOf(line string, n int) string {
+	return string([]rune(line)[:n])
+}
+
+// TestPicker_ColumnWidthsAreStableWhileScrolling is v3 spec §8.1's stated
+// reason for measuring over the whole filtered set rather than over the
+// visible window: with a window measurement, scrolling a wider row into
+// view widens its column and shifts every other row's content sideways
+// mid-scroll. The fixture is built so a window measurement CANNOT pass --
+// the widest first cell is at the bottom of the list and out of the
+// window until the cursor reaches it.
+func TestPicker_ColumnWidthsAreStableWhileScrolling(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetColumns(PickerColumn{}, PickerColumn{Flex: true})
+	items := []PickerItem{
+		{ID: "1", Cells: []string{"a", "first"}},
+		{ID: "2", Cells: []string{"bb", "second"}},
+		{ID: "3", Cells: []string{"ccc", "third"}},
+		{ID: "4", Cells: []string{"dddd", "fourth"}},
+		{ID: "5", Cells: []string{"eeeeeeeeeeee", "fifth"}},
+	}
+	p.SetItems(1, items)
+
+	const height = 2
+	// Column 1 starts wherever column 0 ends plus the gap, so the index of
+	// the second cell's first character IS the measurement, read back off
+	// the render.
+	want := cellIndexOf(rowsOf(p, 40, height)[0], "first")
+	if want <= 0 {
+		t.Fatalf("could not locate the second column in the first row: %q", rowsOf(p, 40, height)[0])
+	}
+
+	for step := 1; step < len(items); step++ {
+		p.CursorNext()
+		for row, line := range rowsOf(p, 40, height) {
+			text := strings.TrimRight(line, " ")
+			if text == "" {
+				continue
+			}
+			second := strings.Fields(text)[1]
+			if got := cellIndexOf(line, second); got != want {
+				t.Errorf("after %d CursorNext, row %d starts its second column at cell %d, want %d (columns must not jitter as the list scrolls): %q",
+					step, row, got, want, line)
+			}
+		}
+	}
+}
+
+// TestPicker_MarkColumnKeepsCellsAligned pins v3 spec §8.2's fixed-width
+// mark column against the defect it replaces: before v3 the Marker was a
+// bare prefix, so a marked row's content started two cells right of every
+// unmarked row's and nothing in the list lined up.
+//
+// It also pins the priority rule in the same breath -- a row that is both
+// marked and current shows the Marker, because a profile that is both
+// current and auth-failed has to shout the failure.
+func TestPicker_MarkColumnKeepsCellsAligned(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "plain", Cells: []string{"plain"}},
+		{ID: "current", Cells: []string{"current"}, Current: true},
+		{ID: "marked", Cells: []string{"marked"}, Marker: "!"},
+		{ID: "both", Cells: []string{"both"}, Marker: "!", Current: true},
+	})
+
+	rows := rowsOf(p, 30, 4)
+	for i, want := range []string{"plain", "current", "marked", "both"} {
+		if got := cellIndexOf(rows[i], want); got != markColumnWidth {
+			t.Errorf("row %d (%q) starts its first cell at %d, want %d -- the mark column is FIXED width: %q",
+				i, want, got, markColumnWidth, rows[i])
+		}
+	}
+	if got := cellsOf(rows[1], markColumnWidth); got != markerCurrent+" " {
+		t.Errorf("the current row's mark column = %q, want %q", got, markerCurrent+" ")
+	}
+	if got := cellsOf(rows[3], markColumnWidth); got != "! " {
+		t.Errorf("the marked-AND-current row's mark column = %q, want %q -- the marker wins", got, "! ")
+	}
+}
+
+// TestPicker_NoMarkColumnWhenNothingUsesIt is the other half of the
+// fixed-width rule: a picker whose items carry neither a marker nor a
+// current flag must not pay two cells for a column it will never draw in
+// -- the base-ref and issue lists are exactly that.
+func TestPicker_NoMarkColumnWhenNothingUsesIt(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Cells: []string{"alpha"}},
+		{ID: "2", Cells: []string{"beta"}},
+	})
+	for i, want := range []string{"alpha", "beta"} {
+		line := rowsOf(p, 20, 2)[i]
+		if got := cellIndexOf(line, want); got != 0 {
+			t.Errorf("row %d = %q, want its content flush left at cell 0 (got %d): no item uses the mark column", i, line, got)
+		}
+	}
+}
+
+// TestPicker_BadgeIsFlushRightInItsOwnColumn pins the two properties v3
+// spec §8.1 gives the badge: every badge ends at the row's last cell, and
+// the cells of EVERY row -- badge or not -- stop short of the widest
+// badge, so a long value can never run into a neighbour's status word.
+func TestPicker_BadgeIsFlushRightInItsOwnColumn(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Cells: []string{"short"}, Badge: "In Progress"},
+		{ID: "2", Cells: []string{"a much longer value than the first"}},
+		{ID: "3", Cells: []string{"third"}, Badge: "Todo"},
+	})
+
+	const width = 60
+	rows := rowsOf(p, width, 3)
+	for i, badge := range []string{"In Progress", "", "Todo"} {
+		if badge == "" {
+			continue
+		}
+		if got, want := cellIndexOf(rows[i], badge)+ansi.StringWidth(badge), width; got != want {
+			t.Errorf("row %d's badge %q ends at cell %d, want %d (flush right): %q", i, badge, got, want, rows[i])
+		}
+	}
+	// The badge-less row's own content must still clear the reserved
+	// column: "In Progress" is 11 cells, plus the two-cell gap.
+	if got := ansi.StringWidth(strings.TrimRight(rows[1], " ")); got > width-ansi.StringWidth("In Progress")-cellGap {
+		t.Errorf("the badge-less row runs to cell %d, want it clear of the reserved badge column: %q", got, rows[1])
+	}
+}
+
+// TestPicker_ColumnBoundsAndElideMode pins the three knobs PickerColumn
+// adds that nothing else in this file exercises: Max caps a column
+// however long its content is, Min holds one open however short, and
+// Elide decides which END of an over-long cell survives -- the difference
+// between a path a reader can still identify and one they cannot.
+func TestPicker_ColumnBoundsAndElideMode(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetColumns(
+		PickerColumn{Max: 6},
+		PickerColumn{Min: 8},
+		PickerColumn{Elide: ElideHead, Max: 12},
+	)
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Cells: []string{"an overlong first cell", "x", "/home/zvi/Projects/herdr-draft"}},
+	})
+
+	row := rowsOf(p, 60, 1)[0]
+	if want := "an ov…"; cellIndexOf(row, want) != 0 {
+		t.Errorf("row = %q, want it to open with %q -- Max 6 caps the first column", row, want)
+	}
+	// Min 8 on a one-cell column pushes the third column to 6+2+8+2 == 18,
+	// and ElideHead keeps the path's TAIL: the segments that identify it.
+	if got, want := cellIndexOf(row, Ellipsis+"herdr-draft"), 18; got != want {
+		t.Errorf("the third column starts at cell %d, want %d holding the path's tail: %q", got, want, row)
+	}
+}
+
+// TestPicker_EmptyColumnCostsNothing pins the collapse rule rowLayout.left
+// documents: a column no row in the set has anything in takes neither
+// width nor its two-cell gap. It is reachable rather than theoretical --
+// clauth's AuthStatus is unvalidated JSON and can be empty for every
+// profile at once -- and a two-cell hole around an invisible column reads
+// as a rendering fault, not as a column nobody filled in.
+func TestPicker_EmptyColumnCostsNothing(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Cells: []string{"alpha", "", "one"}},
+		{ID: "2", Cells: []string{"beta", "", "two"}},
+	})
+
+	row := rowsOf(p, 40, 1)[0]
+	if got, want := cellIndexOf(row, "one"), len("alpha")+cellGap; got != want {
+		t.Errorf("the third column starts at cell %d, want %d -- the empty middle column costs nothing at all: %q", got, want, row)
+	}
+}
+
+// TestPicker_QueryOwnsMatchOnlyWhileItIsSet pins v3 spec §8.4's ownership
+// rule, the half of it this widget implements: with a query set,
+// applyFilter computes every kept item's Match and overwrites whatever
+// the caller supplied; with no query, the caller's own span is preserved
+// verbatim, which is how a field that ranks its own candidates supplies
+// spans this widget could not have computed.
+func TestPicker_QueryOwnsMatchOnlyWhileItIsSet(t *testing.T) {
+	caller := PickerMatch{Col: 0, Start: 1, End: 3}
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Cells: []string{"alpha", "beta"}, Match: caller},
+	})
+
+	if got, _ := p.Selected(); got.Match != caller {
+		t.Errorf("Match with no query = %+v, want the caller's own %+v preserved verbatim", got.Match, caller)
+	}
+
+	p.SetQuery("et")
+	got, ok := p.Selected()
+	if !ok {
+		t.Fatalf("Selected() ok = false, want the item kept: %q matches cell 1", "et")
+	}
+	if want := (PickerMatch{Col: 1, Start: 1, End: 3}); got.Match != want {
+		t.Errorf("Match under a query = %+v, want %+v (cell 1, runes [1,3))", got.Match, want)
+	}
+
+	// A row kept only because its BADGE matched has nothing to paint: the
+	// span would have to point at a column, and the badge is not one.
+	p.SetQuery("")
+	p.SetItems(2, []PickerItem{{ID: "1", Cells: []string{"alpha"}, Badge: "Todo"}})
+	p.SetQuery("odo")
+	got, ok = p.Selected()
+	if !ok {
+		t.Fatalf("Selected() ok = false, want the badge match to keep the row")
+	}
+	if !got.Match.empty() {
+		t.Errorf("Match for a badge-only match = %+v, want nothing to paint", got.Match)
 	}
 }
 

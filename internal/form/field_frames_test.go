@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -214,6 +215,30 @@ func TestFrames_IssuePanel(t *testing.T) {
 	assertFrame(t, "issue-panel-150x44", buildIssuePanelForm(theme.Default()), 150, 44)
 }
 
+// buildIssueColumnsForm is v3 spec §8.1's own motivating example, which
+// the fixture above cannot show: sampleIssues' two identifiers are the
+// same width and its titles both fit, so that frame renders identically
+// whether or not the columns line up. This one has three identifiers of
+// three different widths and a title far too long for the row, which is
+// the whole complaint -- before v3, `ENG-1` and `ENG-101` started their
+// titles at different cells and a long title pushed the status word off
+// the end mid-word.
+func buildIssueColumnsForm(palette theme.Palette) Model {
+	f := NewIssueField(palette)
+	f.SetIssues(1, []linear.Issue{
+		{Identifier: "ENG-1", Title: "Fix login bug", StateName: "Todo", Estimate: estimate(3)},
+		{Identifier: "ENG-101", Title: "revalidate and reset the candidate pool on every browse transition", StateName: "In Progress"},
+		{Identifier: "PLATFORM-7", Title: "short", StateName: "Done"},
+	})
+	f.Focus()
+	f.Update(key(tea.KeyDown, 0)) // none -> ENG-1
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_IssueColumns(t *testing.T) {
+	assertFrame(t, "issue-columns-80x16", buildIssueColumnsForm(theme.Default()), 80, 16)
+}
+
 // buildAccountPanelForm enables AccountField (agent kind claude) over a
 // mixed healthy/warned profile set, so the frame carries the colored
 // state words that replaced v1's bare "!" marker.
@@ -228,6 +253,17 @@ func buildAccountPanelForm(palette theme.Palette) Model {
 
 func TestFrames_AccountPanel(t *testing.T) {
 	assertFrame(t, "account-panel-80x24", buildAccountPanelForm(theme.Default()), 80, 24)
+}
+
+// TestFrames_AccountPanelNarrow pins the SHRINK ladder, which no other
+// frame reaches: the account panel is the widest table in the form (four
+// cell columns, a mark column and a badge), so 44 cells is where v3 spec
+// §8.1's Min/Flex arithmetic actually has to choose what to give up. It
+// is here because the first attempt chose wrong -- flexing the profile
+// NAME elided all four names to "…" while "Max 20x" kept every cell it
+// asked for, and no fixture at 80 cells could have shown it.
+func TestFrames_AccountPanelNarrow(t *testing.T) {
+	assertFrame(t, "account-panel-44x12", buildAccountPanelForm(theme.Default()), 44, 12)
 }
 
 // buildAgentPanelForm focuses AgentField over more kinds than fit its

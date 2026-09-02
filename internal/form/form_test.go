@@ -652,8 +652,8 @@ func (s *pickerSection) View(inner, h int) string {
 }
 func (s *pickerSection) Label() string { return s.id }
 func (s *pickerSection) Row(w int) string {
-	if sel, ok := s.picker.Selected(); ok {
-		return fitLine(sel.Label, w)
+	if sel, ok := s.picker.Selected(); ok && len(sel.Cells) > 0 {
+		return fitLine(sel.Cells[0], w)
 	}
 	return fitLine("none", w)
 }
@@ -708,10 +708,15 @@ func (s *chipRowSection) Panel(w, h int) string {
 // one at an ordinary size and one with room to spare.
 func buildEmptyForm(palette theme.Palette) Model {
 	issue := widgets.NewPicker(palette)
+	issue.SetColumns(widgets.PickerColumn{Tone: widgets.ToneMuted}, widgets.PickerColumn{Flex: true})
+	// Current, not a "✓" Marker: v3 spec §8.2 gives the current-value
+	// glyph to Current and reserves Marker for the attention "!", so a
+	// literal check mark here would now collide with the glyph the picker
+	// draws itself.
 	issue.SetItems(1, []widgets.PickerItem{
-		{ID: "eng-100", Label: "Fix login bug", Hint: "In Progress"},
-		{ID: "eng-101", Label: "Add dark mode", Hint: "Todo", Marker: "✓"},
-		{ID: "eng-102", Label: "Refactor auth", Hint: "Todo"},
+		{ID: "eng-100", Cells: []string{"ENG-100", "Fix login bug"}, Badge: "In Progress", BadgeTone: widgets.ToneMuted},
+		{ID: "eng-101", Cells: []string{"ENG-101", "Add dark mode"}, Badge: "Todo", BadgeTone: widgets.ToneMuted, Current: true},
+		{ID: "eng-102", Cells: []string{"ENG-102", "Refactor auth"}, Badge: "Todo", BadgeTone: widgets.ToneMuted},
 	})
 
 	agent := widgets.NewChipRow(palette)

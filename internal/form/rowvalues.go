@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -44,26 +43,20 @@ const unavailableReasonSep = "  "
 // can live without, while a one-line VALUE cell that loses an end
 // unmarked is not incomplete but MISREAD -- "~/Projects/herdr-dra" and
 // "zvi/fix-login-redir" both read as real values.
-const rowEllipsis = "…"
+const rowEllipsis = widgets.Ellipsis
 
 // keepHead clips s to exactly width cells KEEPING ITS HEAD, marking the
 // cut with rowEllipsis: the rule for titles, branches, prose and
 // identifiers, whose informative end is the one you read first (v2 spec
 // §7, restated in sizes.go's file doc).
 //
-// width < 1 renders nothing; a width of 1 that cannot hold s renders the
-// ellipsis alone, which is still an honest "there is more here than fits"
-// -- the same degrade-rather-than-panic contract widgets/picker.go's
-// widthStyle documents for its own degenerate dimensions.
-func keepHead(s string, width int) string {
-	if width < 1 {
-		return ""
-	}
-	if ansi.StringWidth(s) <= width {
-		return s
-	}
-	return ansi.Truncate(s, width, rowEllipsis)
-}
+// The body moved to widgets.KeepHead for v3 spec §8.1, alongside
+// keepTail below and for the same reason paintLine's body moved: a
+// PickerColumn carries an ElideMode, so the picker applies these two
+// rules to its own cells, and widgets cannot import form. This is now
+// the form-side name for it, kept because the form's own call sites all
+// read keepHead.
+func keepHead(s string, width int) string { return widgets.KeepHead(s, width) }
 
 // keepTail clips s to exactly width cells KEEPING ITS TAIL, marking the
 // cut with a leading rowEllipsis: the rule for PATHS, where the last
@@ -71,24 +64,8 @@ func keepHead(s string, width int) string {
 // "~/Projects/herdr-draft" and the shared prefix is what everything on
 // screen already has in common.
 //
-// ansi.TruncateLeft removes n cells and prepends the marker, so the n
-// that leaves exactly width cells behind is (rendered width - width + 1),
-// the +1 paying for the ellipsis itself. At width 1 that n would consume
-// the whole string and TruncateLeft would emit nothing at all, so the
-// degenerate widths short-circuit to the bare marker.
-func keepTail(s string, width int) string {
-	if width < 1 {
-		return ""
-	}
-	w := ansi.StringWidth(s)
-	if w <= width {
-		return s
-	}
-	if width == 1 {
-		return rowEllipsis
-	}
-	return ansi.TruncateLeft(s, w-width+1, rowEllipsis)
-}
+// Delegates to widgets.KeepTail -- see keepHead above.
+func keepTail(s string, width int) string { return widgets.KeepTail(s, width) }
 
 // panelCursorGlyph is the marker v2 spec §4's mockups draw beside the
 // selected row of a focused panel's list. It lands in the panel's own

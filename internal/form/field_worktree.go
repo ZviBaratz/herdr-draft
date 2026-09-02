@@ -217,6 +217,10 @@ func NewWorktreeField(palette theme.Palette) *WorktreeField {
 	w.chips.SetChips(worktreeChips)
 	w.chips.SetInert(true, worktreeNonGitPlaceholder) // safe default: see SetGitTarget
 	w.branch.SetPlaceholder(worktreeBranchUnset)
+	// One column of ref names, drawn in herdr's own branch color (v3 spec
+	// §8.1's Tone) so the base list matches the branch half of the row it
+	// feeds -- Row already renders the branch in Palette.Branch.
+	w.base.SetColumns(widgets.PickerColumn{Tone: widgets.ToneBranch})
 	w.refreshBaseItems(true) // seed the HEAD sentinel row
 	return w
 }
@@ -516,14 +520,14 @@ func (w *WorktreeField) refreshBaseItems(bump bool) {
 		w.basePickerVersion++
 	}
 	items := make([]widgets.PickerItem, 0, len(w.baseRefs)+1)
-	items = append(items, widgets.PickerItem{ID: baseHeadID, Label: w.headLabel()})
+	items = append(items, widgets.PickerItem{ID: baseHeadID, Cells: []string{w.headLabel()}})
 	seen := map[string]bool{baseHeadID: true}
 	for _, r := range w.baseRefs {
 		if r == "" || seen[r] {
 			continue
 		}
 		seen[r] = true
-		items = append(items, widgets.PickerItem{ID: r, Label: r})
+		items = append(items, widgets.PickerItem{ID: r, Cells: []string{r}})
 	}
 	w.base.SetItems(w.basePickerVersion, items)
 

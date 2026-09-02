@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -47,6 +46,12 @@ const (
 	// read as a heading (v2 spec §3 rule 5).
 	accountActiveLabel = "active"
 	accountActiveHint  = "use whatever profile is live"
+	// accountActiveLegend is how the two read on the panel's status line,
+	// which is where the explanation lives from v3 on -- see panelStatus.
+	// Two spaces and no dash, the same join unavailableReasonSep makes
+	// for the row stack, spelled out here because this is a legend rather
+	// than a state and its reason.
+	accountActiveLegend = accountActiveLabel + "  " + accountActiveHint
 
 	// accountInertPlaceholder is SetAgentIsClaude(false)'s own
 	// explanatory placeholder -- spec §6 field 7: "inert unless the
@@ -153,6 +158,19 @@ func NewAccountField(palette theme.Palette) *AccountField {
 		palette: palette,
 		picker:  widgets.NewPicker(palette),
 	}
+	// Name, plan, auth status, 5h utilization (v3 spec §8.1). NOTHING
+	// flexes here, which is a decision rather than an omission: the name
+	// is the only column a reader picks a row BY, so it must be the last
+	// to give up width, and the picker's fallback shrink order (right to
+	// left among the inflexible) is exactly that. Flexing the name --
+	// tried, and it looks wrong at 40 cells -- elides the four profile
+	// names to "…" while "Max 20x" keeps every cell it asked for.
+	f.picker.SetColumns(
+		widgets.PickerColumn{},
+		widgets.PickerColumn{Tone: widgets.ToneMuted},
+		widgets.PickerColumn{Tone: widgets.ToneMuted},
+		widgets.PickerColumn{Tone: widgets.ToneMuted},
+	)
 	f.refreshItems()
 	return f
 }
@@ -271,7 +289,14 @@ func (f *AccountField) refreshItems() {
 // for issues with an empty Identifier.
 func buildAccountItems(profiles []clauth.Profile, degraded bool) []widgets.PickerItem {
 	items := make([]widgets.PickerItem, 0, len(profiles)+1)
-	items = append(items, widgets.PickerItem{ID: accountActiveID, Label: accountActiveLabel, Hint: accountActiveHint})
+	// The sentinel carries only the word: v3 spec §8.1 measures every
+	// column over the whole set, so a sentence in cell 1 would set the
+	// PLAN column's width for every profile row beneath it and blow the
+	// table apart. Its explanation moved to the panel's own status line
+	// (panelStatus), which the field already reserves and which is empty
+	// in exactly the state the explanation is for -- the same place v3
+	// spec §10.2 puts the panel's legend.
+	items = append(items, widgets.PickerItem{ID: accountActiveID, Cells: []string{accountActiveLabel}})
 	seen := map[string]bool{accountActiveID: true}
 	for _, p := range profiles {
 		if p.Name == "" || seen[p.Name] {
@@ -283,35 +308,42 @@ func buildAccountItems(profiles []clauth.Profile, degraded bool) []widgets.Picke
 	return items
 }
 
-// accountRow builds one profile's picker row: "name · tier · auth · 5h
-// N%" (the brief's own literal row format) when degraded is false, or
-// name-only when it is true (see buildAccountItems' own doc comment). A
-// rate-limited (any usage window at or past 100%) or auth-failed
-// (AuthStatus set and not "ok") profile carries a warning Marker plus a
-// matching note appended to its Hint -- spec §6 field 7: "Rate-limited or
-// auth-failed profiles are selectable but visibly marked", and spec §16
-// non-goal 9: v1 stops at this inline marker, no blocking modal.
+// accountRow builds one profile's picker row -- name, tier, auth status
+// and 5h utilization, one per column (v3 spec §8.1; the `·` separators
+// the brief's original row format used are what the columns replace) --
+// or name-only when degraded is true (see buildAccountItems' own doc
+// comment). A rate-limited (any usage window at or past 100%) or
+// auth-failed (AuthStatus set and not "ok") profile carries a warning
+// Marker plus the warning itself as its badge -- spec §6 field 7:
+// "Rate-limited or auth-failed profiles are selectable but visibly
+// marked", and spec §16 non-goal 9: v1 stops at this inline marker, no
+// blocking modal.
+//
+// The badge is toned by which condition fired, which the single `!`
+// cannot say: an auth failure is Danger (the profile cannot be used at
+// all) where a rate limit is Warning (it can, later) -- the same split
+// accountRowState already draws the stack row's own third part with.
 func accountRow(p clauth.Profile, degraded bool) widgets.PickerItem {
 	if degraded {
-		return widgets.PickerItem{ID: p.Name, Label: p.Name}
+		return widgets.PickerItem{ID: p.Name, Cells: []string{p.Name}}
 	}
 
 	warning := accountWarning(p)
 	marker := ""
+	tone := widgets.ToneWarning
 	if warning != "" {
 		marker = "!"
-	}
-
-	hint := accountWindowHint(p)
-	if warning != "" {
-		hint = strings.TrimSpace(hint + "  " + warning)
+		if warning == accountWarnAuthFailed {
+			tone = widgets.ToneDanger
+		}
 	}
 
 	return widgets.PickerItem{
-		ID:     p.Name,
-		Label:  fmt.Sprintf("%s · %s · %s", p.Name, p.Tier, p.AuthStatus),
-		Hint:   hint,
-		Marker: marker,
+		ID:        p.Name,
+		Cells:     []string{p.Name, p.Tier, p.AuthStatus, accountWindowHint(p)},
+		Badge:     warning,
+		BadgeTone: tone,
+		Marker:    marker,
 	}
 }
 
@@ -531,7 +563,14 @@ func (f *AccountField) Panel(w, h int) string {
 // message (Danger) when it still applies to the current pin, the
 // degraded-status hint (dim) when clauth's schema was unrecognized, the
 // field's own empty-list sentence when there are no profiles at all, and
-// otherwise nothing.
+// otherwise what the `active` sentinel row means.
+//
+// That last case used to be nothing at all, and the sentence used to be
+// the sentinel row's own hint. v3 spec §8.1 measures a picker's columns
+// over the whole set, so a row carrying prose sets the width of a column
+// every other row has to live in -- and this line was reserved, empty,
+// directly beneath it. It is the same move v3 spec §10.2 makes for the
+// panel's `●` legend.
 func (f *AccountField) panelStatus() string {
 	switch {
 	case f.verdictKey == f.Pin() && f.verdictText != "":
@@ -541,7 +580,7 @@ func (f *AccountField) panelStatus() string {
 	case len(f.profiles) == 0:
 		return dimHint(f.palette).Render(accountPanelEmpty)
 	default:
-		return ""
+		return dimHint(f.palette).Render(accountActiveLegend)
 	}
 }
 

@@ -218,12 +218,14 @@ func (f *AgentField) setPickerItems(items []widgets.PickerItem) {
 func (f *AgentField) syncConfirmedFromChip() {
 	if sel := f.chips.Selected(); sel.ID != "" {
 		f.lastConfirmed = sel.ID
+		f.refreshCurrent()
 	}
 }
 
 func (f *AgentField) syncConfirmedFromPicker() {
 	if sel, ok := f.picker.Selected(); ok {
 		f.lastConfirmed = sel.ID
+		f.refreshCurrent()
 	}
 }
 
@@ -295,12 +297,33 @@ func (f *AgentField) SetKind(kind string) {
 // fullListItems builds the full-kind-list picker's item set from f.kinds
 // -- every configured kind is reachable here, not just the ones excluded
 // from the chip row (see the file doc's design note).
+//
+// Current marks lastConfirmed, and this is the field v3 spec §8.2 calls
+// out by name: THE CURSOR IS NOT THE VALUE HERE. ←→ move the chip row
+// and lastConfirmed with it (syncConfirmedFromChip) without touching the
+// picker cursor, which only SetKind re-seeds -- so before v3 the panel
+// highlighted one kind while the stack row one line above it named
+// another, with nothing on screen saying which one would actually
+// launch. The ✓ this puts in the mark column is that missing statement.
 func (f *AgentField) fullListItems() []widgets.PickerItem {
 	items := make([]widgets.PickerItem, len(f.kinds))
 	for i, k := range f.kinds {
-		items[i] = widgets.PickerItem{ID: k, Label: k}
+		items[i] = widgets.PickerItem{ID: k, Cells: []string{k}, Current: k == f.lastConfirmed}
 	}
 	return items
+}
+
+// refreshCurrent re-feeds the kind list at the SAME picker version so
+// each item's Current flag catches up with lastConfirmed. Same version is
+// the point: widgets.Picker.SetItems preserves the selection by ID on a
+// same-version refresh, so the cursor stays exactly where the user left
+// it while the ✓ moves -- which is the whole distinction Current draws.
+//
+// A flag on an item has to be re-supplied to change, so every path that
+// moves lastConfirmed without rebuilding the list has to come through
+// here; seedPickerCursor and SetKinds rebuild it themselves.
+func (f *AgentField) refreshCurrent() {
+	f.picker.SetItems(f.pickerVersion, f.fullListItems())
 }
 
 // Value returns the currently effective agent kind -- never the internal

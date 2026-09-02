@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -207,4 +208,64 @@ func TestAgentField_SetKindTwiceLeavesTheChipsUsable(t *testing.T) {
 	if got := f.Value(); got != "codex" {
 		t.Errorf("Right after seeding moved to %q, want %q", got, "codex")
 	}
+}
+
+// TestAgentField_PanelMarksTheValueTheChipsMoved is v3 spec §8.2's named
+// live defect, pinned. ←→ move the chip row and lastConfirmed with it and
+// deliberately do NOT move the picker cursor (only SetKind re-seeds
+// that), so before v3 the panel's highlighted row and the stack row one
+// line above it named DIFFERENT kinds, with nothing on screen saying
+// which one would actually launch. PickerItem.Current is that missing
+// statement: the ✓ follows the value while the cursor stays where the
+// user left it.
+func TestAgentField_PanelMarksTheValueTheChipsMoved(t *testing.T) {
+	f := NewAgentField(theme.Default())
+	f.SetKinds([]string{"claude", "codex", "pi"})
+	f.Focus()
+
+	f.Update(key(tea.KeyRight, 0))
+	if got := f.Value(); got != "codex" {
+		t.Fatalf("Value() after one Right = %q, want %q", got, "codex")
+	}
+
+	rows := panelRowsOf(f.Panel(40, f.PanelRows()))
+	// Row 0 is the chip row; the kind list starts at row 1.
+	if got, want := rows[2], "  ✓ codex"; !strings.HasPrefix(got, want) {
+		t.Errorf("the codex row = %q, want it to start %q -- the ✓ marks the VALUE", got, want)
+	}
+	if strings.Contains(rows[1], "✓") {
+		t.Errorf("the claude row = %q, want no ✓: the cursor rests there, but codex is the value", rows[1])
+	}
+	// The cursor has not moved, which is the other half of the contract:
+	// ✓ is not a second cursor glyph.
+	if got := f.picker.CursorRow(f.PanelRows() - 1); got != 0 {
+		t.Errorf("CursorRow = %d, want 0 -- ←→ must not move the picker cursor", got)
+	}
+}
+
+// TestAgentField_PanelCurrentFollowsTheListToo pins the same flag from
+// the other direction: ↑↓ move the cursor AND the value together, so the
+// ✓ has to land on the row the cursor landed on rather than staying
+// behind on the kind the field opened with.
+func TestAgentField_PanelCurrentFollowsTheListToo(t *testing.T) {
+	f := NewAgentField(theme.Default())
+	f.SetKinds([]string{"claude", "codex", "pi"})
+	f.Focus()
+
+	f.Update(key(tea.KeyDown, 0))
+
+	rows := panelRowsOf(f.Panel(40, f.PanelRows()))
+	if got, want := rows[2], "▸ ✓ codex"; !strings.HasPrefix(got, want) {
+		t.Errorf("the codex row = %q, want it to start %q -- cursor and value on one row", got, want)
+	}
+}
+
+// panelRowsOf splits a rendered panel into its plain-text lines, zone
+// markers and color both stripped -- the view a reader actually gets,
+// which is what a claim about which glyph sits on which row has to be
+// checked against. ansi.Strip alone leaves bubblezone's markers behind
+// (form.Model.ViewAt is what normally scans them out, and a field-level
+// Panel call never reaches it).
+func panelRowsOf(panel string) []string {
+	return strings.Split(ansi.Strip(widgets.Zones.Scan(panel)), "\n")
 }

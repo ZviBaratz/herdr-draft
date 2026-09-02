@@ -40,8 +40,8 @@
 //     surrounding form, not to the Picker itself.
 //   - Atrium's fuzzy ranking (rankCandidates, backed by internal/fuzzy) is
 //     not on the audited clean list, so SetQuery here is a plain
-//     case-insensitive substring filter over Label/Hint, not a port of
-//     Atrium's subsequence matcher.
+//     case-insensitive substring filter over an item's cells and badge,
+//     not a port of Atrium's subsequence matcher.
 //   - Atrium's Focus/Blur/IsFocused, SetWidth/SetVisibleRows, and preview
 //     hook are dropped: View takes explicit width/height per call (no owned
 //     renderer state), and there is no preview-hook consumer in scope here.
@@ -55,19 +55,223 @@ package widgets
 import (
 	"strconv"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
-// PickerItem is one selectable row in a Picker.
+// Tone names the palette ROLE a picker column, badge or mark glyph is
+// drawn in. It is a CLOSED enum, deliberately: v2 spec §7 declined a
+// per-item style hook and v3 spec §8.1 keeps that judgement -- no
+// caller-supplied lipgloss.Style reaches this widget, which resolves
+// every color itself from the palette it was constructed with. A field
+// says what a column MEANS; the picker decides what that looks like.
+//
+// (v2's stated reason for declining the hook -- "rows are rendered by the
+// field, not by the picker" -- was simply false, as §8.1 notes:
+// renderRow below has always rendered them. The conclusion survives its
+// reasoning.)
+type Tone int
+
+const (
+	// ToneDefault is Palette.Text, the primary tier: the one column in a
+	// row a reader is actually scanning. It is the zero value, so an
+	// undeclared column is a plain-text column.
+	ToneDefault Tone = iota
+	// ToneDim is Palette.DimText, for text that is present but secondary.
+	ToneDim
+	// ToneMuted is Palette.Overlay0, v3 spec §5.2's middle tier -- panel
+	// column headings, badges, identifiers. Without it a panel row reads
+	// as one flat wall of same-weight text.
+	ToneMuted
+	// ToneAccent is Palette.Accent.
+	ToneAccent
+	// ToneBranch is Palette.Branch, herdr's own branch-name color.
+	ToneBranch
+	// ToneSuccess is Palette.Success.
+	ToneSuccess
+	// ToneWarning is Palette.Warning: rate-limited and degraded states.
+	ToneWarning
+	// ToneDanger is Palette.Danger: outright failure.
+	ToneDanger
+)
+
+// color resolves the tone against a palette. An unknown Tone answers
+// Text rather than panicking or rendering colorless, matching this
+// package's degrade-rather-than-fail posture everywhere else.
+func (t Tone) color(p theme.Palette) theme.Color {
+	switch t {
+	case ToneDim:
+		return p.DimText
+	case ToneMuted:
+		return p.Overlay0
+	case ToneAccent:
+		return p.Accent
+	case ToneBranch:
+		return p.Branch
+	case ToneSuccess:
+		return p.Success
+	case ToneWarning:
+		return p.Warning
+	case ToneDanger:
+		return p.Danger
+	default:
+		return p.Text
+	}
+}
+
+// ElideMode says which END of an over-long cell is worth keeping, the
+// same two rules internal/form's row stack already applies to its value
+// cells (KeepHead/KeepTail, and sizes.go's file doc for why an unmarked
+// clip is a MISREAD rather than an incomplete value).
+type ElideMode int
+
+const (
+	// ElideTail keeps the head and marks the cut at the end: the rule for
+	// titles, branches, prose and identifiers. The zero value, since it
+	// is the right answer for every column that is not a path.
+	ElideTail ElideMode = iota
+	// ElideHead keeps the tail and marks the cut at the start: the rule
+	// for PATHS, whose last segments are what distinguish them.
+	ElideHead
+)
+
+// PickerMatch locates the run of characters inside one cell that a query
+// matched, for v3 spec §8.4's match highlighting. Col indexes Cells;
+// Start and End are RUNE indices into that cell, HALF-OPEN [Start, End).
+//
+// Two things make the zero value inert -- Col < 0 is §8.1's stated
+// "nothing to paint" signal, and an empty span says the same thing --
+// which matters because every one of the five fields feeding this widget
+// leaves Match unset on most of its items. A zero value that painted the
+// first character of the first column would be a defect in four fields
+// at once.
+//
+// The half-open End is a deliberate DIVERGENCE from internal/form's
+// fuzzySpan, whose End is inclusive (and whose empty-query answer is the
+// End < Start of fuzzyMatch). Inclusive coordinates have no inert zero
+// value, which is the whole reason for the difference; a caller bridging
+// the two adds one to End at the boundary.
+type PickerMatch struct {
+	Col        int
+	Start, End int
+}
+
+// empty reports that there is nothing to paint -- either no column was
+// named or the span covers no runes. It is the guard v3 spec §8.4's
+// renderer reads before touching a cell, and until that renderer lands it
+// is what applyFilter's own contract is asserted against.
+func (m PickerMatch) empty() bool { return m.Col < 0 || m.End <= m.Start }
+
+// PickerColumn declares how one cell column is sized and colored.
+// SetColumns installs them; a column a caller never declared falls back
+// to this struct's zero value (no bounds, no flex, ToneDefault,
+// ElideTail), so a single-column picker needs no declaration at all.
+//
+// Min and Max bound the measured width: 0 means "no bound" for either.
+// Max caps a column whose content is arbitrarily long (an issue title);
+// Min holds a column open so short values still line up under a heading.
+//
+// Flex marks a column as the one that gives up width FIRST when the row
+// is too narrow for everything -- the title in an issue list, whose tail
+// can be elided without making the row unreadable, as against the
+// identifier beside it, which must stay whole to be worth anything. It
+// does not grow a column: the badge column is flush right regardless, so
+// widening a cell column changes nothing visible.
+type PickerColumn struct {
+	Min, Max int
+	Flex     bool
+	Tone     Tone
+	Elide    ElideMode
+}
+
+// PickerItem is one selectable row in a Picker, as a TABLE row rather
+// than a pre-composed string (v3 spec §8.1).
+//
+// Cells must be PLAIN text, left to right. The picker measures them for
+// alignment, truncates them per column, tones them, and (v3 spec §8.4)
+// paints a match span inside one -- none of which it can do to a string
+// a caller has already styled. The old Label/Hint pair is what this
+// replaces: two pre-joined strings meant every list rendered as a wall of
+// text, with `ENG-1` and `ENG-101` starting their titles at different
+// columns.
 type PickerItem struct {
-	ID     string
-	Label  string
-	Hint   string
+	ID string
+	// Cells is the row's content, one string per column, left to right.
+	// A row may supply fewer cells than the widest row in the set; the
+	// missing ones render blank and still hold their column open.
+	Cells []string
+	// Badge is a short status word rendered in its own column, flush with
+	// the row's right edge. Every row's cells are held clear of the
+	// WIDEST badge in the set, so a badge never collides with content.
+	Badge     string
+	BadgeTone Tone
+	// Marker is a one-cell attention glyph ("!") in the fixed two-cell
+	// mark column before cell 0 -- v3 spec §8.2. It shares that column
+	// with Current's own glyph and WINS: a profile that is both current
+	// and auth-failed must shout the failure, and its currency is already
+	// stated on the stack row above.
 	Marker string
+	// Current marks the field's current VALUE, which is not the cursor.
+	// The cursor is where the user is browsing and carries three signals
+	// of its own (fill, bold, and the panel's ▸ gutter glyph); Current is
+	// what the field would submit. AgentField is where the two visibly
+	// diverge -- ←→ move the chip row and the value without moving the
+	// picker cursor -- and where leaving it unset was a live defect: the
+	// panel highlighted one kind while the row above named another.
+	Current bool
+	// Match is the span to highlight, for v3 spec §8.4. Ownership, since
+	// two parties can fill it: applyFilter computes it for every item it
+	// keeps whenever a query is active, overwriting whatever the caller
+	// set; with no query the caller's own value is preserved verbatim,
+	// which is how a field that ranks its own items supplies its own
+	// spans.
+	Match PickerMatch
+}
+
+// markColumnWidth is the fixed width of the mark column: one cell for the
+// glyph and one separating space. FIXED is the point (v3 spec §8.2) --
+// before v3 the marker was a bare prefix, so a marked row shifted two
+// cells right and its cells stopped lining up with every unmarked row
+// above it.
+const markColumnWidth = 2
+
+// cellGap is the blank run between two adjacent columns, and between the
+// last cell column and the badge. Two cells, matching the separator the
+// pre-v3 row already put between its label and its hint.
+const cellGap = 2
+
+// markerCurrent is the glyph PickerItem.Current draws in the mark
+// column. Marker's own glyph is the caller's ("!" everywhere it is used
+// today) because a field knows what it is warning about; this one is the
+// widget's, because "the current value" means the same thing in every
+// list.
+const markerCurrent = "✓"
+
+// pickerMetrics is the natural (unbounded) size of every column, measured
+// over the WHOLE filtered set. Measuring over the visible window instead
+// is the defect v3 spec §8.1 calls out by name: the columns would jitter
+// as the list scrolls, because a wider row scrolling into view would
+// widen a column and shift every other row's content sideways.
+//
+// It is cached because a render is per-frame and a filter change is
+// per-keystroke; applyFilter invalidates it, which covers both places
+// §8.1 names (SetItems and SetQuery, the two callers that rebuild
+// p.filtered) without either having to remember.
+type pickerMetrics struct {
+	// mark is whether ANY filtered item carries a Marker or is Current,
+	// i.e. whether the mark column is reserved at all. A picker whose
+	// items use neither keeps its two cells for content.
+	mark bool
+	// cells is each column's widest cell across the filtered set.
+	cells []int
+	// badge is the widest Badge across the filtered set, 0 when no item
+	// has one.
+	badge int
 }
 
 // Picker is a filterable single-select list. It owns its full item set, the
@@ -82,6 +286,10 @@ type Picker struct {
 	query    string
 	filtered []PickerItem
 	cursor   int
+
+	columns []PickerColumn
+	// metrics is the measurement cache, nil when it needs recomputing.
+	metrics *pickerMetrics
 }
 
 // NewPicker returns an empty Picker rendered with palette.
@@ -161,33 +369,268 @@ func (p *Picker) indexOfIDOrFallback(id string, fallbackCursor int) int {
 	return clampCursor(fallbackCursor, len(p.filtered))
 }
 
+// SetColumns declares how this picker's cell columns are sized and
+// colored (v3 spec §8.1). Columns beyond the ones declared here fall back
+// to the zero PickerColumn, so a one-column picker may skip the call
+// entirely, and a caller need only declare the leading columns it has an
+// opinion about.
+//
+// It changes no measurement -- the cache holds each column's NATURAL
+// width and Min/Max are applied when a row is fitted to a render width --
+// so it does not invalidate anything.
+func (p *Picker) SetColumns(cols ...PickerColumn) {
+	p.columns = append([]PickerColumn(nil), cols...)
+}
+
+// column returns the declared column i, or the zero PickerColumn for one
+// the caller never described. See SetColumns.
+func (p *Picker) column(i int) PickerColumn {
+	if i < 0 || i >= len(p.columns) {
+		return PickerColumn{}
+	}
+	return p.columns[i]
+}
+
 // SetQuery replaces the active filter text and re-applies it against the
 // current item set, resetting the cursor to the top of the freshly filtered
 // list -- matching Atrium's sync-picker onEdit behavior (picker.go).
 //
-// Matching is a plain case-insensitive substring test against Label and
-// Hint. Atrium's own ranked subsequence matcher (rankCandidates, backed by
-// internal/fuzzy) is not on the audited clean list, so it is not ported
-// here; see the package doc.
+// Matching is a plain case-insensitive substring test against every cell
+// and the badge. Atrium's own ranked subsequence matcher (rankCandidates,
+// backed by internal/fuzzy) is not on the audited clean list, so it is
+// not ported here; see the package doc.
 func (p *Picker) SetQuery(query string) {
 	p.query = query
 	p.applyFilter()
 	p.cursor = 0
 }
 
+// applyFilter rebuilds p.filtered from p.items and the active query, and
+// is the single funnel for both places v3 spec §8.1 requires the column
+// measurements invalidated (SetItems and SetQuery). Invalidating here
+// rather than in each of them is the same set of call sites and one
+// fewer thing for a third caller to forget.
+//
+// It also owns PickerItem.Match while a query is active, per §8.4: every
+// kept item's Match is computed from that query, overwriting whatever
+// the caller supplied. With no query the items -- and their callers' own
+// spans -- are copied through untouched, which is how a field that ranks
+// its own candidates (DirField's fuzzy path) gets to supply spans this
+// widget could not have computed.
 func (p *Picker) applyFilter() {
+	p.metrics = nil
 	if p.query == "" {
 		p.filtered = append([]PickerItem(nil), p.items...)
 		return
 	}
-	q := strings.ToLower(p.query)
+	q := []rune(strings.ToLower(p.query))
 	filtered := make([]PickerItem, 0, len(p.items))
 	for _, it := range p.items {
-		if strings.Contains(strings.ToLower(it.Label), q) || strings.Contains(strings.ToLower(it.Hint), q) {
-			filtered = append(filtered, it)
+		match, ok := matchItem(it, q)
+		if !ok {
+			continue
 		}
+		it.Match = match
+		filtered = append(filtered, it)
 	}
 	p.filtered = filtered
+}
+
+// matchItem finds the first cell (left to right) holding q and reports
+// the span, or -- when only the BADGE matches -- a kept row with nothing
+// to paint (Col -1). A badge match still keeps the row because the
+// pre-v3 filter tested the hint, which is where the status word an issue
+// list is filtered by used to live.
+func matchItem(it PickerItem, q []rune) (PickerMatch, bool) {
+	for i, cell := range it.Cells {
+		if start, end, ok := matchRunes(cell, q); ok {
+			return PickerMatch{Col: i, Start: start, End: end}, true
+		}
+	}
+	if _, _, ok := matchRunes(it.Badge, q); ok {
+		return PickerMatch{Col: -1}, true
+	}
+	return PickerMatch{Col: -1}, false
+}
+
+// matchRunes reports the half-open RUNE span of the first
+// case-insensitive occurrence of q (already lowercased by the caller, once
+// per query rather than once per cell) in s.
+//
+// It walks runes and lowercases them one at a time rather than taking
+// strings.Index over strings.ToLower(s), because the byte offset that
+// would return points into the LOWERCASED string, and converting it back
+// to a rune index into s assumes ToLower preserves rune count -- which it
+// does not for every input (U+0130 lowercases to two runes). The span is
+// a coordinate into the string a caller will slice, so it has to be exact
+// there rather than nearly exact. The cost is the naive O(len(s)*len(q))
+// scan, the same order as internal/form's own fuzzy matcher over the same
+// list sizes.
+func matchRunes(s string, q []rune) (start, end int, ok bool) {
+	if len(q) == 0 || s == "" {
+		return 0, 0, false
+	}
+	cand := []rune(s)
+	for i := 0; i+len(q) <= len(cand); i++ {
+		hit := true
+		for j, qr := range q {
+			if unicode.ToLower(cand[i+j]) != qr {
+				hit = false
+				break
+			}
+		}
+		if hit {
+			return i, i + len(q), true
+		}
+	}
+	return 0, 0, false
+}
+
+// measure returns the cached column measurements, computing them over the
+// whole filtered set on a miss. See pickerMetrics for why the whole set
+// and not the visible window.
+func (p *Picker) measure() pickerMetrics {
+	if p.metrics != nil {
+		return *p.metrics
+	}
+	m := pickerMetrics{}
+	for _, it := range p.filtered {
+		if it.Marker != "" || it.Current {
+			m.mark = true
+		}
+		for len(m.cells) < len(it.Cells) {
+			m.cells = append(m.cells, 0)
+		}
+		for i, c := range it.Cells {
+			if w := ansi.StringWidth(c); w > m.cells[i] {
+				m.cells[i] = w
+			}
+		}
+		if w := ansi.StringWidth(it.Badge); w > m.badge {
+			m.badge = w
+		}
+	}
+	p.metrics = &m
+	return m
+}
+
+// rowLayout is one render width's worth of column geometry: the same
+// numbers for every row in the frame, which is what makes the columns
+// line up.
+type rowLayout struct {
+	mark  int
+	cells []int
+	badge int
+}
+
+// left is the width of everything before the badge: the mark column, the
+// cell columns, and the gaps between them.
+//
+// A zero-width column contributes neither width nor gap. That is not a
+// degenerate case: a column is zero wide when NO row in the filtered set
+// has anything in it -- clauth reporting an empty AuthStatus for every
+// profile, say, which its own unvalidated-JSON shape allows -- and a
+// two-cell gap around an invisible column reads as a rendering fault
+// rather than as a column nobody filled in.
+func (l rowLayout) left() int {
+	w, shown := l.mark, 0
+	for _, c := range l.cells {
+		if c == 0 {
+			continue
+		}
+		if shown > 0 {
+			w += cellGap
+		}
+		w += c
+		shown++
+	}
+	return w
+}
+
+// layout fits the measured columns into width: the mark column when the
+// set uses one, the badge column when it has room for one, and the cell
+// columns bounded by their own Min/Max and then shrunk, Flex first, until
+// they fit.
+//
+// If everything is at its floor and the row STILL does not fit, the row
+// simply overflows and MarkedView's per-row style clips it -- the same
+// hard-clip-rather-than-fail contract widthStyle documents. A popup
+// narrow enough to reach that has bigger problems than a column.
+func (p *Picker) layout(width int) rowLayout {
+	m := p.measure()
+
+	var lay rowLayout
+	if m.mark {
+		lay.mark = markColumnWidth
+	}
+	avail := width - lay.mark
+	// The badge is dropped outright rather than squeezed: a status word
+	// with one cell left for it says nothing, and the cells it would
+	// crowd out say something.
+	if m.badge > 0 && avail-cellGap-m.badge >= 1 {
+		lay.badge = m.badge
+		avail -= cellGap + m.badge
+	}
+	if len(m.cells) == 0 {
+		return lay
+	}
+
+	lay.cells = make([]int, len(m.cells))
+	for i, natural := range m.cells {
+		col := p.column(i)
+		w := natural
+		if col.Max > 0 && w > col.Max {
+			w = col.Max
+		}
+		if w < col.Min {
+			w = col.Min
+		}
+		lay.cells[i] = w
+	}
+
+	// Shrinking floors a non-empty column at 1, so which columns are zero
+	// wide -- and therefore which gaps exist at all, see left() -- is
+	// settled here and cannot change underneath the loop below.
+	over := lay.left() - lay.mark - avail
+	for _, i := range p.shrinkOrder(len(lay.cells)) {
+		if over <= 0 {
+			break
+		}
+		floor := p.column(i).Min
+		if floor < 1 && lay.cells[i] > 0 {
+			// A column shrunk to nothing takes its content with it and
+			// leaves a gap where a column used to be, which reads as a
+			// rendering fault rather than as a narrow terminal.
+			floor = 1
+		}
+		if give := lay.cells[i] - floor; give > 0 {
+			if give > over {
+				give = over
+			}
+			lay.cells[i] -= give
+			over -= give
+		}
+	}
+	return lay
+}
+
+// shrinkOrder is the order columns give up width in: every Flex column
+// left to right, then the rest RIGHT to left. Taking from the right first
+// among the inflexible ones keeps the leading columns -- the identifier
+// you are scanning for -- intact longest.
+func (p *Picker) shrinkOrder(n int) []int {
+	order := make([]int, 0, n)
+	for i := 0; i < n; i++ {
+		if p.column(i).Flex {
+			order = append(order, i)
+		}
+	}
+	for i := n - 1; i >= 0; i-- {
+		if !p.column(i).Flex {
+			order = append(order, i)
+		}
+	}
+	return order
 }
 
 // Selected returns the item under the cursor, or (PickerItem{}, false) when
@@ -251,8 +694,16 @@ func (p *Picker) Len() int { return len(p.items) }
 // field composing the panel has to know which physical line the cursor
 // is on. Putting the glyph in PickerItem/renderRow instead would move
 // every committed v1 golden frame that shows a picker; this accessor
-// keeps the marker a property of the PANEL, where v2 puts it, and leaves
-// this widget's own rendering byte-identical.
+// keeps the marker a property of the PANEL, where v2 puts it, and left
+// this widget's own rendering byte-identical at the time.
+//
+// v3 spec §8.2 re-ratifies the placement on its own merits rather than on
+// that frame argument, which has since expired: the cursor row now
+// carries three signals inside the row (a Surface fill, bold, and a
+// brighter foreground), and a fourth glyph in the row as well -- beside
+// the ✓ the mark column may already be drawing -- would be one pointer
+// too many. So the row's own mark column is for PickerItem.Current and
+// PickerItem.Marker, and the cursor stays out here.
 func (p *Picker) CursorRow(height int) int {
 	if height < 1 {
 		height = 1
@@ -397,49 +848,152 @@ func (p *Picker) MarkedView(width, height int, zonePrefix string) string {
 	if width <= 0 {
 		return strings.Join(make([]string, height), "\n")
 	}
-	rowStyle := widthStyle(width)
-
+	// The row style is PER ROW, not hoisted: v3 spec §8.2 fills the
+	// cursor row with Surface edge to edge, and §8.3 is why that cannot
+	// be an outer Background(...).Render over a row holding any styled
+	// span at all -- Style.Render's trailing reset is unconditional, so
+	// the fill would drop out after the first toned cell. PaintLine
+	// reasserts the background after every embedded reset; see its own
+	// doc comment, and the frame-level test in internal/form that pins
+	// this surviving composeRows' second, PanelBG-colored pass over the
+	// same line.
+	lay := p.layout(width)
 	lines := make([]string, height)
 
 	offset := scrollOffset(p.cursor, len(p.filtered), height)
 	for row := 0; row < height; row++ {
 		idx := offset + row
 		if idx >= len(p.filtered) {
-			lines[row] = rowStyle.Render("")
+			lines[row] = widthStyle(width).Render("")
 			continue
 		}
-		rendered := p.renderRow(p.filtered[idx], idx == p.cursor)
+		cursor := idx == p.cursor
+		rendered := p.renderRow(p.filtered[idx], lay, width, cursor)
 		zoneID := ""
 		if zonePrefix != "" {
 			zoneID = zonePrefix + strconv.Itoa(row)
 		}
-		lines[row] = rowStyle.Render(Zones.Mark(zoneID, rendered))
+		marked := Zones.Mark(zoneID, rendered)
+		if cursor {
+			lines[row] = PaintLine(marked, width, p.palette.Surface)
+			continue
+		}
+		lines[row] = widthStyle(width).Render(marked)
 	}
 	return strings.Join(lines, "\n")
 }
 
-// renderRow renders one item's plain (unpadded) content: an optional
-// Marker, the Label, and a dim Hint, with the Label (and Marker) highlighted
-// when current is true -- current denotes the cursor row, not focus (this
-// widget doesn't track focus; see the package doc's Adaptations section).
-func (p *Picker) renderRow(item PickerItem, current bool) string {
-	labelStyle := lipgloss.NewStyle().Foreground(p.palette.Text)
-	if current {
-		labelStyle = lipgloss.NewStyle().Foreground(p.palette.Accent).Bold(true)
+// renderRow renders one item's content at the shared column geometry:
+// the fixed mark column, each cell padded (or elided) to its column's
+// width, and the badge flush with the row's right edge. cursor denotes
+// the CURSOR row, not focus (this widget doesn't track focus; see the
+// package doc's Adaptations section) and not PickerItem.Current, which
+// is a different fact -- see that field's own doc comment.
+//
+// The cursor row's four signals are v3 spec §8.2's, taken from herdr's
+// own selected row (dialogs.rs:487-500): the Surface fill MarkedView
+// applies around this, bold cells, a brighter foreground, and the ▸
+// glyph the PANEL draws in its gutter (there is no second cursor glyph
+// inside the row -- CursorRow's doc comment records why it lives out
+// there). The brighter foreground is Text and NOT Accent: with an accent
+// gutter glyph and, once §8.4 lands, an accent match span, a third
+// accent on the same row is noise.
+//
+// The badge keeps its own tone on the cursor row -- bolded like the
+// cells, but not repainted in Text -- because that tone IS the row's
+// state: a Danger badge flattened to plain text would hide a failure
+// exactly when the user has scrolled onto it.
+func (p *Picker) renderRow(item PickerItem, lay rowLayout, width int, cursor bool) string {
+	cellStyle := func(t Tone) lipgloss.Style {
+		if cursor {
+			return lipgloss.NewStyle().Foreground(p.palette.Text).Bold(true)
+		}
+		return lipgloss.NewStyle().Foreground(t.color(p.palette))
 	}
-	hintStyle := lipgloss.NewStyle().Foreground(p.palette.DimText)
 
 	var b strings.Builder
-	if item.Marker != "" {
-		b.WriteString(labelStyle.Render(item.Marker))
-		b.WriteString(" ")
+	if lay.mark > 0 {
+		b.WriteString(p.renderMark(item, lay.mark))
 	}
-	b.WriteString(labelStyle.Render(item.Label))
-	if item.Hint != "" {
-		b.WriteString("  ")
-		b.WriteString(hintStyle.Render(item.Hint))
+	shown := 0
+	for i, w := range lay.cells {
+		if w == 0 {
+			continue // an empty column costs nothing, not even its gap -- see rowLayout.left
+		}
+		if shown > 0 {
+			b.WriteString(strings.Repeat(" ", cellGap))
+		}
+		shown++
+		text := ""
+		if i < len(item.Cells) {
+			text = item.Cells[i]
+		}
+		b.WriteString(cellStyle(p.column(i).Tone).Render(fitCell(text, w, p.column(i).Elide)))
+	}
+	if lay.badge > 0 {
+		// Right-flush: pad out to the badge column and right-align the
+		// word inside it, so every badge ends at the same cell -- the
+		// row's last -- however wide the cells before it turned out.
+		gap := width - lay.badge - lay.left()
+		if gap < 1 {
+			gap = 1
+		}
+		badge := KeepHead(item.Badge, lay.badge)
+		b.WriteString(strings.Repeat(" ", gap))
+		b.WriteString(strings.Repeat(" ", lay.badge-ansi.StringWidth(badge)))
+		badgeStyle := lipgloss.NewStyle().Foreground(item.BadgeTone.color(p.palette))
+		if cursor {
+			badgeStyle = badgeStyle.Bold(true)
+		}
+		b.WriteString(badgeStyle.Render(badge))
 	}
 	return b.String()
+}
+
+// renderMark renders the fixed mark column: Marker's own glyph, else
+// Current's, else blanks. Marker wins when a row is both -- v3 spec
+// §8.2's stated priority, because a profile that is both current and
+// auth-failed must shout the failure.
+//
+// The two glyphs are toned apart rather than colored alike: `!` is
+// Warning because it is always an attention marker (an auth failure or a
+// rate limit), and `✓` is Accent because it names the one row on the
+// panel that is the field's actual value.
+func (p *Picker) renderMark(item PickerItem, width int) string {
+	glyph, tone := "", ToneDefault
+	switch {
+	case item.Marker != "":
+		glyph, tone = item.Marker, ToneWarning
+	case item.Current:
+		glyph, tone = markerCurrent, ToneAccent
+	default:
+		return strings.Repeat(" ", width)
+	}
+	glyph = KeepHead(glyph, width)
+	pad := width - ansi.StringWidth(glyph)
+	if pad < 0 {
+		pad = 0
+	}
+	return lipgloss.NewStyle().Foreground(tone.color(p.palette)).Render(glyph) + strings.Repeat(" ", pad)
+}
+
+// fitCell renders text at exactly width cells: elided per the column's
+// own rule when it is too long, space-padded on the right when it is too
+// short. Padding is what makes the NEXT column start at the same place on
+// every row, so it is applied even to the last column, whose trailing
+// blanks the row style would otherwise have added anyway.
+func fitCell(text string, width int, mode ElideMode) string {
+	if width <= 0 {
+		return ""
+	}
+	shown := KeepHead(text, width)
+	if mode == ElideHead {
+		shown = KeepTail(text, width)
+	}
+	if pad := width - ansi.StringWidth(shown); pad > 0 {
+		return shown + strings.Repeat(" ", pad)
+	}
+	return shown
 }
 
 // scrollOffset picks the first visible row so cursor stays inside a window

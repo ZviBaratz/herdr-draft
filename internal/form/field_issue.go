@@ -13,8 +13,9 @@
 // filter can't exploit), IssueField's filtering has no structure to
 // exploit beyond "does this issue's identifier/title/status mention what
 // was typed" -- so it uses widgets.Picker's own built-in SetQuery
-// (case-insensitive substring over Label/Hint) directly, rather than
-// re-deriving fuzzyRank a second time for a field that doesn't need it.
+// (case-insensitive substring over an item's cells and badge) directly,
+// rather than re-deriving fuzzyRank a second time for a field that
+// doesn't need it.
 package form
 
 import (
@@ -127,6 +128,16 @@ func NewIssueField(palette theme.Palette) *IssueField {
 		picker:  widgets.NewPicker(palette),
 	}
 	f.input.SetPlaceholder("type to filter")
+	// v3 spec §8.1's whole motivating example: the identifier gets its own
+	// column so `ENG-1` and `ENG-101` no longer start their titles at
+	// different cells, and the status word moves to the badge so a long
+	// title can no longer push it off the end mid-word. The title flexes
+	// because it is the one part of the row that can lose its tail and
+	// still be worth reading; the identifier cannot.
+	f.picker.SetColumns(
+		widgets.PickerColumn{Tone: widgets.ToneMuted},
+		widgets.PickerColumn{Flex: true},
+	)
 	f.refreshItems(true)
 	f.lastSelectedID = issueNoneID
 	return f
@@ -295,7 +306,7 @@ func (f *IssueField) refreshItems(bump bool) {
 		f.pickerVersion++
 	}
 	items := make([]widgets.PickerItem, 0, len(f.issues)+1)
-	items = append(items, widgets.PickerItem{ID: issueNoneID, Label: issueNoneLabel})
+	items = append(items, widgets.PickerItem{ID: issueNoneID, Cells: []string{issueNoneLabel}})
 	byID := make(map[string]linear.Issue, len(f.issues))
 	for _, iss := range f.issues {
 		if iss.Identifier == "" {
@@ -303,18 +314,19 @@ func (f *IssueField) refreshItems(bump bool) {
 		}
 		byID[iss.Identifier] = iss
 		items = append(items, widgets.PickerItem{
-			ID:    iss.Identifier,
-			Label: iss.Identifier + " · " + iss.Title,
-			Hint:  issueHint(iss),
+			ID:        iss.Identifier,
+			Cells:     []string{iss.Identifier, iss.Title},
+			Badge:     issueHint(iss),
+			BadgeTone: widgets.ToneMuted,
 		})
 	}
 	f.byID = byID
 	f.picker.SetItems(f.pickerVersion, items)
 }
 
-// issueHint composes the row's status/estimate hint text (spec §6 field
+// issueHint composes the row's status/estimate BADGE text (spec §6 field
 // 1: "showing identifier, title, status, estimate, priority" -- priority
-// is deliberately left out of the fixed hint budget here, matching the
+// is deliberately left out of the fixed budget here, matching the
 // brief's own narrower "identifier · title with status/estimate hint"
 // wording; a caller wanting priority surfaced can still read it off
 // Selected()/issueByID's returned *linear.Issue).
