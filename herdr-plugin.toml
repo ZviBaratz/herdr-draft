@@ -11,8 +11,8 @@ command = ["go", "build", "-o", "bin/herdr-draft", "./cmd/herdr-draft"]
 id = "open"
 title = "New session"
 placement = "popup"
-width = "80%"
-height = "80%"
+width = 104
+height = 32
 command = ["./bin/herdr-draft"]
 
 [[actions]]

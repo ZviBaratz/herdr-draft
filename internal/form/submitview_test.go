@@ -668,7 +668,7 @@ func TestSubmitView_EveryLineIsExactlyOneRow(t *testing.T) {
 	v.SetCleanFailed(errors.New(long))
 	v.SetUnsentPrompt("/"+long+"/unsent-prompt.txt", nil)
 
-	for _, size := range [][2]int{{80, 24}, {64, 19}, {120, 40}, {40, 10}} {
+	for _, size := range [][2]int{{101, 30}, {77, 22}, {57, 18}, {150, 44}, {40, 10}} {
 		w, h := size[0], size[1]
 		lines := strippedFrameLines(v, w, h)
 		if len(lines) != h {

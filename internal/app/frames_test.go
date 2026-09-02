@@ -252,17 +252,48 @@ func TestAssembledForm_EverySectionVisibleDownToItsFloor(t *testing.T) {
 	t.Logf("full assembled form shows every section at 80x%d and taller", smallestFit)
 }
 
-// TestAssembledForm_Frames pins the real assembled form at the two sizes
-// spec §15 names (80x24 and 120x40), for both the widest configuration
-// (Linear plus two clauth profiles) and the minimal one, with focus on the
-// Prompt field -- the field C1's own worst case made invisible, and the
-// reason these frames exist at all.
+// framePopupW / framePopupH are the pane the manifest's fixed-cell popup
+// produces: `width = 104` / `height = 32` minus herdr's own chrome, which
+// is `outer - 3` columns and `outer - 2` rows (v3 spec §6.1,
+// `herdr:src/popup_size.rs:73-85`). It is THE size this form ships at,
+// and every frame not deliberately testing a clamp renders here.
+const (
+	framePopupW = 101
+	framePopupH = 30
+)
+
+// filledFrameModel is the fully typed-in state the frames below render:
+// a title, a branch, a resolved base list and a prompt.
+//
+// The reaction path runs for real rather than being hand-simulated: it is
+// what syncs Placement's inert state, the header's context line AND the
+// title panel's resting note, so the frame shows what a running form
+// shows rather than a hand-assembled subset of it. The Cmds it schedules
+// are debounces nothing in these tests ever fires.
+func filledFrameModel(t *testing.T, full, worktree bool) Model {
+	t.Helper()
+	m := newAssembledModel(t, full)
+	m.title.SetTitle("fix login redirect loop", false)
+	m.worktree.SetOn(worktree)
+	m.worktree.SetBranch("zvi/fix-login-redirect-loop", false)
+	m.worktree.SetHeadBranch("main")
+	m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
+	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop", false)
+	m.reactToChanges()
+	return m
+}
+
+// TestAssembledForm_Frames pins the real assembled form at the shipped
+// pane size, for both the widest configuration (Linear plus two clauth
+// profiles) and the minimal one, with focus on the Prompt field -- the
+// field C1's own worst case made invisible, and the reason these frames
+// exist at all.
 //
 // The two configurations deliberately differ in more than which fields
 // exist: the full one has the worktree toggle ON (Branch and Base live,
 // Placement inert -- "a worktree is always its own space", spec §6 field
 // 5), the minimal one has it off (Branch and Base carry their distinct
-// inert placeholders, Placement live). Between them the four frames cover
+// inert placeholders, Placement live). Between them the two frames cover
 // every field's live AND inert rendering under a real budget allocation.
 func TestAssembledForm_Frames(t *testing.T) {
 	for _, tc := range []struct {
@@ -273,24 +304,21 @@ func TestAssembledForm_Frames(t *testing.T) {
 		{"full", true, true},
 		{"minimal", false, false},
 	} {
-		m := newAssembledModel(t, tc.full)
-		m.title.SetTitle("fix login redirect loop", false)
-		m.worktree.SetOn(tc.worktree)
-		m.worktree.SetBranch("zvi/fix-login-redirect-loop", false)
-		m.worktree.SetHeadBranch("main")
-		m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
-		m.prompt.SetValue("Work on ENG-101: Fix login redirect loop", false)
-		// Through the real reaction path rather than by hand: it is what
-		// syncs Placement's inert state, the header's context line AND the
-		// title panel's resting note, so the frame shows what a running
-		// form shows rather than a hand-assembled subset of it. The Cmds
-		// it schedules are debounces nothing in this test ever fires.
-		m.reactToChanges()
+		m := filledFrameModel(t, tc.full, tc.worktree)
 		m.form.FocusByID("prompt")
-
-		assertAppFrame(t, fmt.Sprintf("assembled-%s-80x24", tc.name), m, 80, 24)
-		assertAppFrame(t, fmt.Sprintf("assembled-%s-120x40", tc.name), m, 120, 40)
+		assertAppFrame(t, fmt.Sprintf("assembled-%s-%dx%d", tc.name, framePopupW, framePopupH), m, framePopupW, framePopupH)
 	}
+}
+
+// TestAssembledForm_Oversized is the ONE deliberately oversized frame
+// (v3 spec §12). No terminal produces it -- the popup is a fixed 104x32
+// and herdr clamps it downward, never up -- and that is the point: its
+// job is to pin what the layout does with room to spare, the footer's
+// full-width reach and (after the vertical work) the pads.
+func TestAssembledForm_Oversized(t *testing.T) {
+	m := filledFrameModel(t, true, true)
+	m.form.FocusByID("prompt")
+	assertAppFrame(t, "assembled-full-150x44", m, 150, 44)
 }
 
 // TestAssembledForm_OpeningState pins the frame every user sees FIRST:
@@ -319,28 +347,26 @@ func TestAssembledForm_OpeningState(t *testing.T) {
 	m.reactToChanges()
 	m.form.FocusByID("title")
 
-	assertAppFrame(t, "assembled-opening-80x24", m, 80, 24)
+	assertAppFrame(t, fmt.Sprintf("assembled-opening-%dx%d", framePopupW, framePopupH), m, framePopupW, framePopupH)
 }
 
-// TestAssembledForm_FullAt64x19 pins the size this whole rewrite is
-// justified by and which nothing previously covered: the interior of
-// herdr's own 80%-height popup on an 80x24 terminal.
+// TestAssembledForm_ClampedToASmallTerminal pins the two sizes a small
+// terminal actually produces, and replaces the 64x19 frame that used to
+// stand for "the popup floor". herdr resolves the manifest's fixed cells
+// with `.min(area.width)` / `.min(area.height)`, so a terminal smaller
+// than 104x32 gets a full-screen popup rather than an overflow (v3 spec
+// §6.1): 80x24 hands the form 77x22, and 60x20 hands it 57x18. 64x19
+// corresponds to nothing a user can now produce.
 //
-// It is deliberately a SEPARATE test from the four frames above rather
-// than a third size on the same loop: those render with the prompt
-// focused (the field v1's allocator made invisible, which is why they
-// exist), while the size that matters here should show the form as it
-// actually opens -- focused on the title, v2 spec §8's opening state.
-func TestAssembledForm_FullAt64x19(t *testing.T) {
-	m := newAssembledModel(t, true)
-	m.title.SetTitle("fix login redirect loop", false)
-	m.worktree.SetOn(true)
-	m.worktree.SetBranch("zvi/fix-login-redirect-loop", false)
-	m.worktree.SetHeadBranch("main")
-	m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
-	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop", false)
-	m.reactToChanges()
-	m.form.FocusByID("title")
-
-	assertAppFrame(t, "assembled-full-64x19", m, 64, 19)
+// These are deliberately SEPARATE from the frames above rather than more
+// sizes on the same loop: those render with the prompt focused (the field
+// v1's allocator made invisible, which is why they exist), while a size
+// under pressure should show the form as it actually opens -- focused on
+// the title, v2 spec §8's opening state.
+func TestAssembledForm_ClampedToASmallTerminal(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{77, 22}, {57, 18}} {
+		m := filledFrameModel(t, true, true)
+		m.form.FocusByID("title")
+		assertAppFrame(t, fmt.Sprintf("assembled-full-%dx%d", size.w, size.h), m, size.w, size.h)
+	}
 }

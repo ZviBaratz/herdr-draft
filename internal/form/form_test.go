@@ -705,7 +705,7 @@ func (s *chipRowSection) Panel(w, h int) string {
 // buildEmptyForm returns a form with two representative-but-still-stub
 // Sections (an "issue"-shaped Picker, an "agent"-shaped ChipRow) in their
 // default state, for the golden frames task-16 brief step 3 requires:
-// empty-80x24 and empty-120x40.
+// one at an ordinary size and one with room to spare.
 func buildEmptyForm(palette theme.Palette) Model {
 	issue := widgets.NewPicker(palette)
 	issue.SetItems(1, []widgets.PickerItem{
@@ -736,7 +736,10 @@ func buildEmptyForm(palette theme.Palette) Model {
 func TestFrames_Empty(t *testing.T) {
 	palette := theme.Default()
 	assertFrame(t, "empty-80x24", buildEmptyForm(palette), 80, 24)
-	assertFrame(t, "empty-120x40", buildEmptyForm(palette), 120, 40)
+	// 150x44 rather than the retired 120x40 -- v3 spec §12; the oversized
+	// frame's job is the layout with room to spare, and 120x40 is not a
+	// size herdr's fixed-cell popup can produce.
+	assertFrame(t, "empty-150x44", buildEmptyForm(palette), 150, 44)
 }
 
 // buildManySections returns a form with n stub row Sections, each asking

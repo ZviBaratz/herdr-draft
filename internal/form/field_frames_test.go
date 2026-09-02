@@ -207,8 +207,11 @@ func buildIssuePanelForm(palette theme.Palette) Model {
 	return fieldFrame(palette, f)
 }
 
+// 150x44 rather than the retired 120x40 (v3 spec §12): the picker wants a
+// frame with room to spare, and 120x40 corresponds to nothing herdr's
+// fixed-cell popup can produce.
 func TestFrames_IssuePanel(t *testing.T) {
-	assertFrame(t, "issue-panel-120x40", buildIssuePanelForm(theme.Default()), 120, 40)
+	assertFrame(t, "issue-panel-150x44", buildIssuePanelForm(theme.Default()), 150, 44)
 }
 
 // buildAccountPanelForm enables AccountField (agent kind claude) over a

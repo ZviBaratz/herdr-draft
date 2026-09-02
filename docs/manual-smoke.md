@@ -155,23 +155,32 @@ alternate-screen program, this one included.)
 
 ### What you are looking at
 
-At the 80×24 floor, fully configured:
+**The popup is a fixed 104×32 cells** (v3 spec §6.1), which after herdr's
+own chrome hands the form **101×30**. herdr clamps that down to the
+terminal and never up, so an 80×24 terminal gives **77×22** and a 60×20 one
+**57×18** — those three are the sizes the golden frames pin, and the only
+ones a user can produce. If the popup does not look 104 cells wide, herdr is
+still holding the old manifest in memory: `herdr plugin list --plugin draft
+--json` to check, then `herdr plugin disable draft && herdr plugin enable
+draft`.
+
+At the shipped 101×30, fully configured (blank panel rows elided):
 
 ```
-new session                                                  herdr-draft · main
-───────────────────────────────────────────────────────────────────────────────
-  issue      none
-  title      fix login redirect loop
-▌ prompt     Work on ENG-101: Fix login redirect loop
-  project    ~/Projects/herdr-draft
-  worktree   on · zvi/fix-login-redirect-loop ← main
-  placement  worktree opens as its own space
-  agent      claude
-  account    active · max · 12%
-───────────────────────────────────────────────────────────────────────────────
-  Work on ENG-101: Fix login redirect loop
+ new session                                                                      herdr-draft · main
+ ───────────────────────────────────────────────────────────────────────────────────────────────────
+   issue      none
+   title      fix login redirect loop
+ ▌ prompt     Work on ENG-101: Fix login redirect loop
+   project    ~/Projects/herdr-draft
+   worktree   on · zvi/fix-login-redirect-loop ← main
+   placement  worktree opens as its own space
+   agent      claude
+   account    active · max · 12%
+ ───────────────────────────────────────────────────────────────────────────────────────────────────
+   Work on ENG-101: Fix login redirect loop
 
-⌃J newline · ⇥ move · ⌃R clear                          ↵ create    esc cancel
+ ⌃J newline · ⇥ move · ⌃R clear                                              ↵ create    esc cancel
 ```
 
 - **Eight rows, one line each**, in this order: `issue`, `title`, `prompt`,
@@ -189,7 +198,12 @@ new session                                                  herdr-draft · main
   other.
 - **Create is on the footer**, right-aligned (`↵ create`, `esc cancel`),
   not a row in the stack. It is still the ring's last focus stop: `⇥` past
-  `account` lands on it.
+  `account` lands on it — the button looks the same there (it is filled with
+  the accent color in every state, v3 spec §5.5), and what changes is the
+  key ladder beside it, to `⇧⇥ back to the form`.
+- **The card fills the pane**, one blank column on each side (v3 spec §6.2).
+  Rules and footer reaching only two thirds of the way across is the v2
+  width cap, and it is gone.
 - The header's right half is live context for the **selected** project —
   its directory name and the branch checked out there — not the invoking
   workspace. Watch it change when you set the project row.

@@ -20,7 +20,8 @@ func TestLayoutFrame_SpecNineLadder(t *testing.T) {
 	}{
 		{40, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 28, Footer: true}},
 		{24, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 12, Footer: true}},
-		// The real popup floor: a 64x19 interior on an 80x24 terminal.
+		// The shipped pane is 30 rows and the smallest clamped one 18
+		// (v3 spec §6.1); 19 is neither, and is kept only as a rung.
 		{19, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 7, Footer: true}},
 		// The panel reaches its floor; the chrome is still whole.
 		{15, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 3, Footer: true}},
