@@ -26,6 +26,16 @@ const (
 	titleVerdictMaxCells = 21
 
 	titleLabel = "Title: "
+
+	// titleRowLabel is v2's row label (v2 spec §6): lowercase, no colon,
+	// no padding -- the form pads it into the label column
+	// (rowlayout.go's labelColWidth).
+	titleRowLabel = "title"
+	// titleRowUnset is v2 spec §6's Unset cell for this row. It matches
+	// the v1 placeholder the wrapped lineInput already carries, so the
+	// empty field reads the same whether the row is showing the editor or
+	// the resting value.
+	titleRowUnset = "untitled"
 )
 
 // TitleField is the form's Title Section (spec §6 field 3): a single-line,
@@ -188,6 +198,63 @@ func (f *TitleField) SetTitle(v string, seeded bool) {
 		f.touched = false
 	}
 }
+
+// --- v2 row stack (form.go's rowSection) ---------------------------------
+//
+// These four methods sit ALONGSIDE View/Height/MinHeight above rather than
+// replacing them: compose only takes the row-stack path once EVERY section
+// in the ring implements rowSection (form.go's allRowSections), and the
+// worktree trio has not migrated, so v1's path -- and every committed
+// golden frame -- is untouched by their arrival.
+
+// Label is v2's row label (v2 spec §6's field table).
+func (f *TitleField) Label() string { return titleRowLabel }
+
+// Row renders the title's value cell: the live editor while focused (v2
+// spec §5 -- "the row is the EDITOR for a field whose editing surface is
+// a single line"), the typed value otherwise, and a dim "untitled" when
+// there is nothing to show. A too-long title elides at its TAIL, keeping
+// the head: a title is read left to right and its first words are what
+// identify it.
+//
+// No verdict is appended here, deliberately: v2 spec §6 puts verdicts in
+// the panel precisely so a recomputing verdict cannot shift text under
+// the cursor.
+func (f *TitleField) Row(w int) string {
+	if w < 1 {
+		w = 1
+	}
+	if f.focused {
+		return f.input.View(w)
+	}
+	if v := f.Value(); v != "" {
+		return fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(keepHead(v, w)), w)
+	}
+	return fitLine(dimText(f.palette).Render(keepHead(titleRowUnset, w)), w)
+}
+
+// Panel renders the verdict line at FULL width -- the whole point of
+// moving it off the row (v2 spec §6: this is what retires
+// titleVerdictMaxCells, which today cuts "branch:
+// zvi/fix-login-redirect-loop" at 21 cells). The constant itself stays
+// live for v1's verdictLine until that path is deleted.
+//
+// A verdict computed for a title the user has since edited away from is
+// not rendered at all, the same staleness-by-comparison guard
+// verdictKey's own doc comment describes for v1.
+func (f *TitleField) Panel(w, h int) string {
+	text := ""
+	if f.verdictKey == f.Value() {
+		text = f.verdictText
+	}
+	return panelBlock(w, h, panelText(dimHint(f.palette).Render(text), w))
+}
+
+// PanelRows is one: the verdict line, whether or not a verdict currently
+// applies. Reserving it unconditionally is what keeps the panel's height
+// -- and therefore the footer's position -- independent of whether the
+// app layer has answered yet.
+func (f *TitleField) PanelRows() int { return 1 }
 
 // SetVerdict records the app layer's own live-validation message for the
 // title text that was current when it was computed (key): a short note

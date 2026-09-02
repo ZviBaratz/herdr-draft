@@ -7,6 +7,9 @@
 package form
 
 import (
+	"strconv"
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -15,6 +18,22 @@ import (
 )
 
 const promptLabel = "Prompt: "
+
+const (
+	// promptRowLabel is v2's row label (v2 spec §6).
+	promptRowLabel = "prompt"
+	// promptRowEmpty is v2 spec §6's Unset cell for this row: an em dash,
+	// not the placeholder ladder, because the ladder teaches you what to
+	// TYPE and the row is not where you type (the panel is).
+	promptRowEmpty = "—"
+
+	// promptPanelMinRows / promptPanelMaxRows bound the textarea's own
+	// panel: enough rows to be worth focusing even for a one-line prompt,
+	// capped so a very tall window does not hand a 40-row textarea to a
+	// field most sessions leave empty.
+	promptPanelMinRows = 6
+	promptPanelMaxRows = 20
+)
 
 // promptPlaceholderLadder is spec §6 item 8's own placeholder ladder,
 // forked (per the brief's own "fork of placeholder per spec §6.8"
@@ -165,6 +184,90 @@ func (f *PromptField) SetValue(s string, seeded bool) {
 	if !seeded {
 		f.touched = false
 	}
+}
+
+// --- v2 row stack (form.go's rowSection) ---------------------------------
+//
+// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
+// section comment for why their arrival moves no golden frame.
+
+// Label is v2's row label (v2 spec §6's field table).
+func (f *PromptField) Label() string { return promptRowLabel }
+
+// Row summarizes a multi-line value on one line: the first non-blank
+// line, elided at its TAIL (prose reads left to right), followed by a dim
+// " +N more" naming how many further non-blank lines the panel holds. An
+// empty prompt reads as a dim em dash.
+//
+// N counts non-blank lines only, deliberately: a value ending in a
+// newline would otherwise claim "+1 more" for a line with nothing on it.
+//
+// The suffix's width is subtracted BEFORE the first line is elided, so
+// the count is never the thing that gets cut -- losing it would turn a
+// summary into what looks like the whole value.
+func (f *PromptField) Row(w int) string {
+	if w < 1 {
+		w = 1
+	}
+	first, more := promptSummary(f.area.Value())
+	if first == "" {
+		return fitLine(dimText(f.palette).Render(promptRowEmpty), w)
+	}
+
+	suffix := ""
+	if more > 0 {
+		suffix = dimText(f.palette).Render(" +" + strconv.Itoa(more) + " more")
+	}
+	body := lipgloss.NewStyle().Foreground(f.palette.Text).
+		Render(keepHead(first, w-lipgloss.Width(suffix)))
+	return fitLine(body+suffix, w)
+}
+
+// promptSummary splits value into the first non-blank line and the count
+// of non-blank lines after it -- Row's whole content model, factored out
+// so it can be pinned directly by a table test.
+func promptSummary(value string) (first string, more int) {
+	for _, line := range strings.Split(value, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if first == "" {
+			first = line
+			continue
+		}
+		more++
+	}
+	return first, more
+}
+
+// Panel is the textarea itself, indented into the panel's own gutter and
+// sized to exactly the h rows the layout kept for it. SetRows is applied
+// here per render for the same reason View applies it: the widget caches
+// no geometry of its own.
+func (f *PromptField) Panel(w, h int) string {
+	if h < 1 {
+		h = 1
+	}
+	f.area.SetRows(h)
+	inner := panelInner(w)
+	rendered := strings.Split(f.area.View(inner), "\n")
+	lines := make([]string, 0, h)
+	for i := 0; i < h && i < len(rendered); i++ {
+		lines = append(lines, panelText(rendered[i], w))
+	}
+	return panelBlock(w, h, lines...)
+}
+
+// PanelRows grows with the text: enough rows for the whole prompt plus
+// one to type the next line into, never fewer than promptPanelMinRows and
+// never more than promptPanelMaxRows.
+func (f *PromptField) PanelRows() int {
+	lines := strings.Count(f.area.Value(), "\n") + 1
+	want := lines + 1
+	if want < promptPanelMinRows {
+		want = promptPanelMinRows
+	}
+	return capRows(want, promptPanelMaxRows)
 }
 
 // Height reports PromptField's PREFERRED footprint in a popup winH rows

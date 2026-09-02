@@ -113,6 +113,34 @@ const dirPickerRows = 4
 
 const dirLabel = "Project: "
 
+const (
+	// dirRowLabel is v2's row label. Note it is NOT this Section's ID()
+	// ("dir", which zoneKindByID and every mouse zone already spell that
+	// way): v2 spec §6's field table calls the row "project", and the two
+	// names have no reason to be the same one.
+	dirRowLabel = "project"
+	// dirRowNone is what the row reads when no candidate is selected --
+	// v2 spec §6's table has no unset cell for this field because
+	// production always has a directory, but a form whose candidate list
+	// is empty must still say something.
+	dirRowNone = "none"
+	// dirRowInvalid and dirRowNotRepo are v2 spec §6's Inert cells for
+	// this row, replacing v1's parenthesized "(invalid)"/"(direct)"
+	// markers. The row-stack rewrite plan kept v1's wording; the spec's
+	// table is normative and says `invalid` / `not a repository`, so that
+	// is what the v2 row says. v1's own marker() is untouched.
+	dirRowInvalid   = "invalid"
+	dirRowNotRepo   = "not a repository"
+	dirRowMarkerGap = "  " // separates a path from its marker
+
+	// dirPanelMaxRows caps PanelRows: a project list can be long, and the
+	// panel should not claim more of the form than it can fill.
+	dirPanelMaxRows = 12
+	// dirPanelEmpty speaks in the field's own terms when nothing matches
+	// (v2 spec §6.1's "nothing to choose", never a bare "no matches").
+	dirPanelEmpty = "no matching directories"
+)
+
 // DirField is the form's Project directory Section (spec §6 field 2): a
 // dual-mode picker over app-supplied candidates -- fragment mode (fuzzy-
 // ranked filtering of the full candidate pool) when the typed text
@@ -156,6 +184,13 @@ type DirField struct {
 	// nil until installed (identity, this field's own pre-browse
 	// behavior).
 	pathExpander func(string) string
+
+	// homeDir is SetHomeDir's app-supplied home directory, used ONLY to
+	// collapse a leading home prefix to "~" in v2's row (v2 spec §6:
+	// "path, ~-shortened"). Purely cosmetic: Value() and every
+	// PickerItem.ID stay the real path, and v1's View never reads it, so
+	// installing one cannot move a golden frame.
+	homeDir string
 
 	hint string
 }
@@ -373,6 +408,124 @@ func (d *DirField) expand(raw string) string {
 		return expanded
 	}
 	return raw
+}
+
+// SetHomeDir installs the app layer's own home-directory string (os.
+// UserHomeDir in production), used only to collapse a leading home prefix
+// to "~" when v2's row renders a path -- wired exactly like
+// SetPathExpander, and for the same reason: this package performs no I/O
+// and cannot ask the OS where home is.
+//
+// DISPLAY ONLY. Value() keeps returning the real path, every
+// widgets.PickerItem.ID stays the real path, and nothing this field hands
+// the app layer is ever collapsed. That is what makes it safe to install
+// at construction: a "~" that leaked into a value would be a path no
+// filesystem call could resolve.
+//
+// "" (and "/", which would collapse every absolute path to "~") disable
+// collapsing entirely.
+func (d *DirField) SetHomeDir(home string) { d.homeDir = home }
+
+// collapseHome renders p with a leading homeDir replaced by "~" -- a pure
+// string operation, deliberately not filepath.Rel (see basename's own doc
+// comment: this package performs no path/OS calls of any kind).
+//
+// The prefix must end at a segment boundary: "/home/zvi" must not turn
+// "/home/zvirus/x" into "~us/x".
+func (d *DirField) collapseHome(p string) string {
+	home := strings.TrimSuffix(d.homeDir, "/")
+	if home == "" || p == "" {
+		return p
+	}
+	if p == home {
+		return "~"
+	}
+	if strings.HasPrefix(p, home+"/") {
+		return "~" + p[len(home):]
+	}
+	return p
+}
+
+// --- v2 row stack (form.go's rowSection) ---------------------------------
+//
+// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
+// section comment for why their arrival moves no golden frame.
+
+// Label is v2's row label -- "project", not this Section's ID (see
+// dirRowLabel's own doc comment).
+func (d *DirField) Label() string { return dirRowLabel }
+
+// Row is the selected directory with "~" collapsed, plus the validity
+// marker v2 spec §6 spells `invalid` / `not a repository`, or the live
+// dual-mode input while focused.
+//
+// The path elides at its HEAD, keeping the TAIL: the last segments are
+// what tell "~/Projects/herdr" from "~/Projects/herdr-draft", and the
+// shared prefix is what every other candidate has too. The marker's width
+// is subtracted first, so a verdict is never the thing that gets cut.
+func (d *DirField) Row(w int) string {
+	if w < 1 {
+		w = 1
+	}
+	marker := d.rowMarker()
+	budget := w - lipgloss.Width(marker)
+	if budget < 1 {
+		budget = 1
+	}
+	if d.focused {
+		return fitLine(d.input.View(budget)+marker, w)
+	}
+	val := d.Value()
+	if val == "" {
+		return fitLine(dimText(d.palette).Render(keepHead(dirRowNone, budget))+marker, w)
+	}
+	shown := keepTail(d.collapseHome(val), budget)
+	return fitLine(lipgloss.NewStyle().Foreground(d.palette.Text).Render(shown)+marker, w)
+}
+
+// rowMarker renders v2's validity word for the CURRENT selection, or ""
+// when the app layer's last verdict was for some other path (the same
+// staleness-by-comparison guard v1's marker() uses).
+func (d *DirField) rowMarker() string {
+	if !d.validityKnown || d.validityPath != d.Value() {
+		return ""
+	}
+	switch d.validity {
+	case ValidityInvalid:
+		return dirRowMarkerGap + lipgloss.NewStyle().Foreground(d.palette.Danger).Render(dirRowInvalid)
+	case ValidityDirect:
+		return dirRowMarkerGap + dimText(d.palette).Render(dirRowNotRepo)
+	default:
+		return ""
+	}
+}
+
+// Panel is the candidate list plus one dim status line beneath it.
+func (d *DirField) Panel(w, h int) string {
+	if h < 1 {
+		h = 1
+	}
+	lines := make([]string, 0, h)
+	if h > 1 {
+		lines = append(lines, panelPickerLines(d.picker, w, h-1, "row:"+d.ID()+":", d.palette)...)
+	}
+	lines = append(lines, panelText(dimHint(d.palette).Render(d.panelStatus()), w))
+	return panelBlock(w, h, lines...)
+}
+
+// panelStatus renders the panel's last line: the field's own empty-list
+// sentence, or whatever the app layer last set via Hint.
+func (d *DirField) panelStatus() string {
+	if d.picker.FilteredLen() == 0 {
+		return dirPanelEmpty
+	}
+	return d.hint
+}
+
+// PanelRows is one row per candidate plus the status line, capped at
+// dirPanelMaxRows.
+func (d *DirField) PanelRows() int {
+	return capRows(1+d.picker.FilteredLen(), dirPanelMaxRows)
 }
 
 // Hint sets the text shown on the always-reserved hint row.

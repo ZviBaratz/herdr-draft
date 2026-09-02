@@ -221,16 +221,20 @@ type (
 //
 //   - compose gates on allRowSections() -- every section in the ring
 //     implementing rowSection -- and only then composes v2's row stack.
-//   - No real field (field_*.go) implements it yet, so every production
-//     render, and every existing golden frame, still takes the v1 path
-//     byte-for-byte.
-//   - The stub sections in form_test.go DO implement it, which is how
-//     the new path is exercised and tested before a single pixel of the
-//     real form moves.
+//   - Seven fields have migrated (issue, title, prompt, dir, placement,
+//     agent, account), each ADDING these four methods alongside its v1
+//     View/Height/MinHeight rather than replacing them. The worktree
+//     trio has not, and internal/app's section slice always carries all
+//     three, so every production render -- and every assembled golden
+//     frame -- still takes the v1 path byte-for-byte.
+//   - The stub sections in form_test.go implement it too, which is how
+//     the new path was exercised and tested before a single pixel of the
+//     real form moved.
 //
-// The field migration flips the gate one field at a time; the step after
-// that promotes these four methods into Section itself and deletes
-// View/Height/MinHeight along with the v1 path.
+// The worktree collapse is the last field to migrate and the change that
+// flips the gate for real; the step after that promotes these four
+// methods into Section itself and deletes View/Height/MinHeight along
+// with the v1 path.
 type rowSection interface {
 	Section
 
@@ -782,11 +786,11 @@ func (m Model) ViewAt(w, h int) string {
 // check, not a flag: when EVERY section in the ring implements
 // rowSection, the frame is composed as v2's row stack (composeRows);
 // otherwise it takes v1's path unchanged (composeLegacy), down to the
-// byte. No field_*.go section implements rowSection yet, so every
+// byte. The worktree trio does not implement rowSection yet and
+// internal/app's section slice always carries all three, so every
 // production render and every committed golden frame still goes through
-// composeLegacy -- the row-stack path is reachable today only from the
-// stub sections in form_test.go, which is exactly how it is tested
-// before the real form moves.
+// composeLegacy while the field migration is half done -- see
+// rowSection's own doc comment.
 //
 // The gate is also what handleMouseClick consults to decide which zone
 // scheme the last render marked.

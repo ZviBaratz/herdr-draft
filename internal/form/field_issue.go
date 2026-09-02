@@ -58,6 +58,27 @@ const issueNoneLabel = "None (manual entry)"
 // row, which has the full inner width to spend on it.
 const issueUnavailableLabel = "unavailable"
 
+const (
+	// issueRowLabel is v2's row label (v2 spec §6).
+	issueRowLabel = "issue"
+	// issueRowNone is v2 spec §6's Unset cell -- the row's own word for
+	// "manual entry", shorter than the picker's issueNoneLabel because a
+	// row states a value while a list row offers a choice.
+	issueRowNone = "none"
+	// issueRowUnavailableSep joins "unavailable" to its reason. v2 spec
+	// §6's table spells this cell `unavailable  <reason>`, two spaces --
+	// the row-stack rewrite plan wrote it with an em dash, and the spec
+	// wins.
+	issueRowUnavailableSep = "  "
+	// issuePanelMaxRows caps PanelRows: spec §10 fetches up to 50 issues,
+	// far more than a panel should claim from the rest of the form.
+	issuePanelMaxRows = 24
+	// issuePanelEmpty speaks in the field's own terms when Linear
+	// returned nothing (v2 spec §6.1's "nothing to choose", never a bare
+	// "no matches").
+	issuePanelEmpty = "no assigned issues"
+)
+
 // IssueField is the form's Linear issue Section (spec §6 field 1): a
 // type-to-filter picker over the viewer's assigned issues, "none" pinned
 // as row 0 for manual (non-Linear-seeded) mode. Selecting an issue emits
@@ -323,6 +344,83 @@ func (f *IssueField) Selected() *linear.Issue {
 
 // Hint sets the text shown on the always-reserved hint row.
 func (f *IssueField) Hint(s string) { f.hint = s }
+
+// --- v2 row stack (form.go's rowSection) ---------------------------------
+//
+// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
+// section comment for why their arrival moves no golden frame.
+
+// Label is v2's row label (v2 spec §6's field table).
+func (f *IssueField) Label() string { return issueRowLabel }
+
+// Row is the chosen issue as `ENG-101 · fix login redirect loop`, a dim
+// `none` in manual mode, the live filter input while focused, and -- when
+// Linear is configured but unreachable -- `unavailable  <reason>` in dim
+// italic (v2 spec §6/§6.1).
+//
+// An over-long issue elides at its TAIL, keeping the head: the identifier
+// leads, and it is the half that stays useful when the title is cut.
+func (f *IssueField) Row(w int) string {
+	if w < 1 {
+		w = 1
+	}
+	switch {
+	case f.unavailable != "":
+		text := issueUnavailableLabel + issueRowUnavailableSep + f.unavailable
+		return fitLine(dimHint(f.palette).Render(keepHead(text, w)), w)
+	case f.focused:
+		return f.input.View(w)
+	default:
+		sel := f.Selected()
+		if sel == nil {
+			return fitLine(dimText(f.palette).Render(keepHead(issueRowNone, w)), w)
+		}
+		text := sel.Identifier + " · " + sel.Title
+		return fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(keepHead(text, w)), w)
+	}
+}
+
+// Panel is the issue list plus one dim status line beneath it. An inert
+// field shows no list at all -- there is nothing to pick -- only the
+// reason it is inert, where the full panel width is available for it.
+func (f *IssueField) Panel(w, h int) string {
+	if h < 1 {
+		h = 1
+	}
+	lines := make([]string, 0, h)
+	if f.unavailable == "" && h > 1 {
+		lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
+	}
+	for len(lines) < h-1 {
+		lines = append(lines, panelText("", w))
+	}
+	lines = append(lines, panelText(dimHint(f.palette).Render(f.panelStatus()), w))
+	return panelBlock(w, h, lines...)
+}
+
+// panelStatus renders the panel's last line: the unavailable reason, the
+// field's own empty-list sentence, or whatever the app layer last set via
+// Hint.
+func (f *IssueField) panelStatus() string {
+	switch {
+	case f.unavailable != "":
+		return f.unavailable
+	case f.picker.FilteredLen() == 0 || len(f.issues) == 0:
+		return issuePanelEmpty
+	default:
+		return f.hint
+	}
+}
+
+// PanelRows is one row per offered issue (the "none" sentinel included)
+// plus the status line, capped at issuePanelMaxRows. An inert field wants
+// only the status line, which is all Panel draws for it.
+func (f *IssueField) PanelRows() int {
+	if f.unavailable != "" {
+		return 1
+	}
+	return capRows(1+f.picker.FilteredLen(), issuePanelMaxRows)
+}
 
 // Height reports IssueField's PREFERRED footprint in a popup winH rows
 // tall: its header and hint rows plus as many candidate rows as a window

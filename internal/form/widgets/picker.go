@@ -220,6 +220,43 @@ func (p *Picker) SelectID(id string) bool {
 	return false
 }
 
+// FilteredLen reports how many rows this picker currently has to show --
+// the item count AFTER SetQuery's filter, which is what a caller sizing a
+// panel around the list actually needs (v2 spec §5: a Section's
+// PanelRows() is "the greatest number of rows this field can put to good
+// use", derived from its own item count).
+//
+// Pure read, added for v2's panel sizing: it renders nothing and changes
+// nothing, so it cannot move a frame on its own.
+func (p *Picker) FilteredLen() int { return len(p.filtered) }
+
+// CursorRow reports the PHYSICAL row (0-based) the cursor lands on inside
+// a View/MarkedView render height rows tall, or -1 when nothing is
+// selected or the cursor falls outside that window. It is the exact
+// inverse of SelectVisibleRow, recomputing the same scrollOffset the
+// render itself uses.
+//
+// v2's panels draw their own `▸` cursor glyph in the two-cell gutter
+// column BESIDE the list (v2 spec §4's mockups), not inside a row, so the
+// field composing the panel has to know which physical line the cursor
+// is on. Putting the glyph in PickerItem/renderRow instead would move
+// every committed v1 golden frame that shows a picker; this accessor
+// keeps the marker a property of the PANEL, where v2 puts it, and leaves
+// this widget's own rendering byte-identical.
+func (p *Picker) CursorRow(height int) int {
+	if height < 1 {
+		height = 1
+	}
+	if p.cursor < 0 || p.cursor >= len(p.filtered) {
+		return -1
+	}
+	row := p.cursor - scrollOffset(p.cursor, len(p.filtered), height)
+	if row < 0 || row >= height {
+		return -1
+	}
+	return row
+}
+
 // CursorNext moves the cursor down one row, clamping at the last row --
 // ported from Atrium's handleKey KeyDown branch (no wraparound).
 func (p *Picker) CursorNext() {

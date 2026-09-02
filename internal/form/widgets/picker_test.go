@@ -280,3 +280,87 @@ func TestPicker_SelectID(t *testing.T) {
 		t.Fatalf("Selected().ID after a missed SelectID = %q, want unchanged %q", got.ID, "gamma")
 	}
 }
+
+// TestPicker_FilteredLen pins the count v2's panel sizing reads: the
+// items AFTER the query, not the whole set.
+func TestPicker_FilteredLen(t *testing.T) {
+	p := NewPicker(testPalette())
+	if got := p.FilteredLen(); got != 0 {
+		t.Errorf("FilteredLen() on a fresh Picker = %d, want 0", got)
+	}
+
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Label: "Alpha"},
+		{ID: "2", Label: "Beta"},
+		{ID: "3", Label: "Alphabet"},
+	})
+	if got := p.FilteredLen(); got != 3 {
+		t.Errorf("FilteredLen() = %d, want 3", got)
+	}
+
+	p.SetQuery("alpha")
+	if got := p.FilteredLen(); got != 2 {
+		t.Errorf("FilteredLen() under a query = %d, want 2 (the filtered set, not the item set)", got)
+	}
+}
+
+// TestPicker_CursorRowIsTheInverseOfSelectVisibleRow pins the accessor
+// v2's panels use to draw their own ▸ marker in the gutter column beside
+// the list: for every cursor position and window height, the physical row
+// it reports must be the row SelectVisibleRow maps back to that same
+// item. Deriving one from the other rather than duplicating scrollOffset
+// is what keeps the marker on the highlighted row once the list is taller
+// than the window and starts scrolling.
+func TestPicker_CursorRowIsTheInverseOfSelectVisibleRow(t *testing.T) {
+	items := make([]PickerItem, 9)
+	for i := range items {
+		items[i] = PickerItem{ID: string(rune('a' + i)), Label: string(rune('a' + i))}
+	}
+
+	for _, height := range []int{1, 2, 3, 5, 9, 20} {
+		for cursor := 0; cursor < len(items); cursor++ {
+			p := NewPicker(testPalette())
+			p.SetItems(1, items)
+			for i := 0; i < cursor; i++ {
+				p.CursorNext()
+			}
+			want, _ := p.Selected()
+
+			row := p.CursorRow(height)
+			if row < 0 || row >= height {
+				t.Errorf("CursorRow(%d) with the cursor on item %d = %d, want a row inside [0,%d)",
+					height, cursor, row, height)
+				continue
+			}
+			if !p.SelectVisibleRow(row, height) {
+				t.Errorf("SelectVisibleRow(CursorRow(%d)=%d, %d) = false for item %d", height, row, height, cursor)
+				continue
+			}
+			if got, _ := p.Selected(); got.ID != want.ID {
+				t.Errorf("CursorRow(%d) reported row %d for item %d (%q), but that row holds %q",
+					height, row, cursor, want.ID, got.ID)
+			}
+		}
+	}
+}
+
+// TestPicker_CursorRowWithoutASelection pins the degenerate answers: an
+// empty list has no cursor row at all, and a caller must be able to tell
+// that apart from row 0.
+func TestPicker_CursorRowWithoutASelection(t *testing.T) {
+	p := NewPicker(testPalette())
+	if got := p.CursorRow(4); got != -1 {
+		t.Errorf("CursorRow(4) on an empty Picker = %d, want -1", got)
+	}
+
+	p.SetItems(1, []PickerItem{{ID: "1", Label: "Alpha"}})
+	p.SetQuery("no such thing")
+	if got := p.CursorRow(4); got != -1 {
+		t.Errorf("CursorRow(4) with everything filtered out = %d, want -1", got)
+	}
+
+	p.SetQuery("")
+	if got := p.CursorRow(0); got != 0 {
+		t.Errorf("CursorRow(0) = %d, want 0 -- a degenerate height is floored at 1, matching View", got)
+	}
+}

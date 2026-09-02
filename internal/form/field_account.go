@@ -17,6 +17,7 @@ package form
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -75,6 +76,27 @@ const (
 	accountWindowLabel = "5h"
 )
 
+const (
+	// accountRowLabel is v2's row label (v2 spec §6).
+	accountRowLabel = "account"
+	// accountRowActive is what the unpinned row calls itself: not a
+	// profile name but the standing instruction "use whatever profile is
+	// live" (v2 spec §6's `active · max · 12%`).
+	accountRowActive = "active"
+	// accountRowSep separates the row's three parts.
+	accountRowSep = " · "
+	// accountRowAuthFailed is v2 spec §6's danger-colored state word,
+	// replacing v1's bare "!" marker: "an auth failure reads `beta · max ·
+	// sign in again` in the danger color".
+	accountRowAuthFailed = "sign in again"
+	// accountPanelMaxRows caps PanelRows -- a clauth profile set is small
+	// and the panel should not claim more of the form than it can fill.
+	accountPanelMaxRows = 8
+	// accountPanelEmpty speaks in the field's own terms when clauth
+	// reported no profiles at all (v2 spec §6.1's "nothing to choose").
+	accountPanelEmpty = "no clauth profiles"
+)
+
 // AccountField is the form's clauth account Section (spec §6 field 7): a
 // picker over clauth.Status.Profiles, "active" pinned as row 0 (spec:
 // "don't pin — use whatever profile is live"). Per the brief, this
@@ -109,6 +131,20 @@ type AccountField struct {
 
 	agentIsClaude bool
 	degraded      bool
+
+	// profiles and activeProfile are the parts of the most recent
+	// SetProfiles payload v2's Row needs and v1's View does not: the row
+	// reads the LIVE profile's tier and utilization when nothing is
+	// pinned, which needs both the profile records themselves and
+	// clauth's own answer to "which one is active".
+	//
+	// They are read only by the v2 methods at the bottom of this file.
+	// v1's View still renders from the picker's item labels alone, so
+	// recording them here cannot move a golden frame -- the constraint
+	// that kept this data discarded until the second half of the
+	// migration could carry it onto the row.
+	profiles      []clauth.Profile
+	activeProfile string
 
 	// verdictKey/verdictText are SetVerdict's own staleness guard, the
 	// same "clears the moment the underlying value changes" discipline
@@ -212,8 +248,15 @@ func (f *AccountField) SetAgentIsClaude(isClaude bool) { f.agentIsClaude = isCla
 // contract), the behavior spec §8's "clauth profiles ... form-open + on
 // account focus" polling needs (a re-poll must not silently bounce a
 // user's pin back to "active").
+//
+// status.ActiveProfile and status.Profiles are retained (see their own
+// doc comment on the struct) rather than discarded as v1 discarded them:
+// v2's unpinned row reads `active · max · 12%` off the LIVE profile, which
+// neither the picker's item set nor Pin() can answer.
 func (f *AccountField) SetProfiles(status clauth.Status) {
 	f.degraded = status.Degraded
+	f.profiles = append([]clauth.Profile(nil), status.Profiles...)
+	f.activeProfile = status.ActiveProfile
 	f.picker.SetItems(0, buildAccountItems(status.Profiles, status.Degraded))
 }
 
@@ -368,6 +411,158 @@ func (f *AccountField) Pin() string {
 		return ""
 	}
 	return sel.ID
+}
+
+// --- v2 row stack (form.go's rowSection) ---------------------------------
+//
+// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
+// section comment for why their arrival moves no golden frame.
+
+// Label is v2's row label (v2 spec §6's field table).
+func (f *AccountField) Label() string { return accountRowLabel }
+
+// Row is v2 spec §6's `personal · max · ok` when a profile is pinned and
+// `active · max · 12%` when none is, with the third part becoming a
+// COLORED STATE WORD where the profile needs attention: the utilization
+// in Warning at or past 100% ("gamma · team · 100%"), and "sign in again"
+// in Danger on an auth failure ("beta · max · sign in again"). That
+// colored word is what replaces v1's bare "!" marker.
+//
+// Inert (the selected agent kind is not claude) states why, dim. A
+// degraded clauth status (schema != 1) collapses the row to the name
+// alone -- spec §11's "degrade to name-only entries" applies here exactly
+// as it does to the picker's own rows, since tier, auth status and
+// windows are all fields the degraded parse marks unreliable.
+func (f *AccountField) Row(w int) string {
+	if w < 1 {
+		w = 1
+	}
+	text := lipgloss.NewStyle().Foreground(f.palette.Text)
+	if !f.agentIsClaude {
+		return fitLine(dimHint(f.palette).Render(keepHead(accountInertPlaceholder, w)), w)
+	}
+
+	name := accountRowActive
+	lookup := f.activeProfile
+	if pin := f.Pin(); pin != "" {
+		name, lookup = pin, pin
+	}
+
+	profile, known := f.profileByName(lookup)
+	if !known || f.degraded {
+		return fitLine(text.Render(keepHead(name, w)), w)
+	}
+
+	state, style := f.accountRowState(profile, name != accountRowActive)
+	suffix := accountRowSep + profile.Tier
+	if state != "" {
+		// A profile for which clauth reported neither an auth_status nor
+		// a 5h window has no third part at all; its separator goes with
+		// it rather than dangling off the tier.
+		suffix += accountRowSep
+	}
+	// The state word and the tier are short and fixed; the profile NAME is
+	// the part that can run long, so it is the part that gives up cells.
+	budget := w - lipgloss.Width(suffix) - lipgloss.Width(state)
+	if budget < 1 {
+		return fitLine(text.Render(keepHead(name+suffix+state, w)), w)
+	}
+	return fitLine(text.Render(keepHead(name, budget)+suffix)+style.Render(state), w)
+}
+
+// accountRowState picks the row's third part and the color it is drawn
+// in. An auth failure outranks a rate limit (you cannot use the profile
+// at all), a rate limit outranks the resting state, and the resting state
+// itself differs by row: a PINNED row names the auth status it was pinned
+// on ("ok"), an unpinned one names the live profile's 5h utilization,
+// which is the fact that would make you want to pin something else.
+func (f *AccountField) accountRowState(p clauth.Profile, pinned bool) (string, lipgloss.Style) {
+	if p.AuthStatus != "" && p.AuthStatus != "ok" {
+		return accountRowAuthFailed, lipgloss.NewStyle().Foreground(f.palette.Danger)
+	}
+	if pct, ok := accountUtilization(p); ok && pct >= 100 {
+		return accountPercent(pct), lipgloss.NewStyle().Foreground(f.palette.Warning)
+	}
+	plain := lipgloss.NewStyle().Foreground(f.palette.Text)
+	if pinned {
+		return p.AuthStatus, plain
+	}
+	if pct, ok := accountUtilization(p); ok {
+		return accountPercent(pct), plain
+	}
+	return p.AuthStatus, plain
+}
+
+// profileByName finds the retained clauth.Profile called name. An empty
+// name, or one clauth has never reported, is not known -- Row falls back
+// to printing the name alone rather than inventing a tier for it.
+func (f *AccountField) profileByName(name string) (clauth.Profile, bool) {
+	if name == "" {
+		return clauth.Profile{}, false
+	}
+	for _, p := range f.profiles {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return clauth.Profile{}, false
+}
+
+// accountUtilization returns the profile's 5h window utilization, or
+// (0, false) when clauth reported no such window (an empty Windows slice
+// is a real, observed shape -- see accountWindowHint).
+func accountUtilization(p clauth.Profile) (float64, bool) {
+	for _, w := range p.Windows {
+		if w.Label == accountWindowLabel {
+			return w.UtilizationPct, true
+		}
+	}
+	return 0, false
+}
+
+// accountPercent renders a utilization as v2 spec §6's row writes it:
+// a whole number and a percent sign, no window label.
+func accountPercent(pct float64) string {
+	return strconv.Itoa(int(math.Round(pct))) + "%"
+}
+
+// Panel is the profile picker plus one status line, which carries -- in
+// the same priority order v1's View already implements -- a live verdict,
+// then the degraded-status hint, then nothing.
+func (f *AccountField) Panel(w, h int) string {
+	if h < 1 {
+		h = 1
+	}
+	lines := make([]string, 0, h)
+	if h > 1 {
+		lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
+	}
+	lines = append(lines, panelText(f.panelStatus(), w))
+	return panelBlock(w, h, lines...)
+}
+
+// panelStatus renders the panel's last line: SetVerdict's own live
+// message (Danger) when it still applies to the current pin, the
+// degraded-status hint (dim) when clauth's schema was unrecognized, the
+// field's own empty-list sentence when there are no profiles at all, and
+// otherwise nothing.
+func (f *AccountField) panelStatus() string {
+	switch {
+	case f.verdictKey == f.Pin() && f.verdictText != "":
+		return lipgloss.NewStyle().Foreground(f.palette.Danger).Render(f.verdictText)
+	case f.degraded:
+		return dimHint(f.palette).Render(accountDegradedHint)
+	case len(f.profiles) == 0:
+		return dimHint(f.palette).Render(accountPanelEmpty)
+	default:
+		return ""
+	}
+}
+
+// PanelRows is the "active" row, one row per profile, and the status
+// line, capped at accountPanelMaxRows.
+func (f *AccountField) PanelRows() int {
+	return capRows(2+len(f.profiles), accountPanelMaxRows)
 }
 
 // Height reports AccountField's PREFERRED footprint in a popup winH rows

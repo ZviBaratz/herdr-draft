@@ -8,6 +8,29 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
+// v1Only pins a fixture form to compose's v1 path.
+//
+// Every frame in this file is a v1 frame: it renders ONE field plus the
+// internal Create section, and it exists to pin what that field's
+// View/Height/MinHeight draw. Since compose's gate is a capability check
+// over the whole ring (form.go's allRowSections), a form of one already
+// migrated field plus Create would satisfy it, flip to v2's row stack,
+// and move a frame that is not about v2 at all -- so these fixtures state
+// which path they mean instead of inferring it.
+//
+// It works by embedding the Section INTERFACE, whose method set is
+// exactly v1's: the wrapper promotes ID/Enabled/Focus/Blur/Update/View/
+// Height/MinHeight and nothing else, so Label/Row/Panel/PanelRows are not
+// reachable through it. The optional capability interfaces (titleValuer,
+// completer, newliner, footerHinter) are hidden too, which changes
+// nothing here: composeLegacy's footer is legacyFooterRungs, which
+// consults neither the focused zone nor footerHinter, and the other three
+// only ever affect key handling, which these fixtures never exercise.
+//
+// This whole helper, and the six v1 frames it serves, are deleted by the
+// change that flips the compose path and regenerates every frame.
+type v1Only struct{ Section }
+
 // buildDirBrowseForm puts DirField into focused path-browse mode over an
 // app-supplied candidate set, for the "dir-browse-80x24" golden frame the
 // task-17 brief names explicitly.
@@ -23,7 +46,7 @@ func buildDirBrowseForm(palette theme.Palette) Model {
 		d.Update(rn(r))
 	}
 
-	m := New(Setup{Palette: palette, Sections: []Section{d}})
+	m := New(Setup{Palette: palette, Sections: []Section{v1Only{d}}})
 	m.Init()
 	return m
 }
@@ -42,7 +65,7 @@ func buildTitleVerdictForm(palette theme.Palette) Model {
 	}
 	f.SetVerdict(f.Value(), "branch: zvi/fix-login-bug")
 
-	m := New(Setup{Palette: palette, Sections: []Section{f}})
+	m := New(Setup{Palette: palette, Sections: []Section{v1Only{f}}})
 	m.Init()
 	return m
 }
@@ -77,7 +100,7 @@ func buildPlacementInertForm(palette theme.Palette) Model {
 	f := NewPlacementField(palette)
 	f.SetWorktreeOn(true)
 
-	m := New(Setup{Palette: palette, Sections: []Section{f}})
+	m := New(Setup{Palette: palette, Sections: []Section{v1Only{f}}})
 	m.Init()
 	return m
 }
@@ -95,7 +118,7 @@ func buildIssuePickerForm(palette theme.Palette) Model {
 	f.Focus()
 	f.Update(key(tea.KeyDown, 0)) // none -> ENG-1
 
-	m := New(Setup{Palette: palette, Sections: []Section{f}})
+	m := New(Setup{Palette: palette, Sections: []Section{v1Only{f}}})
 	m.Init()
 	return m
 }
@@ -113,7 +136,7 @@ func buildAccountForm(palette theme.Palette) Model {
 	f.Focus()
 	f.Update(key(tea.KeyDown, 0)) // active -> alpha
 
-	m := New(Setup{Palette: palette, Sections: []Section{f}})
+	m := New(Setup{Palette: palette, Sections: []Section{v1Only{f}}})
 	m.Init()
 	return m
 }

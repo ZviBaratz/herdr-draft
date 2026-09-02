@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
@@ -39,6 +40,39 @@ var placementChips = []widgets.Chip{
 	{ID: "split-here", Label: "Split here"},
 }
 
+// placementRowLabel is v2's row label (v2 spec §6). It is also the widest
+// label in the stack, and therefore what rowlayout.go's labelColWidth is
+// sized against.
+const placementRowLabel = "placement"
+
+// placementRowValues is v2 spec §6's row vocabulary for this field: the
+// same three choices as placementChips, lowercase, as the row stack reads
+// them. It is a SEPARATE table rather than a lowercasing of Chip.Label
+// because v1's chip row still renders those labels capitalized in every
+// committed golden frame.
+var placementRowValues = map[string]string{
+	"new":        "new space",
+	"tab-here":   "tab here",
+	"split-here": "split here",
+}
+
+// placementFocusHints is the one-line explanation v2's panel prints under
+// the chips for whichever choice is selected (v2 spec §6: "placement
+// shows its chips with a per-choice explanation").
+//
+// It is deliberately NOT stored in widgets.Chip.FocusHint, which is where
+// it structurally belongs and where the v2 plan put it:
+// ChipRow.MarkedView already renders a selected chip's FocusHint on a
+// second line (chiprow.go:225-229), so populating it would change v1's
+// PlacementField.View output and move the placement-inert golden frame.
+// The second half of the migration -- the one that flips the compose path
+// and regenerates every frame -- is where that data moves onto the Chip.
+var placementFocusHints = map[string]string{
+	"new":        "opens a new workspace of its own",
+	"tab-here":   "opens a tab beside this pane's tab",
+	"split-here": "splits this pane in two",
+}
+
 // PlacementField is the form's Placement Section (spec §6 field 5): a
 // three-chip row selecting where a non-worktree creation attaches
 // relative to the invoking pane (internal/plan.Placement). It renders at a
@@ -49,15 +83,19 @@ var placementChips = []widgets.Chip{
 // Section.Height() must be hint-independent"), shrinking to the chip row
 // alone when compose's own budget allocation cannot afford the second.
 type PlacementField struct {
-	chips      *widgets.ChipRow
-	focused    bool
+	chips   *widgets.ChipRow
+	focused bool
+	// palette is retained for v2's Row/Panel, which style dim and inert
+	// text themselves; v1's View delegates every style to ChipRow and
+	// never reads it.
+	palette    theme.Palette
 	worktreeOn bool
 }
 
 // NewPlacementField returns a PlacementField with "New space" selected,
 // styled from palette.
 func NewPlacementField(palette theme.Palette) *PlacementField {
-	f := &PlacementField{chips: widgets.NewChipRow(palette)}
+	f := &PlacementField{chips: widgets.NewChipRow(palette), palette: palette}
 	f.chips.SetChips(placementChips)
 	return f
 }
@@ -178,6 +216,56 @@ func (f *PlacementField) Value() plan.Placement {
 		return plan.PlacementNewSpace
 	}
 }
+
+// --- v2 row stack (form.go's rowSection) ---------------------------------
+//
+// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
+// section comment for why their arrival moves no golden frame.
+
+// Label is v2's row label (v2 spec §6's field table).
+func (f *PlacementField) Label() string { return placementRowLabel }
+
+// Row names the selected placement in v2's own lowercase vocabulary, or
+// -- while a worktree is on, which makes the choice meaningless -- states
+// why in dim italic (v2 spec §6's Inert cell, the same sentence v1's
+// inert chip row already carries).
+func (f *PlacementField) Row(w int) string {
+	if w < 1 {
+		w = 1
+	}
+	if f.worktreeOn {
+		return fitLine(dimHint(f.palette).Render(keepHead(placementInertHint, w)), w)
+	}
+	value := placementRowValues[f.chips.Selected().ID]
+	return fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(keepHead(value, w)), w)
+}
+
+// Panel is the chip row plus, beneath it, the one-line explanation of
+// whichever chip is selected (v2 spec §6). While inert the chip row
+// renders its own placeholder and there is no choice to explain, so the
+// second line stays blank rather than repeating the sentence already on
+// the row.
+func (f *PlacementField) Panel(w, h int) string {
+	chips := f.chips.MarkedView(panelInner(w), "chip:"+f.ID()+":")
+	// MarkedView appends a second line for a chip carrying a FocusHint.
+	// None do (see placementFocusHints' own doc comment), but taking the
+	// first line keeps this correct if one ever does.
+	if idx := strings.IndexByte(chips, '\n'); idx >= 0 {
+		chips = chips[:idx]
+	}
+
+	hint := ""
+	if !f.worktreeOn {
+		hint = placementFocusHints[f.chips.Selected().ID]
+	}
+	return panelBlock(w, h,
+		panelMarked(chips, false, f.palette),
+		panelText(dimHint(f.palette).Render(hint), w),
+	)
+}
+
+// PanelRows is two: the chips and their explanation.
+func (f *PlacementField) PanelRows() int { return 2 }
 
 // Height reports PlacementField's preferred two-line footprint --
 // independent of winH, focus, selection, and inert state.

@@ -763,11 +763,12 @@ func strippedLines(m Model, w, h int) []string {
 }
 
 // TestCompose_GateSelectsThePath pins the bridge itself, which is the
-// whole reason not one golden frame moves with this change: the
-// row-stack path is reachable only when EVERY section implements
-// rowSection, the internal Create section implements it so that the
-// answer depends on the caller's own sections alone, and no real field
-// implements it yet -- so every production render still takes v1's path.
+// whole reason not one golden frame moves while the field migration is
+// under way: the row-stack path is reachable only when EVERY section
+// implements rowSection, the internal Create section implements it so
+// that the answer depends on the caller's own sections alone, and the
+// worktree trio has not migrated -- so the assembled production form
+// (which always carries all three) still takes v1's path.
 func TestCompose_GateSelectsThePath(t *testing.T) {
 	palette := theme.Default()
 
@@ -781,15 +782,31 @@ func TestCompose_GateSelectsThePath(t *testing.T) {
 		t.Errorf("a form with one v1 section took the row-stack path; the gate must be unanimous")
 	}
 
-	// The load-bearing claim of this change: the real fields have not
-	// migrated, so the assembled form still renders exactly as it did.
-	real := New(Setup{Palette: palette, Sections: []Section{
+	// Seven of the ten fields have migrated (Label/Row/Panel/PanelRows
+	// alongside their v1 View/Height/MinHeight), so a form of those alone
+	// is on the new path.
+	migrated := New(Setup{Palette: palette, Sections: []Section{
 		NewTitleField(palette),
 		NewPlacementField(palette),
 		NewAgentField(palette),
 	}})
-	if real.allRowSections() {
-		t.Errorf("a form of REAL fields took the row-stack path -- every golden frame would move")
+	if !migrated.allRowSections() {
+		t.Errorf("a form of MIGRATED fields is not on the row-stack path")
+	}
+
+	// The load-bearing claim while the migration is half done: the
+	// worktree trio has NOT migrated, and the assembled production form
+	// (internal/app always includes all three -- app.go's section slice)
+	// therefore still renders on v1's path, exactly as it did. Every
+	// committed assembled-* golden frame depends on this.
+	w := NewWorktreeField(palette)
+	assembled := New(Setup{Palette: palette, Sections: []Section{
+		NewTitleField(palette),
+		w.ChipsSection(), w.BranchSection(), w.BaseSection(),
+		NewPlacementField(palette),
+	}})
+	if assembled.allRowSections() {
+		t.Errorf("a form including the un-migrated worktree trio took the row-stack path -- every assembled golden frame would move")
 	}
 
 	var zero Model

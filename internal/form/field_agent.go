@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -59,6 +60,26 @@ const agentMoreChipID = "\x00more"
 
 const agentMoreLabel = "more…"
 
+const (
+	// agentRowLabel is v2's row label. v1 rendered this field with no
+	// label at all (its View is a bare chip row); v2 spec §6 gives every
+	// row one.
+	agentRowLabel = "agent"
+	// agentRowUnset is what the row reads before SetKinds has supplied
+	// anything -- v2 spec §6's table has no unset state for this field
+	// because production always populates it, but a zero-value field must
+	// still render something honest rather than an empty cell.
+	agentRowUnset = "—"
+	// agentPanelMaxRows caps PanelRows: the chip row plus a full kind
+	// list, which spec §6 sizes at the known 23 kinds, is more than a
+	// panel should claim from the rest of the form.
+	agentPanelMaxRows = 10
+	// agentPanelEmpty speaks in the field's own terms when there is
+	// nothing to pick (v2 spec §6.1's "nothing to choose", never a bare
+	// "no matches").
+	agentPanelEmpty = "no agent kinds configured"
+)
+
 // AgentField is the form's Agent Section (spec §6 field 6): a row of
 // favorite chips plus a "more…" chip that expands into a full-kind-list
 // picker. Value() always returns a real kind name, never the internal
@@ -76,6 +97,11 @@ const agentMoreLabel = "more…"
 type AgentField struct {
 	chips  *widgets.ChipRow
 	picker *widgets.Picker
+
+	// palette is retained for v2's Row/Panel, which style dim text
+	// themselves; v1's View delegates every style to ChipRow/Picker and
+	// never reads it.
+	palette theme.Palette
 
 	focused  bool
 	expanded bool
@@ -97,8 +123,9 @@ type AgentField struct {
 // SetKinds) styled from palette.
 func NewAgentField(palette theme.Palette) *AgentField {
 	return &AgentField{
-		chips:  widgets.NewChipRow(palette),
-		picker: widgets.NewPicker(palette),
+		chips:   widgets.NewChipRow(palette),
+		picker:  widgets.NewPicker(palette),
+		palette: palette,
 	}
 }
 
@@ -379,6 +406,67 @@ func (f *AgentField) fullListItems() []widgets.PickerItem {
 // validation is expected to catch, the same "verdicts never disable
 // submit" posture spec §6 field 3 documents for Title).
 func (f *AgentField) Value() string { return f.lastConfirmed }
+
+// --- v2 row stack (form.go's rowSection) ---------------------------------
+//
+// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
+// section comment for why their arrival moves no golden frame.
+//
+// v2 retires the expand/collapse mechanism (expanded, expand,
+// pickerAtTop, agentMoreChipID) -- Panel shows the favorites and the full
+// kind list at the same time, so there is nothing to expand INTO. Those
+// members survive here only because v1's View and Update still drive
+// them; deleting them is part of the same change that deletes v1's path.
+
+// Label is v2's row label (v2 spec §6's field table).
+func (f *AgentField) Label() string { return agentRowLabel }
+
+// Row is the selected kind, nothing else (v2 spec §6: `claude`). The
+// favorites and the full list both live in the panel, so the row does not
+// have to choose between showing the value and showing the choices.
+func (f *AgentField) Row(w int) string {
+	if w < 1 {
+		w = 1
+	}
+	if v := f.Value(); v != "" {
+		return fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(keepHead(v, w)), w)
+	}
+	return fitLine(dimText(f.palette).Render(agentRowUnset), w)
+}
+
+// Panel is the favorites chip row on line 0 and the full kind list
+// beneath it, BOTH always visible (v2 spec §6: "the more… list moves into
+// the panel"). ←→ drive the chips and ↑↓ the list, which is the whole
+// reason the two can share a panel without a second focus level.
+func (f *AgentField) Panel(w, h int) string {
+	if h < 1 {
+		h = 1
+	}
+	chips := f.chips.MarkedView(panelInner(w), "chip:"+f.ID()+":")
+	if idx := strings.IndexByte(chips, '\n'); idx >= 0 {
+		chips = chips[:idx]
+	}
+	lines := []string{panelMarked(chips, false, f.palette)}
+
+	if h > 1 {
+		if len(f.kinds) == 0 {
+			lines = append(lines, panelText(dimHint(f.palette).Render(agentPanelEmpty), w))
+		} else {
+			lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
+		}
+	}
+	return panelBlock(w, h, lines...)
+}
+
+// PanelRows is the chip row plus one line per known kind, capped at
+// agentPanelMaxRows. An empty kind set still asks for two, so the "no
+// agent kinds configured" line has somewhere to land.
+func (f *AgentField) PanelRows() int {
+	if len(f.kinds) == 0 {
+		return 2
+	}
+	return capRows(1+len(f.kinds), agentPanelMaxRows)
+}
 
 // Height reports AgentField's PREFERRED footprint in a popup winH rows
 // tall -- independent of focus, kind set, and expanded state (see the type
