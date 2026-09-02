@@ -230,6 +230,16 @@ func (p *Picker) SelectID(id string) bool {
 // nothing, so it cannot move a frame on its own.
 func (p *Picker) FilteredLen() int { return len(p.filtered) }
 
+// Len reports how many items this picker HOLDS, before any query -- the
+// denominator of v3 spec §8.5's filter readout (`3/24 issues`), whose
+// numerator is FilteredLen. The two differ only while a query is active,
+// which is exactly when the readout is shown, so a caller wanting "how
+// many rows are there to draw" still wants FilteredLen.
+//
+// Pure read, like FilteredLen: it renders nothing and changes nothing, so
+// it cannot move a frame on its own.
+func (p *Picker) Len() int { return len(p.items) }
+
 // CursorRow reports the PHYSICAL row (0-based) the cursor lands on inside
 // a View/MarkedView render height rows tall, or -1 when nothing is
 // selected or the cursor falls outside that window. It is the exact

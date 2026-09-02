@@ -318,6 +318,38 @@ func TestPicker_FilteredLen(t *testing.T) {
 	}
 }
 
+// TestPicker_Len pins the other half of v3 spec §8.5's `3/24` readout: Len
+// must keep reporting the whole item set while a query narrows
+// FilteredLen, and must not be affected by a query that matches nothing.
+func TestPicker_Len(t *testing.T) {
+	p := NewPicker(testPalette())
+	if got := p.Len(); got != 0 {
+		t.Errorf("Len() on a fresh Picker = %d, want 0", got)
+	}
+
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Label: "Alpha"},
+		{ID: "2", Label: "Beta"},
+		{ID: "3", Label: "Alphabet"},
+	})
+	if got := p.Len(); got != 3 {
+		t.Errorf("Len() = %d, want 3", got)
+	}
+
+	p.SetQuery("alpha")
+	if got, want := p.Len(), 3; got != want {
+		t.Errorf("Len() under a query = %d, want %d (the item set, not the filtered set)", got, want)
+	}
+
+	p.SetQuery("no-such-item")
+	if got := p.Len(); got != 3 {
+		t.Errorf("Len() with everything filtered out = %d, want 3", got)
+	}
+	if got := p.FilteredLen(); got != 0 {
+		t.Errorf("FilteredLen() with everything filtered out = %d, want 0", got)
+	}
+}
+
 // TestPicker_CursorRowIsTheInverseOfSelectVisibleRow pins the accessor
 // v2's panels use to draw their own ▸ marker in the gutter column beside
 // the list: for every cursor position and window height, the physical row
