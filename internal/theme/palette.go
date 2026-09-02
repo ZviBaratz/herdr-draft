@@ -464,16 +464,20 @@ const ActiveRowContrastFloor = 1.25
 // background REGION whose edge the eye has to catch -- but it is its own
 // constant so that moving one floor never silently moves the other.
 //
-// §8.7 specifies the fill as a flat palette.Surface, on the strength of
-// "catppuccin #1e1e2e/#313244 is clear". That pair is Surface against
-// PanelBG, and it is the wrong pair for three of the four inputs: an input
-// is only ever rendered while its field is focused, and a focused stack row
-// is filled ActiveRowBG end to end before the input's own fill is composited
-// into it. Measured against ActiveRowBG instead, Surface is 1.000:1 on
-// catppuccin -- the DEFAULT theme, where the two fields are the byte-
-// identical #313244 -- 1.002:1 on tokyo-night-day and 1.007:1 on
-// catppuccin-latte. A flat Surface fill is therefore literally zero pixels
-// of change on the theme most users see, which is v2's invisible-rule defect
+// §8.7 does not say what the fill IS; issue #27 does, and it says a flat
+// palette.Surface, checked as "catppuccin #1e1e2e/#313244 is clear". Both
+// halves of that check are wrong. #1e1e2e is catppuccin's Border, a value
+// no input is ever drawn on -- PanelBG is #181825 -- and for three of the
+// four inputs the ground is neither: an input is only ever rendered while
+// its field is focused, and a focused stack row is filled ActiveRowBG end
+// to end before the input's own fill is composited into it.
+//
+// Measured against the grounds that are actually used, Surface is 1.000:1
+// on catppuccin -- the DEFAULT theme, where Surface and ActiveRowBG are the
+// byte-identical #313244 -- 1.002:1 on tokyo-night-day and 1.007:1 on
+// catppuccin-latte, with six of seventeen builtins under 1.08:1. A flat
+// Surface fill would therefore have moved every golden frame and zero
+// pixels on the theme most users see, which is v2's invisible-rule defect
 // reproduced one field over. See Palette.InputFill.
 const InputFillContrastFloor = 1.25
 

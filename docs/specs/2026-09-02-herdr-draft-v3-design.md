@@ -647,11 +647,63 @@ One call: `lineInput.View` returns `paintLine(l.ti.View(), width, l.fill)`.
 `paintLine` already pads to exactly width, reasserts the background after
 every reset — `textinput.View` emits several — and **no-ops for
 `lipgloss.NoColor{}`**, so the `terminal` theme, whose `Surface` *is*
-`NoColor{}` (`palette.go:142`), correctly gets no fill.
+`NoColor{}` (`palette.go:203-205`), correctly gets no fill.
 
 `widgets/textarea.go` takes the same via `PaintLine`, but a four-row filled
 block is much heavier than a one-row one — make it a `SetFill` the field opts
 into, so the decision is visible at the call site.
+
+### 8.7a The fill is DERIVED, not `Surface`
+
+This paragraph was added after the section shipped, because the section did
+not say what `l.fill` is and issue #27, which did, was wrong. Recorded here
+rather than left in the code alone, since §8.7 as written would mislead the
+next reader into the exact defect v3 exists to fix.
+
+**An input is only ever rendered while its field is focused** — `TitleField.
+Row`, `IssueField.Row`, `DirField.Row` all gate on it — and a focused stack
+row is filled `ActiveRowBG` edge to edge before the input's own fill is
+composited into it (§5.4). So the pair that decides whether an input is
+visible at all is `Surface` against `ActiveRowBG`, not `Surface` against
+`PanelBG`. Measured across all seventeen RGB builtins:
+
+| theme | `Surface` vs `ActiveRowBG` |
+|---|---|
+| **catppuccin** (the default) | **1.000:1** — the two fields are the byte-identical `#313244` |
+| tokyo-night-day | 1.002:1 |
+| catppuccin-latte | 1.007:1 |
+| gruvbox-light / kanagawa-lotus / dracula | 1.07:1 |
+
+A flat `Surface` fill moves every golden frame and zero pixels on the theme
+most users see. That is §2's founding defect, one field over, and it is
+exactly what §3 rule 6 exists to forbid.
+
+So: `Palette.InputFill(ground) Color` returns `Surface` where `Surface`
+already clears `InputFillContrastFloor` (1.25, the same number and the same
+reasoning as `ActiveRowContrastFloor`) against that ground — herdr's own
+pairing, kept wherever it works — and otherwise the **ground** raised away
+by `ensureContrast`, the same walk §5.3 uses, so the package has one clamp
+and not two. Worst case after: **1.256:1** (rose-pine-dawn), nothing above
+1.556:1, every builtin clearing on both grounds.
+
+`ground` is a **required argument at every call site**, not a default,
+because getting it wrong is invisible by construction. Three inputs sit on
+`ActiveRowBG` (title, issue, dir); two sit on `PanelBG` (the worktree branch
+input and the prompt textarea, both drawn inside the detail panel).
+
+The raise mixes the ground toward `Text` rather than toward the panel, so
+the input is a slightly *raised chip* and not an inset well. A well would be
+`PanelBG`, and a `PanelBG` rectangle inside a focused row lines up
+vertically with the unfocused rows above and below it — the band would read
+as having a hole punched through it rather than as carrying an input.
+
+Two further prescriptions in issue #27 are **declined with evidence**, not
+followed: a `Background` on `Focused.Text` / `Blurred.Text` / `Placeholder`,
+and one on the textarea's `CursorLine` / `EndOfBuffer`. Those styles set a
+Foreground only, so they emit no background SGR to overwrite `PaintLine`'s
+reasserted fill, and the fill is already unbroken. That is pinned cell by
+cell over a real four-row block rather than argued — which is also where a
+future `bubbles` release that starts emitting one gets caught.
 
 ## 9. The resting panel
 
