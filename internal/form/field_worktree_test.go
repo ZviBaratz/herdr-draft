@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -602,6 +603,76 @@ func TestWorktreeField_RowVocabulary(t *testing.T) {
 	// ...and only then does the branch itself elide.
 	if got := rowText(w.Row(20)); !strings.HasSuffix(got, rowEllipsis) {
 		t.Errorf("Row at 20 cells = %q, want the branch elided last, marked with %q", got, rowEllipsis)
+	}
+}
+
+// TestWorktreeField_RowNeverNamesABranchThatDoesNotExist pins the state
+// the form OPENS in -- worktree on, title empty, so nothing has derived a
+// branch yet -- which shipped reading `on · branch name ← main`: the
+// branch editor's placeholder leaking into the row as though the branch
+// were literally called "branch name". Found by running the binary; no
+// frame and no assertion covered the opening state at all, and the
+// placeholder was reasoned about as unreachable ("the app layer always
+// derives a branch from the title") when in fact it is the FIRST thing
+// every user sees.
+//
+// The assertion is deliberately two-sided: the row must say the true
+// thing, and it must not contain the placeholder at any width, since the
+// original defect was a fallback firing inside an elision ladder.
+func TestWorktreeField_RowNeverNamesABranchThatDoesNotExist(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+
+	if got, want := rowText(w.Row(60)), "on · from main"; got != want {
+		t.Errorf("Row with no branch derived = %q, want %q", got, want)
+	}
+
+	// An explicit base is named the same way.
+	w.SetBase("release/1.4")
+	if got, want := rowText(w.Row(60)), "on · from release/1.4"; got != want {
+		t.Errorf("Row with an explicit base and no branch = %q, want %q", got, want)
+	}
+	w.SetBase("")
+
+	// A detached (or not yet resolved) HEAD has no better name for itself.
+	w.SetHeadBranch("")
+	if got, want := rowText(w.Row(60)), "on · from HEAD"; got != want {
+		t.Errorf("Row on a detached HEAD with no branch = %q, want %q", got, want)
+	}
+	w.SetHeadBranch("main")
+
+	// Down to a single cell: never the placeholder, never a dangling
+	// preposition, and always exactly one line of exactly the width asked
+	// for (Section.Row's own contract).
+	for width := 1; width <= 60; width++ {
+		row := w.Row(width)
+		if strings.Contains(row, "\n") {
+			t.Fatalf("Row(%d) spans more than one line: %q", width, row)
+		}
+		if got := lipgloss.Width(row); got != width {
+			t.Errorf("Row(%d) is %d cells wide, want %d: %q", width, got, width, rowText(row))
+		}
+		text := rowText(row)
+		if strings.Contains(text, worktreeBranchUnset) {
+			t.Errorf("Row(%d) = %q, want the branch editor's placeholder %q to stay out of the row",
+				width, text, worktreeBranchUnset)
+		}
+		if strings.HasSuffix(text, strings.TrimSpace(worktreeFromPrefix)) {
+			t.Errorf("Row(%d) = %q, want no dangling %q with nothing after it",
+				width, text, worktreeFromPrefix)
+		}
+	}
+
+	// Narrower than `on · from ` plus a usable base, the whole clause goes
+	// rather than being stubbed -- leaving the one word that is still true.
+	if got, want := rowText(w.Row(13)), worktreeOnPrefix; got != want {
+		t.Errorf("Row(13) = %q, want %q -- the base clause dropped whole", got, want)
+	}
+	if got, want := rowText(w.Row(14)), "on · from main"; got != want {
+		t.Errorf("Row(14) = %q, want %q -- the last width the base still fits", got, want)
 	}
 }
 

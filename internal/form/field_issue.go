@@ -67,6 +67,16 @@ const (
 	// returned nothing (v2 spec §6.1's "nothing to choose", never a bare
 	// "no matches").
 	issuePanelEmpty = "no assigned issues"
+	// issuePanelNoMatch is the OTHER empty list: Linear did return
+	// issues, and the filter the user typed excludes all of them (and the
+	// `none` row with them -- it is a picker item like any other, so a
+	// query matching nothing empties the list completely). Saying "no
+	// assigned issues" there tells the user their Linear queue is empty
+	// when what is actually empty is their search, and the fix for the
+	// two is different: one is "go get assigned some work", the other is
+	// "delete a character". Worded to match field_dir.go's own
+	// dirPanelEmpty, which is the same state on the sibling field.
+	issuePanelNoMatch = "no matching issues"
 )
 
 // IssueField is the form's Linear issue Section (spec §6 field 1): a
@@ -383,8 +393,12 @@ func (f *IssueField) Panel(w, h int) string {
 	return panelBlock(w, h, lines...)
 }
 
-// panelStatus renders the panel's last line: the unavailable reason, the
-// field's own empty-list sentence, or nothing.
+// panelStatus renders the panel's last line: the unavailable reason, one
+// of the field's two distinct empty-list sentences, or nothing.
+//
+// The empty-Linear check comes FIRST because it is the more fundamental
+// fact: with no assigned issues at all, a filter that also matches
+// nothing is not what the user needs told about.
 //
 // v1 also had a Hint(string) setter feeding this line. It was deleted
 // with the v1 path: nothing in internal/app ever called it, so the row it
@@ -394,8 +408,10 @@ func (f *IssueField) panelStatus() string {
 	switch {
 	case f.unavailable != "":
 		return f.unavailable
-	case f.picker.FilteredLen() == 0 || len(f.issues) == 0:
+	case len(f.issues) == 0:
 		return issuePanelEmpty
+	case f.picker.FilteredLen() == 0:
+		return issuePanelNoMatch
 	default:
 		return ""
 	}

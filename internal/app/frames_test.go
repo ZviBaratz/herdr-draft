@@ -293,6 +293,35 @@ func TestAssembledForm_Frames(t *testing.T) {
 	}
 }
 
+// TestAssembledForm_OpeningState pins the frame every user sees FIRST:
+// the fully configured form the instant it opens, before a single
+// keystroke -- no title, no prompt, focus on the title row (v2 spec §8),
+// the worktree on and its base list resolved.
+//
+// Nothing covered this. Every other frame in this file types a title and
+// a prompt first, internal/form's own fixtures each assemble ONE field,
+// and `empty-80x24` over there is an issue-picker fixture with two
+// sections in it. So the one state guaranteed to be rendered on every
+// single popup open was the one state with no frame -- which is how the
+// worktree row shipped reading `on · branch name ← main`, the branch
+// editor's placeholder standing in for a branch nobody had named yet.
+// Found by running the binary, not by any test.
+//
+// The worktree toggle, head branch and base list are set by hand for the
+// same reason the frames below set them: they arrive from the app layer's
+// debounced async checks, which no test ever fires. What is deliberately
+// NOT set is anything the user would have had to type.
+func TestAssembledForm_OpeningState(t *testing.T) {
+	m := newAssembledModel(t, true)
+	m.worktree.SetOn(true)
+	m.worktree.SetHeadBranch("main")
+	m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
+	m.reactToChanges()
+	m.form.FocusByID("title")
+
+	assertAppFrame(t, "assembled-opening-80x24", m, 80, 24)
+}
+
 // TestAssembledForm_FullAt64x19 pins the size this whole rewrite is
 // justified by and which nothing previously covered: the interior of
 // herdr's own 80%-height popup on an 80x24 terminal.

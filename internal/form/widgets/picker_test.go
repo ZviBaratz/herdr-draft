@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
@@ -153,10 +154,18 @@ func TestPicker_StaleVersionIgnored(t *testing.T) {
 	}
 }
 
-// TestPicker_EmptyResultPlaceholder covers the brief's empty-result state:
-// when the query matches nothing, Selected reports no selection and View
-// renders a placeholder row instead of leaving the list visually blank.
-func TestPicker_EmptyResultPlaceholder(t *testing.T) {
+// TestPicker_EmptyResultSaysNothing covers the empty-result state: when
+// the query matches nothing, Selected reports no selection and View
+// renders its full row count BLANK -- no text of its own.
+//
+// This inverts the assertion it replaces, which required a bare
+// "no matches" row. v2 spec §6.1 forbids exactly that string: an empty
+// list must speak "in the field's own terms (`no branches yet`,
+// `no assigned issues`), never a bare `no matches`". Since every field
+// that can empty this list already carries such a line one row below it,
+// the widget's own sentence was both wrong and second -- see the note
+// above View.
+func TestPicker_EmptyResultSaysNothing(t *testing.T) {
 	p := NewPicker(testPalette())
 	p.SetItems(1, []PickerItem{{ID: "1", Label: "Alpha"}})
 	p.SetQuery("no-such-item")
@@ -166,11 +175,16 @@ func TestPicker_EmptyResultPlaceholder(t *testing.T) {
 	}
 
 	view := p.View(24, 3)
-	if !strings.Contains(view, pickerEmptyPlaceholder) {
-		t.Errorf("View(24,3) = %q, want it to contain the empty-result placeholder %q", view, pickerEmptyPlaceholder)
+	if got := strings.TrimSpace(ansi.Strip(view)); got != "" {
+		t.Errorf("View(24,3) = %q, want every row blank -- the FIELD owns the empty-list sentence", got)
 	}
 	if got := strings.Count(view, "\n"); got != 2 {
 		t.Errorf("View(24,3) has %d newlines, want 2 (a 3-row view)", got)
+	}
+	for i, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got != 24 {
+			t.Errorf("View(24,3) line %d is %d cells wide, want 24", i, got)
+		}
 	}
 }
 

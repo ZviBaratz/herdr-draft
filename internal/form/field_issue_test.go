@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -196,6 +197,57 @@ func TestIssueField_NoPanicBeforeSetIssues(t *testing.T) {
 	f.Update(key(tea.KeyDown, 0))
 	f.Update(key(tea.KeyUp, 0))
 	_ = f.Selected()
+}
+
+// TestIssueField_EmptyLinearAndEmptyFilterReadDifferently pins two states
+// that used to share one sentence. "Linear has no issues assigned to you"
+// and "the text you typed excludes every issue you have" are different
+// facts with different fixes, and the panel said `no assigned issues` to
+// both -- telling a user with a full queue and a typo that their queue was
+// empty.
+//
+// It also pins the other half of the same defect: the list ABOVE the
+// status line stays blank. widgets.Picker used to write its own bare
+// "no matches" into row 0, so a filtered-out list printed two sentences
+// for one fact, the wrong one first, against v2 spec §6.1's "never a bare
+// `no matches`".
+func TestIssueField_EmptyLinearAndEmptyFilterReadDifferently(t *testing.T) {
+	palette := theme.Default()
+
+	empty := NewIssueField(palette)
+	empty.SetIssues(1, nil)
+	if got := panelLineAt(empty.Panel(60, 4), 3); got != issuePanelEmpty {
+		t.Errorf("panel status with no issues at all = %q, want %q", got, issuePanelEmpty)
+	}
+
+	f := NewIssueField(palette)
+	f.SetIssues(1, sampleIssues())
+	f.Focus()
+	if got := panelLineAt(f.Panel(60, 4), 3); got != "" {
+		t.Errorf("panel status with issues on offer = %q, want no status line at all", got)
+	}
+
+	for _, r := range "zzzz" {
+		f.Update(rn(r))
+	}
+	panel := f.Panel(60, 4)
+	if got := panelLineAt(panel, 3); got != issuePanelNoMatch {
+		t.Errorf("panel status with a filter matching nothing = %q, want %q", got, issuePanelNoMatch)
+	}
+	if got := ansi.Strip(panel); strings.Contains(got, "no matches") {
+		t.Errorf("panel = %q, want no bare \"no matches\" row (v2 spec §6.1)", got)
+	}
+	for i := 0; i < 3; i++ {
+		if got := panelLineAt(panel, i); got != "" {
+			t.Errorf("panel list row %d = %q, want it blank -- the status line owns the sentence", i, got)
+		}
+	}
+
+	// Both at once: no issues AND a filter matching nothing. The empty
+	// queue is the more fundamental fact and wins.
+	if got := panelLineAt(empty.Panel(60, 4), 3); got != issuePanelEmpty {
+		t.Errorf("panel status with neither issues nor matches = %q, want %q", got, issuePanelEmpty)
+	}
 }
 
 // TestIssueField_UnavailableIsInertAndCarriesTheReason pins spec §13's

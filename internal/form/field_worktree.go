@@ -70,9 +70,20 @@ const (
 	// worktreeBaseArrow introduces the base ref it will branch from.
 	worktreeRowSep    = " · "
 	worktreeBaseArrow = " ← "
-	// worktreeBranchUnset is the stand-in for a worktree that is on with
-	// no branch name resolved yet -- the app layer seeds one from the
-	// title, so this is a transient state rather than a resting one.
+	// worktreeFromPrefix is what the row says INSTEAD of a branch name
+	// while no branch has been derived yet: `on · from main`. See
+	// rowFromBase.
+	worktreeFromPrefix = "from "
+	// worktreeBranchUnset is the branch editor's PLACEHOLDER -- the
+	// lineInput's own prompt, and the dim stand-in the branch part shows
+	// while the cursor rests elsewhere. It is deliberately NOT available
+	// to Row: a placeholder is an instruction to the person typing, and
+	// the row states a value. Leaking it there rendered
+	// `on · branch name ← main` -- a row naming a branch called "branch
+	// name" -- in the state the form OPENS in, every single time, since an
+	// empty title has nothing for the app layer to derive a branch from.
+	// Found by running the binary; see rowFromBase for what the row says
+	// instead.
 	worktreeBranchUnset = "branch name"
 
 	// worktreeMinBaseCells is the fewest cells the row will spend on an
@@ -608,7 +619,8 @@ func (w *WorktreeField) Label() string { return worktreeRowLabel }
 
 // Row states the consequence, not the settings (v2 spec §3 rule 1):
 // `on · zvi/fix-login-redirect-loop ← main` when a worktree will be
-// created, a dim `off` when one will not, and a dim
+// created, `on · from main` while the branch is still unnamed (see
+// rowFromBase), a dim `off` when one will not be created, and a dim
 // `not a git repository` when one cannot be.
 //
 // The elision order runs from least to most informative: the BASE gives
@@ -629,13 +641,14 @@ func (w *WorktreeField) Row(width int) string {
 		return fitLine(dim.Render(keepHead(worktreeOffPlaceholder, width)), width)
 	}
 
+	baseText := w.rowBase()
+	head := worktreeOnPrefix + worktreeRowSep
+
 	branchText := w.Branch()
 	if branchText == "" {
-		branchText = worktreeBranchUnset
+		return fitLine(w.rowFromBase(head, baseText, width), width)
 	}
-	baseText := w.rowBase()
 
-	head := worktreeOnPrefix + worktreeRowSep
 	fixed := lipgloss.Width(head) + lipgloss.Width(worktreeBaseArrow)
 
 	// Stage 1: the base gives up cells.
@@ -649,6 +662,36 @@ func (w *WorktreeField) Row(width int) string {
 	}
 	// Stage 3: elide the branch.
 	return fitLine(w.rowSpans(head, keepHead(branchText, width-lipgloss.Width(head)), ""), width)
+}
+
+// rowFromBase is the row for a worktree that is on with no branch name
+// derived yet: `on · from main`. That is not an edge case -- it is the
+// state the form OPENS in, every single time, because the branch is
+// derived from the title (internal/app) and the title starts empty.
+//
+// The row previously borrowed the branch editor's placeholder here and
+// rendered `on · branch name ← main`, which reads as a branch literally
+// called "branch name". Naming a branch that does not exist is the one
+// thing this row must not do, so the unnamed state changes SHAPE instead
+// of filling in a name: the `← ` arrow is a relation between a branch and
+// the ref it forks from, and with nothing on its left there is no
+// relation to draw. `from <base>` states the same consequence with the
+// half that is actually decided -- "a worktree will be made from main" --
+// and leaves the branch to the title panel, which already says
+// `branch will be <slug>` the moment a title exists.
+//
+// The elision ladder collapses with the branch gone: the base is the only
+// thing left to spend cells on, and below worktreeMinBaseCells of it the
+// clause is dropped whole rather than stubbed -- leaving a bare `on`,
+// which is still true and is the same word the chip carries.
+func (w *WorktreeField) rowFromBase(head, baseText string, width int) string {
+	dim := dimText(w.palette)
+	room := width - lipgloss.Width(head) - lipgloss.Width(worktreeFromPrefix)
+	if room >= lipgloss.Width(baseText) || room >= worktreeMinBaseCells {
+		ref := lipgloss.NewStyle().Foreground(w.palette.Branch)
+		return dim.Render(head+worktreeFromPrefix) + ref.Render(keepHead(baseText, room))
+	}
+	return dim.Render(keepHead(worktreeOnPrefix, width))
 }
 
 // rowSpans paints the row's three spans: `on` and the separators dim, the

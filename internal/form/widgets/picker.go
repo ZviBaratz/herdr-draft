@@ -339,9 +339,22 @@ func clampCursor(cursor, itemCount int) int {
 	return cursor
 }
 
-// pickerEmptyPlaceholder is the row View renders in place of the list when
-// the current query matches nothing.
-const pickerEmptyPlaceholder = "no matches"
+// NOTE: an empty list renders as blank rows and says NOTHING of its own.
+// This widget used to write a bare "no matches" into row 0, which v2 spec
+// §6.1 forbids outright: an empty panel list must speak "in the field's
+// own terms (`no branches yet`, `no assigned issues`), never a bare
+// `no matches`". That row was believed unreachable ("every picker pins a
+// sentinel row 0") -- two of the five callers pin none. DirField filters
+// its own candidate pool and IssueField filters even its `none` row, so
+// either can empty the list, and both already carry a status line of
+// their own directly beneath it: the panel printed "no matches" and
+// "no matching directories" one above the other, two sentences for one
+// fact, the wrong one first.
+//
+// The placeholder is deleted rather than made configurable, because a
+// widget with an empty-text hook is a widget someone eventually leaves at
+// its default. With no default to leave, the field's own line is the only
+// thing that can speak -- which is where §6.1 puts the sentence anyway.
 
 // View renders the picker into exactly height rows (floored at 1), each
 // width cells wide: space-padded when short, clipped when long. width <= 0
@@ -357,10 +370,10 @@ func (p *Picker) View(width, height int) string {
 }
 
 // MarkedView renders exactly like View, additionally wrapping each row
-// that corresponds to a real filtered item (not a blank trailing row, and
-// not the empty-list placeholder row) in a bubblezone/v2 zone marker
-// ID'd zonePrefix+strconv.Itoa(row) via this package's shared Zones
-// manager (zones.go) -- task 21's "row:<sectionID>:<n>" scheme, n being
+// that corresponds to a real filtered item (not a blank trailing row) in
+// a bubblezone/v2 zone marker ID'd zonePrefix+strconv.Itoa(row) via this
+// package's shared Zones manager (zones.go) -- task 21's
+// "row:<sectionID>:<n>" scheme, n being
 // the row's PHYSICAL position (0-based, within this call's own height),
 // NOT the item's absolute filtered index or ID, so a caller resolving a
 // click back to an item must go through SelectAt/SelectVisibleRow above,
@@ -377,15 +390,6 @@ func (p *Picker) MarkedView(width, height int, zonePrefix string) string {
 	rowStyle := widthStyle(width)
 
 	lines := make([]string, height)
-
-	if len(p.filtered) == 0 {
-		placeholderStyle := lipgloss.NewStyle().Foreground(p.palette.DimText).Italic(true)
-		lines[0] = rowStyle.Render(placeholderStyle.Render(pickerEmptyPlaceholder))
-		for i := 1; i < height; i++ {
-			lines[i] = rowStyle.Render("")
-		}
-		return strings.Join(lines, "\n")
-	}
 
 	offset := scrollOffset(p.cursor, len(p.filtered), height)
 	for row := 0; row < height; row++ {
