@@ -474,6 +474,7 @@ type PickerItem struct {
     Marker    string       // "!" — a FIXED 2-cell column, before cell 0
     Current   bool         // the field's current VALUE, not the cursor
     Match     PickerMatch  // {Col, Start, End}; Col < 0 == nothing to paint
+                           // End is HALF-OPEN -- see below
 }
 
 type PickerColumn struct{ Min, Max int; Flex bool; Tone Tone; Elide ElideMode }
@@ -523,8 +524,32 @@ search field.
 `←`/`→` move the chip row and set `lastConfirmed` (`:161-166`, `:218-222`)
 without touching the picker cursor, which is only re-seeded by `SetKind`
 (`:195-206`) — so today the agent panel highlights kind X while the row above
-reads kind Y. `Current: k == f.lastConfirmed` repairs it. In the other four
-pickers the cursor *is* the value; they set it anyway, cheaply and honestly.
+reads kind Y. `Current: k == f.lastConfirmed` repairs it.
+
+**Only `AgentField` sets it.** An earlier draft said the other four pickers
+"set it anyway, cheaply and honestly". That is wrong on every word but the
+last. In those four the value is *derived from* the cursor, so there is no
+stored value to compare against: setting `Current` means either a flag that
+goes stale on every `↑↓` or re-feeding the whole item list per keystroke — to
+draw a `✓` immediately beside a `▸` that already says the same thing, and to
+force a two-cell mark column onto three pickers (dir, worktree-base, issue)
+that otherwise need none. `AgentField` is precisely where cursor and value
+genuinely diverge, which is why it is the one with a bug to fix.
+
+`AccountField` will want `Current` once §10.3 makes `Pin()` a deliberate
+commit rather than a cursor position. Today `Pin()` *is* the cursor, so it
+would be the same redundancy.
+
+The mark column is therefore reserved only when the filtered set actually
+uses it.
+
+**One copy relocation columnisation forced.** The `active` sentinel's hint
+(`use whatever profile is live`) is prose, and prose does not survive being a
+cell: it sets the *plan* column's width for every profile row beneath it, and
+moving it to the badge strands the explanation twenty-eight cells from its
+label. It moves to the panel's status line — which `AccountField` already
+reserves and which is empty in exactly that state, and which is the same place
+§10.2 puts the `●` legend.
 
 `✓` (current) and `!` (marker) share one two-cell mark column in priority
 order: marker wins. A profile that is both current and auth-failed must shout
@@ -552,6 +577,14 @@ Render a real example and read the bytes, as this codebase already does at
 `sizes.go:110-138` and `picker.go:457-468`, and pin it with a test.
 
 ### 8.4 Match highlighting
+
+> **Two span types, two conventions. Read this before writing the renderer.**
+> `widgets.PickerMatch.End` is **half-open** `[Start, End)`; `fuzzySpan.End`
+> is **inclusive**. That is deliberate, not an oversight: `PickerMatch`'s zero
+> value has to be inert, because all five fields leave `Match` unset on most
+> items, and an inclusive `{0,0,0}` would paint the first character of column
+> zero in four fields at once. Inclusive coordinates have no inert zero.
+> **A caller bridging the two adds one to `End` at the boundary.**
 
 `fuzzyMatch` (`fuzzy.go:41`) already returns `(ok, start, end)`; `fuzzyRank`
 (`:150-154`) discards both. Add `fuzzyRankSpans` returning
