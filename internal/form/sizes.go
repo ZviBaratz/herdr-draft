@@ -1,8 +1,10 @@
 // Derived from atrium (github.com/ZviBaratz/atrium) ui/overlay/textInput_size.go
 // and ui/overlay/textInput_render.go, © Zvi Baratz, relicensed by the author.
 //
-// What survives of that port is paintLine, plus two of this form's own
-// layout constants. Everything else is gone:
+// What survives of that port is paintLine -- whose body has since moved
+// to widgets.PaintLine, leaving the name here as a delegator, see its own
+// doc comment -- plus two of this form's own layout constants. Everything
+// else is gone:
 //
 //   - Atrium's shared height BUDGET -- reproduced here as allocateHeights
 //     over the opaque Section interface -- went with v1's variable-height
@@ -70,10 +72,8 @@ package form
 
 import (
 	"image/color"
-	"strings"
 
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 )
 
 // Layout constants for the popup's own fixed chrome: the left gutter and
@@ -148,14 +148,13 @@ const (
 // than literally painting black (NoColor{}.RGBA() reports opaque black)
 // over a user who picked the theme specifically to inherit their
 // terminal's own background.
+//
+// The body moved to widgets.PaintLine for v3 spec §8.3: the picker hits
+// the identical hazard painting its own selected-row fill around an accent
+// match span, and widgets cannot import form (the dependency runs the
+// other way). Everything above is the reasoning for both; this is now the
+// form-side name for it, kept because the form's own call sites and the
+// citations pointing here all read paintLine.
 func paintLine(line string, width int, bg color.Color) string {
-	if width < 1 {
-		width = 1
-	}
-	if _, inherit := bg.(lipgloss.NoColor); inherit || bg == nil {
-		return lipgloss.NewStyle().Width(width).MaxWidth(width).Inline(true).Render(line)
-	}
-	bgOn := ansi.Style{}.BackgroundColor(bg).String()
-	painted := bgOn + strings.ReplaceAll(line, ansi.ResetStyle, ansi.ResetStyle+bgOn)
-	return lipgloss.NewStyle().Background(bg).Width(width).MaxWidth(width).Inline(true).Render(painted)
+	return widgets.PaintLine(line, width, bg)
 }
