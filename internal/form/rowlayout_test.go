@@ -2,28 +2,43 @@ package form
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 )
 
 // --- layoutFrame: the worked table -----------------------------------------
 
-// TestLayoutFrame_SpecNineLadder pins v2 spec §9's degradation ladder
-// against the worked numbers in the issue and in rowlayout.go's own doc
-// comment, n = 8 (the assembled form's eight stack rows once Create is
-// on the footer). These are the values a reviewer can check by eye
-// against the spec, so they are asserted literally rather than derived.
+// TestLayoutFrame_SpecNineLadder pins v3 spec §7.3's worked table --
+// v2 spec §9's ladder with §7.1's three new rungs on top -- at n = 8 (the
+// assembled form's eight stack rows once Create is on the footer). These
+// are the values a reviewer can check by eye against the spec, so they
+// are asserted literally rather than derived.
+//
+// Every row from h = 15 down is the v2 table UNCHANGED, character for
+// character. That is the property that makes this change cheap to review:
+// it lives entirely at h >= 16, so a small-height fixture that moves is a
+// bug, not a consequence.
 func TestLayoutFrame_SpecNineLadder(t *testing.T) {
 	const n = 8
 	cases := []struct {
 		h    int
 		want frame
 	}{
-		{40, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 28, Footer: true}},
-		{24, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 12, Footer: true}},
-		// The shipped pane is 30 rows and the smallest clamped one 18
-		// (v3 spec §6.1); 19 is neither, and is kept only as a rung.
-		{19, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 7, Footer: true}},
-		// The panel reaches its floor; the chrome is still whole.
+		{40, frame{PadTop: 6, Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 15, Rule3: true, Footer: true, PadBottom: 6}},
+		// The shipped pane (v3 spec §6.1), and the two rungs under it:
+		// h = 29 is where the bottom pad runs out, h = 28 where the top
+		// one does and the cap is exactly met.
+		{30, frame{PadTop: 1, Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 15, Rule3: true, Footer: true, PadBottom: 1}},
+		{29, frame{PadTop: 1, Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 15, Rule3: true, Footer: true}},
+		{28, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 15, Rule3: true, Footer: true}},
+		// The popup clamped to an 80x24 terminal: below the cap, so all
+		// of the slack is still panel.
+		{22, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 9, Rule3: true, Footer: true}},
+		{19, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 6, Rule3: true, Footer: true}},
+		// The frame is exactly whole: every component present, the panel
+		// on its floor.
+		{16, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 3, Rule3: true, Footer: true}},
+		// --- from here down, identical to v2 ---
 		{15, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 3, Footer: true}},
 		{14, frame{Header: true, Rule1: true, Rows: 8, Region: 3, Footer: true}},
 		{13, frame{Rule1: true, Rows: 8, Region: 3, Footer: true}},
@@ -50,6 +65,29 @@ func TestLayoutFrame_SpecNineLadder(t *testing.T) {
 	}
 }
 
+// TestLayoutFrame_UnchangedBelowTheCap is the review shortcut stated as a
+// test rather than a claim: at the shipped stack size, layoutFrame at
+// every height v2 could degrade through is EXACTLY the v2 frame -- no
+// rule 3, no pads, the same region.
+//
+// The bound is n-specific and deliberately so. The three new rungs cost
+// one row of chrome plus whatever the cap withholds, and a shorter stack
+// reaches them sooner: n = 0 first differs at h = 8. What the shipped
+// form promises is that nothing at h <= 15 moved, and that is what is
+// asserted.
+func TestLayoutFrame_UnchangedBelowTheCap(t *testing.T) {
+	const n = 8
+	for h := 0; h <= 15; h++ {
+		f := layoutFrame(h, n)
+		if f.Rule3 || f.PadTop != 0 || f.PadBottom != 0 {
+			t.Errorf("layoutFrame(%d, %d) = %+v: h <= 15 must be the v2 frame, with no rule 3 and no pads", h, n, f)
+		}
+		if f.Region > panelFloor {
+			t.Errorf("layoutFrame(%d, %d).Region = %d: v2 never grew the region past its floor this low", h, n, f.Region)
+		}
+	}
+}
+
 // --- layoutFrame: the invariants -------------------------------------------
 
 // layoutRange is the (h, n) grid every invariant below is checked over:
@@ -64,8 +102,9 @@ func layoutRange(fn func(h, n int, f frame)) {
 }
 
 // TestLayoutFrame_ComponentsSumToTheHeight is the invariant everything
-// else rests on: the six components account for every row of the window,
-// with nothing left over and nothing double-spent. It is what lets
+// else rests on: the components -- the two pads now among them -- account
+// for every row of the window, with nothing left over and nothing
+// double-spent. It is what lets
 // composeRows emit its lines with no degradation ladder behind it -- if
 // this held only approximately, the footer would drift off the bottom of
 // short windows.
@@ -139,25 +178,72 @@ func TestLayoutFrame_PanelFloor(t *testing.T) {
 	})
 }
 
-// TestLayoutFrame_SlackLandsInTheRegion pins the property that makes
-// "rows never move" possible at all: every row a window has spare goes
-// to the panel and to nothing above it. Chrome is a fixed cost, the
-// stack is a fixed cost, and the region absorbs the difference -- so the
-// y of every line above the panel is a function of (h, n) alone, never
-// of which field holds focus or of how much that field has to show.
-func TestLayoutFrame_SlackLandsInTheRegion(t *testing.T) {
+// frameChromeLines is the fixed cost of a whole frame: the header, three
+// rules and the footer. It is the number the tests below add to n and
+// panelFloor to find the height at which every component is afforded.
+const frameChromeLines = 5
+
+// TestLayoutFrame_SlackLandsInTheRegionThenTheMargin pins the property
+// that makes "rows never move" possible at all, in its v3 form. Chrome is
+// a fixed cost and the stack is a fixed cost; the region absorbs the
+// difference up to panelCapRows, and beyond that the two pads do. Either
+// way the split is a function of (h, n) alone -- never of which field
+// holds focus or of how much that field has to show -- which is what
+// keeps the row positions fixed as focus travels.
+//
+// This is the v2 test inverted where it has to be: `Region == h-(n+4)`
+// asserted that ALL slack was panel, which is exactly what the cap
+// reverses. The (h, n) determinism it was really protecting is asserted
+// unchanged.
+func TestLayoutFrame_SlackLandsInTheRegionThenTheMargin(t *testing.T) {
 	for n := 0; n <= 12; n++ {
-		full := layoutFrame(n+panelFloor+4, n) // every component afforded
-		for h := n + panelFloor + 4; h <= 80; h++ {
+		whole := n + panelFloor + frameChromeLines // every component afforded
+		full := layoutFrame(whole, n)
+		for h := whole; h <= 80; h++ {
 			f := layoutFrame(h, n)
-			if f.Header != full.Header || f.Rule1 != full.Rule1 || f.Rule2 != full.Rule2 || f.Rows != full.Rows {
-				t.Fatalf("layoutFrame(%d, %d) = %+v: everything above the panel must match %+v once the frame is whole", h, n, f, full)
+			if f.Header != full.Header || f.Rule1 != full.Rule1 || f.Rule2 != full.Rule2 ||
+				f.Rule3 != full.Rule3 || f.Rows != full.Rows {
+				t.Fatalf("layoutFrame(%d, %d) = %+v: every fixed component must match %+v once the frame is whole", h, n, f, full)
 			}
-			if want := h - (n + 4); f.Region != want {
-				t.Fatalf("layoutFrame(%d, %d).Region = %d, want %d (all slack)", h, n, f.Region, want)
+			slack := h - (n + frameChromeLines)
+			wantRegion := slack
+			if wantRegion > panelCapRows {
+				wantRegion = panelCapRows
+			}
+			if f.Region != wantRegion {
+				t.Fatalf("layoutFrame(%d, %d).Region = %d, want %d (slack, capped at %d)", h, n, f.Region, wantRegion, panelCapRows)
+			}
+			if want := slack - wantRegion; f.PadTop+f.PadBottom != want {
+				t.Fatalf("layoutFrame(%d, %d) pads = %d+%d, want %d (everything the cap withheld)",
+					h, n, f.PadTop, f.PadBottom, want)
 			}
 		}
 	}
+}
+
+// TestLayoutFrame_PadsOnlyOnceTheRegionIsFull pins v3 spec §7.3's two
+// free invariants, over the whole (h, n) grid rather than at the sampled
+// heights of the worked table.
+//
+// The first is the one that matters: a pad may never be bought with a row
+// the panel could have used. If it could, a window one row short of the
+// cap would trade panel content for margin -- which is the "reserved
+// blank spacer" defect v2 removed, reintroduced under a new name.
+func TestLayoutFrame_PadsOnlyOnceTheRegionIsFull(t *testing.T) {
+	layoutRange(func(h, n int, f frame) {
+		if (f.PadTop > 0 || f.PadBottom > 0) && f.Region != panelCapRows {
+			t.Fatalf("layoutFrame(%d, %d) = %+v: padded a region still under the %d-row cap", h, n, f, panelCapRows)
+		}
+		if f.PadTop < 0 || f.PadBottom < 0 {
+			t.Fatalf("layoutFrame(%d, %d) = %+v: a pad may not be negative", h, n, f)
+		}
+		if d := f.PadTop - f.PadBottom; d < 0 || d > 1 {
+			t.Fatalf("layoutFrame(%d, %d) = %+v: PadTop - PadBottom = %d, want 0 or 1 (the top gets the odd row)", h, n, f, d)
+		}
+		if f.Region > panelCapRows {
+			t.Fatalf("layoutFrame(%d, %d).Region = %d, want at most the %d-row cap", h, n, f.Region, panelCapRows)
+		}
+	})
 }
 
 // TestLayoutFrame_IsMonotone is the property the superseded ladder
@@ -168,12 +254,24 @@ func TestLayoutFrame_SlackLandsInTheRegion(t *testing.T) {
 // above the header and that unit became unaffordable one row further
 // down. A reader watching a terminal shrink would see chrome flicker
 // back into existence.
+//
+// The component list below is enumerated BY HAND, which is a hazard v3
+// spec §7.3 flags by name: a new frame field left out of it is not a
+// failure, it is silence -- the field simply stops being checked, and
+// nothing says so. The field-count assertion at the top is the cheap fix.
+// It cannot tell that the right field was added, only that the list and
+// the struct are the same size, which is enough to make the omission
+// noisy instead of silent.
 func TestLayoutFrame_IsMonotone(t *testing.T) {
 	boolToInt := func(b bool) int {
 		if b {
 			return 1
 		}
 		return 0
+	}
+	const enumerated = 9
+	if got := reflect.TypeOf(frame{}).NumField(); got != enumerated {
+		t.Fatalf("frame has %d fields but this test enumerates %d: add the new one to `components` below, or monotonicity silently stops being checked for it", got, enumerated)
 	}
 	for n := 0; n <= 14; n++ {
 		for h := 1; h < 60; h++ {
@@ -182,12 +280,15 @@ func TestLayoutFrame_IsMonotone(t *testing.T) {
 				name   string
 				lo, hi int
 			}{
+				{"PadTop", lo.PadTop, hi.PadTop},
 				{"Header", boolToInt(lo.Header), boolToInt(hi.Header)},
 				{"Rule1", boolToInt(lo.Rule1), boolToInt(hi.Rule1)},
 				{"Rule2", boolToInt(lo.Rule2), boolToInt(hi.Rule2)},
 				{"Rows", lo.Rows, hi.Rows},
 				{"Region", lo.Region, hi.Region},
+				{"Rule3", boolToInt(lo.Rule3), boolToInt(hi.Rule3)},
 				{"Footer", boolToInt(lo.Footer), boolToInt(hi.Footer)},
+				{"PadBottom", lo.PadBottom, hi.PadBottom},
 			}
 			for _, c := range components {
 				if c.lo > c.hi {
@@ -199,14 +300,17 @@ func TestLayoutFrame_IsMonotone(t *testing.T) {
 	}
 }
 
-// TestLayoutFrame_DropOrder pins v2 spec §9's order itself: rule 2 goes
-// first, then the header, then rule 1. Stated as implications, so it
-// holds at every (h, n) rather than only at the sampled heights of the
-// worked table.
+// TestLayoutFrame_DropOrder pins v3 spec §7.1's order itself: rule 3 goes
+// first, then rule 2, then the header, then rule 1. Stated as
+// implications, so it holds at every (h, n) rather than only at the
+// sampled heights of the worked table.
 func TestLayoutFrame_DropOrder(t *testing.T) {
 	layoutRange(func(h, n int, f frame) {
+		if f.Rule3 && !f.Rule2 {
+			t.Fatalf("layoutFrame(%d, %d) = %+v kept rule 3 without rule 2 (v3 spec §7.1 drops rule 3 FIRST: rule 2 separates two kinds of content, rule 3 only closes the card)", h, n, f)
+		}
 		if f.Rule2 && !f.Header {
-			t.Fatalf("layoutFrame(%d, %d) = %+v kept rule 2 without the header (spec §9 drops rule 2 FIRST)", h, n, f)
+			t.Fatalf("layoutFrame(%d, %d) = %+v kept rule 2 without the header (spec §9 drops rule 2 FIRST of v2's three)", h, n, f)
 		}
 		if f.Header && !f.Rule1 {
 			t.Fatalf("layoutFrame(%d, %d) = %+v kept the header without rule 1 (spec §9 drops the header BEFORE rule 1)", h, n, f)

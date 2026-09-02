@@ -158,8 +158,13 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 
 	const w = 80
 	// h = 11 affords all seven rows with no header and no rules; h = 60
-	// affords the full chrome. Both show the whole stack, so no scrolling
-	// (stackWindow) can explain a difference.
+	// affords the full chrome AND v3 spec §7's top margin. Both show the
+	// whole stack, so no scrolling (stackWindow) can explain a difference.
+	//
+	// The two stack offsets are DERIVED from the frames rather than
+	// written down, because they are precisely what differs between the
+	// two heights -- and this test's whole job is that the row BYTES do
+	// not.
 	const short, tall = 11, 60
 	shortFrame, tallFrame := layoutFrame(short, len(fields)), layoutFrame(tall, len(fields))
 	if shortFrame.Header || shortFrame.Rule1 || !tallFrame.Header || !tallFrame.Rule1 {
@@ -168,6 +173,10 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 	}
 	if shortFrame.Rows != len(fields) || tallFrame.Rows != len(fields) {
 		t.Fatalf("both heights must show the whole stack; got %d and %d rows", shortFrame.Rows, tallFrame.Rows)
+	}
+	shortTop, tallTop := firstStackRow(shortFrame), firstStackRow(tallFrame)
+	if shortTop == tallTop {
+		t.Fatalf("the two heights must put the stack at DIFFERENT offsets for this to test anything; both start at %d", shortTop)
 	}
 
 	m := New(Setup{Palette: palette, Sections: fields, Name: "new session"})
@@ -188,13 +197,13 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 			t.Errorf("%s.Row(40) changed after rendering the form at two heights:\n before: %q\n  after: %q",
 				f.ID(), rowText(before[i]), rowText(got))
 		}
-		if atShort[i] != atTall[i+2] { // +2: the header and rule 1 at h=60
+		if atShort[shortTop+i] != atTall[tallTop+i] {
 			t.Errorf("row %d (%s) rendered differently at h=%d and h=%d:\n short: %q\n  tall: %q",
-				i, f.ID(), short, tall, rowText(atShort[i]), rowText(atTall[i+2]))
+				i, f.ID(), short, tall, rowText(atShort[shortTop+i]), rowText(atTall[tallTop+i]))
 		}
-		if atShort[i] != againShort[i] {
+		if atShort[shortTop+i] != againShort[shortTop+i] {
 			t.Errorf("row %d (%s) did not survive a round trip through the taller render:\n  first: %q\n second: %q",
-				i, f.ID(), rowText(atShort[i]), rowText(againShort[i]))
+				i, f.ID(), rowText(atShort[shortTop+i]), rowText(againShort[shortTop+i]))
 		}
 	}
 }

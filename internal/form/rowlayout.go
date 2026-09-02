@@ -43,6 +43,34 @@ const (
 	// useful floor for a picker -- the cursor row plus one neighbour
 	// each way.
 	panelFloor = 3
+	// panelCapRows is the tallest the panel region is allowed to grow
+	// (v3 spec §7.2). Every row a window has spare beyond it becomes
+	// margin above and below the card instead of more blank panel.
+	//
+	// DERIVED FROM THE MANIFEST, and re-derive it if that changes:
+	// herdr-plugin.toml asks for a 32-row popup, which hands this form 30
+	// rows; the eight stack rows and the six chrome lines (header, three
+	// rules, the footer -- and the one row of inset each end) leave
+	// sixteen, and holding one back top and bottom as the card's inset
+	// gives the panel fifteen.
+	//
+	// Two things it is deliberately NOT, both of which an earlier draft
+	// got wrong:
+	//
+	//   - Not max(PanelRows()). That is issuePanelMaxRows, 24, and the
+	//     natural region at h = 30 is 17, so a cap of 24 would never bind
+	//     -- the whole change would be a no-op at the only size that
+	//     ships.
+	//   - Not a parameter to layoutFrame. PromptField.PanelRows() grows
+	//     with the text you type and IssueField.PanelRows() shrinks as you
+	//     filter, so any cap derived from the focused field's appetite is
+	//     data-dependent, and the footer would jump while the user types.
+	//     A constant cannot do that.
+	//
+	// Only the two widgets that window their own content are clipped by
+	// it: issue (24) and prompt (20). Every other field's panel fits
+	// whole.
+	panelCapRows = 15
 )
 
 // contentBox returns the left padding and the inner (label+value) width
@@ -114,18 +142,34 @@ func labelCol(inner int) (label, value int) {
 	return label, inner - label
 }
 
-// frame is the vertical layout of one render: which of v2 spec §9's six
-// components this window height affords, and how many lines the two
-// variable ones (the row stack and the panel region) get. Its components
-// always sum to exactly the height layoutFrame was asked for.
+// frame is the vertical layout of one render: which of v3 spec §7.1's
+// components this window height affords, and how many lines the variable
+// ones (the row stack, the panel region and the two pads) get. Its
+// components always sum to exactly the height layoutFrame was asked for.
 //
-// There are exactly six components and none of them is a blank spacer
-// row: v2 spec §9's fixed cost is "header, rule, rows, rule, panel,
-// footer" and every §4 mockup shows no blank chrome at all. Reserved
-// blank rows are half of the visual defect v2 exists to remove (v1's own
-// assembled-full-80x24 frame spends eight of twenty-four lines on them),
-// so they are not reintroduced here as layout.
+// v2 had six components and NO blank spacer rows at all: §9's fixed cost
+// was "header, rule, rows, rule, panel, footer", and reserved blank rows
+// were half of the visual defect v2 existed to remove (v1's own
+// assembled-full-80x24 frame spent eight of twenty-four lines on them).
+// v3 spec §7 adds PadTop/PadBottom, which look like the same thing and
+// are not: v1's spacers were reserved AHEAD of the content, so a short
+// window paid for them out of the panel; these are the LEFTOVER of a
+// window too tall for the card, which v2 spent on yet more blank panel
+// (`rowlayout.go:252-253`). The rows they occupy were blank either way --
+// the change is only where the blank sits, and therefore whether the
+// footer is nailed to the bottom edge of the pane or floats one row above
+// it.
+//
+// The pads are (h, n)-determined and so focus-independent, which is what
+// keeps them legal. `Region - PanelRows(focused)` is the OTHER kind of
+// leftover (v3 spec §7's opening paragraph): it cannot become margin
+// without moving the footer as focus travels, and it is not addressed
+// here.
 type frame struct {
+	// PadTop is the blank margin above the header: the taller half of
+	// whatever a window has spare once the region has reached
+	// panelCapRows. Nonzero only when Region == panelCapRows.
+	PadTop int
 	// Header is the form-name/context line at the very top.
 	Header bool
 	// Rows is how many stack rows are drawn. Below the floor the stack
@@ -136,18 +180,25 @@ type frame struct {
 	Rule1 bool
 	// Rule2 is the rule above the panel.
 	Rule2 bool
-	// Region is the panel's height. 0 means the window afforded no panel
-	// at all -- only reachable below h == 5.
+	// Region is the panel's height, at most panelCapRows. 0 means the
+	// window afforded no panel at all -- only reachable below h == 5.
 	Region int
+	// Rule3 is the rule BELOW the panel, closing the card (v3 spec §7.4).
+	// Last in the survival ladder: it goes before rule 2, because rule 2
+	// separates two kinds of content while rule 3 only closes the card.
+	Rule3 bool
 	// Footer is the key ladder plus the Create button. Never dropped.
 	Footer bool
+	// PadBottom is the blank margin below the footer: the shorter half of
+	// the same remainder. Nonzero only when Region == panelCapRows.
+	PadBottom int
 }
 
 // lines is the frame's total height: the invariant every layoutFrame
 // result satisfies is lines() == h.
 func (f frame) lines() int {
-	n := f.Rows + f.Region
-	for _, present := range []bool{f.Header, f.Rule1, f.Rule2, f.Footer} {
+	n := f.Rows + f.Region + f.PadTop + f.PadBottom
+	for _, present := range []bool{f.Header, f.Rule1, f.Rule2, f.Rule3, f.Footer} {
 		if present {
 			n++
 		}
@@ -157,11 +208,12 @@ func (f frame) lines() int {
 
 // layoutFrame lays out a popup h rows tall holding a stack of n rows.
 //
-// v2 spec §9 gives a DROP order ("panel shrinks to three rows, drop the
+// v2 spec §9 gave a DROP order ("panel shrinks to three rows, drop the
 // second rule, drop the header, drop the first rule, scroll the row
 // stack"); read backwards it is a survival priority, highest first, in
 // which each item is kept only once every higher-priority item is
-// already afforded:
+// already afforded. v3 spec §7.1 keeps that order verbatim and appends
+// three rungs -- rule 3, then the CAPPED region, then the margin:
 //
 //  1. the footer -- never dropped, and it carries the Create button
 //  2. the n stack rows -- scrolled, focused row kept visible, only
@@ -170,31 +222,50 @@ func (f frame) lines() int {
 //  4. rule 1, under the header
 //  5. the header
 //  6. rule 2, above the panel
-//  7. every remaining row grows Region
+//  7. rule 3, below the panel                              (v3 §7.4)
+//  8. the region, grown to at most panelCapRows            (v3 §7.2)
+//  9. the remainder: PadBottom = rem/2, PadTop = rem-rem/2 (v3 §7.1)
 //
 // Rule 1 outranks the header because §9 drops rule 2 first, THEN the
-// header, and only then rule 1.
+// header, and only then rule 1. Rule 3 is ranked last of the three
+// because rule 2 separates two kinds of content while rule 3 only closes
+// the card.
 //
-// Step 7 is the load-bearing one: slack lands in Region and nowhere
-// else, so the y of every line above the panel is a function of (h, n)
-// alone and never of which field holds focus. That is what makes "row i
-// is always at row i" true while focus travels -- and it is why a
-// focused field whose PanelRows() is smaller than Region does not shrink
-// the region: compose calls Panel(w, min(PanelRows(), Region)) and
-// blank-fills the remainder itself, so the footer never moves either.
+// Steps 8 and 9 are the load-bearing pair, and they are what v2's single
+// "everything left over grows Region" became. Slack still lands nowhere
+// above the panel, so the y of every line from the header down is a
+// function of (h, n) alone and never of which field holds focus -- that
+// is what makes "row i is always at row i" true while focus travels, and
+// it is why a focused field whose PanelRows() is smaller than Region does
+// not shrink the region: compose calls Panel(w, min(PanelRows(), Region))
+// and blank-fills the remainder itself. What changed is that beyond
+// panelCapRows the slack stops being blank PANEL and becomes blank
+// MARGIN, split between the two ends, so a tall window shows a card
+// rather than a footer nailed to the bottom edge under twenty-two empty
+// rows.
 //
-// Worked numbers for n = 8 (header, rule1, rows, rule2, panel, footer):
+// Worked numbers for n = 8, v3 spec §7.3's table verbatim:
 //
-//	h  | hdr | r1 | rows | r2 | panel | ftr
-//	40 |  1  |  1 |   8  |  1 |   28  |  1
-//	24 |  1  |  1 |   8  |  1 |   12  |  1
-//	19 |  1  |  1 |   8  |  1 |    7  |  1   <- the real popup floor, 64x19
-//	15 |  1  |  1 |   8  |  1 |    3  |  1   <- panel at its floor
-//	14 |  1  |  1 |   8  |  0 |    3  |  1   <- rule 2 gone
-//	13 |  0  |  1 |   8  |  0 |    3  |  1   <- header gone
-//	12 |  0  |  0 |   8  |  0 |    3  |  1   <- rule 1 gone
-//	11 |  0  |  0 |   7  |  0 |    3  |  1   <- the stack starts scrolling
-//	 5 |  0  |  0 |   1  |  0 |    3  |  1   <- the focused row only
+//	h  | pad | hdr | r1 | rows | r2 | region | r3 | ftr | pad
+//	40 |  6  |  1  |  1 |   8  |  1 |   15   |  1 |  1  |  6
+//	30 |  1  |  1  |  1 |   8  |  1 |   15   |  1 |  1  |  1   <- the popup
+//	29 |  1  |  1  |  1 |   8  |  1 |   15   |  1 |  1  |  0
+//	28 |  0  |  1  |  1 |   8  |  1 |   15   |  1 |  1  |  0   <- cap binds
+//	22 |  0  |  1  |  1 |   8  |  1 |    9   |  1 |  1  |  0   <- 80x24
+//	19 |  0  |  1  |  1 |   8  |  1 |    6   |  1 |  1  |  0
+//	16 |  0  |  1  |  1 |   8  |  1 |    3   |  1 |  1  |  0   <- frame whole
+//	15 |  0  |  1  |  1 |   8  |  1 |    3   |  0 |  1  |  0   <- rule 3 gone
+//	14 |  0  |  0  |  1 |   8  |  0 |    3   |  0 |  1  |  0   <- rule 2 gone
+//	13 |  0  |  0  |  1 |   8  |  0 |    3   |  0 |  1  |  0   <- header gone
+//	12 |  0  |  0  |  0 |   8  |  0 |    3   |  0 |  1  |  0   <- rule 1 gone
+//	11 |  0  |  0  |  0 |   7  |  0 |    3   |  0 |  1  |  0   <- stack scrolls
+//	 5 |  0  |  0  |  0 |   1  |  0 |    3   |  0 |  1  |  0   <- focused row
+//
+// At n = 8 everything from h = 15 down is byte-identical to v2: the whole
+// change lives at h >= 16, where rule 3 becomes the first thing a taller
+// window buys. (That is a property of THIS n, not of the ladder -- a
+// shorter stack reaches h >= 16's territory sooner, and n = 0 first
+// differs at h = 8.)
 //
 // Below h == 5 the panel gives up its floor one row at a time (3, 2, 1,
 // 0) and the footer is the last line standing. The whole ladder is
@@ -203,7 +274,9 @@ func (f frame) lines() int {
 // and its rule as one two-row unit ranked above the header, which made
 // the header vanish at h = 11 and come BACK at h = 10; that is the
 // specific bug this shape exists to avoid, and rowlayout_test.go pins
-// its absence directly.
+// its absence directly. Region survives that test because it is a min of
+// a nondecreasing quantity against a constant, and both pads because
+// they are halves of a nondecreasing remainder.
 //
 // h < 1 returns the zero frame (nothing fits, not even the footer);
 // n < 0 is treated as 0.
@@ -242,7 +315,7 @@ func layoutFrame(h, n int) frame {
 	rem -= region
 
 	// The chrome, in survival order: rule 1, then the header, then
-	// rule 2.
+	// rule 2, then rule 3.
 	if rem > 0 {
 		f.Rule1 = true
 		rem--
@@ -255,9 +328,28 @@ func layoutFrame(h, n int) frame {
 		f.Rule2 = true
 		rem--
 	}
+	if rem > 0 {
+		f.Rule3 = true
+		rem--
+	}
 
-	// Everything still unspent grows the panel, never the chrome.
-	f.Region = region + rem
+	// The panel grows next, but only to the cap: past that the slack is
+	// the card's margin rather than more empty panel (v3 spec §7.2).
+	grow := panelCapRows - region
+	if grow > rem {
+		grow = rem
+	}
+	if grow < 0 {
+		grow = 0
+	}
+	f.Region = region + grow
+	rem -= grow
+
+	// Whatever is still unspent is margin, the taller half on top: the
+	// card reads better sitting slightly high, and it makes the split
+	// deterministic on an odd remainder.
+	f.PadBottom = rem / 2
+	f.PadTop = rem - f.PadBottom
 	return f
 }
 

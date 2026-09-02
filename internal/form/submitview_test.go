@@ -449,17 +449,40 @@ func TestSubmitView_CleanDisabledShowsItsReason(t *testing.T) {
 	}
 }
 
+// regionLastLine is the y of the bottom line of the panel region: under
+// v3 spec §7's frame that is no longer "two above the end", because rule
+// 3 closes the card between the region and the footer and a bottom margin
+// may sit under the footer in turn. Derived from the frame, in
+// compose()'s own order.
+func regionLastLine(f frame, h int) int {
+	y := footerRow(f, h) - 1
+	if f.Rule3 {
+		y--
+	}
+	return y
+}
+
 // TestSubmitView_CleanReasonSitsAboveTheButtons pins the placement v2
-// spec §12's mockup shows: the reason is on the line immediately above
-// the button row, not floating a screen away under the rule.
+// spec §12's mockup shows: the reason is at the BOTTOM of the region,
+// next to the button row it explains, not floating a screen away under
+// the rule.
+//
+// "Immediately above" became "immediately above, inside the card" when
+// v3 spec §7.4 added rule 3: the card's closing rule now sits between the
+// explanation and the buttons. That is one line of chrome, not the screen
+// of blank the bottom-anchoring exists to remove, and the anchoring is
+// still what is asserted -- the reason is the region's last line, wherever
+// the region ends.
 func TestSubmitView_CleanReasonSitsAboveTheButtons(t *testing.T) {
 	v := newSubmitTestView()
 	v.SetSteps(sampleStepsFailed())
 	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: false, Reason: "uncommitted changes"})
 
-	lines := strippedFrameLines(v, 80, 24)
-	if got := lines[len(lines)-2]; !strings.Contains(got, "uncommitted changes") {
-		t.Errorf("line above the footer = %q, want the denial reason", got)
+	const w, h = 80, 24
+	last := regionLastLine(layoutFrame(h, len(sampleStepsFailed())), h)
+	lines := strippedFrameLines(v, w, h)
+	if got := lines[last]; !strings.Contains(got, "uncommitted changes") {
+		t.Errorf("the region's last line (%d) = %q, want the denial reason", last, got)
 	}
 }
 
@@ -474,25 +497,38 @@ func TestSubmitView_CleanReasonSitsAboveTheButtons(t *testing.T) {
 // The rule now travels with the explanation, which is bottom-anchored to
 // the buttons it explains. Trailing blanks above a bottom-anchored
 // footer are not the defect and are not asserted against.
+//
+// v3 spec §7.4's rule 3 is exempt by construction and not by exception:
+// it closes the card at a fixed line directly above the footer, which is
+// chrome, where the rule this test is about is a divider that must
+// introduce something. So the search runs over the step rows and the
+// region only -- everything from line 2 down to the region's last line.
 func TestSubmitView_SecondRuleOnlyWhereThereIsSomethingToRule(t *testing.T) {
 	const w, h = 80, 24
 
 	running := newSubmitTestView()
 	running.SetSteps(sampleStepsRunning())
+	runFrame := layoutFrame(h, len(sampleStepsRunning()))
 	lines := strippedFrameLines(running, w, h)
 	// Line 1 is the rule under the header; nothing below the step rows
 	// may be one while the pipeline is still going.
-	for i, line := range lines[2:] {
+	for i, line := range lines[2 : regionLastLine(runFrame, h)+1] {
 		if strings.Contains(line, "──") {
 			t.Errorf("progress screen draws a second rule at line %d with nothing under it:\n%s",
 				i+2, strings.Join(lines, "\n"))
 			break
 		}
 	}
+	// And rule 3 is where it should be, so the exemption above is not
+	// quietly excusing a missing line.
+	if r3 := footerRow(runFrame, h) - 1; !runFrame.Rule3 || !strings.Contains(lines[r3], "──") {
+		t.Errorf("line %d = %q, want v3 spec §7.4's rule 3 closing the card above the footer", r3, lines[r3])
+	}
 
 	failed := newSubmitTestView()
 	failed.SetSteps(sampleStepsFailed())
 	failed.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true})
+	failFrame := layoutFrame(h, len(sampleStepsFailed()))
 	lines = strippedFrameLines(failed, w, h)
 	reason := -1
 	for i, line := range lines {
@@ -506,8 +542,9 @@ func TestSubmitView_SecondRuleOnlyWhereThereIsSomethingToRule(t *testing.T) {
 	if !strings.Contains(lines[reason-1], "──") {
 		t.Errorf("the line above the explanation = %q, want the second rule introducing it", lines[reason-1])
 	}
-	if reason != len(lines)-2 {
-		t.Errorf("the explanation is at line %d of %d, want it anchored to the buttons", reason, len(lines))
+	if want := regionLastLine(failFrame, h); reason != want {
+		t.Errorf("the explanation is at line %d of %d, want it on the region's last line (%d), anchored to the buttons",
+			reason, len(lines), want)
 	}
 }
 

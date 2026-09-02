@@ -734,10 +734,18 @@ func (m Model) compose(w, h int) string {
 	return m.composeRows(w, h)
 }
 
-// composeRows assembles v2's frame at exactly w x h (v2 spec §4/§5/§9):
-// the header, a rule, the row stack, a second rule, the detail panel,
-// and the footer -- six components, no blank spacer rows, in whatever
-// subset rowlayout.go's layoutFrame says this height affords.
+// composeRows assembles the frame at exactly w x h (v2 spec §4/§5,
+// v3 spec §7): a top margin, the header, a rule, the row stack, a second
+// rule, the detail panel, a third rule closing the card, the footer, and
+// a bottom margin -- in whatever subset rowlayout.go's layoutFrame says
+// this height affords.
+//
+// The two margins are v3 spec §7.1's last rung and are NOT v1's reserved
+// spacers coming back: layoutFrame hands them only rows a window has
+// spare once the region has reached panelCapRows, so they cost the panel
+// nothing at any height that was ever short of room. Emitting them at
+// PanelBG, exactly like the paint loop's own trailing fill below, is what
+// makes them read as the card's inset rather than as a second surface.
 //
 // Every line is emitted at its own background: PanelBG for all of them
 // except the focused stack row, which is painted edge to edge in
@@ -781,6 +789,9 @@ func (m Model) composeRows(w, h int) string {
 		lines = append(lines, composedLine{text: pad + text, bg: bg})
 	}
 
+	for i := 0; i < f.PadTop; i++ {
+		add("", m.palette.PanelBG)
+	}
 	if f.Header {
 		add(m.renderHeaderLine(boxWidth), m.palette.PanelBG)
 	}
@@ -817,10 +828,17 @@ func (m Model) composeRows(w, h int) string {
 		}
 	}
 
+	if f.Rule3 {
+		add(dividerLine(boxWidth, m.palette), m.palette.PanelBG)
+	}
+
 	if f.Footer {
 		focused := m.ring.current()
 		rungs := footerRungsFor(focused, zoneFor(focused), m.clearArmed)
 		add(renderFooter(boxWidth, rungs, m.palette), m.palette.PanelBG)
+	}
+	for i := 0; i < f.PadBottom; i++ {
+		add("", m.palette.PanelBG)
 	}
 
 	painted := make([]string, 0, h)

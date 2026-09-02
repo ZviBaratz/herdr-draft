@@ -265,12 +265,17 @@ func (v *SubmitView) ViewAt(w, h int) string {
 
 // compose assembles the view at exactly w x h using the FORM's own frame
 // (rowlayout.go's layoutFrame over the step stack) and the form's own
-// content box (contentBox/labelCol): header, rule, the step rows, rule,
-// the failure region, footer. Every line is painted with palette.PanelBG
-// across the full w columns (v2 spec §7), and the step the user should be
-// looking at -- the running one, or the failed one -- is painted with
-// ActiveRowBG, the same full-width fill the form marks its focused row
-// with.
+// content box (contentBox/labelCol): the top margin, header, rule, the
+// step rows, rule, the failure region, rule 3, footer, the bottom margin.
+// Every line is painted with palette.PanelBG across the full w columns
+// (v2 spec §7), and the step the user should be looking at -- the running
+// one, or the failed one -- is painted with ActiveRowBG, the same
+// full-width fill the form marks its focused row with.
+//
+// The two margins and rule 3 are v3 spec §7's, and this view emits them
+// for the same reason it shares layoutFrame at all: the submit screen
+// replaces the form in place, so anything that moves the form's header or
+// footer must move this one's identically or the swap visibly jumps.
 //
 // There is no degradation ladder and none is needed, for exactly the
 // reason composeRows needs none: layoutFrame's components sum to h by
@@ -297,6 +302,9 @@ func (v *SubmitView) compose(w, h int) string {
 		lines = append(lines, composedLine{text: pad + text, bg: bg})
 	}
 
+	for i := 0; i < f.PadTop; i++ {
+		add("", v.palette.PanelBG)
+	}
 	if f.Header {
 		add(submitHeaderLine(v.name, v.context, boxWidth, v.palette), v.palette.PanelBG)
 	}
@@ -323,8 +331,22 @@ func (v *SubmitView) compose(w, h int) string {
 	for _, l := range v.regionLines(boxWidth, region, f.Rule2) {
 		add(l, v.palette.PanelBG)
 	}
+	// Rule 3 is a PLAIN divider here, deliberately not folded into the
+	// region the way rule 2 above is (v3 spec §7.4's note): rule 2 is
+	// spent out of the region's budget because it travels down with the
+	// bottom-anchored explanation and is omitted when there is none,
+	// whereas rule 3 closes the card at a fixed line whether or not the
+	// region has anything in it. Folding it in too would have moved it
+	// away from the form's own rule 3 and left
+	// TestSubmitView_RuleMatchesTheForm needing a story.
+	if f.Rule3 {
+		add(dividerLine(boxWidth, v.palette), v.palette.PanelBG)
+	}
 	if f.Footer {
 		add(v.footerLine(boxWidth), v.palette.PanelBG)
+	}
+	for i := 0; i < f.PadBottom; i++ {
+		add("", v.palette.PanelBG)
 	}
 
 	painted := make([]string, 0, h)

@@ -825,6 +825,39 @@ func strippedLines(m Model, w, h int) []string {
 	return out
 }
 
+// firstStackRow and footerRow are the two y coordinates the tests below
+// need, DERIVED from the frame rather than counted by hand. Both stopped
+// being constants when v3 spec §7 gave the frame its two margins: the
+// header no longer sits on line 0 and the footer no longer sits on line
+// h-1, at any height with room to spare.
+//
+// Deriving them is not a cosmetic tidy. Two of the callers
+// (TestRowStack_RowsRenderIdenticallyAtEveryHeight and
+// TestFieldRow_IsIdenticalAtEveryWindowHeight) are the mechanical
+// enforcement of Section.Row's "takes no height by design" contract --
+// they render the same rows at two very different heights and compare the
+// BYTES. Re-pinning them to whatever offsets the new frame happens to
+// produce would have been the easy fix and the wrong one; the offsets are
+// exactly what differs between the two heights, so they have to come from
+// the frame while the row content stays the thing under test.
+//
+// The order they encode is composeRows': PadTop, Header, Rule1, rows,
+// Rule2, Region, Rule3, Footer, PadBottom.
+func firstStackRow(f frame) int {
+	y := f.PadTop
+	if f.Header {
+		y++
+	}
+	if f.Rule1 {
+		y++
+	}
+	return y
+}
+
+func footerRow(f frame, h int) int {
+	return h - 1 - f.PadBottom
+}
+
 // TestRowStack_FrameMatchesLayoutFrame pins composeRows against
 // rowlayout.go: the render is exactly h lines, the two rules land where
 // layoutFrame says, and no blank chrome row creeps in between the header
@@ -840,22 +873,38 @@ func TestRowStack_FrameMatchesLayoutFrame(t *testing.T) {
 		t.Fatalf("ViewAt(%d, %d) produced %d lines, want %d", w, h, len(lines), h)
 	}
 
-	if !strings.Contains(lines[0], "new session") {
-		t.Errorf("line 0 is not the header: %q", lines[0])
+	top := firstStackRow(f)
+	if hdr := top - 2; !strings.Contains(lines[hdr], "new session") {
+		t.Errorf("line %d is not the header: %q", hdr, lines[hdr])
 	}
-	if !isRuleLine(lines[1]) {
-		t.Errorf("line 1 is not rule 1: %q", lines[1])
+	if r1 := top - 1; !isRuleLine(lines[r1]) {
+		t.Errorf("line %d is not rule 1: %q", r1, lines[r1])
 	}
 	for i, s := range stubs {
-		if !strings.Contains(lines[2+i], s.label) || !strings.Contains(lines[2+i], s.value) {
-			t.Errorf("stack line %d = %q, want the %q row", 2+i, lines[2+i], s.id)
+		if !strings.Contains(lines[top+i], s.label) || !strings.Contains(lines[top+i], s.value) {
+			t.Errorf("stack line %d = %q, want the %q row", top+i, lines[top+i], s.id)
 		}
 	}
-	if rule2 := 2 + f.Rows; !isRuleLine(lines[rule2]) {
+	if rule2 := top + f.Rows; !isRuleLine(lines[rule2]) {
 		t.Errorf("line %d is not rule 2: %q", rule2, lines[rule2])
 	}
-	if last := lines[h-1]; !strings.Contains(last, "↵ create") {
-		t.Errorf("the last line is not the footer: %q", last)
+	// v3 spec §7.4's rule 3 closes the card, directly above the footer.
+	if rule3 := footerRow(f, h) - 1; !isRuleLine(lines[rule3]) {
+		t.Errorf("line %d is not rule 3: %q", rule3, lines[rule3])
+	}
+	if ftr := footerRow(f, h); !strings.Contains(lines[ftr], "↵ create") {
+		t.Errorf("line %d is not the footer: %q", ftr, lines[ftr])
+	}
+	// The margins are blank, and there is nothing below the bottom one.
+	for i := 0; i < f.PadTop; i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			t.Errorf("top margin line %d is not blank: %q", i, lines[i])
+		}
+	}
+	for i := footerRow(f, h) + 1; i < h; i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			t.Errorf("bottom margin line %d is not blank: %q", i, lines[i])
+		}
 	}
 }
 
@@ -888,7 +937,7 @@ func TestRowStack_RowsNeverMoveAcrossFocus(t *testing.T) {
 	const w, h = 80, 24
 
 	f := layoutFrame(h, len(stubs))
-	const firstRow = 2             // under the header and rule 1
+	firstRow := firstStackRow(f)   // under the margin, header and rule 1
 	above := firstRow + f.Rows + 1 // ... through rule 2
 
 	padLeft, _ := contentBox(w)
@@ -928,8 +977,10 @@ func TestRowStack_RowsRenderIdenticallyAtEveryHeight(t *testing.T) {
 	const w = 80
 
 	// At h = 8 the frame affords no header and no rules (layoutFrame),
-	// so the stack starts on line 0; at h = 60 it starts under the
-	// header and its rule.
+	// so the stack starts on line 0; at h = 60 it starts under the top
+	// margin, the header and its rule. Both offsets are DERIVED -- the
+	// margin's size is exactly the sort of thing this test must not be
+	// pinned to, since the rows' own bytes are what is under test.
 	short := layoutFrame(8, len(stubs))
 	tall := layoutFrame(60, len(stubs))
 	if short.Header || short.Rule1 || !tall.Header || !tall.Rule1 {
@@ -938,13 +989,17 @@ func TestRowStack_RowsRenderIdenticallyAtEveryHeight(t *testing.T) {
 	if short.Rows != len(stubs) || tall.Rows != len(stubs) {
 		t.Fatalf("both heights must show the whole stack; got %d and %d rows", short.Rows, tall.Rows)
 	}
+	shortTop, tallTop := firstStackRow(short), firstStackRow(tall)
+	if shortTop == tallTop {
+		t.Fatalf("the two heights must put the stack at DIFFERENT offsets for this to test anything; both start at %d", shortTop)
+	}
 
 	atShort := viewLines(m, w, 8)
 	atTall := viewLines(m, w, 60)
 	for i := range stubs {
-		if atShort[i] != atTall[i+2] {
+		if atShort[shortTop+i] != atTall[tallTop+i] {
 			t.Errorf("row %d (%q) rendered differently at h=8 and h=60:\n h=8:  %q\n h=60: %q",
-				i, stubs[i].id, atShort[i], atTall[i+2])
+				i, stubs[i].id, atShort[shortTop+i], atTall[tallTop+i])
 		}
 	}
 }
@@ -954,6 +1009,13 @@ func TestRowStack_RowsRenderIdenticallyAtEveryHeight(t *testing.T) {
 // Create) is never dropped, and the row stack scrolls to keep the
 // FOCUSED row visible rather than clipping it. Focus is parked on the
 // last stack row, the first one a naive top-down clip would lose.
+//
+// "Never dropped" is no longer the same statement as "on the last line":
+// v3 spec §7 puts a margin under the footer at any height with room to
+// spare, so the footer's y is derived from the frame. What is asserted
+// below the footer is that the margin is BLANK -- the promise this test
+// really carries is that nothing outranks the footer, not that the frame
+// ends there.
 func TestRowStack_FocusedRowAndFooterSurviveEveryHeight(t *testing.T) {
 	palette := theme.Default()
 	m, stubs := buildRowForm(palette, "a", "b", "c", "d", "e", "f", "g", "h")
@@ -968,8 +1030,14 @@ func TestRowStack_FocusedRowAndFooterSurviveEveryHeight(t *testing.T) {
 		if len(lines) != h {
 			t.Fatalf("ViewAt(%d, %d) produced %d lines, want %d", w, h, len(lines), h)
 		}
-		if !strings.Contains(lines[h-1], "↵ create") {
-			t.Fatalf("at h=%d the last line does not carry the Create button: %q", h, lines[h-1])
+		ftr := footerRow(layoutFrame(h, len(stubs)), h)
+		if !strings.Contains(lines[ftr], "↵ create") {
+			t.Fatalf("at h=%d line %d does not carry the Create button: %q", h, ftr, lines[ftr])
+		}
+		for i := ftr + 1; i < h; i++ {
+			if strings.TrimSpace(lines[i]) != "" {
+				t.Fatalf("at h=%d line %d is below the footer and not blank margin: %q", h, i, lines[i])
+			}
 		}
 		if h == 1 {
 			continue // the footer is the only line there is
@@ -1002,7 +1070,8 @@ func TestRowStack_SmallPanelDoesNotMoveTheFooter(t *testing.T) {
 
 	const w, h = 80, 24
 	f := layoutFrame(h, 3)
-	rule2 := 2 + f.Rows
+	rule2 := firstStackRow(f) + f.Rows
+	ftr := footerRow(f, h)
 
 	for _, s := range []*stubSection{big, small, none} {
 		if cmd := m.FocusByID(s.id); cmd != nil {
@@ -1012,16 +1081,20 @@ func TestRowStack_SmallPanelDoesNotMoveTheFooter(t *testing.T) {
 		if !isRuleLine(lines[rule2]) {
 			t.Fatalf("with %q focused, line %d is not rule 2: %q", s.id, rule2, lines[rule2])
 		}
-		if !strings.Contains(lines[h-1], "↵ create") {
-			t.Fatalf("with %q focused, the footer is not the last line: %q", s.id, lines[h-1])
+		if !strings.Contains(lines[ftr], "↵ create") {
+			t.Fatalf("with %q focused, line %d is not the footer: %q", s.id, ftr, lines[ftr])
 		}
 		// The region is blank-filled below whatever the field had to
-		// show, never collapsed.
-		for i := rule2 + 1 + s.PanelRows(); i < h-1; i++ {
+		// show, never collapsed. It ends at rule 3, one line above the
+		// footer (v3 spec §7.4).
+		for i := rule2 + 1 + s.PanelRows(); i < ftr-1; i++ {
 			if strings.TrimSpace(lines[i]) != "" {
 				t.Fatalf("with %q focused (%d panel rows), region line %d should be blank fill: %q",
 					s.id, s.PanelRows(), i, lines[i])
 			}
+		}
+		if !isRuleLine(lines[ftr-1]) {
+			t.Fatalf("with %q focused, line %d is not rule 3 closing the card: %q", s.id, ftr-1, lines[ftr-1])
 		}
 		if s.PanelRows() > 0 && !strings.Contains(lines[rule2+1], s.id+" panel 0") {
 			t.Fatalf("with %q focused, the panel's first line is %q", s.id, lines[rule2+1])
@@ -1049,6 +1122,7 @@ func TestRowStack_FocusCarriesThreeSignals(t *testing.T) {
 	const w, h = 80, 24
 	padLeft, inner := contentBox(w)
 	labelW, _ := labelCol(inner)
+	top := firstStackRow(layoutFrame(h, len(stubs)))
 
 	fill := ansi.Style{}.BackgroundColor(palette.ActiveRowBG).String()
 	panelBG := ansi.Style{}.BackgroundColor(palette.PanelBG).String()
@@ -1064,7 +1138,7 @@ func TestRowStack_FocusCarriesThreeSignals(t *testing.T) {
 		}
 		lines := viewLines(m, w, h)
 		for i := range stubs {
-			row, focused := lines[2+i], i == want
+			row, focused := lines[top+i], i == want
 
 			if got := strings.Contains(row, fill); got != focused {
 				t.Errorf("with %q focused, row %d carries the ActiveRowBG fill = %v, want %v", s.id, i, got, focused)
@@ -1092,7 +1166,7 @@ func TestRowStack_FocusCarriesThreeSignals(t *testing.T) {
 			}
 		}
 		// Full width, not just the content box.
-		if got := ansi.StringWidth(lines[2+want]); got != w {
+		if got := ansi.StringWidth(lines[top+want]); got != w {
 			t.Errorf("the focused row is %d cells wide, want the full %d", got, w)
 		}
 	}
@@ -1108,7 +1182,10 @@ func TestRowStack_HeaderCarriesNameAndContext(t *testing.T) {
 	m, _ := buildRowForm(theme.Default(), "a", "b")
 	m.SetContext("herdr-draft · main")
 
-	header := strippedLines(m, 80, 24)[0]
+	// Two rows above it (v3 spec §7): the top margin, then the header
+	// itself -- so the header's y is firstStackRow minus rule 1 and
+	// itself, not 0.
+	header := strippedLines(m, 80, 24)[firstStackRow(layoutFrame(24, 2))-2]
 	if !strings.Contains(header, "new session") {
 		t.Errorf("header %q does not carry Setup.Name", header)
 	}
@@ -1171,7 +1248,8 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 	m.Init()
 
 	const w, h = 120, 24
-	footer := func() string { return strippedLines(m, w, h)[h-1] }
+	ftr := footerRow(layoutFrame(h, 2), h)
+	footer := func() string { return strippedLines(m, w, h)[ftr] }
 
 	if cmd := m.FocusByID("prompt"); cmd != nil {
 		cmd()
@@ -1196,7 +1274,7 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 	// The Create button is never traded away for hint text, whatever
 	// the width.
 	for _, width := range []int{120, 80, 64, 40, 24, 12} {
-		line := ansi.Strip(strings.Split(m.ViewAt(width, h), "\n")[h-1])
+		line := ansi.Strip(strings.Split(m.ViewAt(width, h), "\n")[ftr])
 		if !strings.Contains(line, "↵ create") {
 			t.Errorf("at w=%d the footer lost the Create button: %q", width, line)
 		}
