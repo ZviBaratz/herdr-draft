@@ -131,6 +131,11 @@ const (
 	// dirPanelEmpty speaks in the field's own terms when nothing matches
 	// (v2 spec §6.1's "nothing to choose", never a bare "no matches").
 	dirPanelEmpty = "no matching directories"
+	// dirCountOne / dirCountMany are v3 spec §8.5's filter readout in this
+	// field's own words. See filterCount for why both numbers are spelled
+	// out, and for what a numerator above the denominator means here.
+	dirCountOne  = "directory"
+	dirCountMany = "directories"
 )
 
 // DirField is the form's Project directory Section (spec §6 field 2): a
@@ -167,6 +172,15 @@ type DirField struct {
 	// "for free," inherited from Task 14's own Picker contract rather
 	// than re-implemented here.
 	pickerVersion int
+	// matchedCandidates is how many of the picker's current rows are
+	// actual CANDIDATES, which is v3 spec §8.5's numerator here.
+	// FilteredLen is not: path mode appends the literal typed path
+	// (pathModeItems), a row you can pick but not one of the directories
+	// on offer, so counting it would report more matches than the pool
+	// can supply -- `3/3 directories` for a query two of the three match.
+	// Recomputed by refreshItems, the one place this field rebuilds what
+	// the picker holds.
+	matchedCandidates int
 
 	validityKnown bool
 	validityPath  string
@@ -544,8 +558,20 @@ func (d *DirField) Panel(w, h int) string {
 	for _, n := range notes {
 		lines = append(lines, panelText(note.Render(keepHead(n, panelInner(w))), w))
 	}
-	lines = append(lines, panelText(dimHint(d.palette).Render(d.panelStatus()), w))
+	lines = append(lines, panelStatusLine(dimHint(d.palette).Render(d.panelStatus()), d.filterCount(), w, d.palette))
 	return panelBlock(w, h, lines...)
+}
+
+// filterCount is v3 spec §8.5's readout for this field: how many of the
+// offered directories the typed text keeps.
+//
+// Neither half is a picker count. visibleItems feeds the picker an
+// already-ranked slice, so Len() and FilteredLen() are the same number
+// here and the ratio would never appear at all; and path mode's literal
+// row is in that slice without being a directory on offer. See
+// matchedCandidates.
+func (d *DirField) filterCount() string {
+	return filterCount(d.matchedCandidates, len(d.candidates), dirCountOne, dirCountMany)
 }
 
 // notesShown is how many of the notes this panel height can afford, from
@@ -616,6 +642,7 @@ func (d *DirField) refreshItems(bump bool) {
 		d.pickerVersion++
 	}
 	items := d.visibleItems()
+	d.matchedCandidates = countCandidates(items, d.candidates)
 	pickerItems := make([]widgets.PickerItem, len(items))
 	for i, it := range items {
 		// PickerItem.ID has no uniqueness contract of its own
@@ -638,6 +665,24 @@ func (d *DirField) refreshItems(bump bool) {
 		pickerItems[i] = widgets.PickerItem{ID: it, Cells: []string{d.collapseHome(it)}}
 	}
 	d.picker.SetItems(d.pickerVersion, pickerItems)
+}
+
+// countCandidates counts how many of items are in candidates. It tests
+// membership rather than trusting a branch of visibleItems to report what
+// it appended, so a future third mode cannot quietly make the readout
+// wrong again.
+func countCandidates(items, candidates []string) int {
+	pool := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		pool[c] = struct{}{}
+	}
+	n := 0
+	for _, it := range items {
+		if _, ok := pool[it]; ok {
+			n++
+		}
+	}
+	return n
 }
 
 // visibleItems computes the current mode's displayed item list: every

@@ -494,3 +494,34 @@ func TestDirFieldCompleteLeavesTheCursorAtTheEnd(t *testing.T) {
 		t.Errorf("after typing past a completion, Typed() = %q, want the keystroke at the END", got)
 	}
 }
+
+// TestDirField_FilterCountDiscountsTheLiteralRow pins the DirField half
+// of v3 spec §8.5's numerator. Path mode appends the literal typed path
+// (pathModeItems) so a not-yet-listed directory stays selectable, and
+// that row is not one of the candidates on offer: counting it reads
+// `3/3 directories` for a query two of the three match, i.e. "nothing was
+// filtered out" about a filtered list.
+func TestDirField_FilterCountDiscountsTheLiteralRow(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetHomeDir("/home/zvi")
+	d.SetCandidates(1, []string{
+		"/home/zvi/Projects/herdr",
+		"/home/zvi/Projects/herdr-draft",
+		"/home/zvi/Projects/atrium",
+	})
+	d.Focus()
+
+	if got, want := d.filterCount(), "3 directories"; got != want {
+		t.Errorf("filterCount with nothing typed = %q, want %q", got, want)
+	}
+
+	for _, r := range "~/Projects/h" {
+		d.Update(rn(r))
+	}
+	if got, want := d.picker.FilteredLen(), 3; got != want {
+		t.Fatalf("the picker holds %d rows, want %d (two candidates plus the literal) -- this test is about the difference", got, want)
+	}
+	if got, want := d.filterCount(), "2/3 directories"; got != want {
+		t.Errorf("filterCount in path mode = %q, want %q", got, want)
+	}
+}

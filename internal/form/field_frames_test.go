@@ -1,6 +1,7 @@
 package form
 
 import (
+	"strconv"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -237,6 +238,40 @@ func buildIssueColumnsForm(palette theme.Palette) Model {
 
 func TestFrames_IssueColumns(t *testing.T) {
 	assertFrame(t, "issue-columns-80x16", buildIssueColumnsForm(theme.Default()), 80, 16)
+}
+
+// buildIssueScrollForm is #25's own acceptance fixture: a list far longer
+// than the window it is drawn into, with the cursor walked far enough
+// down that the thumb is clear of BOTH ends of the track. Every other
+// frame in this package renders a list that fits, so before this one no
+// fixture anywhere contained a scrollbar cell at all -- and the two ends
+// are the positions an off-by-one still looks plausible at.
+//
+// Nothing is typed into it, so its count is the plain `20 issues`: the
+// ratio form is pinned by dir-panel-80x24, whose typed text keeps two of
+// three candidates. What this frame adds is that a count and a scrollbar
+// coexist -- the count sits on the status line, one row BELOW the last
+// row the bar reaches, so neither is drawn over the other.
+func buildIssueScrollForm(palette theme.Palette) Model {
+	issues := make([]linear.Issue, 20)
+	for i := range issues {
+		issues[i] = linear.Issue{
+			Identifier: "ENG-" + strconv.Itoa(100+i),
+			Title:      "queued work item " + strconv.Itoa(i),
+			StateName:  "Todo",
+		}
+	}
+	f := NewIssueField(palette)
+	f.SetIssues(1, issues)
+	f.Focus()
+	for i := 0; i < 12; i++ {
+		f.Update(key(tea.KeyDown, 0))
+	}
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_IssueScroll(t *testing.T) {
+	assertFrame(t, "issue-scroll-80x16", buildIssueScrollForm(theme.Default()), 80, 16)
 }
 
 // buildAccountPanelForm enables AccountField (agent kind claude) over a

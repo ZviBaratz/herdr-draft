@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -645,6 +646,111 @@ func TestPicker_QueryOwnsMatchOnlyWhileItIsSet(t *testing.T) {
 	}
 }
 
+// lastCellsOf renders a picker and returns the last CELL of each row,
+// color and zone markers stripped -- the scrollbar column, when there is
+// one.
+func lastCellsOf(p *Picker, width, height int) []string {
+	rows := rowsOf(p, width, height)
+	out := make([]string, len(rows))
+	for i, line := range rows {
+		runes := []rune(line)
+		if len(runes) == 0 {
+			continue
+		}
+		out[i] = string(runes[len(runes)-1])
+	}
+	return out
+}
+
+// scrollbarItems is n numbered rows, wide enough to be worth eliding and
+// short enough to read back off a 20-cell render.
+func scrollbarItems(n int) []PickerItem {
+	items := make([]PickerItem, n)
+	for i := range items {
+		items[i] = PickerItem{ID: strconv.Itoa(i), Cells: []string{"row" + strconv.Itoa(i)}}
+	}
+	return items
+}
+
+// TestPicker_ScrollbarAppearsOnlyWhenTheListOutgrowsTheWindow is v3 spec
+// §8.5's conditional reservation, both halves of it: a list that fits
+// spends no cell at all on a scrollbar, and one row more than fits costs
+// the last column of EVERY row -- content included, which is the part the
+// spec accepts out loud ("content narrows by one cell the moment the list
+// outgrows the window").
+func TestPicker_ScrollbarAppearsOnlyWhenTheListOutgrowsTheWindow(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, scrollbarItems(4))
+
+	for i, cell := range lastCellsOf(p, 20, 4) {
+		if cell == scrollTrackGlyph || cell == scrollThumbGlyph {
+			t.Errorf("row %d ends in %q at a height that fits all 4 items, want no scrollbar at all", i, cell)
+		}
+	}
+
+	p.SetItems(2, scrollbarItems(5))
+	for i, cell := range lastCellsOf(p, 20, 4) {
+		if cell != scrollTrackGlyph && cell != scrollThumbGlyph {
+			t.Errorf("row %d ends in %q with 5 items in a 4-row window, want the track %q or the thumb %q",
+				i, cell, scrollTrackGlyph, scrollThumbGlyph)
+		}
+	}
+}
+
+// TestPicker_ScrollbarTakesItsCellFromTheContent pins what the reserved
+// column costs: the badge stops one cell short of the render width, in
+// the column the bar now owns, rather than being overwritten by it.
+func TestPicker_ScrollbarTakesItsCellFromTheContent(t *testing.T) {
+	p := NewPicker(testPalette())
+	items := scrollbarItems(5)
+	for i := range items {
+		items[i].Badge = "Todo"
+	}
+	p.SetItems(1, items)
+
+	const width = 20
+	row := rowsOf(p, width, 4)[0]
+	if got, want := cellIndexOf(row, "Todo")+ansi.StringWidth("Todo"), width-scrollbarWidth; got != want {
+		t.Errorf("the badge ends at cell %d, want %d -- the scrollbar owns the last cell now: %q", got, want, row)
+	}
+	if got := ansi.StringWidth(row); got != width {
+		t.Errorf("row width = %d, want exactly %d: %q", got, width, row)
+	}
+}
+
+// TestPicker_ScrollbarThumbFollowsTheCursor walks the cursor down a long
+// list and checks the drawn thumb against scrollThumb's own answer at the
+// offset the render used. The point is the WIRING -- that the column is
+// painted from the same geometry the rows are scrolled by -- since the
+// geometry itself is tabled below.
+func TestPicker_ScrollbarThumbFollowsTheCursor(t *testing.T) {
+	const total, height = 24, 6
+	p := NewPicker(testPalette())
+	p.SetItems(1, scrollbarItems(total))
+
+	seenMidTrack := false
+	for step := 0; step < total; step++ {
+		wantTop, wantLength := scrollThumb(total, height, scrollOffset(step, total, height))
+		if wantTop > 0 && wantTop+wantLength < height {
+			seenMidTrack = true
+		}
+		for row, cell := range lastCellsOf(p, 20, height) {
+			want := scrollTrackGlyph
+			if row >= wantTop && row < wantTop+wantLength {
+				want = scrollThumbGlyph
+			}
+			if cell != want {
+				t.Fatalf("with the cursor on item %d, row %d of the bar = %q, want %q (thumb rows [%d,%d))",
+					step, row, cell, want, wantTop, wantTop+wantLength)
+			}
+		}
+		p.CursorNext()
+	}
+	if !seenMidTrack {
+		t.Error("the sweep never produced a thumb clear of both ends -- the fixture no longer exercises a mid-track thumb")
+	}
+}
+
 // TestScrollThumb tables v3 spec §8.5's thumb geometry. It is worth this
 // much table for one reason: the arithmetic is integer, the interesting
 // answers are the rounded ones, and every one of them is far cheaper to
@@ -751,5 +857,38 @@ func TestScrollThumb_StaysInsideTheTrack(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestPicker_FilteredHasID covers the one thing FilteredHasID exists for:
+// telling a field whose picker carries a sentinel row whether that row is
+// still in the filtered set, so v3 spec §8.5's count can leave it out.
+func TestPicker_FilteredHasID(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "\x00none", Cells: []string{"none"}},
+		{ID: "ENG-1", Cells: []string{"ENG-1", "Fix login bug"}},
+		{ID: "ENG-2", Cells: []string{"ENG-2", "Add dark mode"}},
+	})
+
+	for _, id := range []string{"\x00none", "ENG-1", "ENG-2"} {
+		if !p.FilteredHasID(id) {
+			t.Errorf("FilteredHasID(%q) = false with no query, want true", id)
+		}
+	}
+	if p.FilteredHasID("ENG-9") {
+		t.Error(`FilteredHasID("ENG-9") = true, want false -- no such item`)
+	}
+	// An empty id matches nothing rather than every item that forgot one.
+	if p.FilteredHasID("") {
+		t.Error(`FilteredHasID("") = true, want false`)
+	}
+
+	p.SetQuery("ne")
+	if !p.FilteredHasID("\x00none") {
+		t.Error(`the "none" row did not survive "ne", so this case proves nothing`)
+	}
+	if p.FilteredHasID("ENG-1") {
+		t.Error(`FilteredHasID("ENG-1") = true under a query it does not match, want false`)
 	}
 }

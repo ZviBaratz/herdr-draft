@@ -252,6 +252,22 @@ const cellGap = 2
 // list.
 const markerCurrent = "✓"
 
+// scrollbarWidth is what v3 spec §8.5's scrollbar costs: one COLUMN --
+// the last cell of every row -- and not a line. A line would have to come
+// out of the panel's row budget, which is the one thing §8.5 refuses to
+// spend ("no PanelRows() grows anywhere").
+const scrollbarWidth = 1
+
+// The scrollbar's two glyphs, herdr's own (src/ui/scrollbar.rs:135-162).
+// They are drawn in Border and Overlay0 respectively, which is exactly
+// what herdr's surface_dim/overlay0 pair translates to here -- see
+// internal/theme's Palette, whose Border and Overlay0 doc comments name
+// this widget's track and thumb as their reason for existing.
+const (
+	scrollTrackGlyph = "▕"
+	scrollThumbGlyph = "█"
+)
+
 // pickerMetrics is the natural (unbounded) size of every column, measured
 // over the WHOLE filtered set. Measuring over the visible window instead
 // is the defect v3 spec §8.1 calls out by name: the columns would jitter
@@ -521,6 +537,13 @@ type rowLayout struct {
 	mark  int
 	cells []int
 	badge int
+	// bar is the scrollbar column: scrollbarWidth while the list outgrows
+	// the window, 0 otherwise (v3 spec §8.5). It is settled HERE rather
+	// than subtracted at the render site so the cell columns are measured
+	// against the width they will actually get -- a scrollbar taken off
+	// the end of an already-fitted row would silently clip whatever
+	// column happened to be last.
+	bar int
 }
 
 // left is the width of everything before the badge: the mark column, the
@@ -547,23 +570,37 @@ func (l rowLayout) left() int {
 	return w
 }
 
-// layout fits the measured columns into width: the mark column when the
-// set uses one, the badge column when it has room for one, and the cell
-// columns bounded by their own Min/Max and then shrunk, Flex first, until
-// they fit.
+// layout fits the measured columns into a width by height render: the
+// mark column when the set uses one, the scrollbar column when the list
+// outgrows the window, the badge column when it has room for one, and the
+// cell columns bounded by their own Min/Max and then shrunk, Flex first,
+// until they fit.
+//
+// height is here for the scrollbar alone, and only to answer "does the
+// list fit" -- no column's width depends on it, which is what keeps
+// MarkedView's rows identical at every height that shows the same items.
 //
 // If everything is at its floor and the row STILL does not fit, the row
 // simply overflows and MarkedView's per-row style clips it -- the same
 // hard-clip-rather-than-fail contract widthStyle documents. A popup
 // narrow enough to reach that has bigger problems than a column.
-func (p *Picker) layout(width int) rowLayout {
+func (p *Picker) layout(width, height int) rowLayout {
 	m := p.measure()
 
 	var lay rowLayout
 	if m.mark {
 		lay.mark = markColumnWidth
 	}
-	avail := width - lay.mark
+	// v3 spec §8.5: reserved only while the list outgrows the window, so
+	// content narrows by one cell exactly when the bar appears -- accepted
+	// there, because it coincides with a state change the user can already
+	// see. The width guard is the degenerate end of the same rule: at one
+	// cell of render width a scrollbar would be the whole row, and a row
+	// with nothing in it says less than a row with no scrollbar.
+	if len(p.filtered) > height && width > scrollbarWidth {
+		lay.bar = scrollbarWidth
+	}
+	avail := width - lay.mark - lay.bar
 	// The badge is dropped outright rather than squeezed: a status word
 	// with one cell left for it says nothing, and the cells it would
 	// crowd out say something.
@@ -682,6 +719,31 @@ func (p *Picker) FilteredLen() int { return len(p.filtered) }
 // Pure read, like FilteredLen: it renders nothing and changes nothing, so
 // it cannot move a frame on its own.
 func (p *Picker) Len() int { return len(p.items) }
+
+// FilteredHasID reports whether the item with this ID survives the
+// current query. It exists for one job: a field whose picker carries a
+// SENTINEL row -- IssueField's `none`, AccountField's `active` -- cannot
+// use FilteredLen as v3 spec §8.5's numerator directly, because that row
+// is not one of the things the readout counts. Asking here is cheaper
+// and less brittle than re-running the picker's own filter outside it.
+//
+// An empty id is never held (SetItems' IDs are non-empty by contract), so
+// it answers false rather than matching the zero value of every item that
+// forgot one.
+//
+// Pure read, like FilteredLen and Len: it renders nothing and changes
+// nothing, so it cannot move a frame on its own.
+func (p *Picker) FilteredHasID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, it := range p.filtered {
+		if it.ID == id {
+			return true
+		}
+	}
+	return false
+}
 
 // CursorRow reports the PHYSICAL row (0-based) the cursor lands on inside
 // a View/MarkedView render height rows tall, or -1 when nothing is
@@ -841,6 +903,10 @@ func (p *Picker) View(width, height int) string {
 // which recompute the same scrollOffset this method used. zonePrefix ==
 // "" marks nothing at all (Zones.Mark's own empty-id no-op) -- see
 // View's own doc comment.
+//
+// v3 spec §8.5's scrollbar lives here too: the last cell of every row,
+// reserved only while the list outgrows height -- see layout for the
+// reservation and scrollbarCell for the two glyphs.
 func (p *Picker) MarkedView(width, height int, zonePrefix string) string {
 	if height < 1 {
 		height = 1
@@ -857,35 +923,70 @@ func (p *Picker) MarkedView(width, height int, zonePrefix string) string {
 	// doc comment, and the frame-level test in internal/form that pins
 	// this surviving composeRows' second, PanelBG-colored pass over the
 	// same line.
-	lay := p.layout(width)
+	lay := p.layout(width, height)
+	// Everything but the scrollbar column, and what every row below is
+	// composed at: the bar is appended OUTSIDE the row's own fill, so the
+	// track reads as one continuous stroke down the side of the list
+	// rather than being interrupted by the cursor row's Surface (herdr
+	// draws its own scrollbar in a rect beside the list, for the same
+	// reason). It is outside the row's zone marker too, so a click on the
+	// bar is inert rather than selecting the row behind it -- the bar is
+	// not draggable either (v3 spec §8.5's stated non-goal), so there is
+	// nothing for a press on it to mean.
+	inner := width - lay.bar
 	lines := make([]string, height)
 
 	offset := scrollOffset(p.cursor, len(p.filtered), height)
+	thumbTop, thumbLength := scrollThumb(len(p.filtered), height, offset)
 	for row := 0; row < height; row++ {
+		bar := p.scrollbarCell(lay, row, thumbTop, thumbLength)
 		idx := offset + row
 		if idx >= len(p.filtered) {
-			lines[row] = widthStyle(width).Render("")
+			lines[row] = widthStyle(inner).Render("") + bar
 			continue
 		}
 		cursor := idx == p.cursor
-		rendered := p.renderRow(p.filtered[idx], lay, width, cursor)
+		rendered := p.renderRow(p.filtered[idx], lay, inner, cursor)
 		zoneID := ""
 		if zonePrefix != "" {
 			zoneID = zonePrefix + strconv.Itoa(row)
 		}
 		marked := Zones.Mark(zoneID, rendered)
 		if cursor {
-			lines[row] = PaintLine(marked, width, p.palette.Surface)
+			lines[row] = PaintLine(marked, inner, p.palette.Surface) + bar
 			continue
 		}
-		lines[row] = widthStyle(width).Render(marked)
+		lines[row] = widthStyle(inner).Render(marked) + bar
 	}
 	return strings.Join(lines, "\n")
 }
 
+// scrollbarCell renders one physical row's scrollbar cell -- the thumb
+// where scrollThumb put it, the track everywhere else, and nothing at all
+// (not even a blank) when no column was reserved, so a list that fits
+// spends exactly zero cells on a scrollbar it isn't drawing.
+//
+// The colors are read off the palette directly rather than through Tone:
+// Tone is the closed enum a CALLER picks a column's meaning from (see its
+// doc comment), and the track's near-invisible Border has no place in a
+// list of foreground roles a field would ever choose.
+func (p *Picker) scrollbarCell(lay rowLayout, row, thumbTop, thumbLength int) string {
+	if lay.bar < 1 {
+		return ""
+	}
+	glyph, fg := scrollTrackGlyph, p.palette.Border
+	if row >= thumbTop && row < thumbTop+thumbLength {
+		glyph, fg = scrollThumbGlyph, p.palette.Overlay0
+	}
+	return lipgloss.NewStyle().Foreground(fg).Render(glyph)
+}
+
 // renderRow renders one item's content at the shared column geometry:
 // the fixed mark column, each cell padded (or elided) to its column's
-// width, and the badge flush with the row's right edge. cursor denotes
+// width, and the badge flush with the row's right edge. width is the
+// CONTENT width -- the render width less lay.bar, since the scrollbar's
+// own cell is appended by MarkedView after the row is composed -- so the
+// badge is flush with the last cell the row itself owns. cursor denotes
 // the CURSOR row, not focus (this widget doesn't track focus; see the
 // package doc's Adaptations section) and not PickerItem.Current, which
 // is a different fact -- see that field's own doc comment.

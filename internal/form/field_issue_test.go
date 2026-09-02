@@ -211,11 +211,53 @@ func TestIssueField_NoPanicBeforeSetIssues(t *testing.T) {
 // "no matches" into row 0, so a filtered-out list printed two sentences
 // for one fact, the wrong one first, against v2 spec §6.1's "never a bare
 // `no matches`".
+// TestIssueField_FilterCountDiscountsTheNoneRow pins the half of v3 spec
+// §8.5's readout the picker cannot get right on its own: `none` is a
+// picker item like any other, so FilteredLen and Len both count it, and a
+// queue of two would read `3 issues`.
+func TestIssueField_FilterCountDiscountsTheNoneRow(t *testing.T) {
+	f := NewIssueField(theme.Default())
+	f.SetIssues(1, sampleIssues()) // two issues, plus the `none` row
+	f.Focus()
+
+	if got, want := f.picker.FilteredLen(), 3; got != want {
+		t.Fatalf("the picker holds %d rows, want %d -- this test is about the difference", got, want)
+	}
+	if got, want := f.filterCount(), "2 issues"; got != want {
+		t.Errorf("filterCount at rest = %q, want %q", got, want)
+	}
+
+	// The case the discount exists for: "ne" matches the `none` row and
+	// nothing else, so the list is one row long and none of it is an
+	// issue. Counting rows would read `1/2 issues` and point at a row
+	// that is not one of them.
+	for _, r := range "ne" {
+		f.Update(rn(r))
+	}
+	if !f.picker.FilteredHasID(issueNoneID) {
+		t.Fatal(`the "none" row was filtered out by "ne" -- this case no longer exercises the discount`)
+	}
+	if got, want := f.picker.FilteredLen(), 1; got != want {
+		t.Fatalf("the picker kept %d rows under \"ne\", want %d (the sentinel alone)", got, want)
+	}
+	if got, want := f.filterCount(), "0/2 issues"; got != want {
+		t.Errorf("filterCount under a query only the sentinel survives = %q, want %q", got, want)
+	}
+
+	// An inert field draws no list, so it counts nothing.
+	f.SetUnavailable("linear key rejected")
+	if got := f.filterCount(); got != "" {
+		t.Errorf("filterCount on an inert field = %q, want nothing -- Panel draws no rows to count", got)
+	}
+}
+
 func TestIssueField_EmptyLinearAndEmptyFilterReadDifferently(t *testing.T) {
 	palette := theme.Default()
 
 	empty := NewIssueField(palette)
 	empty.SetIssues(1, nil)
+	// No count at all here, deliberately: filterCount says nothing about a
+	// list of zero, because "no assigned issues" already did.
 	if got := panelLineAt(empty.Panel(60, 4), 3); got != issuePanelEmpty {
 		t.Errorf("panel status with no issues at all = %q, want %q", got, issuePanelEmpty)
 	}
@@ -223,16 +265,16 @@ func TestIssueField_EmptyLinearAndEmptyFilterReadDifferently(t *testing.T) {
 	f := NewIssueField(palette)
 	f.SetIssues(1, sampleIssues())
 	f.Focus()
-	if got := panelLineAt(f.Panel(60, 4), 3); got != "" {
-		t.Errorf("panel status with issues on offer = %q, want no status line at all", got)
+	if got := panelStatusMessage(panelLineAt(f.Panel(60, 4), 3), "2 issues"); got != "" {
+		t.Errorf("panel status with issues on offer = %q, want nothing but the count", got)
 	}
 
 	for _, r := range "zzzz" {
 		f.Update(rn(r))
 	}
 	panel := f.Panel(60, 4)
-	if got := panelLineAt(panel, 3); got != issuePanelNoMatch {
-		t.Errorf("panel status with a filter matching nothing = %q, want %q", got, issuePanelNoMatch)
+	if got := panelStatusMessage(panelLineAt(panel, 3), "0/2 issues"); got != issuePanelNoMatch {
+		t.Errorf("panel status with a filter matching nothing = %q, want %q plus the count", got, issuePanelNoMatch)
 	}
 	if got := ansi.Strip(panel); strings.Contains(got, "no matches") {
 		t.Errorf("panel = %q, want no bare \"no matches\" row (v2 spec §6.1)", got)

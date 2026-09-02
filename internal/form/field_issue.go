@@ -78,6 +78,11 @@ const (
 	// "delete a character". Worded to match field_dir.go's own
 	// dirPanelEmpty, which is the same state on the sibling field.
 	issuePanelNoMatch = "no matching issues"
+	// issueCountOne / issueCountMany are v3 spec §8.5's filter readout in
+	// this field's own words, the way issuePanelEmpty is. See
+	// filterCount for why both numbers are spelled out.
+	issueCountOne  = "issue"
+	issueCountMany = "issues"
 )
 
 // IssueField is the form's Linear issue Section (spec §6 field 1): a
@@ -401,8 +406,30 @@ func (f *IssueField) Panel(w, h int) string {
 	for len(lines) < h-1 {
 		lines = append(lines, panelText("", w))
 	}
-	lines = append(lines, panelText(dimHint(f.palette).Render(f.panelStatus()), w))
+	lines = append(lines, panelStatusLine(dimHint(f.palette).Render(f.panelStatus()), f.filterCount(), w, f.palette))
 	return panelBlock(w, h, lines...)
+}
+
+// filterCount is v3 spec §8.5's readout for this field: how many of the
+// user's assigned issues the typed filter keeps.
+//
+// Both halves discount the `none` sentinel, which is a picker row but not
+// an assigned issue -- counting it would make a queue of 47 read
+// `48 issues` at rest, and `3/48` under a filter. len(f.issues) is the
+// denominator for the same reason Len() cannot be.
+//
+// An INERT field counts nothing: SetUnavailable draws no list at all
+// (Panel), so a count beside the reason would be describing rows that are
+// not on screen.
+func (f *IssueField) filterCount() string {
+	if f.unavailable != "" {
+		return ""
+	}
+	shown := f.picker.FilteredLen()
+	if f.picker.FilteredHasID(issueNoneID) {
+		shown--
+	}
+	return filterCount(shown, len(f.issues), issueCountOne, issueCountMany)
 }
 
 // panelStatus renders the panel's last line: the unavailable reason, one

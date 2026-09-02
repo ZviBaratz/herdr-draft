@@ -44,6 +44,16 @@ func panelLineAt(panel string, i int) string {
 	return panelLineText(strings.Split(panel, "\n")[i])
 }
 
+// panelStatusMessage returns the MESSAGE half of a panel's status line:
+// everything left of the filter count v3 spec §8.5 right-flushes onto it.
+//
+// count is the caller's own expectation for that readout rather than a
+// pattern, so a wrong count fails the message assertion too, by staying
+// in the string. Pass "" for a field that shows none.
+func panelStatusMessage(line, count string) string {
+	return strings.TrimRight(strings.TrimSuffix(line, count), " ")
+}
+
 // rowFields builds one of each, populated with the representative data
 // v2 spec §6's own table uses, in the spec's row order (minus the
 // worktree, which field_worktree_test.go covers).
@@ -581,8 +591,9 @@ func TestAccountField_RowDegradesToNamesOnly(t *testing.T) {
 	if got := rowText(f.Row(60)); got != "alpha" {
 		t.Errorf("Row on a degraded status = %q, want the name alone -- tier, auth status and windows are all unreliable", got)
 	}
-	if got := panelLineAt(f.Panel(60, f.PanelRows()), f.PanelRows()-1); got != accountDegradedHint {
-		t.Errorf("Panel status line on a degraded status = %q, want %q", got, accountDegradedHint)
+	line := panelLineAt(f.Panel(60, f.PanelRows()), f.PanelRows()-1)
+	if got := panelStatusMessage(line, "3 profiles"); got != accountDegradedHint {
+		t.Errorf("Panel status line on a degraded status = %q, want %q plus the count", got, accountDegradedHint)
 	}
 }
 

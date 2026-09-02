@@ -95,6 +95,11 @@ const (
 	// accountPanelEmpty speaks in the field's own terms when clauth
 	// reported no profiles at all (v2 spec §6.1's "nothing to choose").
 	accountPanelEmpty = "no clauth profiles"
+	// accountCountOne / accountCountMany are v3 spec §8.5's readout in
+	// this field's own words. Nothing filters this list, so it is always
+	// the plain count -- see filterCount for the field.
+	accountCountOne  = "profile"
+	accountCountMany = "profiles"
 )
 
 // AccountField is the form's clauth account Section (spec §6 field 7): a
@@ -555,8 +560,20 @@ func (f *AccountField) Panel(w, h int) string {
 		f.pickerRowsShown = h - 1
 		lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
 	}
-	lines = append(lines, panelText(f.panelStatus(), w))
+	lines = append(lines, panelStatusLine(f.panelStatus(), f.filterCount(), w, f.palette))
 	return panelBlock(w, h, lines...)
+}
+
+// filterCount is v3 spec §8.5's readout for this field. Nothing filters
+// this list, so it is always the plain count and never a ratio; it is
+// here because the panel caps at accountPanelMaxRows and can therefore
+// scroll, and a scrollbar with no count says how far you are through a
+// list of unstated length.
+//
+// It counts PROFILES, not picker rows: the `active` sentinel is a choice,
+// not an account, so three profiles must not read `4 profiles`.
+func (f *AccountField) filterCount() string {
+	return filterCount(len(f.profiles), len(f.profiles), accountCountOne, accountCountMany)
 }
 
 // panelStatus renders the panel's last line: SetVerdict's own live

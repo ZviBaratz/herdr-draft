@@ -14,6 +14,7 @@
 package form
 
 import (
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -133,6 +134,90 @@ func panelInner(w int) int {
 // gutter, then content fitted to the remaining width.
 func panelText(content string, w int) string {
 	return strings.Repeat(" ", gutterWidth) + fitLine(content, panelInner(w))
+}
+
+// panelStatusLine composes a panel's LAST line, the one v3 spec §8.5
+// spends on the filter count: the field's own status message on the left
+// and the count flush right, in the same two-cell-gutter column every
+// other panel line is composed into.
+//
+// msg arrives already styled, because each field's status has its own
+// tone (AccountField's live verdict is Danger, everyone else's is a dim
+// hint) -- and spreadLine measures rendered width, so a pre-styled left
+// half costs nothing here. The COUNT is styled in this one place instead:
+// it means the same thing on all three lines that carry it, and a field
+// choosing its own color for it is a field that could get it wrong.
+//
+// The count is DROPPED WHOLE rather than squeezed when the two halves
+// cannot both fit with statusCountGap between them -- the same judgement
+// widgets.Picker's layout makes for a badge, and for the same reason: a
+// count that has eaten the sentence beside it costs more than it says.
+// The 44-cell account panel is where this actually bites, since
+// spreadLine truncates its left half flush against the right one with no
+// gap at all, giving `use whatever profile i3 profiles`.
+//
+// With no count -- because there is none, or because it did not fit -- it
+// delegates to panelText rather than composing an equivalent line, so the
+// panels of the fields that never show one are byte-identical by
+// construction and not merely on inspection (fitLine is a lipgloss
+// Render, so applying it twice to already-styled text is not obviously a
+// no-op). rowvalues_test.go pins the equivalence anyway.
+func panelStatusLine(msg, count string, w int, p theme.Palette) string {
+	inner := panelInner(w)
+	if count == "" || lipgloss.Width(msg)+statusCountGap+lipgloss.Width(count) > inner {
+		return panelText(msg, w)
+	}
+	return strings.Repeat(" ", gutterWidth) + spreadLine(msg, dimHint(p).Render(count), inner)
+}
+
+// statusCountGap is the least air v3 spec §8.5's filter count keeps
+// between itself and the message it shares a line with -- the same two
+// cells widgets.Picker puts between two columns of a panel row.
+const statusCountGap = 2
+
+// filterCount is v3 spec §8.5's readout: `24 issues` with nothing
+// filtered out and `3/24 issues` otherwise. It switches on shown != total
+// rather than on herdr's own "is a query set" -- one less piece of state,
+// and it reads identically.
+//
+// The noun is the FIELD's own copy, the way issuePanelEmpty is: a list of
+// issues and a list of directories are counted in different words, and
+// the field is the only thing that knows which.
+//
+// It takes BOTH grammatical numbers, which §8.5's sketched signature
+// (one `noun string`) does not. A one-word version renders `1 issues` for
+// a user with exactly one assigned issue -- an ordinary state, not a
+// corner -- and the ratio form cannot cover it, since the noun there
+// agrees with the total, not the match count. Two constants per field is
+// the cheapest thing that is never wrong.
+//
+// An EMPTY list counts nothing at all. The left half of this very line
+// already says so in the field's own terms (`no assigned issues`), and
+// `0 issues` beside it is the same fact twice, in the less useful order.
+//
+// The full-set branch tests shown >= total rather than ==. No caller can
+// reach the inequality today -- each one subtracts the rows its picker
+// holds that are not things to count (IssueField's `none` sentinel,
+// DirField's literal typed path) before calling -- and the point is that
+// if one ever stops, the line degrades to a plain count instead of
+// rendering an upside-down ratio like `4/3 issues`.
+func filterCount(shown, total int, singular, plural string) string {
+	if total < 1 {
+		return ""
+	}
+	if shown >= total {
+		return countOf(shown, singular, plural)
+	}
+	return strconv.Itoa(shown) + "/" + countOf(total, singular, plural)
+}
+
+// countOf is `1 issue` / `24 issues`.
+func countOf(n int, singular, plural string) string {
+	noun := plural
+	if n == 1 {
+		noun = singular
+	}
+	return strconv.Itoa(n) + " " + noun
 }
 
 // panelMarked composes one panel line whose content the caller has
