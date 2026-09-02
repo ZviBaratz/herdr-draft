@@ -177,6 +177,10 @@ type DirField struct {
 	// behavior).
 	pathExpander func(string) string
 
+	// notes is SetNotes' app-supplied report about the SELECTED project --
+	// v2 spec §11's "ignored and reported" lines. See SetNotes.
+	notes []string
+
 	// homeDir is SetHomeDir's app-supplied home directory, used ONLY to
 	// collapse a leading home prefix to "~" where a path is DISPLAYED
 	// (v2 spec §6: "path, ~-shortened"). Purely cosmetic: Value() and
@@ -500,20 +504,81 @@ func (d *DirField) rowMarker() string {
 	}
 }
 
-// Panel is the candidate list plus one dim status line beneath it.
+// Panel is the candidate list, then whatever notes the app layer has about
+// the selected project, then one dim status line.
+//
+// The notes come BETWEEN the list and the status line rather than after it
+// so they sit against the list they belong beside: the status line is
+// usually empty (panelStatus speaks only when nothing matches), and a note
+// separated from the list by a blank row reads as belonging to neither.
+// Nothing is lost by putting the status last -- it has something to say
+// only when the list is EMPTY, and notesShown reserves the list no rows in
+// that case, so the status always fits.
 func (d *DirField) Panel(w, h int) string {
 	if h < 1 {
 		h = 1
 	}
+	notes := d.notesShown(h)
+
 	lines := make([]string, 0, h)
 	d.pickerRowsShown = 0
-	if h > 1 {
-		d.pickerRowsShown = h - 1
-		lines = append(lines, panelPickerLines(d.picker, w, h-1, "row:"+d.ID()+":", d.palette)...)
+	if rows := h - 1 - len(notes); rows > 0 {
+		d.pickerRowsShown = rows
+		lines = append(lines, panelPickerLines(d.picker, w, rows, "row:"+d.ID()+":", d.palette)...)
+	}
+	// Warning, not dim: every other line in this panel is a thing the user
+	// can pick, and these are the one thing here that says something they
+	// wrote was refused. A note styled like a hint is a note nobody reads,
+	// which is the whole defect v2 spec §11's "with a visible note" names.
+	// The text is prose, so it elides at its TAIL (keepHead) rather than
+	// being clipped silently by panelText's own fit.
+	note := lipgloss.NewStyle().Foreground(d.palette.Warning)
+	for _, n := range notes {
+		lines = append(lines, panelText(note.Render(keepHead(n, panelInner(w))), w))
 	}
 	lines = append(lines, panelText(dimHint(d.palette).Render(d.panelStatus()), w))
 	return panelBlock(w, h, lines...)
 }
+
+// notesShown is how many of the notes this panel height can afford, from
+// the front.
+//
+// Two rows are spoken for before the first note: the status line, and one
+// candidate row whenever there IS a candidate. The chooser is what this
+// panel is for -- a report about a config file must never be the thing that
+// empties it -- so at v2 spec §9's three-row floor a long report shows its
+// first line and the list keeps its cursor row. The rest of the report
+// comes back as soon as the window does.
+func (d *DirField) notesShown(h int) []string {
+	room := h - 1
+	if d.picker.FilteredLen() > 0 {
+		room--
+	}
+	if room > len(d.notes) {
+		room = len(d.notes)
+	}
+	if room < 0 {
+		room = 0
+	}
+	return d.notes[:room]
+}
+
+// SetNotes records the app layer's report about the SELECTED project --
+// v2 spec §11's one line per key in that repository's committed
+// `.herdr-draft.toml` that the trust model refused, and the reason, plus
+// the single line a malformed file reports instead.
+//
+// They live on THIS field because they are a property of the FILE, not of
+// any one value: the project row is what decides which repository the form
+// points at, and therefore which file this is. A reader who wonders why a
+// key they committed did nothing looks at the row that chose the repository.
+//
+// It takes plain strings, already worded: this package performs no I/O and
+// knows nothing of internal/config, so the classification and the reasons
+// are decided over there and only the finished lines arrive here. nil (the
+// resting state, and what a repository with no such file yields) reserves
+// no rows at all.
+func (d *DirField) SetNotes(notes []string) { d.notes = notes }
 
 // panelStatus renders the panel's last line: the field's own empty-list
 // sentence, or nothing.
@@ -529,10 +594,10 @@ func (d *DirField) panelStatus() string {
 	return ""
 }
 
-// PanelRows is one row per candidate plus the status line, capped at
-// dirPanelMaxRows.
+// PanelRows is one row per candidate, one per note (SetNotes) and the
+// status line, capped at dirPanelMaxRows.
 func (d *DirField) PanelRows() int {
-	return capRows(1+d.picker.FilteredLen(), dirPanelMaxRows)
+	return capRows(1+len(d.notes)+d.picker.FilteredLen(), dirPanelMaxRows)
 }
 
 // refreshItems recomputes visibleItems() and feeds it to the wrapped

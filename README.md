@@ -261,6 +261,13 @@ prompt_template` (it would become the agent's first instruction),
 `[clauth]`, `[timeouts]` and `[palette]`. So is a key that is simply
 misspelled. A malformed file is ignored too — it never blocks the form.
 
+**Where you see all this.** The report — one line per ignored key, with the
+reason — is in the **Project** panel, since the project row is what decides
+which repository's file applies. A value the file *did* supply is marked
+`from .herdr-draft.toml` in the panel of the field showing it (Worktree,
+Placement); the rows themselves stay quiet, and the mark goes away once you
+change that value yourself.
+
 **Precedence**, highest first: `projects.json` (your last choice in *this*
 project) → `.herdr-draft.toml` → `last-used.json` (your last choice
 anywhere) → `config.toml` → the built-in default. A team's committed

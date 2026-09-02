@@ -455,14 +455,8 @@ type Model struct {
 	// (spec §11), re-read by the debounced dir check on every project
 	// change and kept here for two reasons: applyProjectDefaults feeds it
 	// back into defaults.Resolve, and its Notes are the visible report of
-	// everything in that file the trust model refused.
-	//
-	// THE NOTES ARE NOT YET RENDERED. Spec §11 puts them in the focused
-	// row's panel, which needs a setter internal/form does not have; that
-	// package is being rewritten under the key-grammar/polish issue, so
-	// the value is plumbed to here -- where a view can read it -- and the
-	// display is left for that work rather than collided with. See
-	// repoConfigNotes.
+	// everything in that file the trust model refused -- pushed onto the
+	// project row's panel by showRepoConfig.
 	repoConfig config.RepoConfig
 
 	// projects is projects.json, loaded once at Bootstrap: nothing but this
@@ -1253,6 +1247,11 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	}
 
 	m.syncDerivedInertness()
+	// Spec §11's provenance follows the touched flags noteUserEdits set at
+	// the top of this function: a value the user has just moved is no
+	// longer the repository's, and the line saying it was has to go with
+	// it. This handler is the only place those flags ever flip.
+	m.showRepoConfig()
 	// Cheap and synchronous, like syncDerivedInertness above: the header's
 	// project name follows the project ROW, which can move on any routed
 	// message (a keystroke re-ranking the candidates, a click on a
@@ -1386,6 +1385,9 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	// Again, because the agent kind above drives AccountField's own inert
 	// condition (spec §6 field 7, "inert while the kind is not claude").
 	m.syncDerivedInertness()
+	// Spec §11's visible half, last: it reads both the resolution above and
+	// the values the calls above just applied.
+	m.showRepoConfig()
 	m.snapshotAppliedDefaults()
 }
 
@@ -1403,14 +1405,71 @@ func (m Model) repoConfigLoader() func(string) config.RepoConfig {
 // repoConfigNotes is spec §11's visible report: one line per key in the
 // selected repository's .herdr-draft.toml that the trust model refused,
 // plus the reason. Empty when there is no such file, or when everything in
-// it was allowed.
-//
-// NOT YET RENDERED -- see Model.repoConfig's own doc comment. Spec §11 puts
-// this in the focused row's panel, which needs a setter internal/form does
-// not currently expose; that package is mid-rewrite under a separate
-// issue, so this is the reachable value a view will read rather than a
-// panel line collided into it.
+// it was allowed. showRepoConfig puts these on the project row's panel.
 func (m Model) repoConfigNotes() []string { return m.repoConfig.Notes }
+
+// showRepoConfig pushes spec §11's two visible pieces of the selected
+// repository's own .herdr-draft.toml into the form. It is the ONLY place
+// this package renders anything about that file, and it is called from the
+// two paths that can change what it should say: applyProjectDefaults (a
+// different project, so a different file and a fresh resolution) and
+// reactToChanges (the user moving a value the file had chosen).
+//
+// PROVENANCE (`from .herdr-draft.toml`, v2 spec §11) goes on the panel of
+// the field that SHOWS a value the file supplied -- never on the row, which
+// stays quiet -- and only while the app's own application of that value
+// still stands. A field the user has since moved is theirs; the touched
+// flags spec §10 already keeps are exactly that question, so this consults
+// them rather than inventing a second answer.
+//
+// Two fields can carry it, and that is the complete set. The file's five
+// allowed keys (config.repoAllowedKeys) are branch_prefix,
+// default_worktree, default_placement, default_base and
+// linear_branch_name, and every value they resolve to is shown by either
+// the worktree panel or the placement panel.
+//
+// branch_prefix and linear_branch_name are deliberately NOT attributed.
+// Neither is a value of its own: both shape the branch this package
+// DERIVES (branchSuggestion), and that branch is equally the user's own
+// typing the moment they edit it -- WorktreeField owns that touched flag
+// and does not expose it, so there is no moment at which claiming the
+// repository wrote what is on screen would be reliably true. Their effect
+// is visible where it belongs, in the branch itself.
+//
+// The IGNORED-KEY NOTES go on the PROJECT panel instead, because they are a
+// property of the FILE rather than of any one value, and the project row is
+// what decides which file that is -- see form.DirField.SetNotes.
+func (m *Model) showRepoConfig() {
+	m.worktree.SetProvenance(repoProvenance(
+		m.fromRepoConfig(defaults.FieldWorktree, m.worktreeTouched),
+		m.fromRepoConfig(defaults.FieldBaseRef, m.baseTouched),
+	))
+	m.placement.SetProvenance(repoProvenance(
+		m.fromRepoConfig(defaults.FieldPlacement, m.placementTouched),
+	))
+	m.dir.SetNotes(m.repoConfigNotes())
+}
+
+// fromRepoConfig reports whether field's resolved value came from the
+// repository's own .herdr-draft.toml AND still stands -- untouched, so what
+// the form shows is what that file chose. The attribution itself is not
+// recomputed here: defaults.Resolve already decided it (Resolved.From).
+func (m Model) fromRepoConfig(field string, touched bool) bool {
+	return !touched && m.resolved.From[field] == defaults.TierRepoConfig
+}
+
+// repoProvenance is the source name a field's SetProvenance renders
+// `from <source>` out of: the repo config file when any of the values that
+// field's panel shows came from it, "" otherwise. One line covers a panel,
+// so one attributed value is enough to earn it.
+func repoProvenance(attributed ...bool) string {
+	for _, ok := range attributed {
+		if ok {
+			return defaults.TierRepoConfig.String()
+		}
+	}
+	return ""
+}
 
 // reactToTypedDir keeps DirField's candidate pool in step with what the
 // user is typing into the Project field (spec §6 field 2's dual mode):

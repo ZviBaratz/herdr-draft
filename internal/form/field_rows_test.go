@@ -74,6 +74,41 @@ func rowFields(palette theme.Palette) []Section {
 	return []Section{issue, title, prompt, dir, placement, agent, account}
 }
 
+// repoConfigFields is rowFields' companion for v2 spec §11's own state:
+// the three fields a committed .herdr-draft.toml can add a line to, each
+// carrying one. They are a SEPARATE slice rather than an addition to
+// rowFields because two of them duplicate IDs it already returns, and one
+// of its tests assembles a real form out of it.
+//
+// The worktree is included here even though field_worktree_test.go
+// otherwise owns it: the generic Panel/PanelRows contract is exactly what a
+// conditional panel line is easiest to break, and this is where that
+// contract is checked.
+func repoConfigFields(palette theme.Palette) []Section {
+	dir := NewDirField(palette)
+	dir.SetCandidates(1, []string{"/home/zvi/Projects/herdr-draft", "/home/zvi/Projects/herdr"})
+	dir.SetNotes([]string{
+		"ignoring agents.extra_args: it becomes part of a launched agent's command line",
+		"ignoring clauth: a repository does not configure your clauth accounts",
+	})
+
+	placement := NewPlacementField(palette)
+	placement.SetProvenance(".herdr-draft.toml")
+
+	worktreeOn := NewWorktreeField(palette)
+	worktreeOn.SetGitTarget(true)
+	worktreeOn.SetOn(true)
+	worktreeOn.SetBranch("zvi/fix-login-redirect-loop", false)
+	worktreeOn.SetBaseItems(1, []string{"main", "release/1.4"})
+	worktreeOn.SetProvenance(".herdr-draft.toml")
+
+	worktreeOff := NewWorktreeField(palette)
+	worktreeOff.SetGitTarget(true)
+	worktreeOff.SetProvenance(".herdr-draft.toml")
+
+	return []Section{dir, placement, worktreeOn, worktreeOff}
+}
+
 // --- Row: exactly one line, exactly the width it was handed ---------------
 
 // TestFieldRow_IsAlwaysExactlyOneLine pins Section.Row's hardest
@@ -84,7 +119,7 @@ func rowFields(palette theme.Palette) []Section {
 // silently becomes two lines at exactly the widths a real terminal hits.
 func TestFieldRow_IsAlwaysExactlyOneLine(t *testing.T) {
 	widths := []int{1, 2, 3, 5, 8, 12, 20, 40, 79, 200}
-	for _, s := range rowFields(theme.Default()) {
+	for _, s := range append(rowFields(theme.Default()), repoConfigFields(theme.Default())...) {
 		for _, w := range widths {
 			row := s.Row(w)
 			if strings.Contains(row, "\n") {
@@ -164,7 +199,7 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 func TestFieldPanel_IsAlwaysExactlyHLines(t *testing.T) {
 	heights := []int{1, 2, 3, 4, 6, 10, 24}
 	widths := []int{4, 20, 80}
-	for _, s := range rowFields(theme.Default()) {
+	for _, s := range append(rowFields(theme.Default()), repoConfigFields(theme.Default())...) {
 		for _, w := range widths {
 			for _, h := range heights {
 				lines := strings.Split(s.Panel(w, h), "\n")
@@ -183,7 +218,7 @@ func TestFieldPanel_IsAlwaysExactlyHLines(t *testing.T) {
 // the form hands Panel min(PanelRows(), Region)) always a height Panel
 // itself honors.
 func TestFieldPanelRows_NeverReservesRowsItCannotFill(t *testing.T) {
-	for _, s := range rowFields(theme.Default()) {
+	for _, s := range append(rowFields(theme.Default()), repoConfigFields(theme.Default())...) {
 		want := s.PanelRows()
 		if want < 1 {
 			t.Errorf("%s.PanelRows() = %d, want at least 1 (0 means 'no panel at all', which none of these fields is)", s.ID(), want)

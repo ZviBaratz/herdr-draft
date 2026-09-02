@@ -68,6 +68,10 @@ type PlacementField struct {
 	focused    bool
 	palette    theme.Palette
 	worktreeOn bool
+
+	// provenance is SetProvenance's config-file name, "" for a selection no
+	// config file chose. See SetProvenance.
+	provenance string
 }
 
 // NewPlacementField returns a PlacementField with "New space" selected,
@@ -167,6 +171,18 @@ func (f *PlacementField) SetValue(v plan.Placement) {
 	}
 }
 
+// SetProvenance names the config file the current selection came from, so
+// the panel can say so (v2 spec §11: `from .herdr-draft.toml`). "" -- the
+// resting state -- is "nobody's file chose this", and the line is not
+// reserved at all.
+//
+// It takes a plain FILE NAME, not a config value: this package performs no
+// I/O and knows nothing of internal/config or internal/defaults, so which
+// tier won is decided over there (defaults.Resolved.From) and only its
+// answer is pushed in here. That is the same setter convention every other
+// verdict in this package arrives by.
+func (f *PlacementField) SetProvenance(source string) { f.provenance = source }
+
 // placementChipID translates plan's own Placement enum to this field's
 // internal placementChips IDs -- the inverse of Value()'s own switch.
 func placementChipID(v plan.Placement) string {
@@ -242,14 +258,23 @@ func (f *PlacementField) Panel(w, h int) string {
 	if !f.worktreeOn {
 		hint = f.chips.Selected().FocusHint
 	}
-	return panelBlock(w, h,
+	lines := []string{
 		chipLine(),
 		panelText(dimHint(f.palette).Render(hint), w),
-	)
+	}
+	// Last, so a region too short for it drops the provenance rather than
+	// the chooser: panelBlock truncates from the bottom, and a note about
+	// where a value came from is worth less than the control that changes
+	// it.
+	if f.provenance != "" {
+		lines = append(lines, provenanceLine(f.provenance, w, f.palette))
+	}
+	return panelBlock(w, h, lines...)
 }
 
-// PanelRows is two: the chips and their explanation.
-func (f *PlacementField) PanelRows() int { return 2 }
+// PanelRows is two -- the chips and their explanation -- plus the
+// provenance line when a config file chose the selection.
+func (f *PlacementField) PanelRows() int { return 2 + provenanceRows(f.provenance) }
 
 // FooterRungs implements form.go's footerHinter for the one state
 // footer.go's per-ZONE table cannot see: with the worktree on, this

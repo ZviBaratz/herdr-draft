@@ -62,6 +62,54 @@ func TestFrames_DirPanel(t *testing.T) {
 	assertFrame(t, "dir-panel-80x24", buildDirPanelForm(theme.Default()), 80, 24)
 }
 
+// buildDirNotesForm is v2 spec §11's ignored-key report, on the panel that
+// carries it (DirField.SetNotes): the project row is what decides which
+// repository's `.herdr-draft.toml` applies, so its panel is where the
+// refusals from that file are read. The three notes are verbatim
+// config.LoadRepoConfig output -- a forbidden table, a forbidden key with
+// its own reason, and the branch_prefix rejection that falls back to the
+// user's own prefix.
+func buildDirNotesForm(palette theme.Palette) Model {
+	d := NewDirField(palette)
+	d.SetHomeDir("/home/zvi")
+	d.SetCandidates(1, []string{
+		"/home/zvi/Projects/herdr-draft",
+		"/home/zvi/Projects/herdr",
+		"/home/zvi/Projects/atrium",
+	})
+	d.SetNotes([]string{
+		"ignoring agents.extra_args: it becomes part of a launched agent's command line",
+		"ignoring linear.prompt_template: it would become the agent's first instruction",
+		`ignoring branch_prefix "a b/": a branch prefix may not contain a space; using your own configured prefix`,
+	})
+	d.Focus()
+	return fieldFrame(palette, d)
+}
+
+func TestFrames_DirNotes(t *testing.T) {
+	assertFrame(t, "dir-notes-80x24", buildDirNotesForm(theme.Default()), 80, 24)
+}
+
+// buildWorktreeProvenanceForm is v2 spec §11's provenance line, on the
+// panel of a value a committed `.herdr-draft.toml` chose: the same live
+// worktree the mockup frame draws, with `from .herdr-draft.toml` under the
+// three parts and above the base list. The ROW is deliberately identical to
+// buildWorktreePanelForm's -- provenance never appears there.
+func buildWorktreeProvenanceForm(palette theme.Palette) Model {
+	w := NewWorktreeField(palette)
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBranch("zvi/fix-login-redirect-loop", false)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+	w.SetProvenance(".herdr-draft.toml")
+	return fieldFrame(palette, w)
+}
+
+func TestFrames_WorktreeProvenance(t *testing.T) {
+	assertFrame(t, "worktree-provenance-80x24", buildWorktreeProvenanceForm(theme.Default()), 80, 24)
+}
+
 // buildTitlePanelForm types a title into TitleField and sets a matching
 // SetVerdict message -- the app layer's own resting note, verbatim
 // (internal/app's titleNote: "branch will be <branch>", v2 spec §4's own

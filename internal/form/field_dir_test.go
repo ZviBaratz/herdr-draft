@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
@@ -265,6 +266,78 @@ func TestDirField_ArrowKeysMoveCursorNotText(t *testing.T) {
 	d.Update(key(tea.KeyUp, 0))
 	if got := d.Value(); got != "/home/z/a" {
 		t.Fatalf("Value() after Up = %q, want %q", got, "/home/z/a")
+	}
+}
+
+// TestDirField_NotesAreBookedRenderedAndOffTheRow is v2 spec §11's
+// ignored-key report, which lands on THIS panel because the file it
+// describes is a property of the selected project (SetNotes). It pins the
+// same three things every panel line has to get right: PanelRows books it,
+// the panel renders it, and the row says nothing about it.
+func TestDirField_NotesAreBookedRenderedAndOffTheRow(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetCandidates(1, []string{"/home/z/a", "/home/z/b"})
+	rowBefore := d.Row(60)
+	bare := d.PanelRows()
+
+	notes := []string{
+		"ignoring agents.extra_args: it becomes part of a launched agent's command line",
+		"ignoring clauth: a repository does not configure your clauth accounts",
+	}
+	d.SetNotes(notes)
+
+	if got := d.PanelRows(); got != bare+len(notes) {
+		t.Fatalf("PanelRows() with %d notes = %d, want %d", len(notes), got, bare+len(notes))
+	}
+	if got := d.Row(60); got != rowBefore {
+		t.Errorf("Row(60) changed when notes were set:\n before: %q\n  after: %q", rowText(rowBefore), rowText(got))
+	}
+
+	panel := ansi.Strip(d.Panel(80, d.PanelRows()))
+	for _, n := range notes {
+		if !strings.Contains(panel, n) {
+			t.Errorf("Panel = %q, want it to carry %q", panel, n)
+		}
+	}
+	// Both candidates are still on offer: the report was paid for, not
+	// taken out of the chooser.
+	for _, c := range []string{"/home/z/a", "/home/z/b"} {
+		if !strings.Contains(panel, c) {
+			t.Errorf("Panel = %q, want candidate %q still listed beside the notes", panel, c)
+		}
+	}
+
+	d.SetNotes(nil)
+	if got := d.PanelRows(); got != bare {
+		t.Errorf("PanelRows() after clearing the notes = %d, want %d back", got, bare)
+	}
+}
+
+// TestDirField_NotesNeverEmptyTheChooser is the panel-floor rule: a
+// repository with a long report must not cost the project row the one
+// candidate line that makes it a chooser at all (notesShown).
+func TestDirField_NotesNeverEmptyTheChooser(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetCandidates(1, []string{"/home/z/a", "/home/z/b", "/home/z/c"})
+	d.SetNotes([]string{"ignoring palette: a repository does not set your colors",
+		"ignoring timeouts: a repository does not set your timeouts",
+		"ignoring linear.api_key: it is a credential"})
+
+	for _, h := range []int{1, 2, panelFloor, 4, 8} {
+		panel := ansi.Strip(d.Panel(80, h))
+		lines := strings.Split(panel, "\n")
+		if len(lines) != h {
+			t.Fatalf("Panel(80, %d) produced %d lines, want %d", h, len(lines), h)
+		}
+		if h >= panelFloor && !strings.Contains(panel, "/home/z/a") {
+			t.Errorf("Panel(80, %d) = %q, want the chooser to keep at least its cursor row", h, panel)
+		}
+	}
+
+	// The report is truncated from the BACK, so the first note is the one
+	// that survives a tight region.
+	if got := ansi.Strip(d.Panel(80, panelFloor)); !strings.Contains(got, "ignoring palette") {
+		t.Errorf("Panel at the floor = %q, want the first note kept", got)
 	}
 }
 

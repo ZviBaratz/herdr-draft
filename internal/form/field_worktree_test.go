@@ -487,6 +487,73 @@ func TestWorktreeField_SetBaseStatusShown(t *testing.T) {
 	}
 }
 
+// TestWorktreeField_ProvenanceSitsUnderThePartsAndYieldsFirst is v2 spec
+// §11's worktree half. Three facts, all of which the layout can silently
+// eat if PanelRows and Panel disagree:
+//
+//   - the line is BOOKED (PanelRows counts it), or the form hands Panel
+//     fewer rows than it draws and blank-fills over the last one;
+//   - it sits under the three parts and above the base list, so it does not
+//     wander as the window resizes the list;
+//   - at v2 spec §9's three-row panel floor it is the first thing dropped,
+//     leaving the parts -- the panel's actual job -- intact.
+func TestWorktreeField_ProvenanceSitsUnderThePartsAndYieldsFirst(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	turnOn(w)
+	w.SetBranch("zvi/fix-login-redirect-loop", false)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+
+	rowBefore := w.Row(60)
+	bare := w.PanelRows()
+	w.SetProvenance(".herdr-draft.toml")
+
+	if got := w.PanelRows(); got != bare+1 {
+		t.Fatalf("PanelRows() with provenance = %d, want %d (one more than without)", got, bare+1)
+	}
+	if got := w.Row(60); got != rowBefore {
+		t.Errorf("Row(60) changed when provenance was set:\n before: %q\n  after: %q", rowText(rowBefore), rowText(got))
+	}
+
+	panel := w.Panel(60, w.PanelRows())
+	if got := panelLineAt(panel, worktreePanelParts); got != "from .herdr-draft.toml" {
+		t.Errorf("panel line %d = %q, want the provenance directly under the three parts",
+			worktreePanelParts, got)
+	}
+	// The base list still gets every row it had before, one line further
+	// down -- the provenance was PAID FOR, not taken out of the list.
+	if got := panelLineAt(panel, worktreePanelParts+1); !strings.Contains(got, "HEAD") {
+		t.Errorf("panel line %d = %q, want the base list to resume under the provenance",
+			worktreePanelParts+1, got)
+	}
+
+	// At the floor the parts survive whole and the provenance is gone.
+	floor := ansi.Strip(w.Panel(60, panelFloor))
+	if strings.Contains(floor, "from .herdr-draft.toml") {
+		t.Errorf("Panel at the %d-row floor = %q, want the provenance dropped before the parts", panelFloor, floor)
+	}
+	if lines := strings.Split(floor, "\n"); len(lines) != panelFloor || !strings.Contains(lines[1], "branch") {
+		t.Errorf("Panel at the %d-row floor = %q, want the three parts", panelFloor, floor)
+	}
+}
+
+// TestWorktreeField_ProvenanceSurvivesAnOffWorktree: a repository whose
+// committed config turns the worktree OFF is exactly the case a reader
+// needs told, so the inert panel books the line too.
+func TestWorktreeField_ProvenanceSurvivesAnOffWorktree(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetProvenance(".herdr-draft.toml")
+
+	if got := w.PanelRows(); got != worktreePanelParts+1 {
+		t.Fatalf("PanelRows() while off = %d, want %d", got, worktreePanelParts+1)
+	}
+	if got := panelLineAt(w.Panel(60, w.PanelRows()), worktreePanelParts); got != "from .herdr-draft.toml" {
+		t.Errorf("last panel line while off = %q, want the provenance", got)
+	}
+}
+
 // TestWorktreeField_RowVocabulary pins v2 spec §6's worktree row in each
 // of its three states, and the elision order the row promises.
 func TestWorktreeField_RowVocabulary(t *testing.T) {

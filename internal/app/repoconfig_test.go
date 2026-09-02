@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
@@ -55,6 +56,91 @@ func repoConfigModel(t *testing.T, cwd string, s testSetup, byRoot map[string]co
 	}
 	m := newTestModel(t, s)
 	return pumpAsync(t, m, m.initCmds), repo
+}
+
+// provenanceLine is v2 spec §11's own wording, and the string every
+// display assertion below looks for.
+const provenanceLine = "from .herdr-draft.toml"
+
+// focusedFrame renders the real form with section id focused, ANSI
+// stripped -- the panel assertions below go through the SAME path a user
+// sees rather than reaching into a field, since "the value is reachable"
+// is precisely what #8 already had and #15 exists to finish.
+func focusedFrame(t *testing.T, m Model, id string) string {
+	t.Helper()
+	m.form.FocusByID(id)
+	if got := m.form.FocusedID(); got != id {
+		t.Fatalf("focus is on %q, want %q (sections: %v)", got, id, m.form.SectionIDs())
+	}
+	return ansi.Strip(m.form.ViewAt(80, 24))
+}
+
+// TestRepoConfig_ProvenanceShowsInTheFocusedRowsPanel is spec §11's
+// display half: a value the repository's committed file chose says so, in
+// the panel of the field that shows it, and nowhere else.
+func TestRepoConfig_ProvenanceShowsInTheFocusedRowsPanel(t *testing.T) {
+	m, _ := repoConfigModel(t, "/repo-a", testSetup{}, map[string]config.RepoConfig{
+		// Worktree off so PlacementField stays live (spec §6 field 5); the
+		// toggle and the base still carry the repo tier, which is what the
+		// worktree panel attributes.
+		"/repo-a": {DefaultWorktree: ptrBool(false), DefaultPlacement: "split-here", DefaultBase: "trunk"},
+	})
+
+	for _, id := range []string{"placement", "worktree"} {
+		if frame := focusedFrame(t, m, id); !strings.Contains(frame, provenanceLine) {
+			t.Errorf("with %q focused the frame does not say %q:\n%s", id, provenanceLine, frame)
+		}
+	}
+	// Not every panel: a field the file cannot set says nothing about it.
+	if frame := focusedFrame(t, m, "title"); strings.Contains(frame, provenanceLine) {
+		t.Errorf("with title focused the frame claims %q:\n%s", provenanceLine, frame)
+	}
+}
+
+// TestRepoConfig_ALowerTierIsNotAttributedToTheRepo is the other half of
+// the same requirement, and the one a "render it whenever there is a repo
+// config" implementation would fail: the SAME placement, resolved from
+// last-used.json instead, is nobody's committed default.
+func TestRepoConfig_ALowerTierIsNotAttributedToTheRepo(t *testing.T) {
+	m, _ := repoConfigModel(t, "/repo-a", testSetup{
+		State: config.State{LastPlacement: "split-here", LastWorktree: ptrBool(false)},
+	}, map[string]config.RepoConfig{"/repo-a": {}})
+
+	if got := m.placement.Value(); got != plan.PlacementSplitHere {
+		t.Fatalf("placement = %v, want last-used.json's split-here (the value under test)", got)
+	}
+	if got := m.resolved.From[defaults.FieldPlacement]; got != defaults.TierGlobalMemory {
+		t.Fatalf("From[placement] = %v, want %v", got, defaults.TierGlobalMemory)
+	}
+	for _, id := range []string{"placement", "worktree"} {
+		if frame := focusedFrame(t, m, id); strings.Contains(frame, provenanceLine) {
+			t.Errorf("with %q focused the frame claims %q for a last-used.json value:\n%s", id, provenanceLine, frame)
+		}
+	}
+}
+
+// TestRepoConfig_TouchingAValueRetiresItsProvenance: once the user moves a
+// chip, what the panel shows is theirs, and a line still crediting the
+// repository would be false. The touched flags spec §10 already keeps are
+// what this rides -- the same ones that stop per-project memory re-applying.
+func TestRepoConfig_TouchingAValueRetiresItsProvenance(t *testing.T) {
+	m, _ := repoConfigModel(t, "/repo-a", testSetup{}, map[string]config.RepoConfig{
+		"/repo-a": {DefaultWorktree: ptrBool(false), DefaultPlacement: "split-here"},
+	})
+	if frame := focusedFrame(t, m, "placement"); !strings.Contains(frame, provenanceLine) {
+		t.Fatalf("the repository's placement is not attributed to start with:\n%s", frame)
+	}
+
+	m.form.FocusByID("placement")
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	m = next.(Model)
+
+	if !m.placementTouched {
+		t.Fatalf("placement is not marked touched after a Right; this test cannot say anything")
+	}
+	if frame := focusedFrame(t, m, "placement"); strings.Contains(frame, provenanceLine) {
+		t.Errorf("the panel still credits the repository for a value the user moved:\n%s", frame)
+	}
 }
 
 // TestRepoConfig_ReachesTheFormThroughTheDirCheck is the basic wiring: a
@@ -403,14 +489,16 @@ func TestRepoConfig_RejectedBranchPrefixFallsBackToTheUsersOwn(t *testing.T) {
 	}
 }
 
-// TestRepoConfig_NotesReachTheModelAndFollowTheProject: the report is
+// TestRepoConfig_NotesReachTheViewAndFollowTheProject: the report is
 // spec §11's "ignored with a visible note", and it is per-project like
 // everything else in the file, so leaving a repository must take its notes
 // with it rather than leave them attributed to the next one.
 //
-// The notes are NOT yet rendered -- see Model.repoConfig's own doc comment
-// -- so this asserts the value a view will read.
-func TestRepoConfig_NotesReachTheModelAndFollowTheProject(t *testing.T) {
+// The note lands on the PROJECT panel (showRepoConfig): the file is a
+// property of the repository the project row chose, not of any one value.
+// This asserts both what the model holds and what the user actually reads,
+// because the model half alone is what shipped in #8 and it was invisible.
+func TestRepoConfig_NotesReachTheViewAndFollowTheProject(t *testing.T) {
 	m, _ := repoConfigModel(t, "/repo-a", testSetup{}, map[string]config.RepoConfig{
 		"/repo-a": {Notes: []string{"ignoring agents.extra_args: it becomes part of a launched agent's command line"}},
 		"/repo-b": {},
@@ -420,10 +508,24 @@ func TestRepoConfig_NotesReachTheModelAndFollowTheProject(t *testing.T) {
 	if len(notes) != 1 || !strings.Contains(notes[0], "agents.extra_args") {
 		t.Fatalf("notes = %q, want one naming agents.extra_args", notes)
 	}
+	frame := focusedFrame(t, m, "dir")
+	if !strings.Contains(frame, "ignoring agents.extra_args") {
+		t.Errorf("the project panel does not name the ignored key:\n%s", frame)
+	}
+	// The reason travels with the key. Only its head is asserted: a note
+	// longer than the panel is wide elides at its tail with a visible
+	// marker (form's keepHead), which is the honest rendering rather than a
+	// silent clip.
+	if !strings.Contains(frame, "ignoring agents.extra_args: it becomes part of") {
+		t.Errorf("the project panel names the key without the reason:\n%s", frame)
+	}
 
 	m = switchProject(t, m, "/repo-a", "/repo-b")
 	if got := m.repoConfigNotes(); len(got) != 0 {
 		t.Errorf("notes = %q after switching to a repository with none, want empty", got)
+	}
+	if frame := focusedFrame(t, m, "dir"); strings.Contains(frame, "ignoring agents.extra_args") {
+		t.Errorf("the previous repository's note followed the form to the next one:\n%s", frame)
 	}
 }
 
@@ -447,6 +549,12 @@ func TestRepoConfig_MalformedFileDoesNotBlockTheForm(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	if got := next.(Model).View().Content; got == "" {
 		t.Error("the form renders nothing, want a malformed repo config never to block it")
+	}
+	// "Never blocks" is not the same as "never mentioned": a file someone
+	// wrote and expects to work reports the same way an ignored key does,
+	// on the project panel (spec §11).
+	if frame := focusedFrame(t, m, "dir"); !strings.Contains(frame, "ignoring .herdr-draft.toml: expected a value") {
+		t.Errorf("the project panel does not report the malformed file:\n%s", frame)
 	}
 }
 

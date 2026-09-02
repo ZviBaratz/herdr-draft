@@ -177,6 +177,10 @@ type WorktreeField struct {
 	// basePickerRows the v2 panel's list height varies with the window.
 	baseRowsShown int
 
+	// provenance is SetProvenance's config-file name, "" for a panel whose
+	// values no config file chose. See SetProvenance.
+	provenance string
+
 	// headBranch is the branch currently checked out in the target repo,
 	// shown alongside the base picker's HEAD row -- spec §6 field 4's own
 	// "row 0 `HEAD (<current branch>)`". "" (a detached HEAD, or before
@@ -676,6 +680,18 @@ func (w *WorktreeField) Panel(width, h int) string {
 	inner := panelInner(width)
 	labelW, valueW := labelCol(inner)
 
+	// The provenance line is the FIRST thing a short panel gives up: at
+	// v2 spec §9's three-row floor the three parts are the whole panel,
+	// and a note about where a value came from must not cost the control
+	// that changes it. It sits directly under those parts rather than
+	// after the base list, because it speaks about them -- and because a
+	// fixed line placed after a list whose length follows the window would
+	// move every time the popup is resized.
+	prov := ""
+	if h > worktreePanelParts {
+		prov = w.provenance
+	}
+
 	// A LIVE chip row supplies its own leading space (widgets.ChipRow
 	// renders each chip as " label "), so it takes one cell off the label
 	// column and one onto its own -- otherwise `off · on` would sit one
@@ -692,7 +708,7 @@ func (w *WorktreeField) Panel(width, h int) string {
 	// The base list's height is settled BEFORE the base part line is
 	// composed, because whether the list is on screen is what decides
 	// whether that line names the selection at all -- see panelBase.
-	rows := h - worktreePanelParts
+	rows := h - worktreePanelParts - provenanceRows(prov)
 	if rows < 0 || !w.isGitRepo || !w.On() {
 		rows = 0
 	}
@@ -705,6 +721,9 @@ func (w *WorktreeField) Panel(width, h int) string {
 	}
 	if h > 2 {
 		lines = append(lines, w.panelPart(partBase, worktreeBaseLabel, w.panelBase(valueW, w.baseListNamesSelection(rows)), labelW))
+	}
+	if prov != "" {
+		lines = append(lines, provenanceLine(prov, width, w.palette))
 	}
 
 	if rows > 0 {
@@ -837,16 +856,31 @@ func (w *WorktreeField) panelBaseRows(labelW, valueW, rows int) []string {
 	return out
 }
 
-// PanelRows is the three parts plus one line per base candidate, capped
-// at worktreePanelMaxRows. An inert or off worktree asks for the three
-// parts alone -- there is no list to show, and reserving rows for one
-// would leave a hole where the panel says nothing.
+// PanelRows is the three parts, the provenance line when there is one,
+// and one line per base candidate, capped at worktreePanelMaxRows. An
+// inert or off worktree asks for the parts alone -- there is no list to
+// show, and reserving rows for one would leave a hole where the panel says
+// nothing -- but it still asks for the provenance line, since a repository
+// that turned the worktree OFF is exactly the case a reader needs told.
 func (w *WorktreeField) PanelRows() int {
+	head := worktreePanelParts + provenanceRows(w.provenance)
 	if !w.isGitRepo || !w.On() {
-		return worktreePanelParts
+		return head
 	}
-	return capRows(worktreePanelParts+w.base.FilteredLen(), worktreePanelMaxRows)
+	return capRows(head+w.base.FilteredLen(), worktreePanelMaxRows)
 }
+
+// SetProvenance names the config file this panel's values came from, so it
+// can say so (v2 spec §11: `from .herdr-draft.toml`). "" -- the resting
+// state -- is "nobody's file chose these", and the line is not reserved at
+// all.
+//
+// One line covers the whole panel rather than one per part: the caller
+// pushes a source only for a value this panel actually SHOWS and the user
+// has not since moved, and three separate attributions would cost three of
+// the ten rows the base list is competing for. See PlacementField
+// .SetProvenance for why this takes a plain file name.
+func (w *WorktreeField) SetProvenance(source string) { w.provenance = source }
 
 // FooterRungs implements form.go's footerHinter: the footer teaches the
 // focused field (v2 spec §3 rule 4), and this field's keys mean different

@@ -115,6 +115,39 @@ func TestPlacementField_WorktreeOffReenables(t *testing.T) {
 	}
 }
 
+// TestPlacementField_ProvenanceIsAPanelLineTheRowNeverShows is v2 spec
+// §11's placement half: a value a config file chose says so in the PANEL,
+// and the row is not touched at all (v2 spec §3 rule 1 -- rows stay quiet,
+// and a row that grew a suffix when a repo config appeared would move text
+// under the cursor).
+func TestPlacementField_ProvenanceIsAPanelLineTheRowNeverShows(t *testing.T) {
+	f := NewPlacementField(theme.Default())
+	rowBefore := f.Row(60)
+	if rows := f.PanelRows(); rows != 2 {
+		t.Fatalf("PanelRows() with no provenance = %d, want 2", rows)
+	}
+	if panel := ansi.Strip(f.Panel(60, f.PanelRows())); strings.Contains(panel, "from ") {
+		t.Errorf("Panel() with no provenance = %q, want no provenance line", panel)
+	}
+
+	f.SetProvenance(".herdr-draft.toml")
+
+	if rows := f.PanelRows(); rows != 3 {
+		t.Errorf("PanelRows() with provenance = %d, want 3 (the line must be booked, or the form blank-fills over it)", rows)
+	}
+	if got, want := f.Row(60), rowBefore; got != want {
+		t.Errorf("Row(60) changed when provenance was set:\n before: %q\n  after: %q", rowText(want), rowText(got))
+	}
+	if got := panelLineAt(f.Panel(60, f.PanelRows()), 2); got != "from .herdr-draft.toml" {
+		t.Errorf("last panel line = %q, want %q", got, "from .herdr-draft.toml")
+	}
+
+	f.SetProvenance("")
+	if rows := f.PanelRows(); rows != 2 {
+		t.Errorf("PanelRows() after clearing provenance = %d, want 2 back", rows)
+	}
+}
+
 func TestPlacementField_NoPanicOnDegenerateWidth(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {

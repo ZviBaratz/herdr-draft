@@ -196,6 +196,32 @@ func panelBlock(w, h int, lines ...string) string {
 	return strings.Join(lines, "\n")
 }
 
+// provenanceFrom opens v2 spec §11's provenance line, whose whole wording
+// the spec fixes: `from .herdr-draft.toml`. The FILE is data the app layer
+// pushes in (a form field knows nothing about config files); the sentence
+// around it is copy, and lives here so two fields cannot spell it two ways.
+const provenanceFrom = "from "
+
+// provenanceRows is how many panel lines a source name costs: one, or none
+// at all when no config file supplied the value. Every PanelRows() that can
+// carry provenance adds this rather than a literal 1 -- a field that
+// reserved the line unconditionally would leave a permanent blank row in
+// the panel of every form that has no repo config, which is the majority.
+func provenanceRows(source string) int {
+	if source == "" {
+		return 0
+	}
+	return 1
+}
+
+// provenanceLine composes the line itself: dim, in the panel's own text
+// column, never on the row (v2 spec §11 -- "provenance appears in the
+// focused row's panel, not in the row", which is v2 spec §3's rule 1, rows
+// stay quiet).
+func provenanceLine(source string, w int, p theme.Palette) string {
+	return panelText(dimHint(p).Render(provenanceFrom+source), w)
+}
+
 // capRows clamps a field's PanelRows() to its own ceiling, never below 1:
 // a Section that reports 0 tells the form it has no panel at all, which
 // is a different statement from "a small one" (form.go's
