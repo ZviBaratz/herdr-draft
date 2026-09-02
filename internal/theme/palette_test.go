@@ -79,6 +79,35 @@ func TestResolve_V2PaletteKeys(t *testing.T) {
 	}
 }
 
+// TestResolve_V3PaletteKeys covers the keys v3 spec §5.1-§5.2 added to
+// applyOverrideKey: Overlay0, and the herdr source name ActiveRowBG now also
+// answers to now that it is sourced from selection_bg.
+func TestResolve_V3PaletteKeys(t *testing.T) {
+	cases := []struct {
+		key string
+		get func(Palette) Color
+	}{
+		{"overlay0", func(p Palette) Color { return p.Overlay0 }},
+		{"selection_bg", func(p Palette) Color { return p.ActiveRowBG }},
+		{"selectionbg", func(p Palette) Color { return p.ActiveRowBG }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.key, func(t *testing.T) {
+			base := Default()
+			want := parseHexColorForTest(t, "#123456")
+
+			got := Resolve(base, map[string]string{tc.key: "#123456"})
+
+			if !colorEqual(tc.get(got), want) {
+				t.Errorf("Resolve with %q override = %v, want %v", tc.key, tc.get(got), want)
+			}
+			if colorEqual(tc.get(base), want) {
+				t.Fatalf("test is vacuous: base palette already has %v for %q", want, tc.key)
+			}
+		})
+	}
+}
+
 // TestBuiltinPalettes_EveryFieldIsSet walks Palette's fields by reflection
 // rather than naming them, so a field added later is covered here
 // automatically. lipgloss.NoColor{} (herdr's Color::Reset, used by the
@@ -229,9 +258,15 @@ panel_bg = "#101010"
 }
 
 // TestLoadHerdrPaletteFrom_V2CustomKeys pins the [theme.custom] half of the
-// v2 palette addition: herdr's surface0/active_row_bg/peach/mauve are real
-// customization keys, so a user who retunes them in herdr must get the same
-// colors here rather than the builtin's.
+// v2 palette addition: herdr's surface0/peach/mauve are real customization
+// keys, so a user who retunes them in herdr must get the same colors here
+// rather than the builtin's.
+//
+// active_row_bg was the fourth key here until v3 spec §5.1 moved ActiveRowBG
+// onto selection_bg. It moved to the v3 test below rather than being
+// repointed in place, because the key that reaches the field is now a v3
+// concern and the value has to clear the contrast floor to stay a pure
+// routing assertion.
 func TestLoadHerdrPaletteFrom_V2CustomKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -241,7 +276,6 @@ name = "dracula"
 
 [theme.custom]
 surface0 = "#111111"
-active_row_bg = "#222222"
 peach = "#333333"
 mauve = "#444444"
 `)
@@ -255,7 +289,6 @@ mauve = "#444444"
 		got       Color
 	}{
 		{"surface0", "Surface", "#111111", got.Surface},
-		{"active_row_bg", "ActiveRowBG", "#222222", got.ActiveRowBG},
 		{"peach", "Warning", "#333333", got.Warning},
 		{"mauve", "Branch", "#444444", got.Branch},
 	}
@@ -264,6 +297,68 @@ mauve = "#444444"
 		if !colorEqual(tc.got, want) {
 			t.Errorf("%s = %v, want %v (from [theme.custom] %s)", tc.draftName, tc.got, want, tc.herdrKey)
 		}
+	}
+}
+
+// TestLoadHerdrPaletteFrom_V3CustomKeys covers the [theme.custom] keys v3
+// spec §5.1-§5.2 brought into herdrThemeCustom. Both override values are
+// chosen to clear ActiveRowContrastFloor against dracula's panel_bg, so this
+// stays an assertion about key routing; floorContrast raising an illegible
+// one is TestLoadHerdrPalette_FloorsAnIllegibleOverride's job.
+func TestLoadHerdrPaletteFrom_V3CustomKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	writeFile(t, path, `
+[theme]
+name = "dracula"
+
+[theme.custom]
+selection_bg = "#555555"
+overlay0 = "#666666"
+`)
+
+	got := LoadHerdrPaletteFrom(path, nil)
+
+	cases := []struct {
+		herdrKey  string
+		draftName string
+		hex       string
+		got       Color
+	}{
+		{"selection_bg", "ActiveRowBG", "#555555", got.ActiveRowBG},
+		{"overlay0", "Overlay0", "#666666", got.Overlay0},
+	}
+	for _, tc := range cases {
+		want := parseHexColorForTest(t, tc.hex)
+		if !colorEqual(tc.got, want) {
+			t.Errorf("%s = %v, want %v (from [theme.custom] %s)", tc.draftName, tc.got, want, tc.herdrKey)
+		}
+	}
+}
+
+// TestLoadHerdrPaletteFrom_ActiveRowBGCustomKeyIsIgnored pins the key v3 spec
+// §5.1 took out of herdrThemeCustom. herdr's active_row_bg marks its
+// *active workspace*, not its keyboard cursor; honoring it here would undo
+// the remapping, and decoding it alongside selection_bg would be a
+// nondeterministic double-write into one field (see herdrThemeCustom's doc).
+func TestLoadHerdrPaletteFrom_ActiveRowBGCustomKeyIsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	writeFile(t, path, `
+[theme]
+name = "dracula"
+
+[theme.custom]
+active_row_bg = "#555555"
+`)
+
+	got := LoadHerdrPaletteFrom(path, nil)
+	dracula, ok := Builtin("dracula")
+	if !ok {
+		t.Fatalf("Builtin(\"dracula\") not found")
+	}
+	if !colorEqual(got.ActiveRowBG, dracula.ActiveRowBG) {
+		t.Errorf("ActiveRowBG = %v, want the builtin's %v -- herdr's active_row_bg must not reach it", got.ActiveRowBG, dracula.ActiveRowBG)
 	}
 }
 

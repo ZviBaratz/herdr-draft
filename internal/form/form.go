@@ -950,16 +950,23 @@ func spreadLine(left, right string, width int) string {
 }
 
 // dividerLine renders a horizontal rule inner cells wide in the palette's
-// Border color, matching Atrium's own divider convention
+// Overlay0 color, matching Atrium's own divider convention
 // (textInput_render.go's tiDividerStyle/`strings.Repeat("─", innerWidth)`,
 // ported here as styling only -- the repeated-rune choice, not a literal
 // code port, since Atrium's own construction is a one-line call this
 // package could not import across packages anyway).
+//
+// Overlay0 and not Border (v3 spec §5.3): Border is herdr's surface_dim, a
+// near-invisible *fill* -- reading it as a stroke is what drew v2's rules at
+// 1.07:1 against their own panel. Overlay0 is the only palette field with a
+// contrast floor that holds across all eighteen builtins (worst case 1.69:1,
+// nord), which internal/theme's contrast_test.go asserts. herdr splits the
+// two the same way in its scrollbar: track surface_dim, thumb overlay0.
 func dividerLine(inner int, p theme.Palette) string {
 	if inner < 0 {
 		inner = 0
 	}
-	return lipgloss.NewStyle().Foreground(p.Border).Render(strings.Repeat("─", inner))
+	return lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", inner))
 }
 
 // createSection is form.go's own internal Section for spec §6 field 9,
