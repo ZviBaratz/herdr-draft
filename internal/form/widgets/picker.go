@@ -459,6 +459,70 @@ func scrollOffset(cursor, total, rows int) int {
 	return offset
 }
 
+// scrollThumb sizes and positions a proportional scrollbar thumb for a
+// window of rows drawn from total items at offset -- the pure geometry
+// behind v3 spec §8.5's last-column scrollbar, and a sibling of
+// scrollOffset above rather than part of any render. Returns (0, 0) when
+// the whole list fits, which doubles as the "reserve no column at all"
+// signal §8.5 asks for: the scrollbar costs a column only while the list
+// outgrows the window.
+//
+// Ported from herdr's own scrollbar (src/ui/scrollbar.rs:36-69,
+// scrollbar_thumb), with its ScrollMetrics collapsed into this widget's
+// terms: herdr's viewport_rows and its track height are both rows here
+// (the track is exactly as tall as the list window it sits beside), and
+// its max_offset_from_bottom is total-rows. That leaves both of its
+// formulas intact --
+//
+//	length = clamp(round(rows*rows/total), 1, rows)
+//	top    = round(offset*(rows-length) / (total-rows))
+//
+// -- including the .max(1), which exists for a case that is easy to reach
+// here: a list a hundred times the window's height rounds the
+// proportional length to ZERO, and a zero-length thumb is not a small
+// scrollbar but an absent one.
+//
+// Rounding is integer half-up via roundDiv rather than herdr's f32
+// .round(), which is the same answer for non-negative inputs and makes
+// the bottom of the track exact rather than nearly exact: at
+// offset == total-rows the two factors cancel outright, so top is
+// rows-length and top+length is rows, never one row short.
+func scrollThumb(total, rows, offset int) (top, length int) {
+	if rows <= 0 || total <= rows {
+		return 0, 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total-rows {
+		offset = total - rows
+	}
+
+	length = roundDiv(rows*rows, total)
+	if length < 1 {
+		length = 1
+	}
+	if length > rows {
+		// Unreachable for total > rows (the true ratio is already below
+		// rows), kept because herdr's own .min(track_height) is and a
+		// thumb longer than its track is the one failure that would
+		// overrun the caller's row loop.
+		length = rows
+	}
+	return roundDiv(offset*(rows-length), total-rows), length
+}
+
+// roundDiv returns num/den rounded half-up, for num >= 0 and den > 0:
+// floor((2*num + den) / (2*den)) is exactly floor(num/den + 1/2) without
+// leaving integer arithmetic. den <= 0 answers 0 rather than panicking --
+// scrollThumb's own guards already exclude it.
+func roundDiv(num, den int) int {
+	if den <= 0 {
+		return 0
+	}
+	return (2*num + den) / (2 * den)
+}
+
 // widthStyle returns a Style that pads/truncates rendered content to
 // exactly width cells, on exactly one output line. Callers must only invoke
 // it with width > 0: lipgloss treats 0 as "unset" for both the Width and

@@ -410,3 +410,112 @@ func TestPicker_CursorRowWithoutASelection(t *testing.T) {
 		t.Errorf("CursorRow(0) = %d, want 0 -- a degenerate height is floored at 1, matching View", got)
 	}
 }
+
+// TestScrollThumb tables v3 spec §8.5's thumb geometry. It is worth this
+// much table for one reason: the arithmetic is integer, the interesting
+// answers are the rounded ones, and every one of them is far cheaper to
+// pin here than to read back out of a rendered column later.
+func TestScrollThumb(t *testing.T) {
+	cases := []struct {
+		name             string
+		total, rows      int
+		offset           int
+		wantTop, wantLen int
+	}{
+		// (0, 0) is "draw no scrollbar": the list fits, so §8.5 reserves
+		// no column for one.
+		{"whole list fits", 5, 10, 0, 0, 0},
+		{"list exactly fills the window", 10, 10, 0, 0, 0},
+
+		// One item over is the shortest scroll there is, and the case
+		// where an off-by-one at either end is most visible: two
+		// positions, and the thumb must occupy 9 of 10 rows in both.
+		{"one item over, at the top", 11, 10, 0, 0, 9},
+		{"one item over, at the bottom", 11, 10, 1, 1, 9},
+
+		{"offset 0 pins the thumb to the top", 20, 10, 0, 0, 5},
+		// 5*(10-5)/(20-10) == 2.5, which must round UP, not truncate.
+		{"mid-scroll rounds half up", 20, 10, 5, 3, 5},
+		// The bottom must be reached EXACTLY: top+length == rows.
+		{"max offset reaches the bottom exactly", 20, 10, 10, 5, 5},
+
+		// A window 1/10th of the list: length rounds to exactly 1
+		// without needing the clamp, and the thumb still spans the full
+		// track from top to bottom.
+		{"long list, at the top", 100, 10, 0, 0, 1},
+		{"long list, mid-scroll", 100, 10, 45, 5, 1},
+		{"long list, at the bottom", 100, 10, 90, 9, 1},
+
+		// rows*rows/total rounds to ZERO here; the clamp is what keeps
+		// the scrollbar visible rather than absent.
+		{"enormous list clamps length to 1, not 0", 10000, 10, 0, 0, 1},
+		{"enormous list at the bottom still reaches it", 10000, 10, 9990, 9, 1},
+
+		// A one-row window has one thumb position, and (rows-length) is
+		// 0, so top must stay 0 without dividing by anything degenerate.
+		{"single row window, at the top", 5, 1, 0, 0, 1},
+		{"single row window, at the bottom", 5, 1, 4, 0, 1},
+
+		// Degenerate inputs answer (0, 0) rather than panicking or
+		// dividing by zero -- a picker mid-resize can hand over any of
+		// these.
+		{"zero rows", 100, 0, 0, 0, 0},
+		{"negative rows", 100, -3, 5, 0, 0},
+		{"zero total", 0, 10, 0, 0, 0},
+		{"negative total", -5, 10, 0, 0, 0},
+		{"zero total and zero rows", 0, 0, 0, 0, 0},
+
+		// An out-of-range offset clamps into [0, total-rows] the way
+		// scrollOffset's own bounds do, rather than sliding the thumb
+		// off either end of the track.
+		{"negative offset clamps to the top", 20, 10, -7, 0, 5},
+		{"offset past the end clamps to the bottom", 20, 10, 99, 5, 5},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			top, length := scrollThumb(c.total, c.rows, c.offset)
+			if top != c.wantTop || length != c.wantLen {
+				t.Errorf("scrollThumb(total=%d, rows=%d, offset=%d) = (top=%d, len=%d), want (top=%d, len=%d)",
+					c.total, c.rows, c.offset, top, length, c.wantTop, c.wantLen)
+			}
+		})
+	}
+}
+
+// TestScrollThumb_StaysInsideTheTrack sweeps every offset of a spread of
+// list/window sizes for the two invariants a renderer depends on and no
+// single table row can state: the thumb never leaves the track, and its
+// ends are reached exactly -- top == 0 at the first offset, top+length ==
+// rows at the last. The second is the one that would otherwise go unnoticed
+// as a scrollbar that stops one row short of the bottom of a long list.
+func TestScrollThumb_StaysInsideTheTrack(t *testing.T) {
+	for _, rows := range []int{1, 2, 3, 7, 10, 24} {
+		for _, total := range []int{rows + 1, rows + 2, rows * 2, rows*3 + 1, rows * 97} {
+			maxOffset := total - rows
+			for offset := 0; offset <= maxOffset; offset++ {
+				top, length := scrollThumb(total, rows, offset)
+				if length < 1 || length > rows {
+					t.Fatalf("scrollThumb(%d, %d, %d) length = %d, want within [1,%d]",
+						total, rows, offset, length, rows)
+				}
+				if top < 0 || top+length > rows {
+					t.Fatalf("scrollThumb(%d, %d, %d) = (top=%d, len=%d), want the thumb inside a %d-row track",
+						total, rows, offset, top, length, rows)
+				}
+				switch offset {
+				case 0:
+					if top != 0 {
+						t.Errorf("scrollThumb(%d, %d, 0) top = %d, want 0 (flush with the top)",
+							total, rows, top)
+					}
+				case maxOffset:
+					if top+length != rows {
+						t.Errorf("scrollThumb(%d, %d, %d) = (top=%d, len=%d), want top+len == %d (flush with the bottom)",
+							total, rows, offset, top, length, rows)
+					}
+				}
+			}
+		}
+	}
+}
