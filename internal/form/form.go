@@ -41,10 +41,30 @@ import (
 // zoneSectionPrefix are these two constant name fragments, shared so a
 // typo in one can't silently desync a Mark call from the Get call that
 // is supposed to find it.
+//
+// v2 (composeRows, below) renames the per-section zone from
+// "section:<id>" to "field:<id>" and adds one "panel" zone over the
+// detail region. The rename is deliberate rather than cosmetic: in v2
+// "row" means a line of the stack, and "row:<id>:<n>" already means a
+// picker row INSIDE a panel, so a zone called "section:<id>" reads like
+// the wrong one of the two. The "panel" zone is the one genuinely new
+// click branch (handleMouseClick): a click inside it forwards to the
+// FOCUSED section without changing focus, which is what lets the chip
+// and picker-row zones nested inside a panel resolve at all -- the
+// panel belongs to the focused field by construction, so there is
+// nothing for such a click to re-focus.
+//
+// Both schemes are live at once for exactly as long as the dual-path
+// bridge is (see compose): a render takes one path or the other and
+// marks only that path's zones, and handleMouseClick looks up the same
+// path's zone names, so a stale zone left over from a render on the
+// other path can never be hit.
 const (
 	createSectionID   = "create"
 	zoneCreateButton  = "button:create"
 	zoneSectionPrefix = "section:"
+	zoneFieldPrefix   = "field:"
+	zonePanel         = "panel"
 )
 
 // Section is one field/region of the form: a Linear issue picker, the
@@ -181,7 +201,81 @@ type (
 	// widgets.PromptArea.InsertNewline's own "bypasses Update
 	// deliberately" contract.
 	newliner interface{ InsertNewline() }
+
+	// footerHinter supplies the focused section's OWN key rungs, widest
+	// first; the form appends the constant tail and picks a rung that
+	// fits (footer.go's footerRungsFor/fitFooter). v2 spec §5 adds this
+	// as the fourth optional capability interface, and v2 spec §3 rule 4
+	// is why it exists: "the footer teaches the focused field, then
+	// states the constants" -- v1's per-field hint ROWS disappear, so a
+	// field that had something to say needs somewhere to say it. A
+	// section that does not implement it falls back to footer.go's own
+	// per-zone table.
+	footerHinter interface{ FooterRungs() []string }
 )
+
+// rowSection is v2's Section (v2 spec §5), carried for now as an
+// OPTIONAL capability interface alongside the v1 Section above rather
+// than replacing it. That is this change's whole trick, and the reason
+// not one golden frame moves with it:
+//
+//   - compose gates on allRowSections() -- every section in the ring
+//     implementing rowSection -- and only then composes v2's row stack.
+//   - No real field (field_*.go) implements it yet, so every production
+//     render, and every existing golden frame, still takes the v1 path
+//     byte-for-byte.
+//   - The stub sections in form_test.go DO implement it, which is how
+//     the new path is exercised and tested before a single pixel of the
+//     real form moves.
+//
+// The field migration flips the gate one field at a time; the step after
+// that promotes these four methods into Section itself and deletes
+// View/Height/MinHeight along with the v1 path.
+type rowSection interface {
+	Section
+
+	// Label is this field's row label ("issue", "worktree", "account"):
+	// plain lowercase words, no colon, no padding. LEADING SPACES INDENT
+	// a child row (v2 spec §5: "the worktree children return '  branch'
+	// and '  base' as labels and the label column pads them"). The FORM
+	// renders it into a fixed labelColWidth column, never the section,
+	// which is what makes the column aligned by construction.
+	Label() string
+
+	// Row renders this field's VALUE CELL: exactly ONE physical line,
+	// exactly w cells wide, where w is the value column's width
+	// (rowlayout.go's labelCol applied to contentBox's inner). It is
+	// called for EVERY section on every render, focused or not; a field
+	// whose precondition is currently false (Enabled() == false) renders
+	// its reason here, dim (v2 spec §6.1).
+	//
+	// Row takes no height and must not consult the window's height in
+	// any way. That is precisely what makes "row i is always at row i"
+	// hold, and it is a contract worth testing directly rather than
+	// documenting: render the same section at two window heights and
+	// compare the bytes.
+	Row(w int) string
+
+	// Panel renders this field's chooser or editor -- the region under
+	// the second rule -- into exactly h physical lines, w cells wide,
+	// including any verdict or note line of its own. It is called ONLY
+	// for the section that currently holds focus, so unlike Row it may
+	// render focus-only affordances. w is the full content box INCLUDING
+	// the two-cell gutter (so a picker's own cursor glyph lands in the
+	// same column the row stack indents past, matching v2 spec §4's
+	// mockups); h is min(PanelRows(), the frame's Region) and is never
+	// < 1, because the form does not call Panel at all when the layout
+	// kept no region.
+	Panel(w, h int) string
+
+	// PanelRows is the greatest number of rows this field can put to
+	// GOOD USE, 0 meaning it has no panel. The form hands Panel
+	// min(PanelRows(), Region) and blank-fills the rest of the region
+	// itself, so a field deriving this from its own item count never
+	// reserves rows it cannot fill -- and, just as importantly, a small
+	// panel never pulls the footer up (rowlayout.go's layoutFrame).
+	PanelRows() int
+}
 
 // zoneKindByID maps a Section's canonical ID() (see Section's own doc
 // comment) to the ZoneKind MapKey's grammar needs. Worktree/Placement/
@@ -237,6 +331,22 @@ type Setup struct {
 	// order. New appends its own internal Create section after these,
 	// always last -- callers must not include their own "create" ID.
 	Sections []Section
+	// Name is the header line's left-hand text ("new session", v2 spec
+	// §4). "" renders no name; the header row itself is still part of
+	// the frame whenever the window affords it, because the layout is a
+	// function of (height, section count) alone -- see rowlayout.go's
+	// layoutFrame. v1's path ignores this field entirely (it draws no
+	// header at all).
+	Name string
+	// InitialFocusID is the ID() of the section focus opens on -- v2
+	// spec §8's "focus opens on title, not on the first enabled
+	// section". "" falls back to the first ENABLED section, v1's
+	// behavior. An ID no section carries is likewise ignored. Like
+	// FocusByID (and unlike Tab navigation) a named section is focused
+	// even when it is currently disabled: the caller naming it is
+	// asserting an intent the ring's skip-disabled walk has no way to
+	// express.
+	InitialFocusID string
 }
 
 // Model is the form root: a tea.Model over Setup's Sections plus this
@@ -260,6 +370,8 @@ type Model struct {
 	width      int
 	height     int
 	clearArmed bool
+	name       string
+	context    string
 }
 
 // New returns a form Model over cfg.Sections plus this package's own
@@ -273,10 +385,36 @@ func New(cfg Setup) Model {
 	sections := make([]Section, 0, len(cfg.Sections)+1)
 	sections = append(sections, cfg.Sections...)
 	sections = append(sections, newCreateSection(cfg.Palette))
+	ring := newFocusRing(sections)
+	if cfg.InitialFocusID != "" {
+		// Move the CURSOR only, no Focus()/Blur() fan-out: New is a pure
+		// constructor (see its doc comment above) and Init is what
+		// asserts the initial focus for real. See Setup.InitialFocusID
+		// for why a disabled section is a legitimate target here.
+		if i := ring.indexOf(cfg.InitialFocusID); i >= 0 {
+			ring.index = i
+		}
+	}
 	return Model{
 		palette: cfg.Palette,
-		ring:    newFocusRing(sections),
+		ring:    ring,
+		name:    cfg.Name,
 	}
+}
+
+// SetContext sets the header line's right-hand text -- v2 spec §4's
+// "live context for the SELECTED project: repository name and its
+// current branch, not the invoking workspace" ("herdr-draft · main").
+// "" renders no context. Ignored by v1's path, which draws no header.
+//
+// POINTER receiver, deliberately, and this is the single easiest thing
+// in this file to get wrong: every OTHER Model mutator gets away with a
+// value receiver only because it writes through *focusRing, a pointer
+// the copy shares with the original. A plain string field written
+// through a value receiver would be set on the copy and silently
+// dropped.
+func (m *Model) SetContext(s string) {
+	m.context = s
 }
 
 // SubmitMsg is emitted (as a tea.Cmd's result) when the grammar's
@@ -432,6 +570,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // any non-left button -- spec §7 only asks for click-to-activate, not a
 // context-menu) is a no-op.
 //
+// v2 adds exactly one new branch, and only on the row-stack path (see
+// compose's gate): a click inside the "panel" zone is forwarded to the
+// FOCUSED section WITHOUT changing focus. The panel already belongs to
+// the focused field by construction, so there is nothing to re-focus --
+// and re-running the focus fan-out would blur and re-Focus the field
+// mid-click, which is what would stop the chip:<id>:<chipID> and
+// row:<id>:<n> zones nested inside the panel from resolving. The
+// per-row zone is likewise named "field:<id>" rather than
+// "section:<id>" on that path (see the zone-scheme doc comment near
+// zoneFieldPrefix); the lookup follows whichever path composed the
+// frame, so a stale zone from the other path can never be hit.
+//
 // A zero-value Model (nil ring; see Model's own doc comment) is a no-op.
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if m.ring == nil {
@@ -443,11 +593,21 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if widgets.Zones.Get(zoneCreateButton).InBounds(msg) {
 		return m, submitCmd
 	}
+
+	rows := m.allRowSections()
+	if rows && widgets.Zones.Get(zonePanel).InBounds(msg) {
+		return m, m.forwardToFocused(msg)
+	}
+
+	prefix := zoneSectionPrefix
+	if rows {
+		prefix = zoneFieldPrefix
+	}
 	for i, s := range m.ring.sections {
 		if s.ID() == createSectionID {
 			continue
 		}
-		if !widgets.Zones.Get(zoneSectionPrefix + s.ID()).InBounds(msg) {
+		if !widgets.Zones.Get(prefix + s.ID()).InBounds(msg) {
 			continue
 		}
 		focusCmd := m.ring.set(i)
@@ -617,7 +777,50 @@ func (m Model) ViewAt(w, h int) string {
 	return buf.String()
 }
 
-// compose assembles the form's content at exactly w x h: one blank
+// compose is the dual-path bridge between v1's variable-height section
+// stack and v2's row stack (v2 spec §5). The gate is a capability
+// check, not a flag: when EVERY section in the ring implements
+// rowSection, the frame is composed as v2's row stack (composeRows);
+// otherwise it takes v1's path unchanged (composeLegacy), down to the
+// byte. No field_*.go section implements rowSection yet, so every
+// production render and every committed golden frame still goes through
+// composeLegacy -- the row-stack path is reachable today only from the
+// stub sections in form_test.go, which is exactly how it is tested
+// before the real form moves.
+//
+// The gate is also what handleMouseClick consults to decide which zone
+// scheme the last render marked.
+func (m Model) compose(w, h int) string {
+	if h <= 0 || m.ring == nil || len(m.ring.sections) == 0 {
+		return ""
+	}
+	if m.allRowSections() {
+		return m.composeRows(w, h)
+	}
+	return m.composeLegacy(w, h)
+}
+
+// allRowSections reports whether every section in the ring implements
+// rowSection -- compose's gate. The internal Create section implements
+// it too (trivially: it has no row and no panel, it renders on the
+// footer line), so the answer depends only on the caller's own
+// Setup.Sections. A zero-value Model, or a ring with no sections at all,
+// is false: compose has already returned "" in both cases, and reporting
+// true for an empty ring would only invite a caller to believe a
+// row-stack render happened when nothing was rendered at all.
+func (m Model) allRowSections() bool {
+	if m.ring == nil || len(m.ring.sections) == 0 {
+		return false
+	}
+	for _, s := range m.ring.sections {
+		if _, ok := s.(rowSection); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// composeLegacy assembles the form's content at exactly w x h: one blank
 // padding row on top, each section's own View lines (decorated with the
 // focus-marker gutter, see decorateFocus) optionally followed by a
 // divider, the footer's key ladder, then the trailing Create section --
@@ -637,12 +840,9 @@ func (m Model) ViewAt(w, h int) string {
 //
 // A zero-value Model (nil ring; see Model's own doc comment) renders as
 // "" -- there are no Sections to compose -- rather than dereferencing the
-// nil ring's own sections slice.
-func (m Model) compose(w, h int) string {
-	if h <= 0 || m.ring == nil || len(m.ring.sections) == 0 {
-		return ""
-	}
-
+// nil ring's own sections slice. (compose, above, has already guarded
+// that case before dispatching here.)
+func (m Model) composeLegacy(w, h int) string {
 	inner := innerWidth(w)
 	sections := m.ring.sections
 
@@ -689,7 +889,7 @@ func (m Model) compose(w, h int) string {
 		}
 	}
 
-	add(decorateFocus(fitFooter(footerRungs(m.clearArmed), inner), false, m.palette), false)
+	add(decorateFocus(fitFooter(legacyFooterRungs(m.clearArmed), inner), false, m.palette), false)
 
 	lastFocused := m.ring.index == lastIdx
 	for _, l := range strings.Split(fitBlock(last.View(inner, heights[lastIdx]), heights[lastIdx], inner), "\n") {
@@ -724,10 +924,221 @@ func (m Model) compose(w, h int) string {
 	return strings.Join(painted, "\n")
 }
 
+// composeRows assembles v2's frame at exactly w x h (v2 spec §4/§5/§9):
+// the header, a rule, the row stack, a second rule, the detail panel,
+// and the footer -- six components, no blank spacer rows, in whatever
+// subset rowlayout.go's layoutFrame says this height affords.
+//
+// Every line is emitted at its own background: PanelBG for all of them
+// except the focused stack row, which is painted edge to edge in
+// ActiveRowBG. That full-width fill IS v2's focus indication (v2 spec
+// §7) -- the `▎` gutter bar is gone, and the gutter column survives only
+// as the two-cell indent v2 spec §4's mockups show, which is also where
+// a picker's own cursor glyph lands inside the panel. paintLine is what
+// makes the fill survive the accent- and dim-styled spans inside a row:
+// it reasserts the background SGR after every embedded ANSI reset, which
+// is exactly the hazard a full-width row highlight hits.
+//
+// No degradation ladder runs here and none is needed. layoutFrame's
+// components sum to exactly h by construction, and Create is on the
+// footer line rather than in the stack, so v1's "never clip the last
+// line" contract (sizes.go's clipKeeping) is upheld by the arithmetic
+// instead of being repaired after the fact. The paint loop still clamps
+// to h, belt and braces.
+func (m Model) composeRows(w, h int) string {
+	sections := m.ring.sections
+	lastIdx := len(sections) - 1
+	// The same body/last split composeLegacy uses: `last` is New's own
+	// Create section, which in v2 feeds the FOOTER rather than the
+	// stack, so the stack is indexed over sections[:len-1] exactly as
+	// the v1 body loop already was.
+	body := sections[:lastIdx]
+
+	padLeft, inner := contentBox(w)
+	boxWidth := gutterWidth + inner
+	labelW, valueW := labelCol(inner)
+	pad := strings.Repeat(" ", padLeft)
+
+	f := layoutFrame(h, len(body))
+
+	type composedLine struct {
+		text string
+		bg   theme.Color
+	}
+	lines := make([]composedLine, 0, h)
+	add := func(text string, bg theme.Color) {
+		lines = append(lines, composedLine{text: pad + text, bg: bg})
+	}
+
+	if f.Header {
+		add(m.renderHeaderLine(boxWidth), m.palette.PanelBG)
+	}
+	if f.Rule1 {
+		add(dividerLine(boxWidth, m.palette), m.palette.PanelBG)
+	}
+
+	start := stackWindow(len(body), f.Rows, m.ring.index)
+	for i := start; i < start+f.Rows && i < len(body); i++ {
+		s, ok := body[i].(rowSection)
+		if !ok {
+			// Unreachable: compose's allRowSections gate is what got us
+			// here. Emit a blank row rather than panicking, per this
+			// project's "degrade, never panic" rule.
+			add(fitLine("", boxWidth), m.palette.PanelBG)
+			continue
+		}
+		focused := i == m.ring.index
+		bg := m.palette.PanelBG
+		if focused {
+			bg = m.palette.ActiveRowBG
+		}
+		// field:<id> (v2): one zone per stack line -- clicking anywhere
+		// on the row focuses that field and then forwards the raw click
+		// to it, so whatever chip/picker zones the field nested in its
+		// own Row survive and resolve (bubblezone markers nest).
+		add(widgets.Zones.Mark(zoneFieldPrefix+s.ID(), renderStackRow(s, labelW, valueW, m.palette)), bg)
+	}
+
+	if f.Rule2 {
+		add(dividerLine(boxWidth, m.palette), m.palette.PanelBG)
+	}
+
+	if f.Region > 0 {
+		// One "panel" zone over the whole region, blank rows included:
+		// a click inside it goes to the focused section without moving
+		// focus (handleMouseClick).
+		region := widgets.Zones.Mark(zonePanel, strings.Join(m.renderPanelRegion(boxWidth, f.Region), "\n"))
+		for _, l := range strings.Split(region, "\n") {
+			add(l, m.palette.PanelBG)
+		}
+	}
+
+	if f.Footer {
+		focused := m.ring.current()
+		rungs := footerRungsFor(focused, zoneFor(focused), m.clearArmed)
+		add(renderFooter(boxWidth, rungs, m.ring.index == lastIdx, m.palette), m.palette.PanelBG)
+	}
+
+	painted := make([]string, 0, h)
+	for _, l := range lines {
+		if len(painted) == h {
+			break
+		}
+		painted = append(painted, paintLine(l.text, w, l.bg))
+	}
+	for len(painted) < h {
+		painted = append(painted, paintLine("", w, m.palette.PanelBG))
+	}
+	return strings.Join(painted, "\n")
+}
+
+// renderHeaderLine renders v2 spec §4's header: the form's name on the
+// left (Setup.Name, bold) and the selected project's live context on the
+// right (SetContext, dim and flush to the box's right edge). Either half
+// may be empty; the row itself is still drawn, because the frame's
+// geometry is a function of (height, section count) alone -- see
+// rowlayout.go's layoutFrame.
+func (m Model) renderHeaderLine(width int) string {
+	name, context := m.name, m.context
+	if name != "" {
+		name = lipgloss.NewStyle().Foreground(m.palette.Text).Bold(true).Render(name)
+	}
+	if context != "" {
+		context = dimText(m.palette).Render(context)
+	}
+	return spreadLine(name, context, width)
+}
+
+// renderStackRow renders one line of the row stack: the two-cell gutter
+// indent, the field's Label padded into the fixed label column, then its
+// own Row filling the value column. The label is dim and the value is
+// the field's business (v2 spec §7's "lowercase terse labels in a dim
+// color, values brighter"); focus is NOT signalled here at all -- it is
+// the caller's full-width ActiveRowBG fill -- which is precisely why Row
+// can be, and must be, focus- and height-independent.
+func renderStackRow(s rowSection, labelW, valueW int, p theme.Palette) string {
+	label := ""
+	if labelW > 0 {
+		label = dimText(p).Width(labelW).MaxWidth(labelW).Inline(true).Render(s.Label())
+	}
+	return strings.Repeat(" ", gutterWidth) + label + fitLine(s.Row(valueW), valueW)
+}
+
+// renderPanelRegion renders exactly region lines of the focused
+// section's detail panel, width cells wide.
+//
+// The focused field is handed min(PanelRows(), region) lines and this
+// function blank-fills whatever is left over. That asymmetry is
+// deliberate and load-bearing: a field with little to show does NOT
+// shrink the region, so the rule above the panel and the footer below it
+// stay put as focus travels (see layoutFrame's "slack always lands in
+// Region"). A focused section with no panel at all (PanelRows() == 0 --
+// the Create section, or a field whose chooser is empty) yields an
+// entirely blank region for the same reason.
+func (m Model) renderPanelRegion(width, region int) []string {
+	lines := make([]string, 0, region)
+	if s, ok := m.ring.current().(rowSection); ok && region > 0 {
+		if want := s.PanelRows(); want > 0 {
+			if want > region {
+				want = region
+			}
+			lines = append(lines, strings.Split(fitBlock(s.Panel(width, want), want, width), "\n")...)
+		}
+	}
+	for len(lines) < region {
+		lines = append(lines, fitLine("", width))
+	}
+	return lines[:region]
+}
+
+// renderFooter composes v2's footer line: the contextual key ladder on
+// the left, the Create button flush right (v2 spec §5, "Create stays a
+// focus stop but moves onto the footer line").
+//
+// The rungs are fitted into width - the button's own width - a two-cell
+// gap, and the button is NEVER traded away for hint text: on a window
+// too narrow for both, the key ladder is what gets clipped. On one too
+// narrow even for the button, the button is all that is drawn -- it is
+// the one control the form cannot do without.
+func renderFooter(width int, rungs []string, createFocused bool, p theme.Palette) string {
+	button := createButton(createFocused, p)
+	buttonWidth := lipgloss.Width(button)
+	marked := widgets.Zones.Mark(zoneCreateButton, button)
+	if buttonWidth >= width {
+		return fitLine(marked, width)
+	}
+	return spreadLine(fitFooter(rungs, width-buttonWidth-footerButtonGap), marked, width)
+}
+
+// footerButtonGap is the minimum blank space kept between the footer's
+// key ladder and the Create button, so the two never read as one run of
+// text.
+const footerButtonGap = 2
+
+// spreadLine renders left and right on one line exactly width cells
+// wide, with right flush to the right edge. When the two collide the
+// LEFT is what gets clipped (the right-hand half is the Create button on
+// the footer and the live project context in the header -- in both cases
+// the half that must survive).
+func spreadLine(left, right string, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	rightWidth := lipgloss.Width(right)
+	if rightWidth >= width {
+		return fitLine(right, width)
+	}
+	return fitLine(fitLine(left, width-rightWidth)+right, width)
+}
+
 // decorateFocus prefixes line with the focus-marker gutter: an
 // accent-colored bar and a space when focused is true, two blank spaces
 // otherwise -- spec §7's "accent for the focused section marker"
-// convention. It never changes line's own physical line count (always
+// convention. V1 COMPOSE PATH ONLY: v2 marks focus with a full-width
+// ActiveRowBG fill and has no marker column at all (v2 spec §7), so
+// composeRows never calls this.
+//
+// It never changes line's own physical line count (always
 // exactly one line in, one out) and is applied uniformly to every
 // composed line (section content, dividers, blank padding, the footer),
 // so the gutter column stays aligned regardless of which lines are
@@ -799,6 +1210,18 @@ func (c *createSection) View(inner, _ int) string {
 	return widgets.Zones.Mark(zoneCreateButton, renderCreateButton(inner, c.focused, c.palette))
 }
 
+// Label/Row/Panel/PanelRows make the Create section a rowSection so that
+// compose's allRowSections gate depends only on the CALLER's own
+// sections -- this one is always present and would otherwise veto the
+// row-stack path forever. All four are trivial by design: on v2's path
+// Create occupies no stack row and no panel, it renders as the button on
+// the footer line (composeRows/renderFooter), so nothing ever calls
+// them. They exist to state that, not to render anything.
+func (c *createSection) Label() string         { return "" }
+func (c *createSection) Row(int) string        { return "" }
+func (c *createSection) Panel(int, int) string { return "" }
+func (c *createSection) PanelRows() int        { return 0 }
+
 // actionButtonText / panelContrastFG / renderCreateButton port herdr's
 // own action-button convention (READ-ONLY reference per the task brief,
 // Apache-2.0, attributed generally in this repository's NOTICE per spec
@@ -855,18 +1278,35 @@ func panelContrastFG(p theme.Palette) theme.Color {
 	return p.PanelBG
 }
 
-func renderCreateButton(inner int, focused bool, p theme.Palette) string {
-	text := actionButtonText("", "Create")
-	style := lipgloss.NewStyle().Foreground(p.Text)
+// createButtonFace returns the button's text and style for the given
+// focus state -- the herdr port described above, with no sizing of its
+// own. Both call sites below differ only in how they place it.
+func createButtonFace(focused bool, p theme.Palette) (string, lipgloss.Style) {
 	if focused {
-		text = actionButtonText("↵", "Create")
-		style = lipgloss.NewStyle().
+		return actionButtonText("↵", "Create"), lipgloss.NewStyle().
 			Foreground(panelContrastFG(p)).
 			Background(p.Accent).
 			Bold(true)
 	}
+	return actionButtonText("", "Create"), lipgloss.NewStyle().Foreground(p.Text)
+}
+
+// renderCreateButton renders the button centered across the full inner
+// width -- v1's placement, where Create owns a row of its own. It dies
+// with the v1 compose path; v2's footer uses createButton instead.
+func renderCreateButton(inner int, focused bool, p theme.Palette) string {
+	text, style := createButtonFace(focused, p)
 	if inner < 1 {
 		inner = 1
 	}
 	return style.Width(inner).MaxWidth(inner).Inline(true).AlignHorizontal(lipgloss.Center).Render(text)
+}
+
+// createButton renders the button at its INTRINSIC width, for v2's
+// footer line (v2 spec §5): renderFooter places it flush right and fits
+// the key ladder into what is left. No Width/AlignHorizontal, which is
+// the whole difference from renderCreateButton above.
+func createButton(focused bool, p theme.Palette) string {
+	text, style := createButtonFace(focused, p)
+	return style.Inline(true).Render(text)
 }

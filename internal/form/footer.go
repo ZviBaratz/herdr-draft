@@ -20,20 +20,20 @@ package form
 
 import "charm.land/lipgloss/v2"
 
-// footerRungs returns spec §6's key-ladder hint, widest (most descriptive)
-// first, narrowest last, for the form's global grammar: Tab/Shift+Tab
-// move the focus ring, Enter advances (or submits from Title/Create),
-// Ctrl+S submits from anywhere, Esc/Ctrl+C cancel, and Ctrl+R Ctrl+R
-// clears. armed selects between "⌃R clear" (arm the gesture) and "⌃R
-// again" (fire it) for the trailing clause, matching keys.go's own
-// MapKey/HandlePaste arm-state contract.
+// legacyFooterRungs returns spec §6's key-ladder hint, widest (most
+// descriptive) first, narrowest last, for the form's global grammar:
+// Tab/Shift+Tab move the focus ring, Enter advances (or submits from
+// Title/Create), Ctrl+S submits from anywhere, Esc/Ctrl+C cancel, and
+// Ctrl+R Ctrl+R clears. armed selects between "⌃R clear" (arm the
+// gesture) and "⌃R again" (fire it) for the trailing clause, matching
+// keys.go's own MapKey/HandlePaste arm-state contract.
 //
-// This is the form-global footer only -- spec §6's per-zone rungs (e.g. a
-// picker's "Tab complete/move" or the prompt's "⌃J newline") are a
-// concrete field Section's own business once one exists (Tasks 17-18),
-// not something the form root can word on a caller's behalf through the
-// opaque Section interface.
-func footerRungs(armed bool) []string {
+// This is the form-global footer only, with no idea which field holds
+// focus -- v1's whole footer, and the reason v1 needed a per-field hint
+// ROW under every field. v2 replaces it with footerRungs below and
+// deletes those rows (v2 spec §3 rule 4). It survives, under this name,
+// only for as long as compose's v1 path does.
+func legacyFooterRungs(armed bool) []string {
 	clearHint := "⌃R clear"
 	if armed {
 		clearHint = "⌃R again"
@@ -48,6 +48,114 @@ func footerRungs(armed bool) []string {
 		rungs[i] = b + " · " + clearHint
 	}
 	return rungs
+}
+
+// footerRungs returns v2's CONTEXTUAL key ladder for one focused zone
+// (v2 spec §3 rule 4: "the footer teaches the focused field, then states
+// the constants"): the zone's own rungs crossed with the constant tail,
+// widest first. fitFooter picks the widest crossing that fits the space
+// renderFooter left it beside the Create button.
+//
+// The cross product, rather than one flat list, is what lets the two
+// halves degrade independently: a narrow window can keep "↑↓ pick" and
+// drop back to a bare "Esc" tail, or keep the full tail and drop the
+// zone hint, whichever is wider and still fits.
+func footerRungs(zone FocusZone, armed bool) []string {
+	return crossRungs(zoneRungs(zone), tailRungs(armed))
+}
+
+// footerRungsFor is footerRungs with the focused section given the first
+// word: a Section implementing footerHinter (form.go) supplies its own
+// lead rungs -- it knows things the zone table cannot, such as whether
+// its picker currently has anything to pick -- and anything else falls
+// back to the table. An empty FooterRungs() slice means "nothing to add,
+// use the table", not "no hints at all".
+func footerRungsFor(s Section, zone FocusZone, armed bool) []string {
+	lead := zoneRungs(zone)
+	if h, ok := s.(footerHinter); ok {
+		if own := h.FooterRungs(); len(own) > 0 {
+			lead = own
+		}
+	}
+	return crossRungs(lead, tailRungs(armed))
+}
+
+// zoneRungs is the per-zone lead of v2's footer, widest first: what THIS
+// field's keys do, in its own words. The wording is v2 spec §4's
+// mockups' and the view plan's; a field with something better to say
+// overrides it via footerHinter.
+//
+// ZoneBranch and ZoneBase still appear here because v1's Worktree is
+// three sections; the field migration collapses them into one and these
+// two entries go with them.
+func zoneRungs(zone FocusZone) []string {
+	switch zone.Kind {
+	case ZoneIssue:
+		return []string{"↑↓ pick · type to filter · Tab complete", "↑↓ pick"}
+	case ZoneDir:
+		return []string{"↑↓ pick · Tab complete · / ~ . browse", "↑↓ pick · Tab complete"}
+	case ZoneTitle:
+		// The one zone whose hint depends on state rather than kind:
+		// Enter submits from a filled title and advances from an empty
+		// one (keys.go's MapKey), and zoneFor already computes exactly
+		// that distinction for the grammar. Reusing it here is what
+		// stops the footer lying about what Enter does.
+		if zone.TitleEmpty {
+			return []string{"↵ next · Tab next", "↵ next"}
+		}
+		return []string{"↵ create · Tab next", "↵ create"}
+	case ZonePrompt:
+		return []string{"⌃J newline · ↵ next", "⌃J newline"}
+	case ZoneWorktree:
+		return []string{"↑↓ part · ←→ toggle · ↵ next", "↑↓ part · ←→ toggle"}
+	case ZoneBranch:
+		return []string{"type to edit · ↵ next", "↵ next"}
+	case ZoneBase:
+		return []string{"↑↓ pick · ↵ next", "↑↓ pick"}
+	case ZonePlacement:
+		return []string{"←→ choose · ↵ next", "←→ choose"}
+	case ZoneAgent:
+		return []string{"←→ favorites · ↑↓ all kinds", "↑↓ pick"}
+	case ZoneAccount:
+		return []string{"↑↓ pick · ↵ next", "↑↓ pick"}
+	case ZoneCreate:
+		return []string{"↵ create · ⇧Tab back", "↵ create"}
+	default:
+		return nil
+	}
+}
+
+// tailRungs is v2's constant tail, widest first -- the form-global
+// grammar every zone shares. armed selects between "⌃R clear" and "⌃R
+// again", exactly as v1's ladder did.
+func tailRungs(armed bool) []string {
+	clearHint := "⌃R clear"
+	if armed {
+		clearHint = "⌃R again"
+	}
+	return []string{
+		"Tab/⇧Tab move · ⌃S create · Esc cancel · " + clearHint,
+		"Tab move · ⌃S create · Esc cancel",
+		"⌃S create · Esc",
+		"Esc",
+	}
+}
+
+// crossRungs joins every lead with every tail, widest first, and then
+// lists the tails alone -- the narrowest usable footer is the constant
+// tail's own last rung, never nothing. A nil/empty lead degrades to the
+// tails alone rather than to an empty ladder.
+func crossRungs(lead, tail []string) []string {
+	if len(lead) == 0 {
+		return tail
+	}
+	out := make([]string, 0, len(lead)*len(tail)+len(tail))
+	for _, l := range lead {
+		for _, t := range tail {
+			out = append(out, l+" · "+t)
+		}
+	}
+	return append(out, tail...)
 }
 
 // fitFooter returns the widest entry in rungs whose rendered width fits

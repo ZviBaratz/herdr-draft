@@ -81,6 +81,22 @@
 //     its own (spec §7), so the budget fitToHeight is handed is the full
 //     window height minus whatever fixed vertical padding form.go itself
 //     reserves, not a border allowance.
+//
+// CORRECTION for v2 (v2 spec §7), to the first bullet above: the
+// no-ellipsis rule is REVERSED for the row stack's VALUE cells, which
+// elide with a visible marker (ansi.Truncate/ansi.TruncateLeft, keeping
+// the informative end -- the tail for paths, the head for titles and
+// branches). The v1 reasoning was about a dependency this package did
+// not want, and about HINT lines, where running out of room costs the
+// reader a suggestion they can live without. A one-line value cell is a
+// different failure: a path or a branch name that loses its tail
+// unmarked is not merely incomplete, it is MISREAD -- "~/Projects/
+// herdr-dra" and "zvi/fix-login-redir" both read as real values. The
+// dependency objection has lapsed too: charmbracelet/x/ansi is already
+// imported by this very file. Everything else above still holds -- the
+// silent clip remains the backstop for a composed line as a whole, and
+// paintLine still runs last. The elision itself lands with the fields
+// that do it; the rule is recorded here, with the decision it reverses.
 package form
 
 import (
@@ -98,6 +114,14 @@ import (
 // fixed rows (a bordered box, an overlay title, per-claude-field
 // dividers) that has no equivalent in this form's flatter, borderless
 // layout.
+//
+// gutterWidth and rightMargin outlive v1: rowlayout.go's contentBox
+// measures against both, though in v2 the gutter is a plain two-cell
+// indent rather than a marker column (focus is a full-width fill, v2
+// spec §7). verticalPadding, footerRows and formChromeRows belong to
+// the v1 compose path alone -- v2's frame has no padding rows at all
+// (v2 spec §9's six components) and books its footer through
+// layoutFrame -- and go when that path does.
 const (
 	// gutterWidth is the left-margin column count reserved for the
 	// focused-section accent marker (see form.go's decorateFocus):
@@ -138,6 +162,16 @@ func innerWidth(w int) int {
 	return inner
 }
 
+// pickerChromeRows, pickerRowsAt, promptRowsAt and allocateHeights below
+// all belong to the V1 COMPOSE PATH ONLY -- the shared height budget v2
+// replaces with a fixed row stack plus one panel (rowlayout.go). They
+// are kept, unchanged, for exactly as long as compose's v1 branch and
+// the field Sections' View/Height/MinHeight are, and are deleted with
+// them; nothing in the row-stack path calls any of them. (paintLine,
+// dropLinesToFit, clipKeeping, fitToHeight and innerWidth are NOT in
+// that set: they stay permanently, and innerWidth in particular keeps
+// serving submitview.go.)
+//
 // pickerChromeRows is the row count every picker-backed field Section
 // spends on its own fixed chrome before a single candidate row is drawn:
 // the label/selection header, plus the always-reserved hint/verdict row
