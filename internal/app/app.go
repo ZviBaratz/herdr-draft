@@ -994,7 +994,13 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 		// (fix round 1) pushes a fresh, submit-time message, the same
 		// "the field itself shows why" pattern Title's own dup verdict
 		// already used.
-		m.account.SetVerdict(pin, fmt.Sprintf("blocked — auth: %s", status))
+		// "sign in again  <status>": the same words the account ROW
+		// already shows for a bad auth status, and v2 spec §6's own
+		// `<state>  <reason>` separator. It replaced
+		// "blocked — auth: <status>", which led with a state the user
+		// cannot act on and carried a `Label:` colon v2 spec §7 drops
+		// everywhere else.
+		m.account.SetVerdict(pin, fmt.Sprintf("sign in again  clauth reports %s", status))
 		return m.form.FocusByID("account"), true
 	}
 	return nil, false

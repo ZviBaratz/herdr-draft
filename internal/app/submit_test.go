@@ -390,11 +390,13 @@ func TestSubmit_PinnedProfileAuthFailedBlocksWithAccountVerdict(t *testing.T) {
 	// mentions "expired" regardless (accountRow's own "name · tier ·
 	// auth_status" format) and was ALREADY visible before the click, so
 	// checking for "expired" alone would pass even without the fix.
-	// AccountField.SetVerdict pushes a NEW hint-row message with a
-	// "blocked" prefix nothing else in the view ever renders -- that's
-	// the actual signal this fix adds.
+	// AccountField.SetVerdict pushes a NEW panel-status message naming
+	// clauth as the source, which nothing else in the view ever renders
+	// -- that's the actual signal this fix adds. (v2's copy pass turned
+	// "blocked — auth: expired" into a line that leads with what to do;
+	// "clauth reports" is the half no row can produce on its own.)
 	frame := fieldText(m.account, 60)
-	wantVerdict := "blocked — auth: expired"
+	wantVerdict := "sign in again  clauth reports expired"
 	if !strings.Contains(frame, wantVerdict) {
 		t.Fatalf("the account panel after a blocked submit = %q, want it to contain the new blocking verdict %q", frame, wantVerdict)
 	}

@@ -110,8 +110,13 @@ func TestPromptField_FocusReturnsBlinkCmd(t *testing.T) {
 func TestPromptField_ViewShowsPlaceholderLadderEntry(t *testing.T) {
 	f := NewPromptField(theme.Default())
 	frame := fieldText(f, 80)
-	if !strings.Contains(frame, "Optional") {
+	if !strings.Contains(frame, "optional") {
 		t.Errorf("View(80) = %q, want it to contain a placeholder ladder entry", frame)
+	}
+	// v2 spec §8 made ↵ submit from this field, so no rung may still
+	// offer it as a way past the prompt.
+	if strings.Contains(frame, "Enter") || strings.Contains(frame, "skip") {
+		t.Errorf("View(80) = %q, want no placeholder naming Enter as a way to skip the prompt", frame)
 	}
 }
 

@@ -23,7 +23,7 @@ const (
 	// promptRowEmpty is v2 spec §6's Unset cell for this row: an em dash,
 	// not the placeholder ladder, because the ladder teaches you what to
 	// TYPE and the row is not where you type (the panel is).
-	promptRowEmpty = "—"
+	promptRowEmpty = rowValueNone
 
 	// promptPanelMinRows / promptPanelMaxRows bound the textarea's own
 	// panel: enough rows to be worth focusing even for a one-line prompt,
@@ -40,11 +40,16 @@ const (
 // widgets.PromptArea's own selectPlaceholder (picking the widest entry
 // that still fits) has more than a single all-or-nothing jump to choose
 // between as the field's available width shrinks.
+// v2's copy pass rewrote all four rungs (v2 spec §3 rule 5: "copy is
+// plain, lowercase and active"). The widest one also had to go on
+// grounds of truth: it read "(Enter or Tab to skip)", and v2 spec §8
+// makes ↵ from this field SUBMIT rather than advance, so it named a key
+// that now creates the session.
 var promptPlaceholderLadder = []string{
-	"Optional — sent to the agent once it starts (Enter or Tab to skip)",
-	"Optional — sent once the agent starts",
-	"Optional prompt",
-	"Optional",
+	"optional, sent to the agent once it starts",
+	"optional, sent once the agent starts",
+	"optional prompt",
+	"optional",
 }
 
 // PromptField is the form's Prompt Section (spec §6 field 8): an optional
