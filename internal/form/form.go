@@ -68,9 +68,9 @@ const (
 // plus the detail panel it shows while it holds focus (v2 spec §5). The
 // form's eight fields plus this package's own internal Create button, all
 // deliberately opaque beyond this interface -- the focus ring, the
-// composition and the degradation ladder work identically over every
-// Section, whether it is one of the real fields or a test double, without
-// knowing which.
+// composition and rowlayout.go's frame arithmetic work identically over
+// every Section, whether it is one of the real fields or a test double,
+// without knowing which.
 //
 // Setter methods a concrete field needs (SetItems, SetChips, ...) are NOT
 // part of this interface: the app layer holds each concrete Section by
@@ -270,7 +270,7 @@ type Setup struct {
 	// Palette is the herdr-derived color palette (internal/theme) every
 	// style in this package and its Sections is built from.
 	Palette theme.Palette
-	// Sections are the caller's own form fields, in spec §6's field
+	// Sections are the caller's own form fields, in v2 spec §6's row
 	// order. New appends its own internal Create section after these,
 	// always last -- callers must not include their own "create" ID.
 	Sections []Section
@@ -293,10 +293,9 @@ type Setup struct {
 }
 
 // Model is the form root: a tea.Model over Setup's Sections plus this
-// package's own Create button, wiring focus.go's ring, sizes.go's
-// constant-height budget/degradation ladder, footer.go's key ladder, and
-// keys.go's MapKey grammar together, painted in Setup.Palette's herdr
-// skin.
+// package's own Create button, wiring focus.go's ring, rowlayout.go's
+// content box and frame arithmetic, footer.go's key ladder, and keys.go's
+// MapKey grammar together, painted in Setup.Palette's herdr skin.
 //
 // Construction via New is required. A zero-value Model (e.g. `var m
 // form.Model`, or any Model obtained some other way than a call to New)
@@ -444,12 +443,12 @@ func (m Model) SectionIDs() []string {
 // or an id with no matching section.
 //
 // This is a minimal public entry point over focusRing's own
-// already-existing, already-documented focusByID (focus.go: "used e.g.
-// by spec §6's 'a failing submit re-focuses Title' rule once a concrete
-// Title section exists") -- added in Task 20b since nothing in this
-// package previously exposed it beyond this file, and the app layer's
-// own submit-time validation (spec §9) is exactly that rule's first real
-// caller.
+// already-existing, already-documented focusByID (focus.go) -- added in
+// Task 20b since nothing in this package previously exposed it beyond
+// this file. The rule it serves is "a failing submit re-focuses Title",
+// generalized by spec §9's submit-time validation ("inline verdicts,
+// submit blocked, focus moved") to whichever field actually blocked; the
+// app layer's own checkSubmitValidation is that rule's real caller.
 func (m Model) FocusByID(id string) tea.Cmd {
 	if m.ring == nil {
 		return nil
@@ -556,10 +555,17 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouseWheel implements task 21's wheel grammar: it forwards the
-// raw tea.MouseWheelMsg to the CURRENTLY FOCUSED section's own Update
-// only -- spec §7's "scroll the focused picker or the prompt", not
-// whatever section happens to sit under the mouse pointer -- letting a
+// handleMouseWheel forwards the raw tea.MouseWheelMsg to the CURRENTLY
+// FOCUSED section's own Update only. v2 spec §7 states the rule as "the
+// wheel scrolls the panel unconditionally -- there is now exactly one
+// scrollable region, so routing by focus is no longer meaningful", and
+// forwarding to the focused section is how that is spelled here: the
+// panel IS the focused section's panel, so "the panel" and "the focused
+// section" name the same region. (v1's own rule, task 21's, was spec
+// §7's "scroll the focused picker or the prompt" -- deliberately not
+// "whatever section sits under the pointer" -- and the code is
+// unchanged; v2 removed the ambiguity that wording guarded against, not
+// the behavior.) Forwarding lets a
 // concrete field decide for itself whether it has anything to scroll
 // (IssueField/DirField/WorktreeField's base picker/AccountField/
 // AgentField's expanded list move their own picker cursor; PromptField
@@ -578,8 +584,9 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 // wheelDelta translates a tea.MouseWheelMsg into -1 (wheel up: move
 // back/prev, mirroring Up) or +1 (wheel down: move forward/next,
 // mirroring Down), or 0 for a wheel axis this package has no vertical-
-// scroll meaning for (left/right -- spec §7 only asks for up/down
-// wheel-scroll). Shared by every field_*.go Update that handles
+// scroll meaning for (left/right -- v2 spec §7 asks only for a wheel
+// that "scrolls the panel", a vertical region, and v1 spec §7 asked only
+// for up/down before it). Shared by every field_*.go Update that handles
 // tea.MouseWheelMsg, so each one's own up/down cursor-move branches read
 // the same shape as their existing Up/Down KeyPressMsg branches.
 func wheelDelta(msg tea.MouseWheelMsg) int {
@@ -700,14 +707,15 @@ func (m Model) View() tea.View {
 // lipgloss Width/MaxWidth measurement (verified directly: a private CSI
 // sequence ending in 'z', not a color/style code, so lipgloss's
 // ansi-aware width calculator skips it exactly like it skips a real SGR
-// code) and Scan removes them cleanly regardless of where sizes.go's own
-// degradation ladder (fitToHeight, inside compose) may have clipped
-// interior lines -- an unpaired marker left behind by a dropped line is
-// still stripped, its zone simply isn't reported this scan (see
-// widgets/zones.go's own doc comment) -- so this package's 11 committed
-// golden frames stay byte-identical: Scan is called BEFORE the
-// colorprofile.Writer pass below, so that pass (already a documented
-// TrueColor passthrough regardless) never sees a marker byte at all.
+// code) and Scan removes them cleanly regardless of which composed lines
+// actually reached the output -- composeRows' paint loop clamps to h and
+// stackWindow scrolls rows out of the frame entirely, and an unpaired
+// marker left behind by a line that never made it is still stripped, its
+// zone simply isn't reported this scan (see widgets/zones.go's own doc
+// comment) -- so this package's committed golden frames stay
+// byte-identical: Scan is called BEFORE the colorprofile.Writer pass
+// below, so that pass (already a documented TrueColor passthrough
+// regardless) never sees a marker byte at all.
 func (m Model) ViewAt(w, h int) string {
 	content := widgets.Zones.Scan(m.compose(w, h))
 	var buf strings.Builder
@@ -744,9 +752,10 @@ func (m Model) compose(w, h int) string {
 // No degradation ladder runs here and none is needed. layoutFrame's
 // components sum to exactly h by construction, and Create is on the
 // footer line rather than in the stack, so v1's "never clip the last
-// line" contract (sizes.go's clipKeeping) is upheld by the arithmetic
-// instead of being repaired after the fact. The paint loop still clamps
-// to h, belt and braces.
+// line" contract -- which v1 repaired after the fact, with a post-hoc
+// drop-lines cascade over the composed lines (sizes.go's own package doc
+// records what became of it) -- is upheld here by the arithmetic
+// instead. The paint loop still clamps to h, belt and braces.
 func (m Model) composeRows(w, h int) string {
 	sections := m.ring.sections
 	lastIdx := len(sections) - 1
@@ -938,27 +947,6 @@ func spreadLine(left, right string, width int) string {
 		return fitLine(right, width)
 	}
 	return fitLine(fitLine(left, width-rightWidth)+right, width)
-}
-
-// decorateFocus prefixes line with the focus-marker gutter: an
-// accent-colored bar and a space when focused is true, two blank spaces
-// otherwise -- spec §7's "accent for the focused section marker"
-// convention. V1 COMPOSE PATH ONLY: v2 marks focus with a full-width
-// ActiveRowBG fill and has no marker column at all (v2 spec §7), so
-// composeRows never calls this.
-//
-// It never changes line's own physical line count (always
-// exactly one line in, one out) and is applied uniformly to every
-// composed line (section content, dividers, blank padding, the footer),
-// so the gutter column stays aligned regardless of which lines are
-// section content -- only per-SECTION content lines ever pass
-// focused=true, everything else always passes false.
-func decorateFocus(line string, focused bool, p theme.Palette) string {
-	marker := "  "
-	if focused {
-		marker = lipgloss.NewStyle().Foreground(p.Accent).Render("▎") + " "
-	}
-	return marker + line
 }
 
 // dividerLine renders a horizontal rule inner cells wide in the palette's

@@ -69,6 +69,15 @@ func TestFrames_DirPanel(t *testing.T) {
 // config.LoadRepoConfig output -- a forbidden table, a forbidden key with
 // its own reason, and the branch_prefix rejection that falls back to the
 // user's own prefix.
+//
+// Verbatim is the whole point, and this fixture failed it once: the
+// branch_prefix note read "a branch prefix may not contain a space",
+// which is nobody's string -- gitx.ValidateBranchPrefix returns
+// "contains a space" and config/repo.go interpolates that. Because the
+// fixture writes its own note text rather than calling the loader, the
+// invention rendered and pinned cleanly, and a frame that invents its
+// copy cannot catch a copy regression. Anything quoted here must be a
+// string production actually emits.
 func buildDirNotesForm(palette theme.Palette) Model {
 	d := NewDirField(palette)
 	d.SetHomeDir("/home/zvi")
@@ -80,7 +89,7 @@ func buildDirNotesForm(palette theme.Palette) Model {
 	d.SetNotes([]string{
 		"ignoring agents.extra_args: it becomes part of a launched agent's command line",
 		"ignoring linear.prompt_template: it would become the agent's first instruction",
-		`ignoring branch_prefix "a b/": a branch prefix may not contain a space; using your own configured prefix`,
+		`ignoring branch_prefix "a b/": contains a space; using your own configured prefix`,
 	})
 	d.Focus()
 	return fieldFrame(palette, d)

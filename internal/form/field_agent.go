@@ -134,9 +134,9 @@ func (f *AgentField) Update(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
-		// The wheel scrolls the kind list (spec §7: "scroll the focused
-		// picker") -- the favorite chip row is a small, always-fully-
-		// visible set with nothing to scroll.
+		// The wheel scrolls the kind list (v2 spec §7: "the wheel
+		// scrolls the panel unconditionally") -- the favorite chip row is
+		// a small, always-fully-visible set with nothing to scroll.
 		switch wheelDelta(wheel) {
 		case -1:
 			f.picker.CursorPrev()

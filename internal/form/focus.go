@@ -159,9 +159,14 @@ func (r *focusRing) move(delta int) tea.Cmd {
 
 // focusByID moves the cursor directly to the section whose ID() == id (if
 // present), regardless of that section's Enabled() state -- ported from
-// Atrium's focusStop(kind), used e.g. by spec §6's "a failing submit
-// re-focuses Title" rule once a concrete Title section exists. A no-op
-// (returns nil) when no section has that ID.
+// Atrium's focusStop(kind). Its real caller is spec §9's submit-time
+// validation, "inline verdicts, submit blocked, focus moved":
+// internal/app's checkSubmitValidation re-focuses whichever field
+// blocked the create. (The rule was first written as v1 spec §6 field
+// 3's "a failing submit re-focuses Title"; v2 §6 replaces that section
+// with a row table and does not restate it, but §9 is untouched by v2
+// and states it generally.) A no-op (returns nil) when no section has
+// that ID.
 func (r *focusRing) focusByID(id string) tea.Cmd {
 	if i := r.indexOf(id); i >= 0 {
 		return r.set(i)

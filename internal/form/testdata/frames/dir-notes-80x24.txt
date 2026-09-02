@@ -7,7 +7,7 @@
 [48;2;24;24;37m[48;2;24;24;37m  [38;2;205;214;244m~/Projects/atrium[m[48;2;24;24;37m                                                            [m[48;2;24;24;37m [m
 [48;2;24;24;37m[48;2;24;24;37m  [38;2;250;179;135mignoring agents.extra_args: it becomes part of a launched agent's command li…[m[48;2;24;24;37m[m[48;2;24;24;37m [m
 [48;2;24;24;37m[48;2;24;24;37m  [38;2;250;179;135mignoring linear.prompt_template: it would become the agent's first instructi…[m[48;2;24;24;37m[m[48;2;24;24;37m [m
-[48;2;24;24;37m[48;2;24;24;37m  [38;2;250;179;135mignoring branch_prefix "a b/": a branch prefix may not contain a space; usin…[m[48;2;24;24;37m[m[48;2;24;24;37m [m
+[48;2;24;24;37m[48;2;24;24;37m  [38;2;250;179;135mignoring branch_prefix "a b/": contains a space; using your own configured p…[m[48;2;24;24;37m[m[48;2;24;24;37m [m
 [48;2;24;24;37m[48;2;24;24;37m  [3;38;2;166;173;200m[m[48;2;24;24;37m                                                                             [m[48;2;24;24;37m [m
 [48;2;24;24;37m[48;2;24;24;37m                                                                               [m[48;2;24;24;37m [m
 [48;2;24;24;37m[48;2;24;24;37m                                                                               [m[48;2;24;24;37m [m

@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-02
 - **Status:** implemented
-- **Errata:** five corrections found during implementation are marked
+- **Errata:** seven corrections found during implementation are marked
   **ERRATUM** in place, below. Each replaces the sentence it follows; the
   original wording is left standing so a comment citing it still resolves.
 - **Supersedes:** §6 (the form) and §7 (skin & mouse) of
@@ -200,6 +200,31 @@ available = h - 4 - n
 panel     = min(focused.PanelRows(), available)
 ```
 
+> **ERRATUM, the fixed-cost formula.** Neither line describes what
+> `layoutFrame` does. Both were written before §9's degradation order was
+> settled, and they contradict it two sections later.
+>
+> The fixed cost is not always 4. The header and the two rules are
+> *droppable*, in a definite order, so on a short window it is 3, 2 or 1 —
+> the footer alone is never dropped. Nor are the `n` rows fixed: once the
+> whole stack and the panel floor no longer both fit above the footer, the
+> stack scrolls instead, down to the focused row alone.
+>
+> The panel is not `min(PanelRows(), available)`. Taking the minimum would
+> let a field with little to show shrink the region, which moves the rule
+> above it and the footer below it as focus travels — precisely the thing
+> the fixed-row design exists to prevent. Slack lands in the panel and
+> nowhere else, whatever the focused field asked for.
+>
+> The real rule is §9's ladder, read as a survival order rather than a drop
+> order: the footer first, then the `n` rows, then the panel's first three
+> rows, then rule 1, then the header, then rule 2, and every line still
+> unspent after that grows the panel. `PanelRows()` is consulted only
+> *inside* the region the ladder already fixed — `compose` renders
+> `Panel(w, min(PanelRows(), region))` and blank-fills the remainder itself.
+> See §9 for the ladder; `rowlayout.go`'s `layoutFrame` carries the worked
+> heights and the monotonicity argument.
+
 **Create stays a focus stop but moves onto the footer line.** It remains the
 last Section in the ring and keeps its `button:create` zone; only its
 rendering changes, from a centered full-width row to an intrinsic-width
@@ -219,6 +244,34 @@ Deleted from `sizes.go`: `allocateHeights`, `pickerRowsAt`, `promptRowsAt`,
 `formChromeRows`, `footerRows`. Kept: `paintLine`, `dropLinesToFit`,
 `clipKeeping`, `fitToHeight`, `innerWidth`. `fitToHeight`'s heading stage
 becomes live for the first time.
+
+> **ERRATUM, what was kept from `sizes.go`.** Of the five, only `paintLine`
+> survives. The heading stage never became live either: `fitToHeight` was
+> deleted having rendered nothing in v2.
+>
+> `innerWidth` went first. It was kept only so that unifying it with
+> `contentBox` would not move the two submit golden frames — and §12, seven
+> sections later, requires the submit screen to share the form's own label
+> column, which moves those frames on purpose. The spec's own later decision
+> overtook the reason for keeping it, so when the v1 compose path went it
+> lost its last caller and went with it.
+>
+> `fitToHeight`, `dropLinesToFit` and `clipKeeping` — Atrium's post-hoc
+> drop-lines cascade — went next, for the reason the erratum above gives:
+> `layoutFrame`'s components sum to exactly the height they were asked for
+> *by construction*, so no render is ever over budget and there is nothing
+> left to degrade after the fact. That retires this section's argument that
+> `clipKeeping`'s "never drop the last line" needs no change in order to
+> protect the key ladder and the button — the conclusion holds, but the
+> arithmetic is what holds it, not the clip.
+>
+> The cascade outlived its last caller by most of the v2 program — from the
+> commit that gave the submit pipeline the form's own chrome to the end —
+> which is worth recording rather than quietly tidying: it was still
+> documenting v1's `▎` gutter bar (`decorateFocus`, unreachable alongside
+> it) long after §7 had replaced that affordance with a full-width
+> `ActiveRowBG` fill. Dead code that draws the old design is not neutral;
+> it tells the next reader the screen still looks that way.
 
 ## 6. Fields — rows, panels, states
 

@@ -52,21 +52,24 @@ var promptPlaceholderLadder = []string{
 	"optional",
 }
 
-// PromptField is the form's Prompt Section (spec §6 field 8): an optional
+// PromptField is the form's `prompt` row (v2 spec §6): an optional
 // multi-line textarea, delivered post-launch via `herdr agent prompt
 // --wait` (spec §9 step 3) -- this package has no opinion on delivery,
 // only on collecting the text.
 //
-// PromptField renders a one-line label header plus the wrapped
-// PromptArea's own rows: spec §6 field 8's "4 rows preferred, 1 floor",
-// scaled to whatever the panel's own region can afford (Panel's h).
-// Height stays independent of focus and content, per Section.Height's own
-// contract -- PromptArea.View already renders exactly its configured row
-// count regardless of what has been typed into it (see its own doc
-// comment), so that holds here trivially.
+// The split between the two halves is v2's, not v1's. The ROW is a
+// one-line summary of the value and nothing else; the LABEL is drawn by
+// the form, into its own column; and the textarea lives entirely in the
+// PANEL, sized to the h rows the layout kept for it. v1 sized the whole
+// field instead -- spec §6 field 8's "4 rows preferred, 1 floor",
+// allocated by a height budget that no longer exists -- and there is no
+// Section.Height any more to be independent of. What survives of that
+// contract is stronger and stated on Section itself: Row(w) takes no
+// height at all and must not consult one, which is what makes "row i is
+// always at row i" hold as focus travels.
 //
 // This is where PromptArea.SetRows -- the shrink hook Task 15 built and
-// nothing ever called -- is finally driven: View applies it per render,
+// nothing ever called -- is finally driven: Panel applies it per render,
 // from the height it was allocated.
 type PromptField struct {
 	palette theme.Palette

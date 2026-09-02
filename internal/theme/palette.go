@@ -378,8 +378,9 @@ type herdrThemeCustom struct {
 	Green      string `toml:"green"`
 	SurfaceDim string `toml:"surface_dim"`
 	// Decoded since the v2 palette gained a draft field for each of these
-	// (spec §7); before that they were real herdr keys with no draft
-	// equivalent, so leaving them out would now mean a user who customizes
+	// (v2 spec §7's "four palette fields are added" table: surface0,
+	// active_row_bg, peach, mauve); before that they were real herdr keys
+	// with no draft equivalent, so leaving them out would now mean a user who customizes
 	// herdr's mauve gets herdr's color for branches and ours for the same
 	// branches.
 	Surface0    string `toml:"surface0"`

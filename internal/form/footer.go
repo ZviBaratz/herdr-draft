@@ -7,8 +7,12 @@
 // never defines it) and partly in ui/overlay/hints.go, which is NOT on
 // the clean list and was never opened for this task. So the specific
 // ladder text and the rung-selection algorithm below are both written
-// fresh against spec §6's own grammar description, not ported from or
-// informed by hints.go's actual implementation.
+// fresh -- not ported from or informed by hints.go's actual
+// implementation -- against the spec's own description of the grammar
+// they teach: originally v1 spec §6's, and now v2's, whose §8 states the
+// key grammar, §4's mockups supply the wording (see zoneRungs) and §3
+// rule 4 sets the priority between a rung's two halves (see
+// footerRungs).
 //
 // The rung-selection algorithm (fitFooter) mirrors the *shape* of
 // widgets/textarea.go's own selectPlaceholder (task 15, same house style:

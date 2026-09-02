@@ -1,64 +1,58 @@
 // Derived from atrium (github.com/ZviBaratz/atrium) ui/overlay/textInput_size.go
 // and ui/overlay/textInput_render.go, © Zvi Baratz, relicensed by the author.
 //
-// What survives of that port is the DROP-LINES CASCADE (fitToHeight and
-// its helpers) plus paintLine. Atrium's shared height BUDGET -- the piece
-// this file also reproduced, as allocateHeights over the opaque Section
-// interface -- went with v1: v2's stack rows are one line each, always,
-// its only variable-height region is the single panel, and rowlayout.go's
-// layoutFrame computes that arithmetically instead of arbitrating it
-// between fields. Only submitview.go still needs a post-hoc cascade, and
-// it is the only caller of fitToHeight left.
+// What survives of that port is paintLine, plus two of this form's own
+// layout constants. Everything else is gone:
 //
-// The cascade is Atrium's *second* line of defence -- fitOverlay's
-// post-hoc drop-lines pass, for when the content simply does not fit:
-//
-//   - fitOverlay's OWN first stage -- run unconditionally, before its
-//     height budget check even starts -- truncates each individual
-//     overlong line to innerWidth with a "…" tail
-//     (`truncate.StringWithTail(l, uint(innerWidth), "…")`,
-//     textInput_render.go:259-263, via github.com/muesli/reflow/truncate)
-//     has NO equivalent here, and is deliberately not ported: this
-//     package adds no dependency on reflow/truncate, and no line in a
-//     composed view silently loses its tail with an ellipsis. Two things
-//     cover the same underlying need without it -- every renderer here
-//     stays within the width it is handed (the same width-discipline
-//     convention widgets/picker.go's widthStyle doc establishes:
-//     Inline(true) plus MaxWidth, a hard clip, no ellipsis), and
-//     paintLine (this file, below) applies its own `.MaxWidth(w)` as a
-//     last-resort backstop over the fully composed line (gutter +
-//     content + margin) regardless of what produced it. So overlong
-//     content is still bounded to the available width -- just clipped
-//     silently rather than marked with "…" -- a real, disclosed
-//     behavioral difference from Atrium, not an oversight.
-//   - dropLinesToFit is ported near-verbatim from fitOverlay's own helper
-//     of the same name (textInput_render.go): remove interior lines
-//     matching a droppable predicate, preserving the first and last line
-//     unconditionally, until budget is met or nothing droppable remains.
-//   - The blank-then-divider two-stage application of it (see fitToHeight
-//     below) is ported from fitOverlay's own two calls to the same
-//     helper with different predicates.
-//   - fitOverlay's THIRD stage -- drop the default overlay heading, kept
-//     only when a caller overrode Title (fork-from-checkpoint) -- has no
-//     equivalent here: submitview.go supplies no heading line, so
-//     fitToHeight keeps the *stage* (a droppable "heading" line,
-//     identified by index) for port fidelity while nothing exercises it.
-//     The FORM does draw a header of its own now (v2 spec §4), but it
-//     drops that header through rowlayout.go's layoutFrame rather than
-//     through this cascade.
-//   - The final clip-tail stage (fitOverlay's last block: keep the
-//     content's own last line no matter what, since it's always the
-//     submit control) is ported near-verbatim (clipKeeping below).
-//     clipKeeping adds one thing Atrium's own has no equivalent of: a
-//     protect mask, so a caller's must-keep lines survive alongside the
-//     last one. With an empty mask it is byte-for-byte the same clip.
+//   - Atrium's shared height BUDGET -- reproduced here as allocateHeights
+//     over the opaque Section interface -- went with v1's variable-height
+//     sections. v2's stack rows are one line each, always, its only
+//     variable-height region is the single panel, and rowlayout.go's
+//     layoutFrame computes that arithmetically instead of arbitrating it
+//     between fields.
+//   - Atrium's DROP-LINES CASCADE -- fitOverlay's post-hoc degradation
+//     pass, for when composed content simply does not fit, ported here as
+//     fitToHeight over dropLinesToFit, clipKeeping and isBlankLine --
+//     went one round later, and its own history is the cautionary part.
+//     v2 spec §5 listed it under "Kept" on the assumption submitview.go
+//     would still need a post-hoc pass; §9's priority ladder, settled two
+//     sections later, made that false. layoutFrame's six components sum
+//     to exactly the height it was asked for BY CONSTRUCTION, which is
+//     why both composeRows and SubmitView.compose say in their own doc
+//     comments that no degradation ladder runs and none is needed --
+//     leaving the cascade with nothing to degrade. It then sat here
+//     unreachable for most of the v2 program, still documenting v1's `▎`
+//     gutter bar (decorateFocus, unreachable alongside it and deleted
+//     with it) long after v2 had replaced that affordance with a
+//     full-width ActiveRowBG fill -- which is exactly how dead code
+//     misinforms: a reader greps for the bar, finds the function that
+//     draws it, and believes the screen still has one.
 //   - Atrium's bordered-box arithmetic (`budget := t.height - 4`,
-//     subtracting the box's own border+padding rows) is dropped outright:
-//     herdr draws the popup's outer chrome, this package draws none of
-//     its own (spec §7), so the budget fitToHeight is handed is the full
+//     subtracting the box's own border+padding rows) never applied at
+//     all: herdr draws the popup's outer chrome and this package draws
+//     none of its own (spec §7), so a render here is handed the full
 //     window height, not a border allowance.
 //
-// CORRECTION for v2 (v2 spec §7), to the first bullet above: the
+// One deliberate, disclosed behavioral difference from Atrium outlives
+// the cascade, and paintLine is what still enforces this package's side
+// of it. fitOverlay's OWN first stage -- unconditional, before its
+// height budget check even started -- truncated each individual overlong
+// line to innerWidth with a "…" tail
+// (`truncate.StringWithTail(l, uint(innerWidth), "…")`,
+// textInput_render.go:259-263, via github.com/muesli/reflow/truncate).
+// It has no equivalent here and is deliberately not ported: this package
+// adds no dependency on reflow/truncate, and no COMPOSED line silently
+// loses its tail with an ellipsis. Two things cover the same underlying
+// need without it -- every renderer here stays within the width it is
+// handed (the same width-discipline convention widgets/picker.go's
+// widthStyle doc establishes: Inline(true) plus MaxWidth, a hard clip,
+// no ellipsis), and paintLine (below) applies its own `.MaxWidth(w)` as
+// a last-resort backstop over the fully composed line (gutter + content
+// + margin) regardless of what produced it. So overlong content is still
+// bounded to the available width -- just clipped silently rather than
+// marked with "…", a real difference from Atrium and not an oversight.
+//
+// CORRECTION for v2 (v2 spec §7), to the paragraph above: the
 // no-ellipsis rule is REVERSED for the row stack's VALUE cells
 // (rowvalues.go's keepHead/keepTail), which elide with a visible marker,
 // keeping the informative end -- the tail for paths, the head for titles
@@ -82,18 +76,20 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Layout constants for the popup's own fixed chrome: the left gutter, the
-// right margin, and one blank padding row top and bottom. These are
-// herdr-draft's own numbers, not ported -- Atrium's formChromeLines counts
-// a wholly different, larger set of fixed rows (a bordered box, an overlay
-// title, per-claude-field dividers) that has no equivalent in this form's
-// flatter, borderless layout.
+// Layout constants for the popup's own fixed chrome: the left gutter and
+// the right margin. These are herdr-draft's own numbers, not ported --
+// Atrium's formChromeLines counts a wholly different, larger set of fixed
+// rows (a bordered box, an overlay title, per-claude-field dividers) that
+// has no equivalent in this form's flatter, borderless layout.
 //
-// gutterWidth and rightMargin serve the FORM (rowlayout.go's contentBox
-// measures against both), though the gutter is now a plain two-cell indent
-// rather than a marker column -- focus is a full-width fill, v2 spec §7.
-// verticalPadding serves SUBMITVIEW alone: the form's own frame has no
-// padding rows at all (v2 spec §9's six components).
+// Both serve the FORM: rowlayout.go's contentBox measures against both,
+// though the gutter is now a plain two-cell indent rather than a marker
+// column -- focus is a full-width fill, v2 spec §7. There is no VERTICAL
+// constant left here. v1 kept a verticalPadding = 1 for the blank row
+// submitview.go reserved above and below its content; v2's frame has no
+// padding rows at all (v2 spec §9's six components, none of them a
+// spacer), so it went with the cascade that used to drop it again on a
+// short terminal.
 const (
 	// gutterWidth is the left-margin column count: one cell for a panel
 	// picker's own cursor glyph plus one separating space, and the same
@@ -102,135 +98,7 @@ const (
 	// rightMargin is the column count of blank space kept between the
 	// widest content column and the popup's own right edge.
 	rightMargin = 1
-	// verticalPadding is the number of blank rows submitview.go reserves
-	// top and bottom of its composed content, before the degradation
-	// ladder in fitToHeight considers dropping them again on a short
-	// terminal.
-	verticalPadding = 1
 )
-
-// isBlankLine reports whether l carries no visible content -- whitespace
-// only, once every ANSI escape sequence is stripped out of it.
-//
-// This is the fix for a stage of the ladder below that had been dead since
-// the day it was written: fitToHeight's drop-blank-lines stage tested
-// `l == ""`, but every composed line goes through decorateFocus first,
-// which prefixes a two-cell gutter, and reserved-but-empty rows are padded
-// out to the full inner width. No line reaching fitToHeight has EVER been
-// the empty string, so the stage the degradation ladder puts SECOND never
-// once fired -- every overlong render skipped straight from "drop
-// dividers" to the tail clip.
-func isBlankLine(l string) bool {
-	return strings.TrimSpace(ansi.Strip(l)) == ""
-}
-
-// dropLinesToFit removes interior lines matching droppable -- leading,
-// trailing, protected, and non-matching lines are always preserved --
-// until the slice is at most budget lines long or no droppable lines
-// remain. Ported near-verbatim from Atrium's textInput_render.go
-// dropLinesToFit; the protect mask (nil, or one entry per line; see
-// fitToHeight) is this package's own addition.
-func dropLinesToFit(lines []string, protect []bool, budget int, droppable func(string) bool) ([]string, []bool) {
-	excess := len(lines) - budget
-	if excess <= 0 {
-		return lines, protect
-	}
-	outLines := make([]string, 0, len(lines))
-	outProtect := make([]bool, 0, len(lines))
-	for i, l := range lines {
-		if excess > 0 && i > 0 && i < len(lines)-1 && !isProtected(protect, i) && droppable(l) {
-			excess--
-			continue
-		}
-		outLines = append(outLines, l)
-		outProtect = append(outProtect, isProtected(protect, i))
-	}
-	return outLines, outProtect
-}
-
-// isProtected reports whether index i is marked in the protect mask -- a
-// nil or short mask means "not protected", so every caller can pass nil
-// for "nothing to protect".
-func isProtected(protect []bool, i int) bool {
-	return i >= 0 && i < len(protect) && protect[i]
-}
-
-// clipKeeping truncates lines to budget, keeping the very last line
-// unconditionally, then every protected line, then as much of the rest as
-// still fits, taken from the top.
-//
-// With an empty protect mask this is exactly Atrium's own fitOverlay tail
-// clip, which it replaces: the first budget-1 lines plus the last one. A
-// protected block larger than the whole budget still degrades gracefully
-// (its first budget-1 lines survive) rather than overflowing.
-func clipKeeping(lines []string, protect []bool, budget int) []string {
-	if budget < 1 || len(lines) <= budget {
-		return lines
-	}
-
-	keep := make([]bool, len(lines))
-	keep[len(lines)-1] = true
-	kept := 1
-
-	for i := range lines {
-		if kept >= budget {
-			break
-		}
-		if !keep[i] && isProtected(protect, i) {
-			keep[i] = true
-			kept++
-		}
-	}
-	for i := range lines {
-		if kept >= budget {
-			break
-		}
-		if !keep[i] {
-			keep[i] = true
-			kept++
-		}
-	}
-
-	out := make([]string, 0, budget)
-	for i, l := range lines {
-		if keep[i] {
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
-// fitToHeight applies the drop-lines degradation ladder to composed
-// content lines: drop interior blank lines, then interior divider lines,
-// then (if headingIndex names one -- see the package doc's note that no
-// caller currently supplies one) that single heading line, then clip what
-// is left -- each stage only engaged if the previous one still leaves
-// lines over budget. headingIndex < 0 means "no heading line in this
-// render," making that stage a no-op; a value >= len(lines) is likewise
-// ignored rather than panicking. protect, when non-nil, carries one entry
-// per input line marking the lines no stage may drop; nil protects
-// nothing beyond the first and last lines every stage already
-// preserves.
-func fitToHeight(lines []string, protect []bool, budget int, divider string, headingIndex int) []string {
-	if budget < 1 {
-		return lines
-	}
-	lines, protect = dropLinesToFit(lines, protect, budget, isBlankLine)
-	lines, protect = dropLinesToFit(lines, protect, budget, func(l string) bool { return l == divider })
-	if len(lines) > budget && headingIndex >= 0 && headingIndex < len(lines) {
-		outLines := make([]string, 0, len(lines)-1)
-		outProtect := make([]bool, 0, len(lines)-1)
-		for i, l := range lines {
-			if i == headingIndex {
-				continue
-			}
-			outLines = append(outLines, l)
-			outProtect = append(outProtect, isProtected(protect, i))
-		}
-		lines, protect = outLines, outProtect
-	}
-	return clipKeeping(lines, protect, budget)
-}
 
 // paintLine explicitly paints bg as line's background across exactly
 // width cells, surviving any ANSI resets already embedded in line (e.g.

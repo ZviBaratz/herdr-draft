@@ -161,11 +161,11 @@ func (a KeyAction) String() string {
 	}
 }
 
-// ZoneKind identifies which of the form's fields (spec §6's field order) a
-// keypress is aimed at. The set below covers every field spec §6 lists,
-// including the two sub-fields (Branch, Base) that only appear once
-// Worktree is on -- MapKey does not itself gate on that; a caller simply
-// never routes a keypress to Branch/Base while Worktree is off.
+// ZoneKind identifies which of the form's fields a keypress is aimed at.
+// The set below covers every row v2 spec §6's table lists, plus Create,
+// plus the two worktree sub-fields (Branch, Base) that v1 made rows of
+// their own -- see ZoneBranch below for why those two outlived the
+// sections they named.
 type ZoneKind int
 
 const (
@@ -177,11 +177,21 @@ const (
 	ZoneTitle
 	// ZoneWorktree is the worktree on/off chip row (spec §6 field 4).
 	ZoneWorktree
-	// ZoneBranch is the worktree branch text field (spec §6 field 4,
-	// shown only while Worktree is on).
+	// ZoneBranch is the worktree branch text field. v1 made it a Section
+	// and a tabbable row of its own -- one third of spec §6 field 4,
+	// present only while Worktree was on. v2 spec §6 collapses all three
+	// parts into ONE worktree row with a three-part panel, so no section
+	// maps onto this kind any more: form.go's zoneKindByID lost its
+	// entry and the whole worktree row answers to ZoneWorktree.
+	//
+	// It is kept anyway, and so is footer.go's zoneRungs entry for it:
+	// the kind is still part of this grammar's vocabulary, and a table
+	// that answers for every member of an enum is cheaper to trust than
+	// one that answers for most of them.
 	ZoneBranch
-	// ZoneBase is the worktree base-ref picker (spec §6 field 4, shown
-	// only while Worktree is on).
+	// ZoneBase is the worktree base-ref picker -- likewise a v1 Section
+	// of its own, likewise now one part of the worktree panel rather
+	// than a row, and likewise kept in the vocabulary. See ZoneBranch.
 	ZoneBase
 	// ZonePlacement is the placement chip row (spec §6 field 5).
 	ZonePlacement

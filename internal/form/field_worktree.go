@@ -5,10 +5,12 @@
 // task-17 brief's own provenance guardrail). This file's base picker is
 // built entirely on widgets.Picker (Task 14, itself ported from Atrium's
 // unencumbered ui/overlay/picker.go mixin -- a DIFFERENT, clean-listed
-// file), per spec §6.4, with no reference to branchPicker.go's own shape,
-// naming, or behavior. The chip row (on/off) and branch text input are
-// likewise independent implementations, built on widgets.ChipRow (Task
-// 14) and this package's own lineInput (lineinput.go) respectively.
+// file), per v2 spec §6's worktree row ("a three-part editor", v1 spec
+// §6 field 4 before it), with no reference to branchPicker.go's own
+// shape, naming, or behavior. The chip row (on/off) and branch text
+// input are likewise independent implementations, built on
+// widgets.ChipRow (Task 14) and this package's own lineInput
+// (lineinput.go) respectively.
 //
 // Section shape: v1 made spec §6 field 4 THREE focus stops -- the on/off
 // toggle (ZoneWorktree), the branch text field (ZoneBranch) and the
@@ -150,9 +152,10 @@ const (
 	partBase
 )
 
-// WorktreeField is spec §6 field 4 as one v2 Section (see the file doc
-// comment): the on/off toggle, the branch name and the base ref, shown as
-// a single consequence row and edited in a three-part panel.
+// WorktreeField is v2 spec §6's `worktree` row as one Section (see the
+// file doc comment): the on/off toggle, the branch name and the base
+// ref, shown as a single consequence row and edited in a three-part
+// panel.
 type WorktreeField struct {
 	palette theme.Palette
 
