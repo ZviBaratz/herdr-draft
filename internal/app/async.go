@@ -215,6 +215,10 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		// resynced lastWorktreeOn to the NEW value, so reactToChanges' own
 		// diff would otherwise never see this specific transition.
 		cmd = m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), msg.req.key, m.worktree.On())
+		// ...and the title panel's resting note follows the toggle for
+		// the same reason: "branch will be X" is true only while a
+		// worktree is going to be created (see Model.titleNote).
+		m.title.SetVerdict(m.title.Value(), m.titleNote(""))
 	}
 	return m, cmd
 }
@@ -355,12 +359,21 @@ func (m Model) handleBaseDebounce(msg baseDebounceMsg) (Model, tea.Cmd) {
 // spec §6 field 4 calls for (fetchedRepos is never reset, so a repo that
 // already fetched once this form-open never fetches again even if the
 // user navigates away and back).
+//
+// It is also where the header's context line is refreshed (v2 spec §4:
+// "repository name and its current branch"), because this handler is the
+// one place the checked-out branch is ever learned. Both outcomes update
+// it: a failure means the selected project is not a repository (or its
+// refs could not be read), and the previous project's branch must not go
+// on being displayed beside the new project's name.
 func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 	if msg.req.version != m.baseReqVersion {
 		return m, nil
 	}
 	if msg.err {
 		m.worktree.SetBaseStatus("couldn't list")
+		m.worktree.SetHeadBranch("")
+		m.refreshFormContext()
 		return m, nil
 	}
 
@@ -368,6 +381,7 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 	m.worktree.SetHeadBranch(msg.head)
 	m.worktree.SetBaseItems(m.baseItemsVersion, msg.refs)
 	m.worktree.SetBaseStatus("")
+	m.refreshFormContext()
 
 	path := msg.req.key
 	var cmd tea.Cmd
@@ -504,7 +518,7 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 	if msg.req.version != m.titleReqVersion {
 		return m, nil
 	}
-	m.title.SetVerdict(msg.req.key, titleVerdictText(msg.branchExists, msg.labelTaken))
+	m.title.SetVerdict(msg.req.key, m.titleNote(titleVerdictText(msg.branchExists, msg.labelTaken)))
 	// titleDupBlocked mirrors the SAME verdict just pushed above --
 	// checkSubmitValidation (app.go, spec §9) reads this directly rather
 	// than re-deriving it from TitleField's own (unexported) verdict
@@ -518,6 +532,34 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 // from the two duplicate checks spec §6 field 3 names. No literal wording
 // is given in the spec beyond the field's own example fixture text, so
 // this is this task's own terse phrasing.
+// titleNote is what TitleField's panel line actually says: a duplicate
+// warning when there is one, and otherwise the RESTING consequence of the
+// title as it stands -- v2 spec §4's own mockup, whose title panel reads
+// `branch will be zvi/fix-login-redirect-loop` on a form nothing is wrong
+// with.
+//
+// The layering matters in both directions. A duplicate warning always
+// wins: it is the one thing that can stop a submit, and burying it under
+// a restatement of the branch name would be the panel's worst possible
+// failure. And the resting note is not a verdict at all, which is why it
+// is composed HERE rather than inside titleVerdictText -- that function
+// stays a pure statement about the two duplicate checks.
+//
+// A session with no worktree creates no branch, so it has no resting note
+// to give: the panel is then genuinely empty, which is honest.
+func (m Model) titleNote(verdict string) string {
+	if verdict != "" {
+		return verdict
+	}
+	if !m.worktree.Enabled() || !m.worktree.On() {
+		return ""
+	}
+	if branch := m.worktree.Branch(); branch != "" {
+		return "branch will be " + branch
+	}
+	return ""
+}
+
 func titleVerdictText(branchExists, labelTaken bool) string {
 	switch {
 	case branchExists && labelTaken:

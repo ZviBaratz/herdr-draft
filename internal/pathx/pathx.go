@@ -31,6 +31,23 @@ import (
 	"strings"
 )
 
+// Home is the current user's home directory, or "" when it cannot be
+// determined (os.UserHomeDir failing, e.g. no HOME in the environment).
+//
+// It exists for the reverse of ExpandTilde's job: internal/form renders
+// project paths with the home prefix collapsed back to "~" (v2 spec §4)
+// and, performing no I/O of its own, has to be handed the string to
+// collapse. Returning "" rather than a guess is what lets that caller
+// disable collapsing entirely instead of shortening against the wrong
+// home -- the same posture ExpandTilde takes below.
+func Home() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
 // ExpandTilde replaces a leading "~" with the current user's home
 // directory: "~" alone, and "~/..." (or "~\..." on Windows). Everything
 // else is returned unchanged, including the "~user" form -- resolving

@@ -88,9 +88,15 @@ func TestPlacementField_WorktreeOnGoesInert(t *testing.T) {
 		t.Errorf("Value() after SetWorktreeOn(true) = %v, want %v (forced back to new space)", got, plan.PlacementNewSpace)
 	}
 
-	frame := ansi.Strip(f.View(60, f.Height(24)))
-	if !strings.Contains(frame, "worktree opens as its own space") {
-		t.Errorf("View(60) = %q, want it to contain the inert hint text", frame)
+	// The ROW states the consequence and the PANEL says how to get the
+	// choice back -- two different sentences on purpose (see
+	// placementInertPanelHint).
+	if got := ansi.Strip(f.Row(60)); !strings.Contains(got, placementInertHint) {
+		t.Errorf("Row(60) = %q, want it to contain %q", got, placementInertHint)
+	}
+	panel := ansi.Strip(f.Panel(60, f.PanelRows()))
+	if !strings.Contains(panel, placementInertPanelHint) {
+		t.Errorf("Panel(60) = %q, want it to contain %q", panel, placementInertPanelHint)
 	}
 }
 

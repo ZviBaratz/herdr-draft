@@ -51,7 +51,12 @@ const issueLabel = "Issue: "
 // leaks through either public surface.
 const issueNoneID = "\x00none"
 
-const issueNoneLabel = "None (manual entry)"
+// issueNoneLabel is the picker's own first row. v2 spec §3 rule 5 names
+// this exact string as the copy pass's worked example -- "`none`, not
+// `None (manual entry)`" -- and it is a good one: the parenthetical
+// explained a mechanism ("you will type the title yourself") that the
+// title row one line up already demonstrates.
+const issueNoneLabel = "none"
 
 // issueUnavailableLabel is the header body an inert field shows in place
 // of a selection (SetUnavailable) -- the reason itself goes on the hint
@@ -61,9 +66,10 @@ const issueUnavailableLabel = "unavailable"
 const (
 	// issueRowLabel is v2's row label (v2 spec §6).
 	issueRowLabel = "issue"
-	// issueRowNone is v2 spec §6's Unset cell -- the row's own word for
-	// "manual entry", shorter than the picker's issueNoneLabel because a
-	// row states a value while a list row offers a choice.
+	// issueRowNone is v2 spec §6's Unset cell. It is the same word the
+	// picker's own first row now uses (issueNoneLabel): the row states a
+	// value and the list row offers a choice, but there is only one honest
+	// word for this one and repeating it costs nothing.
 	issueRowNone = "none"
 	// issueRowUnavailableSep joins "unavailable" to its reason. v2 spec
 	// §6's table spells this cell `unavailable  <reason>`, two spaces --

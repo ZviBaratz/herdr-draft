@@ -76,10 +76,11 @@ func (s *stubSection) Enabled() bool    { return s.enabled }
 func (s *stubSection) Height(w int) int { return s.height(w) }
 
 // MinHeight deliberately equals the stub's own reported Height: these
-// stubs are "deliberately NOT self-degrading" (see buildManySections), so
-// a form built from them exercises sizes.go's last-resort line-dropping
-// ladder rather than its budget allocation -- which is exactly what
-// TestDegradation_CreateNeverClippedAt80x20 is there to pin.
+// stubs are not self-degrading, so a form built from them exercises
+// sizes.go's last-resort line-dropping ladder rather than its budget
+// allocation. Nothing golden renders through them any more -- every
+// committed frame is on v2's row-stack path -- so what they still cover
+// is compose's v1 branch itself, until the change that deletes it.
 func (s *stubSection) MinHeight() int { return s.height(0) }
 
 func (s *stubSection) View(inner, _ int) string { return s.content(inner) }
@@ -115,11 +116,9 @@ func (t *titledStub) Value() string { return t.value }
 // compose's row-stack path.
 //
 // It is deliberately a separate type from stubSection rather than four
-// more methods on it. stubSection backs the committed golden frames
-// (degraded-80x20 via buildManySections), and teaching it the v2 methods
-// would flip those frames onto the new path and move them -- the one
-// thing the dual-path bridge exists to avoid. The two stubs are the two
-// paths.
+// more methods on it: the two stubs are the two compose paths, and
+// keeping them apart is what lets a test state which one it means. That
+// separation loses its job with the v1 path itself.
 type rowStub struct {
 	stubSection
 	label      string
@@ -460,6 +459,40 @@ func TestZoneFor(t *testing.T) {
 	}
 }
 
+// TestZoneFor_EveryRealFieldHasItsOwnZone guards the hole zoneKindByID's
+// fallback leaves open: an ID it does not know silently becomes
+// ZonePlacement, which is the right answer for a test stub and a wrong,
+// SILENT one for a real field. The worktree collapse removed two entries
+// from that map, so this is the assertion that says nothing fell through
+// with them.
+func TestZoneFor_EveryRealFieldHasItsOwnZone(t *testing.T) {
+	palette := theme.Default()
+	want := map[string]ZoneKind{
+		"issue":     ZoneIssue,
+		"title":     ZoneTitle,
+		"prompt":    ZonePrompt,
+		"dir":       ZoneDir,
+		"worktree":  ZoneWorktree,
+		"placement": ZonePlacement,
+		"agent":     ZoneAgent,
+		"account":   ZoneAccount,
+	}
+	fields := []Section{
+		NewIssueField(palette), NewTitleField(palette), NewPromptField(palette),
+		NewDirField(palette), NewWorktreeField(palette), NewPlacementField(palette),
+		NewAgentField(palette), NewAccountField(palette),
+	}
+	for _, f := range fields {
+		expected, known := want[f.ID()]
+		if !known {
+			t.Fatalf("field %q is not in this test's own table -- add it when adding a field", f.ID())
+		}
+		if got := zoneFor(f).Kind; got != expected {
+			t.Errorf("zoneFor(%q).Kind = %v, want %v", f.ID(), got, expected)
+		}
+	}
+}
+
 func TestZoneFor_TitleEmpty(t *testing.T) {
 	empty := &titledStub{stubSection: *newStub("title"), value: "  "}
 	filled := &titledStub{stubSection: *newStub("title"), value: "hello"}
@@ -584,6 +617,11 @@ func TestZeroValueModel_DoesNotPanic(t *testing.T) {
 // multi-span styled output (Picker's cursor-row accent highlighting and
 // its "✓" Marker convention, ChipRow's cursor highlighting), not just
 // plain unstyled stub text.
+//
+// Both are rowSections: they render a one-line value row and put their
+// widget in the panel, exactly as a real field does, so the empty-* golden
+// frames exercise v2's compose path (the only one production takes) rather
+// than a stub-only branch nothing ships.
 type pickerSection struct {
 	id      string
 	picker  *widgets.Picker
@@ -601,6 +639,17 @@ func (s *pickerSection) MinHeight() int         { return 1 }
 func (s *pickerSection) View(inner, h int) string {
 	return s.picker.View(inner, h)
 }
+func (s *pickerSection) Label() string { return s.id }
+func (s *pickerSection) Row(w int) string {
+	if sel, ok := s.picker.Selected(); ok {
+		return fitLine(sel.Label, w)
+	}
+	return fitLine("none", w)
+}
+func (s *pickerSection) Panel(w, h int) string {
+	return panelBlock(w, h, panelPickerLines(s.picker, w, h, "row:"+s.id+":", theme.Default())...)
+}
+func (s *pickerSection) PanelRows() int { return capRows(s.picker.FilteredLen(), s.rows) }
 
 // chipRowSection always reserves the hint line regardless of whether the
 // currently selected chip carries one -- the "field wrappers must always
@@ -632,6 +681,16 @@ func (s *chipRowSection) View(inner, h int) string {
 	}
 	return fitBlock(v, h, inner)
 }
+func (s *chipRowSection) Label() string    { return s.id }
+func (s *chipRowSection) Row(w int) string { return fitLine(s.row.Selected().Label, w) }
+func (s *chipRowSection) PanelRows() int   { return 1 }
+func (s *chipRowSection) Panel(w, h int) string {
+	v := s.row.MarkedView(panelInner(w), "chip:"+s.id+":")
+	if idx := strings.IndexByte(v, '\n'); idx >= 0 {
+		v = v[:idx]
+	}
+	return panelBlock(w, h, panelMarked(v, false, theme.Default()))
+}
 
 // buildEmptyForm returns a form with two representative-but-still-stub
 // Sections (an "issue"-shaped Picker, an "agent"-shaped ChipRow) in their
@@ -657,7 +716,9 @@ func buildEmptyForm(palette theme.Palette) Model {
 			&pickerSection{id: "issue", picker: issue, enabled: true, rows: 3},
 			&chipRowSection{id: "agent", row: agent, enabled: true},
 		},
+		Name: "new session",
 	})
+	m.SetContext("herdr-draft · main")
 	m.Init()
 	return m
 }
@@ -668,65 +729,51 @@ func TestFrames_Empty(t *testing.T) {
 	assertFrame(t, "empty-120x40", buildEmptyForm(palette), 120, 40)
 }
 
-// buildManySections returns a form with n generic stub Sections, each
-// always reporting height lines regardless of the window height handed
-// to it (deliberately NOT self-degrading), specifically so their combined
-// height overflows a short window and forces sizes.go's fitToHeight
-// degradation ladder to actually engage -- see
-// TestDegradation_CreateNeverClippedAt80x20's own comment for the height
-// arithmetic this is tuned against.
-func buildManySections(palette theme.Palette, n, height int) Model {
+// buildManySections returns a form with n stub row Sections, each asking
+// for a panel `panelRows` tall -- more stack rows and more panel than a
+// short window can hold at once, so v2's own degradation ladder
+// (rowlayout.go's layoutFrame plus compose's stackWindow scroll) is
+// actually forced to engage rather than never triggered.
+func buildManySections(palette theme.Palette, n, panelRows int) Model {
 	sections := make([]Section, 0, n)
 	for i := 0; i < n; i++ {
-		id := fmt.Sprintf("field-%d", i)
-		sections = append(sections, &stubSection{
-			id:      id,
-			enabled: true,
-			height:  func(int) int { return height },
-			content: func(inner int) string {
-				lines := make([]string, height)
-				for j := range lines {
-					lines[j] = fmt.Sprintf("%s content line %d", id, j)
-				}
-				return strings.Join(lines, "\n")
-			},
-		})
+		sections = append(sections, newRowStub(fmt.Sprintf("field-%d", i)).withPanel(panelRows))
 	}
-	m := New(Setup{Palette: palette, Sections: sections})
+	m := New(Setup{Palette: palette, Sections: sections, Name: "new session"})
 	m.Init()
 	return m
 }
 
-// TestDegradation_CreateNeverClippedAt80x20 is task-16 brief step 3's
-// other literal requirement: "degradation at 80x20 keeps the Create
-// button visible (stub sections + shrink)."
+// TestDegradation_FooterAndFocusedRowSurvive is v2's replacement for
+// v1's "degradation at 80x20 keeps the Create button visible": the
+// promise is the same one (spec §6 field 9, v2 spec §9's "the footer and
+// its buttons are never dropped"), asserted at the two sizes below the
+// popup floor where v2's ladder is doing real work -- 64x12, where the
+// header and both rules are gone and the panel sits on its three-row
+// floor, and 40x8, where the row stack itself has started scrolling.
 //
-// Six 4-line stub sections (chosen so the ladder is actually forced to
-// engage, not merely never triggered): body alone is
-// 6*(4 content + 1 divider) = 30 lines, plus 2 vertical-padding lines,
-// the footer line, and the Create button's own line = 34 -- well over
-// the 20-row budget, so fitToHeight's drop-blanks/drop-dividers stages
-// (sizes.go) cannot possibly bring it under 20 on their own (dropping
-// every one of the 6 dividers and both padding lines only recovers 8
-// lines, 34-8=26 > 20), which means the final clipTail stage MUST engage
-// for this test to pass at all -- so a passing result is real evidence
-// the degradation ladder's last-resort stage, not just its earlier
-// stages, correctly preserves the Create button.
-func TestDegradation_CreateNeverClippedAt80x20(t *testing.T) {
+// Six stub fields with four-row panels is deliberately more than either
+// height can show, so a passing result is evidence the ladder ran, not
+// that it was never needed.
+func TestDegradation_FooterAndFocusedRowSurvive(t *testing.T) {
 	palette := theme.Default()
 	m := buildManySections(palette, 6, 4)
 
-	assertFrame(t, "degraded-80x20", m, 80, 20)
+	assertFrame(t, "degraded-64x12", m, 64, 12)
+	assertFrame(t, "degraded-40x8", m, 40, 8)
 
-	got := m.ViewAt(80, 20)
-	lines := strings.Split(got, "\n")
-	if len(lines) != 20 {
-		t.Fatalf("ViewAt(80, 20) produced %d rows, want exactly 20", len(lines))
-	}
-
-	last := ansi.Strip(lines[len(lines)-1])
-	if !strings.Contains(last, "Create") {
-		t.Fatalf("last row does not contain the Create button text: %q", last)
+	for _, size := range []struct{ w, h int }{{64, 12}, {40, 8}} {
+		lines := strings.Split(m.ViewAt(size.w, size.h), "\n")
+		if len(lines) != size.h {
+			t.Fatalf("ViewAt(%d, %d) produced %d rows, want exactly %d", size.w, size.h, len(lines), size.h)
+		}
+		last := ansi.Strip(lines[len(lines)-1])
+		if !strings.Contains(last, "Create") {
+			t.Fatalf("at %dx%d the last row does not carry the Create button: %q", size.w, size.h, last)
+		}
+		if !strings.Contains(ansi.Strip(strings.Join(lines, "\n")), "field-0 value") {
+			t.Fatalf("at %dx%d the focused row is not visible:\n%s", size.w, size.h, strings.Join(lines, "\n"))
+		}
 	}
 }
 
@@ -762,13 +809,15 @@ func strippedLines(m Model, w, h int) []string {
 	return out
 }
 
-// TestCompose_GateSelectsThePath pins the bridge itself, which is the
-// whole reason not one golden frame moves while the field migration is
-// under way: the row-stack path is reachable only when EVERY section
-// implements rowSection, the internal Create section implements it so
-// that the answer depends on the caller's own sections alone, and the
-// worktree trio has not migrated -- so the assembled production form
-// (which always carries all three) still takes v1's path.
+// TestCompose_GateSelectsThePath pins the bridge itself: the row-stack
+// path is reachable only when EVERY section implements rowSection, and
+// the internal Create section implements it so the answer depends on the
+// caller's own sections alone.
+//
+// The claim that matters now that the migration is finished is the last
+// one: EVERY real field implements rowSection, so the assembled
+// production form takes v2's path. Until the v1 interface is deleted
+// outright, this is what says so.
 func TestCompose_GateSelectsThePath(t *testing.T) {
 	palette := theme.Default()
 
@@ -782,36 +831,26 @@ func TestCompose_GateSelectsThePath(t *testing.T) {
 		t.Errorf("a form with one v1 section took the row-stack path; the gate must be unanimous")
 	}
 
-	// Seven of the ten fields have migrated (Label/Row/Panel/PanelRows
-	// alongside their v1 View/Height/MinHeight), so a form of those alone
-	// is on the new path.
-	migrated := New(Setup{Palette: palette, Sections: []Section{
-		NewTitleField(palette),
-		NewPlacementField(palette),
-		NewAgentField(palette),
-	}})
-	if !migrated.allRowSections() {
-		t.Errorf("a form of MIGRATED fields is not on the row-stack path")
-	}
-
-	// The load-bearing claim while the migration is half done: the
-	// worktree trio has NOT migrated, and the assembled production form
-	// (internal/app always includes all three -- app.go's section slice)
-	// therefore still renders on v1's path, exactly as it did. Every
-	// committed assembled-* golden frame depends on this.
-	w := NewWorktreeField(palette)
-	assembled := New(Setup{Palette: palette, Sections: []Section{
-		NewTitleField(palette),
-		w.ChipsSection(), w.BranchSection(), w.BaseSection(),
-		NewPlacementField(palette),
-	}})
-	if assembled.allRowSections() {
-		t.Errorf("a form including the un-migrated worktree trio took the row-stack path -- every assembled golden frame would move")
-	}
-
 	var zero Model
 	if zero.allRowSections() {
 		t.Errorf("a zero-value Model reported the row-stack path")
+	}
+
+	// Every field internal/app can assemble, in v2 spec §6's own row
+	// order. A field that regressed off the row-stack path would take the
+	// whole form back to v1's layout with it.
+	assembled := New(Setup{Palette: palette, Sections: []Section{
+		NewIssueField(palette),
+		NewTitleField(palette),
+		NewPromptField(palette),
+		NewDirField(palette),
+		NewWorktreeField(palette),
+		NewPlacementField(palette),
+		NewAgentField(palette),
+		NewAccountField(palette),
+	}})
+	if !assembled.allRowSections() {
+		t.Errorf("the assembled production field list is NOT on the row-stack path")
 	}
 }
 
@@ -1135,6 +1174,72 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 		line := ansi.Strip(strings.Split(m.ViewAt(width, h), "\n")[h-1])
 		if !strings.Contains(line, "Create") {
 			t.Errorf("at w=%d the footer lost the Create button: %q", width, line)
+		}
+	}
+}
+
+// TestFooterRungs_PerZone pins footer.go's own per-zone table against the
+// zones the key grammar actually defines (v2 spec §3 rule 4, and the plan's
+// rung table): every zone a real field maps onto teaches something, and
+// the ONE zone whose hint depends on state rather than kind -- Title --
+// says what Enter will really do.
+//
+// The Title pair is the reason this test exists at all: v1's footer said
+// "↵ advance" from every zone, including a filled Title where Enter
+// submits the form. FocusZone.TitleEmpty was already computed for the
+// grammar; the footer simply never read it.
+func TestFooterRungs_PerZone(t *testing.T) {
+	want := map[ZoneKind]string{
+		ZoneIssue:     "↑↓ pick",
+		ZoneDir:       "↑↓ pick",
+		ZonePrompt:    "⌃J newline",
+		ZoneWorktree:  "↑↓ part",
+		ZonePlacement: "←→ choose",
+		ZoneAgent:     "←→ favorites",
+		ZoneAccount:   "↑↓ pick",
+		ZoneCreate:    "↵ create",
+	}
+	for kind, substr := range want {
+		rungs := footerRungs(FocusZone{Kind: kind}, false)
+		if len(rungs) == 0 {
+			t.Errorf("zone %v has no footer rungs at all", kind)
+			continue
+		}
+		if !strings.Contains(rungs[0], substr) {
+			t.Errorf("zone %v's widest rung = %q, want it to teach %q", kind, rungs[0], substr)
+		}
+		if !strings.Contains(rungs[0], "Esc") {
+			t.Errorf("zone %v's widest rung = %q, want the constant tail appended", kind, rungs[0])
+		}
+	}
+
+	filled := footerRungs(FocusZone{Kind: ZoneTitle, TitleEmpty: false}, false)[0]
+	if !strings.Contains(filled, "↵ create") {
+		t.Errorf("a non-empty title's rung = %q, want it to say Enter CREATES", filled)
+	}
+	empty := footerRungs(FocusZone{Kind: ZoneTitle, TitleEmpty: true}, false)[0]
+	if strings.Contains(empty, "↵ create") || !strings.Contains(empty, "↵ next") {
+		t.Errorf("an empty title's rung = %q, want it to say Enter ADVANCES", empty)
+	}
+
+	// ⌃R's two states reach every zone through the same tail.
+	if armed := footerRungs(FocusZone{Kind: ZoneAgent}, true)[0]; !strings.Contains(armed, "⌃R again") {
+		t.Errorf("armed rung = %q, want the ⌃R⌃R gesture's second state", armed)
+	}
+}
+
+// TestFooterRungs_AZoneHintNeverLosesToTheConstantTail pins the ordering
+// property crossRungs exists for. fitFooter picks the WIDEST rung that
+// fits and has no notion of which half matters, so a bare constant tail
+// offered alongside the crossings can out-measure -- and silently replace
+// -- a narrower crossing that still teaches the focused field. At 64
+// columns with the title focused that is exactly what it did.
+func TestFooterRungs_AZoneHintNeverLosesToTheConstantTail(t *testing.T) {
+	rungs := footerRungs(FocusZone{Kind: ZoneTitle, TitleEmpty: false}, false)
+	for _, width := range []int{120, 80, 64, 53, 40, 30} {
+		got := fitFooter(rungs, width)
+		if !strings.Contains(got, "↵ create") {
+			t.Errorf("at width %d the footer = %q, want it to still teach the focused field", width, got)
 		}
 	}
 }

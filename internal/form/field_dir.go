@@ -411,20 +411,32 @@ func (d *DirField) expand(raw string) string {
 }
 
 // SetHomeDir installs the app layer's own home-directory string (os.
-// UserHomeDir in production), used only to collapse a leading home prefix
-// to "~" when v2's row renders a path -- wired exactly like
-// SetPathExpander, and for the same reason: this package performs no I/O
-// and cannot ask the OS where home is.
+// UserHomeDir in production), used to collapse a leading home prefix to
+// "~" wherever this field DISPLAYS a path -- v2's row and the panel's own
+// candidate rows (v2 spec §4's mockup shows both collapsed) -- wired
+// exactly like SetPathExpander, and for the same reason: this package
+// performs no I/O and cannot ask the OS where home is.
 //
-// DISPLAY ONLY. Value() keeps returning the real path, every
-// widgets.PickerItem.ID stays the real path, and nothing this field hands
-// the app layer is ever collapsed. That is what makes it safe to install
-// at construction: a "~" that leaked into a value would be a path no
-// filesystem call could resolve.
+// DISPLAY ONLY, and the split runs through widgets.PickerItem: the ID
+// stays the real path and the Label is what collapses, so Value() and
+// every path this field hands the app layer are untouched. That is what
+// makes it safe to install at construction -- a "~" that leaked into a
+// value would be a path no filesystem call could resolve.
+//
+// It refreshes the item list rather than only recording the string,
+// because the Labels built by the last refreshItems call are already
+// rendered from the PREVIOUS home. Same version, so the picker's
+// preserve-by-ID branch keeps the current selection.
 //
 // "" (and "/", which would collapse every absolute path to "~") disable
 // collapsing entirely.
-func (d *DirField) SetHomeDir(home string) { d.homeDir = home }
+func (d *DirField) SetHomeDir(home string) {
+	if d.homeDir == home {
+		return
+	}
+	d.homeDir = home
+	d.refreshItems(false)
+}
 
 // collapseHome renders p with a leading homeDir replaced by "~" -- a pure
 // string operation, deliberately not filepath.Rel (see basename's own doc
@@ -627,7 +639,11 @@ func (d *DirField) refreshItems(bump bool) {
 		// uniqueness here" after review round 1 found a real duplicate-ID
 		// path through pathModeItems this claim had not yet accounted for
 		// -- see pathModeItems' and dedupePaths' own doc comments.
-		pickerItems[i] = widgets.PickerItem{ID: it, Label: it}
+		// ID is the REAL path (Value()/SetValidity/every app-layer read go
+		// through it); Label is what the panel shows, with the home prefix
+		// collapsed to "~" -- see SetHomeDir. The two differ only in
+		// presentation, which is exactly the split PickerItem is for.
+		pickerItems[i] = widgets.PickerItem{ID: it, Label: d.collapseHome(it)}
 	}
 	d.picker.SetItems(d.pickerVersion, pickerItems)
 }

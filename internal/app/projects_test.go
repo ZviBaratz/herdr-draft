@@ -85,10 +85,20 @@ func TestDirResult_AppliesProjectMemory(t *testing.T) {
 	if m.worktree.On() {
 		t.Error("worktree toggle is on, want the remembered off")
 	}
-	// The base ref is resolved and attributed even though WorktreeField has
-	// no setter for it yet -- see defaults.Resolved.BaseRef.
 	if got := m.resolved.BaseRef; got != "main" {
 		t.Errorf("resolved BaseRef = %q, want the remembered %q", got, "main")
+	}
+	// ...and it reaches the field, which is the half #7 could not build:
+	// it resolved and persisted a base with no setter to apply it to, so
+	// "remember the base" worked everywhere except on screen.
+	//
+	// It is applied BEFORE the branch list exists (this model has settled
+	// only the dir check), which is the ordering that makes SetBase hold a
+	// ref rather than drop it -- so the assertion below is on the field's
+	// own state once its list arrives, not on a call having been made.
+	m.worktree.SetBaseItems(1, []string{"main", "develop"})
+	if got := m.worktree.Base(); got != "main" {
+		t.Errorf("WorktreeField.Base() = %q, want the remembered %q", got, "main")
 	}
 	for _, field := range []string{
 		defaults.FieldAgentKind, defaults.FieldPlacement,

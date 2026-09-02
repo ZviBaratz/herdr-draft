@@ -214,27 +214,22 @@ type (
 	footerHinter interface{ FooterRungs() []string }
 )
 
-// rowSection is v2's Section (v2 spec §5), carried for now as an
-// OPTIONAL capability interface alongside the v1 Section above rather
-// than replacing it. That is this change's whole trick, and the reason
-// not one golden frame moves with it:
+// rowSection is v2's Section (v2 spec §5), carried for one more change
+// as an OPTIONAL capability interface alongside the v1 Section above
+// rather than replacing it.
 //
-//   - compose gates on allRowSections() -- every section in the ring
-//     implementing rowSection -- and only then composes v2's row stack.
-//   - Seven fields have migrated (issue, title, prompt, dir, placement,
-//     agent, account), each ADDING these four methods alongside its v1
-//     View/Height/MinHeight rather than replacing them. The worktree
-//     trio has not, and internal/app's section slice always carries all
-//     three, so every production render -- and every assembled golden
-//     frame -- still takes the v1 path byte-for-byte.
-//   - The stub sections in form_test.go implement it too, which is how
-//     the new path was exercised and tested before a single pixel of the
-//     real form moved.
+// compose gates on allRowSections() -- every section in the ring
+// implementing rowSection -- and only then composes v2's row stack. That
+// gate is what let the ten fields migrate additively, one commit at a
+// time, without moving a golden frame: a form was on the new path only
+// once its last field could render there.
 //
-// The worktree collapse is the last field to migrate and the change that
-// flips the gate for real; the step after that promotes these four
-// methods into Section itself and deletes View/Height/MinHeight along
-// with the v1 path.
+// EVERY field now implements it, including the collapsed WorktreeField,
+// so the gate is satisfied for the real assembled form and v1's
+// composeLegacy is unreachable in production. The next change promotes
+// these four methods into Section itself and deletes View/Height/
+// MinHeight along with that path; until then form_test.go's stubSection
+// (v1) and rowStub (v2) are what keep both branches covered.
 type rowSection interface {
 	Section
 
@@ -287,13 +282,21 @@ type rowSection interface {
 // special case" -- MapKey's behavior for all three is identical (plain
 // advance/back, no Tab-complete, no newline, Enter advances) -- since
 // ZoneKind has no dedicated "plain" member of its own.
+//
+// This is a CLOSED set: every ID internal/app can put in the ring appears
+// here, and zoneFor's fallback for anything else (ZonePlacement) exists
+// for test stubs, not for production fields. The v2 collapse of the
+// worktree trio into one Section removed the "branch" and "base" entries
+// -- no Section carries those IDs any more, and the WorktreeField that
+// absorbed them keeps ID() == "worktree", so nothing fell through the
+// fallback when they went. ZoneBranch/ZoneBase themselves survive in
+// keys.go: they are still part of the grammar's vocabulary, simply with
+// no section currently mapped onto them.
 var zoneKindByID = map[string]ZoneKind{
 	"issue":     ZoneIssue,
 	"dir":       ZoneDir,
 	"title":     ZoneTitle,
 	"worktree":  ZoneWorktree,
-	"branch":    ZoneBranch,
-	"base":      ZoneBase,
 	"placement": ZonePlacement,
 	"agent":     ZoneAgent,
 	"account":   ZoneAccount,
@@ -786,11 +789,9 @@ func (m Model) ViewAt(w, h int) string {
 // check, not a flag: when EVERY section in the ring implements
 // rowSection, the frame is composed as v2's row stack (composeRows);
 // otherwise it takes v1's path unchanged (composeLegacy), down to the
-// byte. The worktree trio does not implement rowSection yet and
-// internal/app's section slice always carries all three, so every
-// production render and every committed golden frame still goes through
-// composeLegacy while the field migration is half done -- see
-// rowSection's own doc comment.
+// byte. Every real field implements rowSection now, so production always
+// takes the row-stack path and composeLegacy survives only for
+// form_test.go's own v1 stubs, until the next change deletes it.
 //
 // The gate is also what handleMouseClick consults to decide which zone
 // scheme the last render marked.

@@ -8,139 +8,176 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
-// v1Only pins a fixture form to compose's v1 path.
+// field_frames_test.go pins ONE field at a time, focused, so its row and
+// its panel can be reviewed without the other seven competing for the
+// same frame. The assembled form is pinned separately, in
+// internal/app/frames_test.go.
 //
-// Every frame in this file is a v1 frame: it renders ONE field plus the
-// internal Create section, and it exists to pin what that field's
-// View/Height/MinHeight draw. Since compose's gate is a capability check
-// over the whole ring (form.go's allRowSections), a form of one already
-// migrated field plus Create would satisfy it, flip to v2's row stack,
-// and move a frame that is not about v2 at all -- so these fixtures state
-// which path they mean instead of inferring it.
-//
-// It works by embedding the Section INTERFACE, whose method set is
-// exactly v1's: the wrapper promotes ID/Enabled/Focus/Blur/Update/View/
-// Height/MinHeight and nothing else, so Label/Row/Panel/PanelRows are not
-// reachable through it. The optional capability interfaces (titleValuer,
-// completer, newliner, footerHinter) are hidden too, which changes
-// nothing here: composeLegacy's footer is legacyFooterRungs, which
-// consults neither the focused zone nor footerHinter, and the other three
-// only ever affect key handling, which these fixtures never exercise.
-//
-// This whole helper, and the six v1 frames it serves, are deleted by the
-// change that flips the compose path and regenerates every frame.
-type v1Only struct{ Section }
+// Every fixture here renders through v2's row stack, which is the only
+// path production takes: a form of one migrated field plus the internal
+// Create section satisfies compose's allRowSections gate on its own. The
+// v1Only wrapper these fixtures used to carry -- which hid a field's
+// Label/Row/Panel/PanelRows behind the bare Section interface to keep
+// them on the legacy path -- went with the compose flip.
 
-// buildDirBrowseForm puts DirField into focused path-browse mode over an
-// app-supplied candidate set, for the "dir-browse-80x24" golden frame the
-// task-17 brief names explicitly.
-func buildDirBrowseForm(palette theme.Palette) Model {
+// fieldFrame builds a one-field form with the same header the real form
+// has, focused on that field so its panel renders.
+//
+// InitialFocusID names the field explicitly rather than relying on the
+// ring's first-enabled walk, because two of the fixtures below are
+// deliberately INERT (a non-git worktree, an inert placement) and the
+// walk would skip straight past them to the always-enabled Create
+// section -- pinning the panel of the wrong section entirely.
+func fieldFrame(palette theme.Palette, s Section) Model {
+	m := New(Setup{
+		Palette:        palette,
+		Sections:       []Section{s},
+		Name:           "new session",
+		InitialFocusID: s.ID(),
+	})
+	m.SetContext("herdr-draft · main")
+	m.Init()
+	return m
+}
+
+// buildDirPanelForm puts DirField into focused path-browse mode over an
+// app-supplied candidate set, with a home directory installed so both the
+// row and the panel's candidate rows collapse to "~".
+func buildDirPanelForm(palette theme.Palette) Model {
 	d := NewDirField(palette)
+	d.SetHomeDir("/home/zvi")
 	d.SetCandidates(1, []string{
 		"/home/zvi/Projects/herdr",
 		"/home/zvi/Projects/herdr-draft",
 		"/home/zvi/Projects/atrium",
 	})
 	d.Focus() // an unfocused lineInput ignores keystrokes -- see lineinput.go
-	for _, r := range "/home/zvi/Projects/h" {
+	for _, r := range "~/Projects/h" {
 		d.Update(rn(r))
 	}
-
-	m := New(Setup{Palette: palette, Sections: []Section{v1Only{d}}})
-	m.Init()
-	return m
+	return fieldFrame(palette, d)
 }
 
-func TestFrames_DirBrowse(t *testing.T) {
-	assertFrame(t, "dir-browse-80x24", buildDirBrowseForm(theme.Default()), 80, 24)
+func TestFrames_DirPanel(t *testing.T) {
+	assertFrame(t, "dir-panel-80x24", buildDirPanelForm(theme.Default()), 80, 24)
 }
 
-// buildTitleVerdictForm types a title into TitleField and sets a matching
-// SetVerdict message, for the "title-verdict-80x24" golden frame.
-func buildTitleVerdictForm(palette theme.Palette) Model {
+// buildTitlePanelForm types a title into TitleField and sets a matching
+// SetVerdict message -- 35 cells of it, longer than v1's retired 21-cell
+// clamp, so the frame shows the verdict whole.
+func buildTitlePanelForm(palette theme.Palette) Model {
 	f := NewTitleField(palette)
 	f.Focus()
-	for _, r := range "fix login bug" {
+	for _, r := range "fix login redirect loop" {
 		f.Update(rn(r))
 	}
-	f.SetVerdict(f.Value(), "branch: zvi/fix-login-bug")
+	f.SetVerdict(f.Value(), "branch: zvi/fix-login-redirect-loop")
+	return fieldFrame(palette, f)
+}
 
-	m := New(Setup{Palette: palette, Sections: []Section{v1Only{f}}})
-	m.Init()
+func TestFrames_TitlePanel(t *testing.T) {
+	assertFrame(t, "title-panel-80x24", buildTitlePanelForm(theme.Default()), 80, 24)
+}
+
+// buildPromptPanelForm focuses PromptField over a multi-line prompt, so
+// the frame shows both the row's "+N more" summary and the textarea the
+// panel opens onto.
+func buildPromptPanelForm(palette theme.Palette) Model {
+	f := NewPromptField(palette)
+	f.SetValue("Work on ENG-101: Fix login redirect loop\n\nStart with the cookie the callback sets.", false)
+	f.Focus()
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_PromptPanel(t *testing.T) {
+	assertFrame(t, "prompt-panel-80x24", buildPromptPanelForm(theme.Default()), 80, 24)
+}
+
+// buildWorktreePanelForm is v2 spec §4's own worktree mockup: a live
+// worktree with a branch, a base list, and the part cursor moved off the
+// chips onto the branch -- the state the mockup draws.
+func buildWorktreePanelForm(palette theme.Palette) Model {
+	w := NewWorktreeField(palette)
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBranch("zvi/fix-login-redirect-loop", false)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+
+	m := fieldFrame(palette, w)
+	w.Update(key(tea.KeyDown, 0)) // chips -> branch
 	return m
 }
 
-func TestFrames_TitleVerdict(t *testing.T) {
-	assertFrame(t, "title-verdict-80x24", buildTitleVerdictForm(theme.Default()), 80, 24)
+func TestFrames_WorktreePanel(t *testing.T) {
+	assertFrame(t, "worktree-panel-80x24", buildWorktreePanelForm(theme.Default()), 80, 24)
 }
 
-// buildWorktreeNonGitForm puts all three WorktreeField zones into the
-// non-git present-but-inert state, for the "worktree-nongit-80x24" golden
-// frame -- exercising the "distinct placeholders" contract
-// TestWorktreeField_NonGitPlaceholdersAreDistinct already pins
-// behaviorally.
+// buildWorktreeNonGitForm pins the other end of the field: a target that
+// cannot host a worktree at all, where the row and all three panel parts
+// carry the non-git reason rather than an empty control.
 func buildWorktreeNonGitForm(palette theme.Palette) Model {
 	w := NewWorktreeField(palette)
 	w.SetGitTarget(false)
-
-	m := New(Setup{Palette: palette, Sections: []Section{
-		w.ChipsSection(), w.BranchSection(), w.BaseSection(),
-	}})
-	m.Init()
-	return m
+	return fieldFrame(palette, w)
 }
 
 func TestFrames_WorktreeNonGit(t *testing.T) {
 	assertFrame(t, "worktree-nongit-80x24", buildWorktreeNonGitForm(theme.Default()), 80, 24)
 }
 
-// buildPlacementInertForm sets PlacementField inert (worktree on), for the
-// "placement-inert-80x24" golden frame.
-func buildPlacementInertForm(palette theme.Palette) Model {
+// buildPlacementPanelForm sets PlacementField inert (worktree on), the
+// state where the row states the reason and the panel's chips are
+// replaced by their own placeholder.
+func buildPlacementPanelForm(palette theme.Palette) Model {
 	f := NewPlacementField(palette)
 	f.SetWorktreeOn(true)
-
-	m := New(Setup{Palette: palette, Sections: []Section{v1Only{f}}})
-	m.Init()
-	return m
+	return fieldFrame(palette, f)
 }
 
-func TestFrames_PlacementInert(t *testing.T) {
-	assertFrame(t, "placement-inert-80x24", buildPlacementInertForm(theme.Default()), 80, 24)
+func TestFrames_PlacementPanel(t *testing.T) {
+	assertFrame(t, "placement-panel-80x24", buildPlacementPanelForm(theme.Default()), 80, 24)
 }
 
-// buildIssuePickerForm focuses IssueField over a small assigned-issue set,
-// for the "issue-picker-120x40" golden frame the task-18 brief names
-// explicitly.
-func buildIssuePickerForm(palette theme.Palette) Model {
+// buildIssuePanelForm focuses IssueField over a small assigned-issue set.
+func buildIssuePanelForm(palette theme.Palette) Model {
 	f := NewIssueField(palette)
 	f.SetIssues(1, sampleIssues())
 	f.Focus()
 	f.Update(key(tea.KeyDown, 0)) // none -> ENG-1
-
-	m := New(Setup{Palette: palette, Sections: []Section{v1Only{f}}})
-	m.Init()
-	return m
+	return fieldFrame(palette, f)
 }
 
-func TestFrames_IssuePicker(t *testing.T) {
-	assertFrame(t, "issue-picker-120x40", buildIssuePickerForm(theme.Default()), 120, 40)
+func TestFrames_IssuePanel(t *testing.T) {
+	assertFrame(t, "issue-panel-120x40", buildIssuePanelForm(theme.Default()), 120, 40)
 }
 
-// buildAccountForm enables AccountField (agent kind claude) over a mixed
-// healthy/warned profile set, for the "account-80x24" golden frame.
-func buildAccountForm(palette theme.Palette) Model {
+// buildAccountPanelForm enables AccountField (agent kind claude) over a
+// mixed healthy/warned profile set, so the frame carries the colored
+// state words that replaced v1's bare "!" marker.
+func buildAccountPanelForm(palette theme.Palette) Model {
 	f := NewAccountField(palette)
 	f.SetAgentIsClaude(true)
 	f.SetProfiles(sampleStatus())
 	f.Focus()
 	f.Update(key(tea.KeyDown, 0)) // active -> alpha
-
-	m := New(Setup{Palette: palette, Sections: []Section{v1Only{f}}})
-	m.Init()
-	return m
+	return fieldFrame(palette, f)
 }
 
-func TestFrames_Account(t *testing.T) {
-	assertFrame(t, "account-80x24", buildAccountForm(theme.Default()), 80, 24)
+func TestFrames_AccountPanel(t *testing.T) {
+	assertFrame(t, "account-panel-80x24", buildAccountPanelForm(theme.Default()), 80, 24)
+}
+
+// buildAgentPanelForm focuses AgentField over more kinds than fit its
+// favorites row, which in v1 hid the rest behind a "more…" chip and in v2
+// simply lists them all in the panel.
+func buildAgentPanelForm(palette theme.Palette) Model {
+	f := NewAgentField(palette)
+	f.SetKinds([]string{"claude", "codex", "pi", "gemini", "cursor", "aider"})
+	f.Focus()
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_AgentPanel(t *testing.T) {
+	assertFrame(t, "agent-panel-80x24", buildAgentPanelForm(theme.Default()), 80, 24)
 }

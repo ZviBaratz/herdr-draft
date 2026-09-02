@@ -50,7 +50,11 @@ const accountLabel = "Account: "
 const accountActiveID = "\x00active"
 
 const (
-	accountActiveLabel = "Active"
+	// accountActiveLabel is the picker's own first row. Lowercase, and
+	// therefore the same word accountRowActive puts in the row: the two
+	// name one thing, and v1's capital was a leftover from a chip row that
+	// read as a heading (v2 spec §3 rule 5).
+	accountActiveLabel = "active"
 	accountActiveHint  = "use whatever profile is live"
 
 	// accountInertPlaceholder is SetAgentIsClaude(false)'s own

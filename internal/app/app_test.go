@@ -239,6 +239,13 @@ type testSetup struct {
 	LinearCache  []linear.Issue
 }
 
+// testHomeDir is the home every test model collapses paths against. It is
+// a FIXED string, never os.UserHomeDir: the golden frames render project
+// paths with the home prefix replaced by "~", and reading the real home
+// here would make them differ on every machine whose home is not the
+// author's.
+const testHomeDir = "/home/zvi"
+
 func newTestModel(t *testing.T, s testSetup) Model {
 	t.Helper()
 
@@ -277,6 +284,7 @@ func newTestModel(t *testing.T, s testSetup) Model {
 		Workspaces:   s.Workspaces,
 		ClauthStatus: s.ClauthStatus,
 		LinearCache:  s.LinearCache,
+		HomeDir:      testHomeDir,
 	})
 }
 
@@ -499,16 +507,18 @@ func TestTitleResult_StaleVersionDropped(t *testing.T) {
 func TestIssueSelectionSeedsAndRespectsTouchedBranch(t *testing.T) {
 	m := newTestModel(t, testSetup{})
 
-	// The user types into Branch directly (bypassing the focus ring, which
-	// is fine -- worktreeBranchSection.Update applies regardless of the
-	// field's own inert/enabled state, matching a real keypress reaching
-	// whichever section currently holds focus). The wrapped lineInput
-	// ignores key input while blurred (bubbles/v2's own textinput.Model.
-	// Update: "if !m.focus { return m, nil }"), so Focus() is required
-	// first, exactly as form.go's own focus ring would have already done
-	// for whichever section is current.
-	m.worktree.BranchSection().Focus()
-	m.worktree.BranchSection().Update(rn('x'))
+	// The user types into the branch directly, bypassing the focus ring
+	// but reproducing the state it would have put the field in: a usable
+	// git target with the worktree on (otherwise the branch part is not
+	// reachable at all), focused, and one ↓ from the chips onto the
+	// branch. The wrapped lineInput ignores key input while blurred
+	// (bubbles/v2's own textinput.Model.Update: "if !m.focus { return m,
+	// nil }"), which is what WorktreeField.Focus plus that ↓ arrange.
+	m.worktree.SetGitTarget(true)
+	m.worktree.SetOn(true)
+	m.worktree.Focus()
+	m.worktree.Update(key(tea.KeyDown, 0))
+	m.worktree.Update(rn('x'))
 	if got := m.worktree.Branch(); got != "x" {
 		t.Fatalf("Branch() after typing = %q, want %q", got, "x")
 	}
@@ -600,9 +610,9 @@ func TestBaseResult_ErrorSetsCouldNotList(t *testing.T) {
 		t.Fatalf("fetchPruneCalls = %v after a failed result, want none", git.fetchPruneCalls)
 	}
 
-	frame := ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(24)))
+	frame := ansi.Strip(m.worktree.Panel(60, m.worktree.PanelRows()))
 	if !strings.Contains(frame, "couldn't list") {
-		t.Fatalf("BaseSection View = %q, want it to contain the \"couldn't list\" status", frame)
+		t.Fatalf("worktree panel = %q, want it to contain the \"couldn't list\" status", frame)
 	}
 }
 
@@ -626,18 +636,18 @@ func TestBaseResult_StaleVersionDropped(t *testing.T) {
 	// v2 (fresher) resolves first, successfully.
 	m2, _ := m.handleBaseResult(baseResultMsg{req: request{version: v2, key: "new"}, refs: []string{"main"}})
 	m = m2
-	frame := ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(24)))
+	frame := ansi.Strip(m.worktree.Panel(60, m.worktree.PanelRows()))
 	if strings.Contains(frame, "couldn't list") {
-		t.Fatalf("BaseSection View = %q, fresh v2's success was not applied", frame)
+		t.Fatalf("worktree panel = %q, fresh v2's success was not applied", frame)
 	}
 
 	// v1 (stale) resolves second, with an error -- must be dropped, not
 	// clobbering v2's already-applied success with "couldn't list".
 	m2, _ = m.handleBaseResult(baseResultMsg{req: request{version: v1, key: "old"}, err: true})
 	m = m2
-	frame = ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(24)))
+	frame = ansi.Strip(m.worktree.Panel(60, m.worktree.PanelRows()))
 	if strings.Contains(frame, "couldn't list") {
-		t.Fatalf("BaseSection View = %q, stale v1 result was wrongly applied", frame)
+		t.Fatalf("worktree panel = %q, stale v1 result was wrongly applied", frame)
 	}
 }
 
@@ -870,41 +880,63 @@ func TestReloadClauthCmd_NilSourceDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestNew_WorktreeSectionsAreAdjacent pins the carried requirement: the
-// three worktree zones must still read as ONE visual group in the
-// assembled section list.
+// TestNew_SectionOrder pins v2 spec §6's row order at the ONE place it is
+// declared -- internal/app's own section slice -- including the two
+// fields whose presence is a static precondition (issue, account) and the
+// internal Create section New always appends last.
 //
-// Fix round 1: this used to (a) rebuild m.form from a hand-written
-// Sections list, discarding the real one New() assembled, and (b) even
-// after fixing that, rely on a Tab-walk (sectionOrder) -- but Tab
-// navigation SKIPS disabled sections (focus.go's nextEnabled), and
-// Placement is disabled whenever Worktree is on (the exact state this test
-// puts the form in to make Branch/Base enabled), so an inserted-in-between
-// regression on Placement specifically would have kept passing even after
-// fix (a) alone -- verified directly: temporarily inserting m.placement
-// between ChipsSection and BranchSection in app.go's own New still passed
-// the Tab-walk version of this test. form.Model.SectionIDs() (added
-// alongside this fix) returns the real construction order INCLUDING
-// disabled sections, closing that gap for good.
-func TestNew_WorktreeSectionsAreAdjacent(t *testing.T) {
-	m := newTestModel(t, testSetup{})
+// It replaces TestNew_WorktreeSectionsAreAdjacent, whose carried
+// requirement ("the three worktree zones must still read as one visual
+// group") the collapse satisfies by construction: there is one worktree
+// section now, so there is nothing left to separate. Note the test that
+// preceded it also had to survive a Tab-walk trap -- Tab navigation SKIPS
+// disabled sections (focus.go's nextEnabled), so an inserted-in-between
+// regression on Placement went undetected until the assertion moved to
+// SectionIDs(), which reports the real construction order INCLUDING
+// disabled sections. This one is built on the same accessor for the same
+// reason.
+func TestNew_SectionOrder(t *testing.T) {
+	full := newTestModel(t, testSetup{
+		Linear:       &fakeLinear{},
+		Clauth:       &fakeClauth{},
+		ClauthStatus: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}, {Name: "b"}}},
+	})
+	want := []string{"issue", "title", "prompt", "dir", "worktree", "placement", "agent", "account", "create"}
+	if got := full.form.SectionIDs(); !equalStrings(got, want) {
+		t.Errorf("SectionIDs() for the widest configuration = %v, want %v", got, want)
+	}
 
-	ids := m.form.SectionIDs()
-	idx := func(id string) int {
-		for i, v := range ids {
-			if v == id {
-				return i
-			}
+	// Linear unconfigured and fewer than two clauth profiles: those two
+	// rows are absent entirely (v2 spec §6.1's "absent by design"), and
+	// the rest keep their order.
+	minimal := newTestModel(t, testSetup{})
+	wantMinimal := []string{"title", "prompt", "dir", "worktree", "placement", "agent", "create"}
+	if got := minimal.form.SectionIDs(); !equalStrings(got, wantMinimal) {
+		t.Errorf("SectionIDs() for the minimal configuration = %v, want %v", got, wantMinimal)
+	}
+}
+
+// TestNew_FocusOpensOnTitle pins v2 spec §8's opening state: the whole
+// redesign is "open, type a title, Enter", which is only true if focus
+// starts on the title rather than on the first enabled section.
+func TestNew_FocusOpensOnTitle(t *testing.T) {
+	m := newTestModel(t, testSetup{Linear: &fakeLinear{}})
+	m.Init()
+	if got := m.form.FocusedID(); got != "title" {
+		t.Errorf("FocusedID() after Init = %q, want %q", got, "title")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
-		return -1
 	}
-	w, b, base := idx("worktree"), idx("branch"), idx("base")
-	if w < 0 || b < 0 || base < 0 {
-		t.Fatalf("SectionIDs() %v is missing one of worktree/branch/base", ids)
-	}
-	if b != w+1 || base != b+1 {
-		t.Fatalf("worktree sections are not adjacent in %v (worktree=%d branch=%d base=%d)", ids, w, b, base)
-	}
+	return true
 }
 
 // --- agent kinds: favorites-first (carried requirement) --------------------
@@ -1378,6 +1410,70 @@ func TestTildeProjectDirIsExpandedBeforeItLeavesThePlugin(t *testing.T) {
 	}
 }
 
+// --- the header's project context (v2 spec §4) ---------------------------
+
+// TestHeaderContextNamesTheSelectedProjectAndItsBranch pins v2 spec §4's
+// header: "live context for the SELECTED project: repository name and its
+// current branch, not the invoking workspace." The distinction is the
+// whole point -- the popup is launched from wherever the user happens to
+// be, and the header must describe the session about to be created.
+func TestHeaderContextNamesTheSelectedProjectAndItsBranch(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main"}
+	git.currentBranchResult = "zvi/some-branch"
+	m := newTestModel(t, testSetup{
+		Git: git,
+		Ctx: herdrc.Context{WorkspaceCwd: "/home/zvi/Projects/herdr-draft"},
+	})
+
+	req := request{version: m.baseReqVersion, key: m.dir.Value()}
+	m2, _ := m.handleBaseResult(m.runBaseCheck(req)().(baseResultMsg))
+	m = m2
+
+	header := ansi.Strip(strings.SplitN(m.form.ViewAt(80, 24), "\n", 2)[0])
+	if !strings.Contains(header, "herdr-draft · zvi/some-branch") {
+		t.Errorf("header = %q, want the selected project's name and branch", header)
+	}
+}
+
+// TestHeaderContextOnANonRepositoryDropsTheBranchHalf states what the
+// spec does not settle: a project that is not a git repository shows its
+// NAME ALONE, with no separator and no branch.
+//
+// The alternative -- "myproject · not a repository" -- would put a
+// verdict in a place reserved for context, and repeat what the project
+// row's own inert cell says one line further down. It also has to hold
+// when the previous project WAS a repository: the branch must go, or the
+// header quietly attributes one project's branch to another.
+func TestHeaderContextOnANonRepositoryDropsTheBranchHalf(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main"}
+	git.currentBranchResult = "main"
+	m := newTestModel(t, testSetup{
+		Git: git,
+		Ctx: herdrc.Context{WorkspaceCwd: "/home/zvi/Projects/herdr-draft"},
+	})
+
+	req := request{version: m.baseReqVersion, key: m.dir.Value()}
+	m2, _ := m.handleBaseResult(m.runBaseCheck(req)().(baseResultMsg))
+	m = m2
+	if header := ansi.Strip(strings.SplitN(m.form.ViewAt(80, 24), "\n", 2)[0]); !strings.Contains(header, "· main") {
+		t.Fatalf("setup: header = %q, want a branch to lose", header)
+	}
+
+	// The project moves to something git cannot list refs for.
+	m2, _ = m.handleBaseResult(baseResultMsg{req: request{version: m.baseReqVersion, key: "/tmp/plain"}, err: true})
+	m = m2
+
+	header := ansi.Strip(strings.SplitN(m.form.ViewAt(80, 24), "\n", 2)[0])
+	if strings.Contains(header, "· main") {
+		t.Errorf("header = %q, still carries the previous project's branch", header)
+	}
+	if !strings.Contains(header, "herdr-draft") {
+		t.Errorf("header = %q, want the project name to survive", header)
+	}
+}
+
 // --- minor M4: the base picker's HEAD row names the current branch ------
 
 // TestBaseListNamesTheCurrentBranchOnTheHeadRow pins spec §6 field 4's own
@@ -1399,7 +1495,7 @@ func TestBaseListNamesTheCurrentBranchOnTheHeadRow(t *testing.T) {
 	m2, _ := m.handleBaseResult(result)
 	m = m2
 
-	frame := ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(40)))
+	frame := ansi.Strip(m.worktree.Panel(60, m.worktree.PanelRows()))
 	if !strings.Contains(frame, "HEAD (main)") {
 		t.Errorf("base picker = %q, want its HEAD row to name the current branch", frame)
 	}
@@ -1420,7 +1516,7 @@ func TestBaseListFallsBackToABareHeadOnADetachedHead(t *testing.T) {
 	m2, _ := m.handleBaseResult(m.runBaseCheck(req)().(baseResultMsg))
 	m = m2
 
-	frame := ansi.Strip(m.worktree.BaseSection().View(60, m.worktree.BaseSection().Height(40)))
+	frame := ansi.Strip(m.worktree.Panel(60, m.worktree.PanelRows()))
 	if strings.Contains(frame, "HEAD (") {
 		t.Errorf("base picker = %q, want a bare HEAD row on a detached HEAD", frame)
 	}
@@ -1707,7 +1803,12 @@ func TestBrowsingIsReachableByTypingThroughUpdate(t *testing.T) {
 	m, _ := browseModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	m = next.(Model)
-	m.Init() // focuses the first section (Project, with no Linear configured)
+	m.Init()
+	// v2 opens focus on the title (spec §8), so reaching the project row
+	// is now a deliberate move -- exactly as it is for a real user.
+	if cmd := m.form.FocusByID("dir"); cmd != nil {
+		cmd()
+	}
 
 	// Only the LAST keystroke's cmd is flattened: every keystroke also
 	// batches the text input's own blink timer, which really does sleep.

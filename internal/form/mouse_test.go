@@ -117,11 +117,16 @@ func TestMouseZones_ChipClickSelectsPlacement(t *testing.T) {
 // wheel grammar (form.go's handleMouseWheel doc comment: "scroll the
 // focused picker or the prompt") scrolls whichever section CURRENTLY has
 // focus, not whatever the mouse happens to sit over, so this focuses the
-// base section first (FocusByID, the same entry point spec §9's own
-// submit-time re-focus rule uses) before sending a wheel-down message,
-// and asserts WorktreeField.Base() moved off "HEAD" (row 0, Base()'s own
-// "" sentinel) onto the first real ref -- exactly as Down already does
-// (worktreeBaseSection.Update).
+// worktree field first (FocusByID, the same entry point spec §9's own
+// submit-time re-focus rule uses) and walks the part cursor down onto the
+// base list, then asserts WorktreeField.Base() moved off "HEAD" (row 0,
+// Base()'s own "" sentinel) onto the first real ref -- exactly as Down
+// already does.
+//
+// Walking the part cursor is the point rather than an inconvenience: the
+// wheel means "scroll the list" only where a list is what the user is
+// looking at, and v2's worktree panel has two other parts that are not
+// scrollable at all.
 func TestMouseZones_WheelMovesBasePickerCursor(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 	w.SetGitTarget(true)
@@ -132,16 +137,18 @@ func TestMouseZones_WheelMovesBasePickerCursor(t *testing.T) {
 		t.Fatalf("fresh WorktreeField.Base() = %q, want \"\" (HEAD)", got)
 	}
 
-	m := New(Setup{Palette: theme.Default(), Sections: []Section{
-		w.ChipsSection(), w.BranchSection(), w.BaseSection(),
-	}})
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{w}})
 	m.Init()
 
-	if cmd := m.FocusByID("base"); cmd != nil {
+	if cmd := m.FocusByID("worktree"); cmd != nil {
 		cmd()
 	}
-	if got := m.FocusedID(); got != "base" {
-		t.Fatalf("FocusedID() after FocusByID(\"base\") = %q, want %q", got, "base")
+	if got := m.FocusedID(); got != "worktree" {
+		t.Fatalf("FocusedID() after FocusByID(\"worktree\") = %q, want %q", got, "worktree")
+	}
+	for i := 0; i < 2; i++ { // chips -> branch -> base
+		next, _ := m.Update(key(tea.KeyDown, 0))
+		m = next.(Model)
 	}
 
 	next, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
@@ -149,5 +156,42 @@ func TestMouseZones_WheelMovesBasePickerCursor(t *testing.T) {
 
 	if got := w.Base(); got != "main" {
 		t.Fatalf("WorktreeField.Base() after a wheel-down over the focused base picker = %q, want %q", got, "main")
+	}
+}
+
+// TestMouseZones_ClickOnABaseRowSelectsItAndMovesThePart pins the click
+// half of v2's worktree sub-focus: a click on one of the panel's own
+// "row:base:<n>" zones both selects that ref AND parks the part cursor on
+// the base list, so the keyboard picks up where the mouse left off rather
+// than the next ↑ meaning something else.
+func TestMouseZones_ClickOnABaseRowSelectsItAndMovesThePart(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"develop", "release/1.4"})
+
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{w}, Name: "new session"})
+	m.Init()
+	if cmd := m.FocusByID("worktree"); cmd != nil {
+		cmd()
+	}
+	_ = m.ViewAt(80, 24)
+	syncZones()
+
+	const zoneID = "row:base:1" // row 0 is the HEAD sentinel
+	zi := widgets.Zones.Get(zoneID)
+	if zi.IsZero() {
+		t.Fatalf("zone %q never resolved after ViewAt(80, 24)'s own Scan", zoneID)
+	}
+
+	next, _ := m.Update(clickAt(zi.StartX, zi.StartY))
+	m = next.(Model)
+
+	if got := w.Base(); got != "develop" {
+		t.Fatalf("Base() after clicking %s = %q, want %q", zoneID, got, "develop")
+	}
+	if w.part != partBase {
+		t.Fatalf("part after clicking a base row = %v, want partBase", w.part)
 	}
 }

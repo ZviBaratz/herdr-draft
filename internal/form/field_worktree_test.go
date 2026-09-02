@@ -10,16 +10,20 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
-func TestWorktreeField_SectionIDs(t *testing.T) {
+func TestWorktreeField_SectionID(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
-	if got := w.ChipsSection().ID(); got != "worktree" {
-		t.Errorf("ChipsSection().ID() = %q, want %q", got, "worktree")
+	if got := w.ID(); got != "worktree" {
+		t.Errorf("ID() = %q, want %q", got, "worktree")
 	}
-	if got := w.BranchSection().ID(); got != "branch" {
-		t.Errorf("BranchSection().ID() = %q, want %q", got, "branch")
+	// The collapse kept this ID, which is what keeps keys.go's
+	// ZoneWorktree mapping and every "chip:worktree:<id>" zone working;
+	// "branch" and "base" are gone from form.go's zoneKindByID with the
+	// sections that carried them.
+	if _, ok := zoneKindByID["branch"]; ok {
+		t.Errorf("zoneKindByID still maps %q; no Section carries that ID any more", "branch")
 	}
-	if got := w.BaseSection().ID(); got != "base" {
-		t.Errorf("BaseSection().ID() = %q, want %q", got, "base")
+	if _, ok := zoneKindByID["base"]; ok {
+		t.Errorf("zoneKindByID still maps %q; no Section carries that ID any more", "base")
 	}
 }
 
@@ -31,15 +35,12 @@ func TestWorktreeField_DefaultsToOffAndInert(t *testing.T) {
 	if w.Enabled() {
 		t.Errorf("Enabled() = true before any SetGitTarget call, want false (safe default)")
 	}
-	if w.ChipsSection().Enabled() {
-		t.Errorf("ChipsSection().Enabled() = true before SetGitTarget, want false")
-	}
 }
 
 // TestWorktreeField_GitTargetGatesEverything pins SetGitTarget's own
-// contract: a non-git target makes chips/branch/base all present-but-
-// inert regardless of the on/off toggle; a git target re-enables the
-// chips row (branch/base still gated by On(), separately).
+// contract: a non-git target makes the whole field present-but-inert
+// regardless of the on/off toggle, and the sub-focus cursor cannot park
+// on a part that has nothing to configure.
 func TestWorktreeField_GitTargetGatesEverything(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 	w.SetGitTarget(true)
@@ -47,40 +48,32 @@ func TestWorktreeField_GitTargetGatesEverything(t *testing.T) {
 	if !w.Enabled() {
 		t.Errorf("Enabled() = false after SetGitTarget(true), want true")
 	}
-	if !w.ChipsSection().Enabled() {
-		t.Errorf("ChipsSection().Enabled() = false after SetGitTarget(true), want true")
-	}
-	// Worktree is still off -- branch/base stay inert.
-	if w.BranchSection().Enabled() {
-		t.Errorf("BranchSection().Enabled() = true while off, want false")
-	}
-	if w.BaseSection().Enabled() {
-		t.Errorf("BaseSection().Enabled() = true while off, want false")
+	// Worktree is still off -- only the toggle part is reachable.
+	if got := w.maxPart(); got != partChips {
+		t.Errorf("maxPart() while off = %v, want partChips", got)
 	}
 
 	turnOn(w)
-	if !w.BranchSection().Enabled() {
-		t.Errorf("BranchSection().Enabled() = false once On() and git, want true")
-	}
-	if !w.BaseSection().Enabled() {
-		t.Errorf("BaseSection().Enabled() = false once On() and git, want true")
+	if got := w.maxPart(); got != partBase {
+		t.Errorf("maxPart() once on and git = %v, want partBase", got)
 	}
 
-	// Flipping back to a non-git target must force branch/base inert
-	// again even though the toggle is still "on".
-	w.SetGitTarget(false)
-	if w.BranchSection().Enabled() {
-		t.Errorf("BranchSection().Enabled() = true for a non-git target even while on, want false")
+	// Flipping back to a non-git target must strand nothing: the cursor
+	// comes back to the chips even though the toggle still reads "on".
+	w.Update(key(tea.KeyDown, 0)) // chips -> branch
+	if w.part != partBranch {
+		t.Fatalf("setup: part = %v, want partBranch", w.part)
 	}
-	if w.BaseSection().Enabled() {
-		t.Errorf("BaseSection().Enabled() = true for a non-git target even while on, want false")
+	w.SetGitTarget(false)
+	if w.part != partChips {
+		t.Errorf("part = %v after the target stopped being a repository, want partChips", w.part)
 	}
 }
 
 // turnOn toggles the chips row from its default "off" to "on" via a
 // single Right arrow press, through the real Section.Update path.
 func turnOn(w *WorktreeField) {
-	w.ChipsSection().Update(key(tea.KeyRight, 0))
+	w.Update(key(tea.KeyRight, 0))
 }
 
 func TestWorktreeField_ChipsToggleOnOff(t *testing.T) {
@@ -89,12 +82,129 @@ func TestWorktreeField_ChipsToggleOnOff(t *testing.T) {
 
 	turnOn(w)
 	if !w.On() {
-		t.Fatalf("On() = false after one Right on the chips zone, want true")
+		t.Fatalf("On() = false after one Right, want true")
 	}
 
-	w.ChipsSection().Update(key(tea.KeyLeft, 0))
+	w.Update(key(tea.KeyLeft, 0))
 	if w.On() {
 		t.Fatalf("On() = true after Left back, want false")
+	}
+}
+
+// TestWorktreeField_SubFocusGrammar is the whole reason the three v1
+// sections could become one (v2 spec §6): ↑↓ mean "move the part" away
+// from the base list and "move the list" on it, with the top row handing
+// the part cursor back -- the same handoff AgentField's expanded list
+// already used, which is the precedent that answered the "↑↓ would mean
+// two things" objection.
+func TestWorktreeField_SubFocusGrammar(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+	w.Focus()
+
+	if w.part != partChips {
+		t.Fatalf("Focus() left the part cursor at %v, want partChips", w.part)
+	}
+
+	// Down walks the parts, clamping at the last one.
+	w.Update(key(tea.KeyDown, 0))
+	if w.part != partBranch {
+		t.Fatalf("part after one Down = %v, want partBranch", w.part)
+	}
+	w.Update(key(tea.KeyDown, 0))
+	if w.part != partBase {
+		t.Fatalf("part after two Downs = %v, want partBase", w.part)
+	}
+
+	// On the base list, Down is the picker's own cursor and the part
+	// cursor stays put.
+	w.Update(key(tea.KeyDown, 0))
+	if w.part != partBase {
+		t.Fatalf("part after a Down on the base list = %v, want it to stay on partBase", w.part)
+	}
+	if got := w.Base(); got != "main" {
+		t.Fatalf("Base() after a Down on the base list = %q, want %q", got, "main")
+	}
+	w.Update(key(tea.KeyDown, 0))
+	if got := w.Base(); got != "release/1.4" {
+		t.Fatalf("Base() after a second Down = %q, want %q", got, "release/1.4")
+	}
+
+	// Up walks back UP the list first...
+	w.Update(key(tea.KeyUp, 0))
+	if got, part := w.Base(), w.part; got != "main" || part != partBase {
+		t.Fatalf("after Up: Base() = %q part = %v, want %q / partBase", got, part, "main")
+	}
+	w.Update(key(tea.KeyUp, 0))
+	if got, part := w.Base(), w.part; got != "" || part != partBase {
+		t.Fatalf("after a second Up: Base() = %q part = %v, want HEAD / partBase", got, part)
+	}
+	// ...and only THEN hands the part cursor back to the branch.
+	w.Update(key(tea.KeyUp, 0))
+	if w.part != partBranch {
+		t.Fatalf("Up at the top of the base list left part = %v, want the handoff back to partBranch", w.part)
+	}
+	if got := w.Base(); got != "" {
+		t.Fatalf("the handoff also moved the base selection to %q, want it left on HEAD", got)
+	}
+
+	// Up again is a plain part move; the top clamps.
+	w.Update(key(tea.KeyUp, 0))
+	if w.part != partChips {
+		t.Fatalf("part after Up from the branch = %v, want partChips", w.part)
+	}
+	w.Update(key(tea.KeyUp, 0))
+	if w.part != partChips {
+		t.Fatalf("part after Up from the chips = %v, want it clamped at partChips", w.part)
+	}
+}
+
+// TestWorktreeField_ArrowsDriveTheChipsExceptOnTheBranch pins the other
+// half of the grammar: ←→ mean the toggle everywhere except the branch
+// part, where they belong to the text cursor.
+func TestWorktreeField_ArrowsDriveTheChipsExceptOnTheBranch(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBranch("zvi/keep-me", false)
+	w.SetBaseItems(1, []string{"main"})
+	w.Focus()
+
+	// From the base part, ←→ still reach the toggle.
+	w.Update(key(tea.KeyDown, 0))
+	w.Update(key(tea.KeyDown, 0))
+	if w.part != partBase {
+		t.Fatalf("setup: part = %v, want partBase", w.part)
+	}
+	w.Update(key(tea.KeyLeft, 0))
+	if w.On() {
+		t.Errorf("Left from the base part did not reach the on/off toggle")
+	}
+	// ...and turning it off strands nothing.
+	if w.part != partChips {
+		t.Errorf("part after the toggle went off = %v, want it clamped to partChips", w.part)
+	}
+
+	// On the branch part they are the text cursor's, not the toggle's.
+	w.Update(key(tea.KeyRight, 0)) // back on
+	w.Update(key(tea.KeyDown, 0))  // -> branch
+	if w.part != partBranch {
+		t.Fatalf("setup: part = %v, want partBranch", w.part)
+	}
+	if !w.On() {
+		t.Fatalf("setup: On() = false, want true")
+	}
+	w.Update(key(tea.KeyLeft, 0))
+	w.Update(key(tea.KeyLeft, 0))
+	if !w.On() {
+		t.Errorf("Left on the branch part flipped the toggle; it belongs to the text cursor there")
+	}
+	// A real edit still lands, and still marks the field touched.
+	w.Update(rn('X'))
+	if got := w.Branch(); got != "zvi/keep-X" && !strings.Contains(got, "X") {
+		t.Errorf("Branch() after typing on the branch part = %q, want the edit applied", got)
 	}
 }
 
@@ -144,11 +254,11 @@ func TestWorktreeField_TouchedRule(t *testing.T) {
 		t.Fatalf("Branch() after seeding = %q, want %q", got, "zvi/from-linear")
 	}
 
-	// The user types, taking over the field (a real focus stop must be
-	// focused first, matching how the form's own ring drives it: an
-	// unfocused text input ignores keystrokes).
-	w.BranchSection().Focus()
-	w.BranchSection().Update(rn('-'))
+	// The user types, taking over the field (the field must be focused AND
+	// the part cursor on the branch, matching how the form's own ring
+	// drives it: an unfocused text input ignores keystrokes).
+	focusBranch(w)
+	w.Update(rn('-'))
 	if got := w.Branch(); got != "zvi/from-linear-" {
 		t.Fatalf("Branch() after typing = %q, want %q", got, "zvi/from-linear-")
 	}
@@ -165,6 +275,13 @@ func TestWorktreeField_TouchedRule(t *testing.T) {
 	}
 }
 
+// focusBranch puts the field in the state a user typing a branch name is
+// in: focused, with the part cursor on the branch input.
+func focusBranch(w *WorktreeField) {
+	w.Focus()
+	w.Update(key(tea.KeyDown, 0))
+}
+
 // TestWorktreeField_HardSetOverridesTouched pins SetBranch's seeded=false
 // path: an authoritative (non-seeded) set always applies, even after the
 // field has been touched, and clears the touched flag so a later seed can
@@ -174,8 +291,8 @@ func TestWorktreeField_HardSetOverridesTouched(t *testing.T) {
 	w.SetGitTarget(true)
 	turnOn(w)
 
-	w.BranchSection().Focus()
-	w.BranchSection().Update(rn('x')) // touch it
+	focusBranch(w)
+	w.Update(rn('x')) // touch it
 	if got := w.Branch(); got != "x" {
 		t.Fatalf("setup: Branch() after typing 'x' = %q, want %q", got, "x")
 	}
@@ -196,6 +313,52 @@ func TestWorktreeField_BaseDefaultsToHEAD(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 	if got := w.Base(); got != "" {
 		t.Fatalf("Base() on a fresh field = %q, want \"\" (HEAD)", got)
+	}
+}
+
+// TestWorktreeField_SetBaseRoundTrip pins the setter #7 needed and could
+// not have: a remembered base ref goes in and comes back out of Base(),
+// "" still means HEAD, and -- the case that actually happens in
+// production -- a ref set BEFORE the async branch list arrives is applied
+// when it does, rather than dropped on the floor.
+func TestWorktreeField_SetBaseRoundTrip(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+
+	w.SetBase("release/1.4")
+	if got := w.Base(); got != "release/1.4" {
+		t.Fatalf("Base() after SetBase(%q) = %q", "release/1.4", got)
+	}
+	w.SetBase("")
+	if got := w.Base(); got != "" {
+		t.Fatalf("Base() after SetBase(\"\") = %q, want \"\" (HEAD)", got)
+	}
+
+	// The real ordering: the app layer resolves the remembered base off
+	// the debounced dir check, one `git for-each-ref` round trip BEFORE
+	// the list naming it exists.
+	pending := NewWorktreeField(theme.Default())
+	pending.SetBase("develop")
+	if got := pending.Base(); got != "" {
+		t.Fatalf("Base() before the list arrived = %q, want \"\" -- there is nothing to select yet", got)
+	}
+	pending.SetBaseItems(1, []string{"main", "develop"})
+	if got := pending.Base(); got != "develop" {
+		t.Fatalf("Base() after the list arrived = %q, want the remembered %q", got, "develop")
+	}
+
+	// Once it lands it is forgotten: a later refresh must not re-apply it
+	// over a selection the user has since moved.
+	pending.SetGitTarget(true)
+	pending.SetOn(true)
+	focusBase(pending)
+	pending.Update(key(tea.KeyUp, 0)) // develop -> main
+	if got := pending.Base(); got != "main" {
+		t.Fatalf("setup: Base() = %q, want the user's own %q", got, "main")
+	}
+	pending.SetBaseItems(2, []string{"main", "develop"})
+	if got := pending.Base(); got != "main" {
+		t.Fatalf("Base() after a later refresh = %q, want the user's %q -- a landed SetBase must not re-apply", got, "main")
 	}
 }
 
@@ -230,8 +393,7 @@ func TestWorktreeField_BaseSentinelHasNonEmptyID(t *testing.T) {
 func TestWorktreeField_SetBaseItemsRefreshPreservesSelectionByID(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 	w.SetBaseItems(1, []string{"main", "develop", "release"})
-	w.BaseSection().Update(key(tea.KeyDown, 0)) // HEAD -> main
-	w.BaseSection().Update(key(tea.KeyDown, 0)) // main -> develop
+	w.SetBase("develop")
 	if got := w.Base(); got != "develop" {
 		t.Fatalf("setup: Base() = %q, want %q", got, "develop")
 	}
@@ -248,30 +410,42 @@ func TestWorktreeField_SetBaseItemsRefreshPreservesSelectionByID(t *testing.T) {
 func TestWorktreeField_SetBaseItemsAndSelect(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 	w.SetGitTarget(true)
-	turnOn(w)
+	w.SetOn(true)
 	w.SetBaseItems(1, []string{"main", "develop"})
+	focusBase(w)
 
-	w.BaseSection().Update(key(tea.KeyDown, 0)) // HEAD -> main
+	w.Update(key(tea.KeyDown, 0)) // HEAD -> main
 	if got := w.Base(); got != "main" {
 		t.Fatalf("Base() after one Down = %q, want %q", got, "main")
 	}
-	w.BaseSection().Update(key(tea.KeyDown, 0)) // main -> develop
+	w.Update(key(tea.KeyDown, 0)) // main -> develop
 	if got := w.Base(); got != "develop" {
 		t.Fatalf("Base() after two Downs = %q, want %q", got, "develop")
 	}
-	w.BaseSection().Update(key(tea.KeyUp, 0))
-	w.BaseSection().Update(key(tea.KeyUp, 0))
+	w.Update(key(tea.KeyUp, 0))
+	w.Update(key(tea.KeyUp, 0))
 	if got := w.Base(); got != "" {
 		t.Fatalf("Base() back at the top = %q, want \"\" (HEAD)", got)
 	}
 }
 
+// focusBase puts the part cursor on the base list, the state in which ↑↓
+// drive the picker.
+func focusBase(w *WorktreeField) {
+	w.Focus()
+	w.Update(key(tea.KeyDown, 0))
+	w.Update(key(tea.KeyDown, 0))
+}
+
 func TestWorktreeField_SetBaseItemsStalenessGate(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
 	w.SetBaseItems(2, []string{"fresh"})
 	w.SetBaseItems(1, []string{"stale"}) // dropped: older version
+	focusBase(w)
 
-	w.BaseSection().Update(key(tea.KeyDown, 0))
+	w.Update(key(tea.KeyDown, 0))
 	if got := w.Base(); got != "fresh" {
 		t.Fatalf("Base() = %q after a stale SetBaseItems call, want the fresher %q to survive", got, "fresh")
 	}
@@ -283,66 +457,117 @@ func TestWorktreeField_SetBaseStatusShown(t *testing.T) {
 	turnOn(w)
 	w.SetBaseStatus("searching…")
 
-	frame := ansi.Strip(w.BaseSection().View(60, w.BaseSection().Height(24)))
+	frame := ansi.Strip(w.Panel(60, w.PanelRows()))
 	if !strings.Contains(frame, "searching…") {
-		t.Fatalf("BaseSection().View(60) = %q, want it to contain the base status", frame)
+		t.Fatalf("Panel = %q, want it to contain the base status", frame)
+	}
+}
+
+// TestWorktreeField_RowVocabulary pins v2 spec §6's worktree row in each
+// of its three states, and the elision order the row promises.
+func TestWorktreeField_RowVocabulary(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+
+	if got := rowText(w.Row(60)); got != worktreeNonGitPlaceholder {
+		t.Errorf("Row on a non-git target = %q, want %q", got, worktreeNonGitPlaceholder)
+	}
+
+	w.SetGitTarget(true)
+	if got := rowText(w.Row(60)); got != worktreeOffPlaceholder {
+		t.Errorf("Row while off = %q, want %q", got, worktreeOffPlaceholder)
+	}
+
+	w.SetOn(true)
+	w.SetBranch("zvi/fix-login-redirect-loop", false)
+	w.SetHeadBranch("main")
+	// The row names the ref this worktree will branch FROM, not the
+	// picker row that chose it: HEAD selected plus a checked-out `main`
+	// reads `← main`, never `← HEAD (main)`.
+	if got, want := rowText(w.Row(60)), "on · zvi/fix-login-redirect-loop ← main"; got != want {
+		t.Errorf("Row = %q, want %q", got, want)
+	}
+
+	w.SetBaseItems(1, []string{"release/1.4"})
+	w.SetBase("release/1.4")
+	if got, want := rowText(w.Row(60)), "on · zvi/fix-login-redirect-loop ← release/1.4"; got != want {
+		t.Errorf("Row with an explicit base = %q, want %q", got, want)
+	}
+	w.SetBase("")
+	w.SetHeadBranch("")
+	if got, want := rowText(w.Row(60)), "on · zvi/fix-login-redirect-loop ← HEAD"; got != want {
+		t.Errorf("Row on a detached HEAD = %q, want %q", got, want)
+	}
+	w.SetHeadBranch("main")
+	w.SetBase("")
+
+	// The base gives up cells first...
+	if got := rowText(w.Row(40)); !strings.Contains(got, "zvi/fix-login-redirect-loop") {
+		t.Errorf("Row at 40 cells = %q, want the branch intact and the base elided", got)
+	}
+	// ...then the whole clause goes, rather than showing a stub...
+	if got := rowText(w.Row(34)); strings.Contains(got, "←") {
+		t.Errorf("Row at 34 cells = %q, want the base clause dropped entirely", got)
+	}
+	// ...and only then does the branch itself elide.
+	if got := rowText(w.Row(20)); !strings.HasSuffix(got, rowEllipsis) {
+		t.Errorf("Row at 20 cells = %q, want the branch elided last, marked with %q", got, rowEllipsis)
 	}
 }
 
 // TestWorktreeField_NonGitPlaceholdersAreDistinct pins the brief's own
-// "inert w/ distinct placeholders" wording: the branch and base rows must
-// show DIFFERENT placeholder text for "not a git repository" than for
-// merely "off" (git repo, toggle off) -- otherwise a user couldn't tell
-// the two inert reasons apart.
+// "inert w/ distinct placeholders" wording: the panel must show DIFFERENT
+// text for "not a git repository" than for merely "off" (git repo, toggle
+// off) -- otherwise a user could not tell the two inert reasons apart.
 func TestWorktreeField_NonGitPlaceholdersAreDistinct(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 
 	w.SetGitTarget(false)
-	nonGitBranch := ansi.Strip(w.BranchSection().View(60, w.BranchSection().Height(24)))
-	nonGitBase := ansi.Strip(w.BaseSection().View(60, w.BaseSection().Height(24)))
+	nonGit := ansi.Strip(w.Panel(60, w.PanelRows()))
 
 	w.SetGitTarget(true) // git repo, but still off
-	offBranch := ansi.Strip(w.BranchSection().View(60, w.BranchSection().Height(24)))
-	offBase := ansi.Strip(w.BaseSection().View(60, w.BaseSection().Height(24)))
+	off := ansi.Strip(w.Panel(60, w.PanelRows()))
 
-	if nonGitBranch == offBranch {
-		t.Errorf("branch row placeholder is identical for \"non-git\" and \"off\": %q", nonGitBranch)
+	if nonGit == off {
+		t.Errorf("panel is identical for \"non-git\" and \"off\": %q", nonGit)
 	}
-	if nonGitBase == offBase {
-		t.Errorf("base row placeholder is identical for \"non-git\" and \"off\": %q", nonGitBase)
+	if !strings.Contains(nonGit, worktreeNonGitPlaceholder) {
+		t.Errorf("non-git panel = %q, want it to name the reason", nonGit)
+	}
+	if !strings.Contains(off, worktreeOffPlaceholder) {
+		t.Errorf("off panel = %q, want it to name the reason", off)
 	}
 }
 
-func TestWorktreeField_HeightIsConstantAcrossStates(t *testing.T) {
+// TestWorktreeField_FooterRungsFollowThePart pins v2 spec §3 rule 4 for
+// the one field whose keys mean different things in different parts: the
+// footer must not promise "←→ toggle" while the user is typing a branch
+// name, and must not promise "type to edit" anywhere else.
+func TestWorktreeField_FooterRungsFollowThePart(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
-	chipsBase := w.ChipsSection().Height(24)
-	branchBase := w.BranchSection().Height(24)
-	baseBase := w.BaseSection().Height(24)
-
 	w.SetGitTarget(true)
-	turnOn(w)
-	w.SetBranch("some/branch", false)
-	w.SetBaseItems(1, []string{"main", "develop", "release"})
-	w.SetBaseStatus("searching…")
+	w.SetOn(true)
+	w.SetBaseItems(1, []string{"main"})
+	w.Focus()
 
-	if got := w.ChipsSection().Height(24); got != chipsBase {
-		t.Errorf("ChipsSection().Height(24) changed: got %d, want %d", got, chipsBase)
+	widest := func() string { return w.FooterRungs()[0] }
+
+	if got := widest(); !strings.Contains(got, "←→") {
+		t.Errorf("rung on the chips part = %q, want it to teach the toggle", got)
 	}
-	if got := w.BranchSection().Height(24); got != branchBase {
-		t.Errorf("BranchSection().Height(24) changed: got %d, want %d", got, branchBase)
+	w.Update(key(tea.KeyDown, 0))
+	if got := widest(); !strings.Contains(got, "type to edit") || strings.Contains(got, "←→") {
+		t.Errorf("rung on the branch part = %q, want it to teach typing and NOT the toggle", got)
 	}
-	if got := w.BaseSection().Height(24); got != baseBase {
-		t.Errorf("BaseSection().Height(24) changed: got %d, want %d", got, baseBase)
+	w.Update(key(tea.KeyDown, 0))
+	if got := widest(); !strings.Contains(got, "↑↓ pick") {
+		t.Errorf("rung on the base part = %q, want it to teach the list", got)
 	}
 
-	if got := strings.Count(w.ChipsSection().View(60, w.ChipsSection().Height(24)), "\n") + 1; got != chipsBase {
-		t.Errorf("ChipsSection().View(60) rendered %d lines, want %d", got, chipsBase)
-	}
-	if got := strings.Count(w.BranchSection().View(60, w.BranchSection().Height(24)), "\n") + 1; got != branchBase {
-		t.Errorf("BranchSection().View(60) rendered %d lines, want %d", got, branchBase)
-	}
-	if got := strings.Count(w.BaseSection().View(60, w.BaseSection().Height(24)), "\n") + 1; got != baseBase {
-		t.Errorf("BaseSection().View(60) rendered %d lines, want %d", got, baseBase)
+	// A non-git target must not be promised keys that do nothing -- which
+	// is exactly what footer.go's own ZoneWorktree table would have said.
+	nonGit := NewWorktreeField(theme.Default())
+	if got := nonGit.FooterRungs()[0]; strings.ContainsAny(got, "←→↑↓") {
+		t.Errorf("rung on a non-git target = %q, want no arrow key promised: none of them do anything here", got)
 	}
 }
 
@@ -353,11 +578,14 @@ func TestWorktreeField_NoPanicOnDegenerateInputs(t *testing.T) {
 		}
 	}()
 	w := NewWorktreeField(theme.Default())
-	_ = w.ChipsSection().View(0, w.ChipsSection().Height(24))
-	_ = w.BranchSection().View(-2, w.BranchSection().Height(24))
-	_ = w.BaseSection().View(0, w.BaseSection().Height(24))
+	_ = w.Row(0)
+	_ = w.Row(-2)
+	_ = w.Panel(0, 0)
+	_ = w.Panel(-2, 1)
+	_ = w.Panel(4, 20)
 	w.SetBaseItems(1, nil)
 	w.SetBranch("", true)
+	w.SetBase("nothing-like-this")
 }
 
 // TestWorktreeField_HeadRowNamesTheCurrentBranch pins spec §6 field 4's
@@ -370,20 +598,22 @@ func TestWorktreeField_HeadRowNamesTheCurrentBranch(t *testing.T) {
 	w.SetOn(true)
 	w.SetBaseItems(1, []string{"release/1.4"})
 
-	base := w.BaseSection()
-	if frame := ansi.Strip(base.View(60, base.Height(40))); strings.Contains(frame, "HEAD (") {
-		t.Fatalf("base picker = %q, want a bare HEAD before any branch is supplied", frame)
+	if frame := ansi.Strip(w.Panel(60, w.PanelRows())); strings.Contains(frame, "HEAD (") {
+		t.Fatalf("base panel = %q, want a bare HEAD before any branch is supplied", frame)
 	}
 
 	w.SetHeadBranch("main")
-
-	frame := ansi.Strip(base.View(60, base.Height(40)))
-	if !strings.Contains(frame, "HEAD (main)") {
-		t.Errorf("base picker = %q, want the HEAD row to name the current branch", frame)
+	if got := w.HeadBranch(); got != "main" {
+		t.Errorf("HeadBranch() = %q, want %q -- the app layer reads it back for the header", got, "main")
 	}
-	// The selection display on the header row must agree with the row.
-	if !strings.Contains(strings.SplitN(frame, "\n", 2)[0], "HEAD (main)") {
-		t.Errorf("base header = %q, want it to show the same HEAD label as row 0", frame)
+
+	frame := ansi.Strip(w.Panel(60, w.PanelRows()))
+	if !strings.Contains(frame, "HEAD (main)") {
+		t.Errorf("base panel = %q, want the HEAD row to name the current branch", frame)
+	}
+	// The base part's own selection display must agree with the row.
+	if !strings.Contains(strings.Split(frame, "\n")[2], "HEAD (main)") {
+		t.Errorf("base part = %q, want it to show the same HEAD label as row 0", frame)
 	}
 	// The sentinel's own public contract is unchanged: HEAD still means "".
 	if got := w.Base(); got != "" {
@@ -399,7 +629,8 @@ func TestWorktreeField_HeadRowKeepsTheUsersSelection(t *testing.T) {
 	w.SetGitTarget(true)
 	w.SetOn(true)
 	w.SetBaseItems(1, []string{"release/1.4"})
-	w.BaseSection().Update(key(tea.KeyDown, 0)) // HEAD -> release/1.4
+	focusBase(w)
+	w.Update(key(tea.KeyDown, 0)) // HEAD -> release/1.4
 
 	if got := w.Base(); got != "release/1.4" {
 		t.Fatalf("Base() = %q, want the user's own selection before the head branch lands", got)

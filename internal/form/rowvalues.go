@@ -120,6 +120,28 @@ func panelMarked(content string, cursor bool, p theme.Palette) string {
 	return panelGutter(cursor, p) + content
 }
 
+// panelChipRow composes one panel line whose content is a
+// widgets.ChipRow render, already fitted to panelChipWidth(w).
+//
+// It pays for only ONE of the gutter's two cells and lets the chip row's
+// own leading space stand in for the other: ChipRow renders every chip as
+// " label ", so a chip row composed through panelMarked like any other
+// content sits one column right of the picker rows and part labels
+// beside it. One cell is a small thing to be wrong about and a very
+// visible one in a panel whose whole job is an aligned column.
+//
+// An INERT chip row has no such padding (widgets.ChipRow renders its
+// placeholder bare), so a caller in that state must use panelMarked
+// instead -- see field_worktree.go's Panel, which switches on exactly
+// that.
+func panelChipRow(content string) string {
+	return strings.Repeat(" ", gutterWidth-1) + content
+}
+
+// panelChipWidth is the width a chip row is rendered at to land in the
+// column panelChipRow then places it in.
+func panelChipWidth(w int) int { return panelInner(w) + 1 }
+
 // panelPickerLines renders pk into exactly h panel lines w cells wide:
 // the picker itself in the content column, its cursor row marked with
 // panelCursorGlyph in the gutter. zonePrefix is passed straight through

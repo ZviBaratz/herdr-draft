@@ -41,6 +41,11 @@ import (
 // plan in Task 20 (submit/plan.Build wiring is Task 20b's job).
 const claudeKind = "claude"
 
+// formName is the header's left-hand text (v2 spec §4). Lowercase, like
+// every other label in the form and like herdr's own modal headers (v2
+// spec §7).
+const formName = "new session"
+
 // knownAgentKinds is herdr's full 23-kind agent list (spec §6 field 6:
 // "full kind list (herdr's 23)"), translated from
 // /home/zvi/Projects/herdr/src/detect/mod.rs's `Agent::ALL` /
@@ -160,6 +165,14 @@ type Setup struct {
 	Workspaces   []herdrc.WorkspaceInfo
 	ClauthStatus clauth.Status
 	LinearCache  []linear.Issue
+	// HomeDir is the string DirField collapses to "~" when it displays a
+	// path (v2 spec §4). It is passed in rather than read here for the
+	// same reason every other tier is -- New performs no I/O -- and, more
+	// pointedly, because a golden frame that consulted os.UserHomeDir
+	// would render differently on every machine whose home is not the
+	// author's. Bootstrap fills it from pathx.Home; "" disables
+	// collapsing.
+	HomeDir string
 	// LinearUnavailable is non-empty when Linear is CONFIGURED but its API
 	// key could not be resolved (a broken [linear] api_key_cmd, or an
 	// inline api_key in a config.toml wider than 0600). Distinct from
@@ -264,6 +277,7 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		ClauthStatus:      clauthStatus,
 		LinearCache:       linearCache,
 		LinearUnavailable: linearUnavailable,
+		HomeDir:           pathx.Home(),
 	}), nil
 }
 
@@ -288,6 +302,9 @@ type Model struct {
 	state    config.State
 	ctx      herdrc.Context
 	stateDir string
+	// homeDir is retained purely so handleClearRequested's rebuild through
+	// New can hand it back (see Setup.HomeDir); nothing else reads it.
+	homeDir string
 
 	deps Deps
 
@@ -445,9 +462,17 @@ type Model struct {
 	// one-shot gate would have blocked the second project's remembered
 	// toggle outright, and removing it while keeping a second gate for the
 	// same question would have put the two back in competition.
+	// baseTouched joins them for the fourth field projects.json remembers
+	// (config.Projects.Entry.Base). It could not exist until WorktreeField
+	// had a setter for its base picker's selection: #7 resolved and
+	// persisted the remembered base and then had nowhere to put it, so
+	// "remember the base" worked in every layer beneath the view and was
+	// invisible on screen. WorktreeField.SetBase closed that, and this is
+	// the flag that keeps it from fighting the user.
 	worktreeTouched  bool
 	placementTouched bool
 	agentTouched     bool
+	baseTouched      bool
 
 	// appliedWorktreeOn/appliedPlacement/appliedAgentKind are what the APP
 	// itself last put in those three fields (snapshotAppliedDefaults). The
@@ -476,6 +501,7 @@ type Model struct {
 	appliedWorktreeOn bool
 	appliedPlacement  plan.Placement
 	appliedAgentKind  string
+	appliedBaseRef    string
 
 	// dirInvalid/titleDupBlocked mirror the last dir-validity/title-dup
 	// verdict each already pushed into DirField/TitleField (handleDirResult/
@@ -567,6 +593,7 @@ func New(s Setup) Model {
 		projects:     s.Projects,
 		ctx:          s.Ctx,
 		stateDir:     s.StateDir,
+		homeDir:      s.HomeDir,
 		deps:         s.Deps,
 		workspaces:   s.Workspaces,
 		clauthStatus: s.ClauthStatus,
@@ -684,24 +711,36 @@ func New(s Setup) Model {
 	// browsed rows around it are (see DirField.SetPathExpander): the app
 	// layer owns every path resolution, the form package none.
 	m.dir.SetPathExpander(s.Deps.Git.ResolvePath)
+	// The reverse mapping, for display only: v2's project row and its
+	// panel show "~/Projects/herdr-draft", never the expanded home (v2
+	// spec §4). internal/form performs no I/O, so it has to be told where
+	// home is; an undeterminable home ("") simply disables collapsing.
+	m.dir.SetHomeDir(s.HomeDir)
 
-	sections := make([]form.Section, 0, 9)
+	// v2 spec §6's row order, declared HERE and nowhere else: issue,
+	// title, prompt, project, worktree, placement, agent, account. Issue
+	// sits directly above title so one ⇧⇥ reaches it, and title/prompt --
+	// the two fields the fast path is about -- lead, with the machinery
+	// that usually needs no attention below them.
+	sections := make([]form.Section, 0, 8)
 	if m.issue != nil {
 		sections = append(sections, m.issue)
 	}
-	sections = append(sections, m.dir, m.title,
-		// The three worktree zones (carried requirement: "must still read
-		// as ONE visual group") are inserted back-to-back, in spec §6
-		// field 4's own on/off-then-branch-then-base order, with nothing
-		// from another field between them.
-		m.worktree.ChipsSection(), m.worktree.BranchSection(), m.worktree.BaseSection(),
-		m.placement, m.agent)
+	sections = append(sections, m.title, m.prompt, m.dir, m.worktree, m.placement, m.agent)
 	if m.account != nil {
 		sections = append(sections, m.account)
 	}
-	sections = append(sections, m.prompt)
 
-	m.form = form.New(form.Setup{Palette: palette, Sections: sections})
+	m.form = form.New(form.Setup{
+		Palette:  palette,
+		Sections: sections,
+		Name:     formName,
+		// v2 spec §8: "focus opens on title, not on the first enabled
+		// section" -- the whole point of the redesign is that the common
+		// session is open, type a title, Enter.
+		InitialFocusID: "title",
+	})
+	m.refreshFormContext()
 	m.syncDerivedInertness()
 	m.snapshotAppliedDefaults()
 
@@ -1046,6 +1085,7 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		Workspaces:   m.workspaces,
 		ClauthStatus: m.clauthStatus,
 		LinearCache:  m.linearIssues,
+		HomeDir:      m.homeDir,
 
 		LinearUnavailable: m.linearUnavailable,
 	})
@@ -1058,11 +1098,12 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 	// The suppression rides the touched flags rather than a second flag of
 	// its own, for the reason those flags replaced worktreeDefaultApplied:
 	// one mechanism decides whether a default may still be applied. A ⌃R⌃R
-	// is a deliberate statement about these three fields' values, which is
+	// is a deliberate statement about these four fields' values, which is
 	// exactly what "touched" means here.
 	fresh.worktreeTouched = true
 	fresh.placementTouched = true
 	fresh.agentTouched = true
+	fresh.baseTouched = true
 	next, sizeCmd := fresh.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	fresh = next.(Model)
 	return fresh, tea.Batch(fresh.Init(), sizeCmd)
@@ -1118,6 +1159,14 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	dupKey := titleVal + "\x00" + branchVal + "\x00" + dirVal
 	if dupKey != m.lastDupKey || worktreeOn != m.lastWorktreeOn {
 		m.lastDupKey = dupKey
+		// The resting note goes on NOW, not when the check lands, so the
+		// title panel says what the title will produce while the debounce
+		// is still running. Overwriting whatever verdict is there is safe
+		// precisely here and nowhere else: this branch fires exactly when
+		// a fresh check is being scheduled, so any duplicate warning
+		// already on screen was computed for a title/branch/dir triple
+		// that no longer holds and is about to be recomputed.
+		m.title.SetVerdict(titleVal, m.titleNote(""))
 		cmds = append(cmds, m.scheduleTitleCheck(titleVal, branchVal, dirVal, worktreeOn))
 	}
 
@@ -1129,6 +1178,12 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	}
 
 	m.syncDerivedInertness()
+	// Cheap and synchronous, like syncDerivedInertness above: the header's
+	// project name follows the project ROW, which can move on any routed
+	// message (a keystroke re-ranking the candidates, a click on a
+	// candidate row). Its branch half is refreshed separately, by the base
+	// check that learns it (async.go's handleBaseResult).
+	m.refreshFormContext()
 	m.snapshotAppliedDefaults()
 	return cmds
 }
@@ -1154,11 +1209,20 @@ func (m *Model) noteUserEdits() {
 	if k := m.agent.Value(); k != m.appliedAgentKind {
 		m.agentTouched = true
 	}
+	// The base needs one extra guard the other three do not: its value
+	// also changes when the CANDIDATE LIST changes underneath it (an async
+	// `git for-each-ref` landing, a project switch clearing the pool), and
+	// widgets.Picker falls back to row 0 when the ref it held is no longer
+	// on offer. Only a move AWAY from HEAD counts as a decision; a fall
+	// back to HEAD is the list moving, not the user.
+	if b := m.worktree.Base(); b != m.appliedBaseRef && b != "" {
+		m.baseTouched = true
+	}
 }
 
-// snapshotAppliedDefaults records the three memory-fed fields' current
-// values as "what the app put there", so noteUserEdits' next pass only
-// reports a change the USER made.
+// snapshotAppliedDefaults records the memory-fed fields' current values
+// as "what the app put there", so noteUserEdits' next pass only reports a
+// change the USER made.
 //
 // It is called at the end of every path that can move one of them without
 // user input -- New, reactToChanges and applyProjectDefaults -- always
@@ -1171,6 +1235,7 @@ func (m *Model) snapshotAppliedDefaults() {
 	m.appliedWorktreeOn = m.worktree.On()
 	m.appliedPlacement = m.placement.Value()
 	m.appliedAgentKind = m.agent.Value()
+	m.appliedBaseRef = m.worktree.Base()
 }
 
 // applyProjectDefaults re-resolves spec §10's layered defaults for the
@@ -1211,8 +1276,15 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool) {
 	if !m.agentTouched {
 		m.agent.SetKind(m.resolved.AgentKind)
 	}
-	// resolved.BaseRef is deliberately not applied: WorktreeField has no
-	// setter for its base picker's selection (see defaults.Resolved.BaseRef).
+	if !m.baseTouched {
+		// The remembered base almost always arrives BEFORE the branch list
+		// naming it: this runs off the debounced dir check, and the
+		// `git for-each-ref` that populates the picker is a separate,
+		// later round trip. SetBase holds the ref and re-applies it when
+		// the list lands (see its own doc comment), which is the whole
+		// reason it is not a plain SelectID here.
+		m.worktree.SetBase(m.resolved.BaseRef)
+	}
 
 	// Again, because the agent kind above drives AccountField's own inert
 	// condition (spec §6 field 7, "inert while the kind is not claude").
@@ -1292,6 +1364,51 @@ func (m *Model) syncDerivedInertness() {
 	if m.account != nil {
 		m.account.SetAgentIsClaude(m.agent.Value() == claudeKind)
 	}
+}
+
+// refreshFormContext sets the header's right-hand text (v2 spec §4): live
+// context for the SELECTED project -- its directory name and the branch
+// currently checked out there -- deliberately NOT the invoking workspace,
+// which is what the popup was launched from rather than what the session
+// being created will run in.
+//
+// The name is the selected path's own last segment. For a repository
+// checkout that is the repository name; for a linked worktree it is the
+// worktree's name, which is the more useful of the two to see here (it is
+// the directory the new session will actually sit beside).
+//
+// NON-GIT PROJECTS SHOW THE NAME ALONE, with no separator and no branch
+// half. The spec does not settle this, and the alternative --
+// "myproject · not a repository" -- says in the header what the project
+// row's own inert cell already says one line down, in a place reserved
+// for context rather than verdicts. The branch half exists when there is
+// a branch; otherwise there is simply less to say.
+//
+// A detached HEAD is the same case: gitx.CurrentBranch reports "" rather
+// than an error, so the header quietly drops to the name alone rather
+// than inventing a ref.
+func (m *Model) refreshFormContext() {
+	name := lastPathSegment(m.dir.Value())
+	if name == "" {
+		m.form.SetContext("")
+		return
+	}
+	if branch := m.worktree.HeadBranch(); branch != "" {
+		name += " · " + branch
+	}
+	m.form.SetContext(name)
+}
+
+// lastPathSegment is the final component of a slash-separated path, with
+// any trailing separator ignored -- filepath.Base's answer for the shapes
+// this form deals in, without importing path/filepath for one call whose
+// input is already a cleaned absolute path.
+func lastPathSegment(p string) string {
+	p = strings.TrimRight(p, "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // View renders the form and enables the popup chrome bubbletea v2 controls

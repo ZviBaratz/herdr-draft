@@ -109,6 +109,12 @@ type AgentField struct {
 	kinds         []string
 	lastConfirmed string
 
+	// pickerRowsShown is how many kind rows the last Panel render drew.
+	// widgets.Picker.SelectAt needs the SAME height MarkedView was called
+	// with to map a click back to an item, and unlike v1's fixed
+	// agentPickerRows the v2 panel's list height varies with the window.
+	pickerRowsShown int
+
 	// pickerVersion is bumped on every setPickerItems call so
 	// widgets.Picker.SetItems always sees a strictly newer version --
 	// deliberately never relying on its same-version preserve-by-ID
@@ -148,35 +154,32 @@ func (f *AgentField) Focus() tea.Cmd {
 // Blur removes input focus.
 func (f *AgentField) Blur() { f.focused = false }
 
-// Update handles Up/Down/Left/Right: while collapsed, Left/Up moves the
-// chip cursor back and Right/Down moves it forward, EXCEPT that Down on
-// the "more…" chip specifically expands the field instead of wrapping
-// past it (widgets.ChipRow's own Next() would otherwise wrap straight
-// back to the first favorite, defeating the whole point of the "more…"
-// chip); while expanded, Up/Down move the full-list picker's own cursor,
-// with Up at the top row collapsing back to the chip row (parked on
-// "more…", where it already sits -- expand() never moves the chip
-// cursor). Left/Right are no-ops while expanded: the user's attention is
-// inside the vertical list, and there is nothing left/right to navigate
-// to there.
+// Update implements v2's agent grammar, which needs no modes because the
+// panel shows both halves at once (v2 spec §6, "the more… list moves into
+// the panel"): ←→ move the favorite chip cursor, ↑↓ move the full
+// kind-list picker's, and either one confirms the kind it lands on.
+//
+// v1 had to arbitrate: its chip row and its list occupied the same rows,
+// so ↑↓ meant "move the chips" until a "more…" chip expanded the list and
+// then meant "move the list", with ↑ at the top collapsing back. Nothing
+// in v2 is collapsed, so nothing has two meanings, and the "more…" chip
+// that opened the list has no job left -- SetKinds stopped emitting it.
 func (f *AgentField) Update(msg tea.Msg) tea.Cmd {
 	if click, ok := msg.(tea.MouseClickMsg); ok {
 		f.handleClick(click)
 		return nil
 	}
 	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
-		// Wheel only has meaning over the expanded full-list picker (spec
-		// §7: "scroll the focused picker") -- the favorite chip row is a
-		// small, always-fully-visible set, nothing to scroll.
-		if f.expanded {
-			switch wheelDelta(wheel) {
-			case -1:
-				f.picker.CursorPrev()
-				f.syncConfirmedFromPicker()
-			case 1:
-				f.picker.CursorNext()
-				f.syncConfirmedFromPicker()
-			}
+		// The wheel scrolls the kind list (spec §7: "scroll the focused
+		// picker") -- the favorite chip row is a small, always-fully-
+		// visible set with nothing to scroll.
+		switch wheelDelta(wheel) {
+		case -1:
+			f.picker.CursorPrev()
+			f.syncConfirmedFromPicker()
+		case 1:
+			f.picker.CursorNext()
+			f.syncConfirmedFromPicker()
 		}
 		return nil
 	}
@@ -186,67 +189,37 @@ func (f *AgentField) Update(msg tea.Msg) tea.Cmd {
 	}
 	switch km.String() {
 	case "up":
-		if f.expanded {
-			if f.pickerAtTop() {
-				f.expanded = false
-			} else {
-				f.picker.CursorPrev()
-				f.syncConfirmedFromPicker()
-			}
-		} else {
-			f.chips.Prev()
-			f.syncConfirmedFromChip()
-		}
+		f.picker.CursorPrev()
+		f.syncConfirmedFromPicker()
 	case "down":
-		switch {
-		case f.expanded:
-			f.picker.CursorNext()
-			f.syncConfirmedFromPicker()
-		case f.chips.Selected().ID == agentMoreChipID:
-			f.expand()
-		default:
-			f.chips.Next()
-			f.syncConfirmedFromChip()
-		}
+		f.picker.CursorNext()
+		f.syncConfirmedFromPicker()
 	case "left":
-		if !f.expanded {
-			f.chips.Prev()
-			f.syncConfirmedFromChip()
-		}
+		f.chips.Prev()
+		f.syncConfirmedFromChip()
 	case "right":
-		if !f.expanded {
-			f.chips.Next()
-			f.syncConfirmedFromChip()
-		}
+		f.chips.Next()
+		f.syncConfirmedFromChip()
 	}
 	return nil
 }
 
-// handleClick implements task 21's mouse click over AgentField: while
-// expanded, a click on one of the full-list picker's own
-// "row:agent:<n>" zones selects that row (SelectAt), the click-driven
-// counterpart to Up/Down's own CursorPrev/CursorNext+
-// syncConfirmedFromPicker pairing above; while collapsed, a click on one
-// of the favorite chip row's own "chip:agent:<chipID>" zones either
-// expands the field (clicking the synthetic "more…" chip -- the
-// click-driven counterpart to Down on "more…" in Update above) or
-// selects that favorite (syncConfirmedFromChip, mirroring Left/Right).
+// handleClick implements task 21's mouse click over AgentField: a click
+// on one of the kind list's own "row:agent:<n>" zones selects that row
+// (SelectAt, the click-driven counterpart to ↑↓), and a click on one of
+// the favorite chip row's own "chip:agent:<chipID>" zones selects that
+// favorite (the counterpart to ←→). Both halves are always on screen, so
+// unlike v1 there is no mode deciding which of the two a click can mean.
 func (f *AgentField) handleClick(msg tea.MouseClickMsg) {
-	if f.expanded {
-		if _, ok := f.picker.SelectAt(msg, agentPickerRows, "row:"+f.ID()+":"); ok {
+	if _, ok := f.chips.SelectAt(msg, "chip:"+f.ID()+":"); ok {
+		f.syncConfirmedFromChip()
+		return
+	}
+	if f.pickerRowsShown > 0 {
+		if _, ok := f.picker.SelectAt(msg, f.pickerRowsShown, "row:"+f.ID()+":"); ok {
 			f.syncConfirmedFromPicker()
 		}
-		return
 	}
-	chip, ok := f.chips.SelectAt(msg, "chip:"+f.ID()+":")
-	if !ok {
-		return
-	}
-	if chip.ID == agentMoreChipID {
-		f.expand()
-		return
-	}
-	f.syncConfirmedFromChip()
 }
 
 // pickerAtTop reports whether the full-list picker's cursor is already on
@@ -308,20 +281,23 @@ func (f *AgentField) syncConfirmedFromPicker() {
 // SetKinds replaces the field's ordered kind list -- see the file doc's
 // design note for how favorites-vs-full-list is derived from this single
 // list's own order. Resets the chip cursor to index 0 (kinds[0], spec
-// §12's own configured default) and collapses the full-list picker.
+// §12's own configured default).
+//
+// The chip row carries the leading favorites and NOTHING ELSE. v1 also
+// appended a synthetic "more…" chip, whose whole job was to open the full
+// kind list; v2's panel shows that list permanently, one line below the
+// chips, so a chip meaning "show the thing already on screen" is a
+// control with no effect.
 func (f *AgentField) SetKinds(kinds []string) {
 	f.kinds = append([]string(nil), kinds...)
 	f.expanded = false
 
-	chips := make([]widgets.Chip, 0, agentFavoriteChips+1)
+	chips := make([]widgets.Chip, 0, agentFavoriteChips)
 	for i, k := range f.kinds {
 		if i >= agentFavoriteChips {
 			break
 		}
 		chips = append(chips, widgets.Chip{ID: k, Label: k})
-	}
-	if len(f.kinds) > agentFavoriteChips {
-		chips = append(chips, widgets.Chip{ID: agentMoreChipID, Label: agentMoreLabel})
 	}
 	f.chips.SetChips(chips)
 
@@ -339,10 +315,9 @@ func (f *AgentField) SetKinds(kinds []string) {
 // with a guess at a stale or typo'd value, matching AccountField.SetPin's
 // own posture for the same class of persisted-preference input.
 //
-// A kind that has its own chip moves the chip cursor; one reachable only
-// through the "more…" list selects it there and parks the chip cursor on
-// "more…", which is where the user would have had to go to pick it by
-// hand.
+// A kind that has its own chip moves the chip cursor to it; either way
+// the kind list's own cursor is moved there too, so the panel's two
+// halves never disagree about what is selected.
 //
 // Added alongside the state-persistence wiring (finding I2): SetKinds'
 // "index 0 is the default" contract could express only the CONFIGURED
@@ -363,27 +338,11 @@ func (f *AgentField) SetKind(kind string) {
 		return
 	}
 
-	if f.chips.SelectID(kind) {
-		// Collapse: a kind with its own chip is fully described by the chip
-		// row, and an expanded list left over from an EARLIER SetKind call
-		// would highlight a kind that is no longer the selected one --
-		// while also swallowing Left/Right, since those belong to the chip
-		// row only while the list is collapsed (see Update). Seeding
-		// callers may legitimately call SetKind more than once (app.New
-		// applies `[agents] default`, then last-used), so this method has
-		// to leave the field coherent on its own rather than relying on
-		// SetKinds having just reset the flag.
-		f.expanded = false
-		f.syncConfirmedFromChip()
-		return
-	}
-	// Not a favorite, so it only exists behind "more…". Park the chip
-	// cursor there and expand the list around it: leaving the list
-	// collapsed would show a highlighted "more…" chip and no indication
-	// anywhere of which kind is actually selected. expand() seeds the
-	// picker's cursor from lastConfirmed, so set that first.
+	f.chips.SelectID(kind) // a no-op for a kind with no chip of its own
+	// expand() seeds the kind list's cursor from lastConfirmed, so set
+	// that first. Its own `expanded` flag is v1's and means nothing here:
+	// v2's panel shows the list whether or not anything "expanded" it.
 	f.lastConfirmed = kind
-	f.chips.SelectID(agentMoreChipID)
 	f.expand()
 }
 
@@ -442,16 +401,18 @@ func (f *AgentField) Panel(w, h int) string {
 	if h < 1 {
 		h = 1
 	}
-	chips := f.chips.MarkedView(panelInner(w), "chip:"+f.ID()+":")
+	chips := f.chips.MarkedView(panelChipWidth(w), "chip:"+f.ID()+":")
 	if idx := strings.IndexByte(chips, '\n'); idx >= 0 {
 		chips = chips[:idx]
 	}
-	lines := []string{panelMarked(chips, false, f.palette)}
+	lines := []string{panelChipRow(chips)}
 
+	f.pickerRowsShown = 0
 	if h > 1 {
 		if len(f.kinds) == 0 {
 			lines = append(lines, panelText(dimHint(f.palette).Render(agentPanelEmpty), w))
 		} else {
+			f.pickerRowsShown = h - 1
 			lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
 		}
 	}

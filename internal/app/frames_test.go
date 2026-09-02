@@ -137,19 +137,22 @@ func newAssembledModel(t *testing.T, full bool) Model {
 
 // sectionMarkers maps every Section ID New can assemble to a literal
 // string that must appear in the render whenever that section holds focus.
-// Text fields are named by their own label; the three chip rows carry no
-// label of their own, so each is named by a chip only it renders.
+// In v2 that is simply each field's own row label (v2 spec §6's table) --
+// v1 needed a per-field rule here because three of its sections were bare
+// chip rows with no label at all.
+//
+// It lost "branch" and "base" with the worktree collapse, and "create"
+// keeps its button text: Create is the one section that renders on the
+// footer rather than in the stack.
 var sectionMarkers = map[string]string{
-	"issue":     "Issue:",
-	"dir":       "Project:",
-	"title":     "Title:",
-	"worktree":  "Off",
-	"branch":    "Branch:",
-	"base":      "Base:",
-	"placement": "New space",
-	"agent":     "claude",
-	"account":   "Account:",
-	"prompt":    "Prompt:",
+	"issue":     "issue",
+	"dir":       "project",
+	"title":     "title",
+	"worktree":  "worktree",
+	"placement": "placement",
+	"agent":     "agent",
+	"account":   "account",
+	"prompt":    "prompt",
 	"create":    "Create",
 }
 
@@ -172,8 +175,14 @@ func TestAssembledForm_FocusedSectionVisibleAt80x24(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := newAssembledModel(t, full)
 			ids := m.form.SectionIDs()
-			if len(ids) < 9 {
-				t.Fatalf("assembled form has %d sections (%v), want the full spec §6 field list", len(ids), ids)
+			// v2's stack is eight rows plus the Create section on the
+			// footer; the minimal configuration omits issue and account
+			// entirely (v2 spec §6.1's "absent by design"), leaving six
+			// rows and Create. This is a floor guard against a section
+			// silently vanishing -- TestNew_SectionOrder pins the exact
+			// list, and its order, for both configurations.
+			if len(ids) < 7 {
+				t.Fatalf("assembled form has %d sections (%v), want the full v2 spec §6 field list", len(ids), ids)
 			}
 
 			for _, id := range ids {
@@ -266,12 +275,41 @@ func TestAssembledForm_Frames(t *testing.T) {
 		m.title.SetTitle("fix login redirect loop", false)
 		m.worktree.SetOn(tc.worktree)
 		m.worktree.SetBranch("zvi/fix-login-redirect-loop", false)
+		m.worktree.SetHeadBranch("main")
 		m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
 		m.prompt.SetValue("Work on ENG-101: Fix login redirect loop", false)
-		m.syncDerivedInertness()
+		// Through the real reaction path rather than by hand: it is what
+		// syncs Placement's inert state, the header's context line AND the
+		// title panel's resting note, so the frame shows what a running
+		// form shows rather than a hand-assembled subset of it. The Cmds
+		// it schedules are debounces nothing in this test ever fires.
+		m.reactToChanges()
 		m.form.FocusByID("prompt")
 
 		assertAppFrame(t, fmt.Sprintf("assembled-%s-80x24", tc.name), m, 80, 24)
 		assertAppFrame(t, fmt.Sprintf("assembled-%s-120x40", tc.name), m, 120, 40)
 	}
+}
+
+// TestAssembledForm_FullAt64x19 pins the size this whole rewrite is
+// justified by and which nothing previously covered: the interior of
+// herdr's own 80%-height popup on an 80x24 terminal.
+//
+// It is deliberately a SEPARATE test from the four frames above rather
+// than a third size on the same loop: those render with the prompt
+// focused (the field v1's allocator made invisible, which is why they
+// exist), while the size that matters here should show the form as it
+// actually opens -- focused on the title, v2 spec §8's opening state.
+func TestAssembledForm_FullAt64x19(t *testing.T) {
+	m := newAssembledModel(t, true)
+	m.title.SetTitle("fix login redirect loop", false)
+	m.worktree.SetOn(true)
+	m.worktree.SetBranch("zvi/fix-login-redirect-loop", false)
+	m.worktree.SetHeadBranch("main")
+	m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
+	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop", false)
+	m.reactToChanges()
+	m.form.FocusByID("title")
+
+	assertAppFrame(t, "assembled-full-64x19", m, 64, 19)
 }

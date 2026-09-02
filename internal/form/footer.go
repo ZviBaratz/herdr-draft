@@ -141,21 +141,36 @@ func tailRungs(armed bool) []string {
 	}
 }
 
-// crossRungs joins every lead with every tail, widest first, and then
-// lists the tails alone -- the narrowest usable footer is the constant
-// tail's own last rung, never nothing. A nil/empty lead degrades to the
-// tails alone rather than to an empty ladder.
+// crossRungs joins every lead with every tail, then adds the NARROWEST
+// tail on its own as the floor. A nil/empty lead degrades to the tails
+// alone rather than to an empty ladder.
+//
+// Only the narrowest tail is offered bare, and that restriction is the
+// whole point rather than an economy. fitFooter picks the WIDEST rung
+// that fits, with no notion of which half matters; offering the full tail
+// ladder unaccompanied meant a wide constant tail could out-measure --
+// and silently replace -- a narrower crossing that still carried the
+// focused field's own hint. At 64 columns with the title focused that is
+// exactly what happened: `Tab/⇧Tab move · ⌃S create · Esc cancel · ⌃R
+// clear` (49 cells) beat `↵ create · Tab move · ⌃S create · Esc cancel`
+// (45), so the footer stated the constants and taught nothing, which is
+// v2 spec §3 rule 4 backwards. With only `Esc` bare, any crossing that
+// fits always wins, and the bare rung is reached only on a window too
+// narrow for even the shortest crossing.
 func crossRungs(lead, tail []string) []string {
 	if len(lead) == 0 {
 		return tail
 	}
-	out := make([]string, 0, len(lead)*len(tail)+len(tail))
+	out := make([]string, 0, len(lead)*len(tail)+1)
 	for _, l := range lead {
 		for _, t := range tail {
 			out = append(out, l+" · "+t)
 		}
 	}
-	return append(out, tail...)
+	if len(tail) > 0 {
+		out = append(out, tail[len(tail)-1])
+	}
+	return out
 }
 
 // fitFooter returns the widest entry in rungs whose rendered width fits

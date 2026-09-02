@@ -400,8 +400,9 @@ func TestDirField_CollapseHomeStopsAtASegmentBoundary(t *testing.T) {
 
 // TestPlacementField_RowAndPanelVocabulary pins v2 spec §6's placement
 // row (lowercase, one word per choice) and the panel's per-choice
-// explanation -- and, critically, that populating that explanation did
-// NOT reach widgets.Chip.FocusHint, which v1's own View renders.
+// explanation, which lives on widgets.Chip.FocusHint -- v2 spec §7's one
+// widget-adjacent change, and the only reason no new widget code was
+// needed for it.
 func TestPlacementField_RowAndPanelVocabulary(t *testing.T) {
 	palette := theme.Default()
 	f := NewPlacementField(palette)
@@ -425,13 +426,16 @@ func TestPlacementField_RowAndPanelVocabulary(t *testing.T) {
 		}
 	}
 
-	// The explanation lives on PlacementField, not on the Chip: v1's
-	// ChipRow.MarkedView renders a selected chip's FocusHint on a second
-	// line, so putting it there would move the placement-inert frame.
+	// Every chip carries its own explanation and its own lowercase label:
+	// the row reads the label straight off the selected chip, so a chip
+	// added without either would show an empty row rather than a wrong
+	// one, which is the failure this catches.
 	for _, chip := range placementChips {
-		if chip.FocusHint != "" {
-			t.Errorf("placementChips[%q].FocusHint = %q; populating it moves v1's golden frame -- keep the explanation in placementFocusHints until the compose path flips",
-				chip.ID, chip.FocusHint)
+		if chip.FocusHint == "" {
+			t.Errorf("placementChips[%q].FocusHint is empty; the panel's explanation line reads it", chip.ID)
+		}
+		if chip.Label != strings.ToLower(chip.Label) {
+			t.Errorf("placementChips[%q].Label = %q, want lowercase (v2 spec §3 rule 5)", chip.ID, chip.Label)
 		}
 	}
 

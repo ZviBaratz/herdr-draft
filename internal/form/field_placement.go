@@ -23,6 +23,13 @@ import (
 // workspace regardless of Placement."
 const placementInertHint = "worktree opens as its own space"
 
+// placementInertPanelHint is what the PANEL says in the same state.
+// It differs from the row's own sentence deliberately: the row states the
+// consequence (v2 spec §3 rule 1) and the panel, being the chooser, says
+// what would give the reader a choice back. Repeating one sentence twice,
+// three lines apart, would have said neither.
+const placementInertPanelHint = "turn the worktree off to choose"
+
 // placementChips are spec §6 field 5's three options, in order; "new"
 // (index 0, plan.PlacementNewSpace, the zero value) is what
 // SetWorktreeOn(true) snaps the selection back to -- see SetWorktreeOn's
@@ -34,44 +41,23 @@ const placementInertHint = "worktree opens as its own space"
 // selects it" scenario the task brief names explicitly) read the same
 // vocabulary a config author already uses, instead of a second,
 // internal-only ID space for the exact same three concepts.
+//
+// Labels are lowercase and FocusHint carries each choice's one-line
+// explanation (v2 spec §7's one widget-adjacent change: "populating
+// Chip.FocusHint on the placement chips -- plain data, no new code").
+// v1 could not have either: it capitalized the labels because its chip
+// row was the field's whole rendering, and a populated FocusHint would
+// have made ChipRow.View two lines tall in a fixed-height section.
 var placementChips = []widgets.Chip{
-	{ID: "new", Label: "New space"},
-	{ID: "tab-here", Label: "Tab here"},
-	{ID: "split-here", Label: "Split here"},
+	{ID: "new", Label: "new space", FocusHint: "opens a new workspace of its own"},
+	{ID: "tab-here", Label: "tab here", FocusHint: "opens a tab beside this pane's tab"},
+	{ID: "split-here", Label: "split here", FocusHint: "splits this pane in two"},
 }
 
 // placementRowLabel is v2's row label (v2 spec §6). It is also the widest
 // label in the stack, and therefore what rowlayout.go's labelColWidth is
 // sized against.
 const placementRowLabel = "placement"
-
-// placementRowValues is v2 spec §6's row vocabulary for this field: the
-// same three choices as placementChips, lowercase, as the row stack reads
-// them. It is a SEPARATE table rather than a lowercasing of Chip.Label
-// because v1's chip row still renders those labels capitalized in every
-// committed golden frame.
-var placementRowValues = map[string]string{
-	"new":        "new space",
-	"tab-here":   "tab here",
-	"split-here": "split here",
-}
-
-// placementFocusHints is the one-line explanation v2's panel prints under
-// the chips for whichever choice is selected (v2 spec §6: "placement
-// shows its chips with a per-choice explanation").
-//
-// It is deliberately NOT stored in widgets.Chip.FocusHint, which is where
-// it structurally belongs and where the v2 plan put it:
-// ChipRow.MarkedView already renders a selected chip's FocusHint on a
-// second line (chiprow.go:225-229), so populating it would change v1's
-// PlacementField.View output and move the placement-inert golden frame.
-// The second half of the migration -- the one that flips the compose path
-// and regenerates every frame -- is where that data moves onto the Chip.
-var placementFocusHints = map[string]string{
-	"new":        "opens a new workspace of its own",
-	"tab-here":   "opens a tab beside this pane's tab",
-	"split-here": "splits this pane in two",
-}
 
 // PlacementField is the form's Placement Section (spec §6 field 5): a
 // three-chip row selecting where a non-worktree creation attaches
@@ -161,7 +147,7 @@ func (f *PlacementField) SetWorktreeOn(on bool) {
 	if on {
 		f.chips.SetChips(placementChips)
 	}
-	f.chips.SetInert(on, placementInertHint)
+	f.chips.SetInert(on, placementInertPanelHint)
 }
 
 // SetValue moves the chip cursor directly to the chip matching v -- e.g.
@@ -236,7 +222,7 @@ func (f *PlacementField) Row(w int) string {
 	if f.worktreeOn {
 		return fitLine(dimHint(f.palette).Render(keepHead(placementInertHint, w)), w)
 	}
-	value := placementRowValues[f.chips.Selected().ID]
+	value := f.chips.Selected().Label
 	return fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(keepHead(value, w)), w)
 }
 
@@ -246,20 +232,30 @@ func (f *PlacementField) Row(w int) string {
 // second line stays blank rather than repeating the sentence already on
 // the row.
 func (f *PlacementField) Panel(w, h int) string {
-	chips := f.chips.MarkedView(panelInner(w), "chip:"+f.ID()+":")
-	// MarkedView appends a second line for a chip carrying a FocusHint.
-	// None do (see placementFocusHints' own doc comment), but taking the
-	// first line keeps this correct if one ever does.
-	if idx := strings.IndexByte(chips, '\n'); idx >= 0 {
-		chips = chips[:idx]
+	// A LIVE chip row pays for one of the gutter's two cells itself
+	// (panelChipRow); the INERT placeholder does not, so it is composed
+	// like any other panel text.
+	chipLine := func() string {
+		if f.worktreeOn {
+			return panelMarked(f.chips.MarkedView(panelInner(w), "chip:"+f.ID()+":"), false, f.palette)
+		}
+		v := f.chips.MarkedView(panelChipWidth(w), "chip:"+f.ID()+":")
+		// MarkedView appends the selected chip's FocusHint as a second
+		// line of its own, WITHOUT the panel's gutter. Taking only the
+		// first line here and re-composing the hint through panelText
+		// below is what keeps it aligned with every other panel line.
+		if idx := strings.IndexByte(v, '\n'); idx >= 0 {
+			v = v[:idx]
+		}
+		return panelChipRow(v)
 	}
 
 	hint := ""
 	if !f.worktreeOn {
-		hint = placementFocusHints[f.chips.Selected().ID]
+		hint = f.chips.Selected().FocusHint
 	}
 	return panelBlock(w, h,
-		panelMarked(chips, false, f.palette),
+		chipLine(),
 		panelText(dimHint(f.palette).Render(hint), w),
 	)
 }
