@@ -32,10 +32,6 @@ const (
 	// is what makes the column aligned by construction rather than by
 	// convention (v2 spec §5).
 	labelColWidth = 11
-	// maxContentWidth caps the content box. v2 spec §7: "width is capped
-	// and the content centered horizontally, so a 200-column terminal
-	// does not stretch rows into ribbons."
-	maxContentWidth = 88
 	// minValueWidth is the fewest cells the value column is allowed. On
 	// a window too narrow for both columns the LABEL gives up cells
 	// first (labelCol below): a row whose value is gone says nothing at
@@ -50,43 +46,52 @@ const (
 )
 
 // contentBox returns the left padding and the inner (label+value) width
-// of v2's content box in a popup w columns wide.
+// of the content box in a popup w columns wide.
 //
 // The box is laid out as
 //
-//	padLeft | gutterWidth | inner (= labelCol + valueCol) | right slack
+//	sideMargin | gutterWidth | inner (= labelCol + valueCol) | sideMargin
 //
-// with rightMargin (sizes.go) held back on the right, so `padLeft +
-// gutterWidth + inner + rightMargin <= w` always. inner is capped at
-// maxContentWidth and the slack that cap leaves over is split evenly
-// between the two sides, favouring the left on an odd remainder -- that
-// is the "centered" half of v2 spec §7's width cap.
+// and it FILLS the pane: `padLeft + gutterWidth + inner + sideMargin == w`
+// exactly, at every width above the degenerate ones (v3 spec §6.2).
+//
+// v2 capped inner at 88 and centered the slack, on the reasoning that "a
+// 200-column terminal does not stretch rows into ribbons". v3 spec §6.2
+// deletes the cap for two reasons. The pane width is now fixed by our own
+// manifest (v3 spec §6.1, 101 columns), so any cap is either dead code at
+// the one size that ships or reintroduces dead columns there; and the
+// ribbon worry assumed a naked line of text, where a focused row is now a
+// full-width band with its text at the left (v3 spec §5.4). The surface
+// that genuinely wanted the columns was the panel, and the cap was
+// costing it: at 190 columns it truncated issue titles mid-word with
+// eighty columns empty on either side.
+//
+// The margin is SYMMETRIC now. v2 held back a rightMargin only, so the
+// header, both rules and the footer -- which are drawn at the full box
+// width, gutter included -- sat flush against herdr's own `│` popup
+// glyph on the left.
 //
 // The gutterWidth column is a MARKER column again: v2 emptied it when it
 // replaced the `▎` focus bar with a full-width ActiveRowBG fill, and v3
 // spec §5.4 puts a bar back in it because that fill turned out to be
-// invisible (rowvalues.go's focusBarGlyph has the whole reversal). It
-// doubles as the two-cell inset §4's mockups show between the row stack
-// or the panel and the full-width header, rules and footer, and a
-// picker's own cursor glyph lands in exactly the same cell.
+// invisible (rowvalues.go's focusBarGlyph has the whole reversal). It is
+// not a margin -- it is the row stack's indent and the panel's cursor
+// column (rowvalues.go's panelGutter), which is why it stays two cells
+// wide while the margins around it change.
 //
 // Degenerate widths degrade rather than panic (the same contract
-// widgets/picker.go's widthStyle documents): inner is floored at 1 and
-// padLeft at 0, so a one-column window still asks for a renderable, if
-// useless, box.
+// widgets/picker.go's widthStyle documents), and the branch below is
+// shaped by one requirement: inner must be NONDECREASING in w. Shedding
+// the two margins one at a time as the window narrows would make inner
+// jump from 2 at w=4 to 1 at w=5 -- wider window, narrower box -- so the
+// degenerate case drops both margins and the content floor together, in
+// one step.
 func contentBox(w int) (padLeft, inner int) {
-	inner = w - gutterWidth - rightMargin
-	if inner > maxContentWidth {
-		inner = maxContentWidth
-	}
+	inner = w - gutterWidth - 2*sideMargin
 	if inner < 1 {
-		inner = 1
+		return 0, 1
 	}
-	padLeft = (w - gutterWidth - rightMargin - inner) / 2
-	if padLeft < 0 {
-		padLeft = 0
-	}
-	return padLeft, inner
+	return sideMargin, inner
 }
 
 // labelCol splits a content box inner cells wide into its label and

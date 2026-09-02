@@ -31,6 +31,19 @@ const (
 	// field most sessions leave empty.
 	promptPanelMinRows = 6
 	promptPanelMaxRows = 20
+
+	// promptPanelMaxWidth caps the measure the textarea WRAPS at, and it
+	// is the one thing v2's deleted maxContentWidth was silently
+	// protecting (v3 spec §6.3). Prose is the only content on this screen
+	// with a comfortable line length of its own -- every other panel is a
+	// table, which wants every column it can get -- so the clamp belongs
+	// here, in the one field that has the property, and not back in
+	// rowlayout.go's kernel where it would take the tables down with it.
+	//
+	// 100 is inert at the shipped 101-column pane (v3 spec §6.1): it
+	// exists for the oversized terminal, where a 190-cell line of prose
+	// is genuinely harder to read than a wrapped one.
+	promptPanelMaxWidth = 100
 )
 
 // promptPlaceholderLadder is spec §6 item 8's own placeholder ladder,
@@ -246,12 +259,20 @@ func promptSummary(value string) (first string, more int) {
 // sized to exactly the h rows the layout kept for it. SetRows is applied
 // here per render for the same reason View applies it: the widget caches
 // no geometry of its own.
+//
+// The WRAP measure is clamped to promptPanelMaxWidth while the panel line
+// itself is still padded to the panel's full width, so the prose stops at
+// a readable column without leaving the region's background unpainted
+// behind it.
 func (f *PromptField) Panel(w, h int) string {
 	if h < 1 {
 		h = 1
 	}
 	f.area.SetRows(h)
 	inner := panelInner(w)
+	if inner > promptPanelMaxWidth {
+		inner = promptPanelMaxWidth
+	}
 	rendered := strings.Split(f.area.View(inner), "\n")
 	lines := make([]string, 0, h)
 	for i := 0; i < h && i < len(rendered); i++ {

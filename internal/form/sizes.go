@@ -79,8 +79,8 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 )
 
-// Layout constants for the popup's own fixed chrome: the left gutter and
-// the right margin. These are herdr-draft's own numbers, not ported --
+// Layout constants for the popup's own fixed chrome: the marker gutter
+// and the side margins. These are herdr-draft's own numbers, not ported --
 // Atrium's formChromeLines counts a wholly different, larger set of fixed
 // rows (a bordered box, an overlay title, per-claude-field dividers) that
 // has no equivalent in this form's flatter, borderless layout.
@@ -96,13 +96,16 @@ import (
 // spacer), so it went with the cascade that used to drop it again on a
 // short terminal.
 const (
-	// gutterWidth is the left-margin column count: one cell for a marker
-	// -- a panel picker's own cursor glyph, or a stack row's focus bar --
-	// plus one separating space.
+	// gutterWidth is the marker column plus its separating space: a panel
+	// picker's own cursor glyph, or a stack row's focus bar, and one
+	// blank. It is content, not margin -- see sideMargin.
 	gutterWidth = 2
-	// rightMargin is the column count of blank space kept between the
-	// widest content column and the popup's own right edge.
-	rightMargin = 1
+	// sideMargin is the blank column kept on EACH side of the card, so
+	// the header, the rules and the footer -- all drawn at the full box
+	// width -- do not sit flush against herdr's own popup border (v3 spec
+	// §6.2). v2 held back a rightMargin only, which is exactly the defect:
+	// one column of air on the right and none on the left.
+	sideMargin = 1
 )
 
 // paintLine explicitly paints bg as line's background across exactly

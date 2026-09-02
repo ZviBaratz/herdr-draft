@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -117,6 +119,35 @@ func TestPromptField_ViewShowsPlaceholderLadderEntry(t *testing.T) {
 	// offer it as a way past the prompt.
 	if strings.Contains(frame, "Enter") || strings.Contains(frame, "skip") {
 		t.Errorf("View(80) = %q, want no placeholder naming Enter as a way to skip the prompt", frame)
+	}
+}
+
+// TestPromptField_PanelWrapsAtItsOwnMaxWidth pins v3 spec §6.3: with the
+// kernel's width cap gone, the ONE surface that still wants a reading
+// measure keeps its own. The prose wraps at promptPanelMaxWidth however
+// wide the panel gets, while the panel LINE is still padded to the full
+// width, so the region's background stays painted behind it.
+//
+// It is checked at a width no shipped popup produces on purpose: the
+// clamp is inert at the 101-column pane (v3 spec §6.1) and exists for the
+// oversized terminal, which is exactly the case a frame at the shipped
+// size cannot cover.
+func TestPromptField_PanelWrapsAtItsOwnMaxWidth(t *testing.T) {
+	f := NewPromptField(theme.Default())
+	f.SetValue(strings.Repeat("word ", 60), false)
+
+	const w = 200
+	lines := strings.Split(f.Panel(w, f.PanelRows()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("Panel(%d) produced %d lines, want the prose wrapped over several", w, len(lines))
+	}
+	for i, l := range lines {
+		if got := ansi.StringWidth(l); got != w {
+			t.Errorf("Panel(%d) line %d is %d cells wide, want the panel's full %d", w, i, got, w)
+		}
+		if got := ansi.StringWidth(strings.TrimRight(ansi.Strip(l), " ")); got > gutterWidth+promptPanelMaxWidth {
+			t.Errorf("Panel(%d) line %d has %d cells of text, want at most the gutter plus %d", w, i, got, promptPanelMaxWidth)
+		}
 	}
 }
 

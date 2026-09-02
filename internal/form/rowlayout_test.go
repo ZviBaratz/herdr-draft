@@ -247,12 +247,19 @@ func TestStackWindow_KeepsTheFocusedRowVisible(t *testing.T) {
 
 // --- contentBox / labelCol -------------------------------------------------
 
-// TestContentBox_FitsAndCentersAndCaps pins v2 spec §7's width cap and
-// centering: the box never overruns the window, is capped at
-// maxContentWidth however wide the terminal gets, and the slack that cap
-// leaves is split between the two margins rather than all falling on one
-// side.
-func TestContentBox_FitsAndCentersAndCaps(t *testing.T) {
+// TestContentBox_FillsThePane pins v3 spec §6.2, and it is the exact
+// inverse of the v2 test it replaces (TestContentBox_FitsAndCentersAndCaps,
+// which asserted a cap at 88, a centred box and a growing left pad --
+// all three now false by design): above the degenerate widths the box
+// FILLS the pane, one blank column on each side and nothing else spare.
+//
+// The nondecreasing check is the one that earns its place. The degenerate
+// branch is written as a single step -- drop both margins and the content
+// floor together -- precisely so it holds; shedding the margins one at a
+// time instead gives inner = 2 at w = 4 and inner = 1 at w = 5, a wider
+// window with a narrower box.
+func TestContentBox_FillsThePane(t *testing.T) {
+	prev := 0
 	for w := 1; w <= 240; w++ {
 		padLeft, inner := contentBox(w)
 		if padLeft < 0 {
@@ -261,35 +268,35 @@ func TestContentBox_FitsAndCentersAndCaps(t *testing.T) {
 		if inner < 1 {
 			t.Fatalf("contentBox(%d) inner = %d, want >= 1", w, inner)
 		}
-		if padLeft+inner > w {
+		if inner < prev {
+			t.Fatalf("contentBox(%d) inner = %d shrank below contentBox(%d)'s %d", w, inner, w-1, prev)
+		}
+		prev = inner
+
+		if total := padLeft + gutterWidth + inner + sideMargin; w > gutterWidth+2*sideMargin {
+			// Above the degenerate widths the four parts account for
+			// every column: no cap, no slack, no dead margin.
+			if total != w {
+				t.Fatalf("contentBox(%d) = (%d, %d): margins + gutter + box = %d, want exactly %d", w, padLeft, inner, total, w)
+			}
+			if padLeft != sideMargin {
+				t.Fatalf("contentBox(%d) padLeft = %d, want the symmetric %d", w, padLeft, sideMargin)
+			}
+		} else if padLeft+inner > w && w > 1 {
 			t.Fatalf("contentBox(%d) = (%d, %d): the box overruns the window", w, padLeft, inner)
 		}
-		if inner > maxContentWidth {
-			t.Fatalf("contentBox(%d) inner = %d, want at most the %d cap", w, inner, maxContentWidth)
-		}
-		// The whole line, gutter and right margin included, still fits.
-		if w > gutterWidth+rightMargin+1 && padLeft+gutterWidth+inner+rightMargin > w {
-			t.Fatalf("contentBox(%d) = (%d, %d): gutter + box + right margin overruns the window", w, padLeft, inner)
-		}
 	}
 
-	// The two sizes the design is argued from: the popup floor uses the
-	// full width, a wide terminal centers a capped box.
-	if padLeft, inner := contentBox(64); padLeft != 0 || inner != 61 {
-		t.Errorf("contentBox(64) = (%d, %d), want (0, 61)", padLeft, inner)
-	}
-	if padLeft, inner := contentBox(120); padLeft != 14 || inner != maxContentWidth {
-		t.Errorf("contentBox(120) = (%d, %d), want (14, %d)", padLeft, inner, maxContentWidth)
-	}
-
-	// Centering: past the cap, the left pad grows with the window.
-	prev, _ := contentBox(100)
-	for w := 101; w <= 200; w++ {
-		padLeft, _ := contentBox(w)
-		if padLeft < prev {
-			t.Fatalf("contentBox(%d) padLeft = %d shrank below contentBox(%d)'s %d", w, padLeft, w-1, prev)
+	// v3 spec §6.2's own worked table, both ends of it.
+	for _, c := range []struct{ w, padLeft, inner int }{
+		{40, 1, 36},
+		{77, 1, 73},
+		{101, 1, 97},
+		{190, 1, 186},
+	} {
+		if padLeft, inner := contentBox(c.w); padLeft != c.padLeft || inner != c.inner {
+			t.Errorf("contentBox(%d) = (%d, %d), want (%d, %d)", c.w, padLeft, inner, c.padLeft, c.inner)
 		}
-		prev = padLeft
 	}
 }
 
@@ -326,10 +333,12 @@ func TestLabelCol_LabelShrinksFirst(t *testing.T) {
 		}
 	}
 
-	if label, value := labelCol(61); label != 11 || value != 50 {
-		t.Errorf("labelCol(61) = (%d, %d), want (11, 50) -- the 64-column popup floor", label, value)
+	// The two boxes the shipped sizes produce (v3 spec §6.1/§6.2): the
+	// 101-column popup, and the popup clamped to an 80x24 terminal.
+	if label, value := labelCol(97); label != 11 || value != 86 {
+		t.Errorf("labelCol(97) = (%d, %d), want (11, 86) -- the 101-column popup's box", label, value)
 	}
-	if label, value := labelCol(maxContentWidth); label != 11 || value != 77 {
-		t.Errorf("labelCol(%d) = (%d, %d), want (11, 77) -- a wide terminal's capped box", maxContentWidth, label, value)
+	if label, value := labelCol(73); label != 11 || value != 62 {
+		t.Errorf("labelCol(73) = (%d, %d), want (11, 62) -- the same popup on an 80x24 terminal", label, value)
 	}
 }

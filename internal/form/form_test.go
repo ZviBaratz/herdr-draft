@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
@@ -1190,6 +1191,41 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 		line := ansi.Strip(strings.Split(m.ViewAt(width, h), "\n")[h-1])
 		if !strings.Contains(line, "↵ create") {
 			t.Errorf("at w=%d the footer lost the Create button: %q", width, line)
+		}
+	}
+}
+
+// TestRenderFooter_ExactFitKeepsCancel pins the boundary v3 spec §7.5
+// names: renderFooter's cancel test is `<=`, so a pair of buttons that
+// fits the line EXACTLY is drawn, and only one column less drops cancel.
+// v2 tested `<` and lost the button on the width where it fitted, which
+// contradicted its own documented priority (key ladder first, then
+// cancel, create last).
+//
+// It is a direct call rather than a width in one of the loops above
+// because the branch is not reachable through a real frame at any width
+// a user can produce: v3 spec §6.2's box is edge-to-edge, so boxWidth is
+// w-2, and the exact fit lands on a 26-column terminal. Unreachable
+// through the front door is exactly the condition under which a branch
+// quietly stops being covered.
+func TestRenderFooter_ExactFitKeepsCancel(t *testing.T) {
+	palette := theme.Default()
+	exact := lipgloss.Width(createButton(palette)) + footerButtonGap + lipgloss.Width(cancelButton(palette))
+
+	for _, c := range []struct {
+		width      int
+		wantCancel bool
+	}{
+		{exact + 1, true},
+		{exact, true},
+		{exact - 1, false},
+	} {
+		line := ansi.Strip(widgets.Zones.Scan(renderFooter(c.width, nil, palette)))
+		if got := strings.Contains(line, "esc cancel"); got != c.wantCancel {
+			t.Errorf("renderFooter(%d) carries cancel = %v, want %v: %q", c.width, got, c.wantCancel, line)
+		}
+		if !strings.Contains(line, "↵ create") {
+			t.Errorf("renderFooter(%d) lost the Create button: %q", c.width, line)
 		}
 	}
 }

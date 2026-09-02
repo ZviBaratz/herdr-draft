@@ -928,6 +928,15 @@ func (m Model) renderPanelRegion(width, region int) []string {
 // narrow for all three, the key ladder is what gets clipped, then cancel,
 // and create is the last thing standing -- it is the one control the
 // form cannot do without.
+//
+// The cancel test is `<=`, not `<` (v3 spec §7.5): a pair of buttons that
+// fits the line EXACTLY fits, and dropping cancel there contradicted the
+// priority the paragraph above states. One character, and the frames it
+// moves are the narrow ones.
+//
+// Nothing else here is width-aware. The footer's reach is entirely a
+// function of the boxWidth composeRows hands it, which is why v3 spec
+// §6.2's edge-to-edge box needed no change on this side of the call.
 func renderFooter(width int, rungs []string, p theme.Palette) string {
 	create := widgets.Zones.Mark(zoneCreateButton, createButton(p))
 	createWidth := lipgloss.Width(create)
@@ -937,7 +946,7 @@ func renderFooter(width int, rungs []string, p theme.Palette) string {
 
 	buttons, buttonsWidth := create, createWidth
 	cancel := widgets.Zones.Mark(zoneCancelButton, cancelButton(p))
-	if both := createWidth + footerButtonGap + lipgloss.Width(cancel); both < width {
+	if both := createWidth + footerButtonGap + lipgloss.Width(cancel); both <= width {
 		buttons, buttonsWidth = create+strings.Repeat(" ", footerButtonGap)+cancel, both
 	}
 	return spreadLine(fitFooter(rungs, width-buttonsWidth-footerButtonGap), buttons, width)
