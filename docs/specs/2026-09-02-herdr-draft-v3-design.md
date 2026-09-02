@@ -126,57 +126,113 @@ window (§8).
 
 Supersedes v2 §7's palette table and its focus-indication paragraph.
 
-### 5.1 Two remappings
+### 5.1 What was measured first
 
-| Field | was | becomes | catppuccin contrast vs `PanelBG` |
-|---|---|---|---|
-| `Border` | `surface_dim` | **`surface1`** | 1.07:1 → 1.92:1 |
-| `ActiveRowBG` | `active_row_bg` | **`selection_bg`** | 1.07:1 → 1.40:1 |
+Contrast against `panel_bg`, computed for every candidate herdr field across
+all seventeen RGB builtins. `terminal` has a named `panel_bg` (`Color::Reset`,
+"inherit the terminal background") and so has no known value to compare
+against; it is exempt throughout this section.
 
-Both are deliberate divergences from the otherwise 1:1 herdr translation, and
-both are *more* faithful to intent than the mapping they replace.
+| candidate | worst case | on |
+|---|---|---|
+| `surface_dim` — today's `Border` | **1.00:1** | seven themes, byte-identical |
+| `surface1` | **1.05:1** | rose-pine-dawn |
+| `selection_bg` | **1.10:1** | rose-pine-dawn |
+| `overlay0` | **1.69:1** | nord |
+| `overlay1` | 2.44:1 | nord |
+| `subtext0` | 2.93:1 | solarized-light |
 
-`surface1` is what herdr itself draws a visible separator with
-(`herdr:src/ui/dialogs.rs:473`). `surface_dim` is described in herdr's palette
-as "very dim surface for separators", but it is a **fill**; reading a fill
-value as a stroke is what produced a 1.07:1 line.
+This table is the whole design. **`overlay0` is the only single herdr field
+legible as a stroke on every builtin.** An earlier draft of this spec chose
+`surface1`, on the grounds that herdr draws its own separator with it
+(`herdr:src/ui/dialogs.rs:473`) — true, but only of one dialog, where it
+happens to work for catppuccin. Across the theme set it is invisible in nine
+of eighteen. Where source fidelity and legibility conflict, legibility wins;
+that is design rule 6.
 
-`active_row_bg` marks herdr's *active workspace* row, against `sidebar_bg`.
-Our focused row is a **keyboard cursor**, which herdr paints with
-`selection_bg` — documented as "the Navigate-mode cursor row in the sidebar"
-(`herdr:src/app/state.rs:78`), which is exactly what we have.
+### 5.2 The rule moves to a new field; `Border` does not move
 
-### 5.2 Two new fields
+**`Border` stays `surface_dim`, unchanged.** It is the right value for a
+scrollbar *track*, and herdr's own scrollbar uses `surface_dim` for exactly
+that (`herdr:src/ui/scrollbar.rs:155-157`).
+
+**One new field:**
 
 | Field | herdr source | catppuccin | Used for |
 |---|---|---|---|
-| `Overlay0` | `overlay0` | `#6c7086`, 3.59:1 | panel column headings, badges, scrollbar thumb, the middle text tier |
-| `Faint` | `surface_dim` | `#1e1e2e`, 1.07:1 | scrollbar track, and anywhere a deliberately near-invisible tone is wanted |
+| `Overlay0` | `overlay0` | `#6c7086`, 3.59:1 | the horizontal rules, the scrollbar thumb, panel column headings, right-flush badges |
+
+`dividerLine` (`form.go:955-963`) points at `Overlay0` instead of `Border`.
+That is the entire rule fix, and it mirrors herdr's scrollbar exactly: track
+`surface_dim`, thumb `overlay0`.
 
 `Overlay0` is structural, not decorative. The palette today has **no middle
-text tier**: it jumps from `Surface` at 1.40:1 to `DimText` at 7.89:1, which
+text tier** — it jumps from `Surface` at 1.40:1 to `DimText` at 7.89:1, which
 is why a panel row reads as one flat wall of same-weight text. herdr uses
 `text` / `subtext0` / `overlay0` inside a *single* list row
-(`herdr:src/ui/dialogs.rs:487-500`). `Faint` preserves the `surface_dim` value
-rather than losing it when `Border` moves off it.
+(`herdr:src/ui/dialogs.rs:487-500`).
 
-Each field needs an entry in all 18 builtins (`palette.go:118-235`), a key in
-`applyOverrideKey`, and decoding in `herdrThemeCustom` for `surface1`,
-`selection_bg` and `overlay0`.
+It needs an entry in all 18 builtins (`palette.go:118-235`), a key in
+`applyOverrideKey`, and decoding in `herdrThemeCustom`.
 
-### 5.3 The contrast test
+A `Faint` field was specified in an earlier draft, to preserve the
+`surface_dim` value once `Border` vacated it. `Border` no longer vacates it,
+so `Faint` would duplicate `Border`. Dropped.
 
-A test over every builtin palette asserting a minimum WCAG contrast ratio
-between `Border`/`PanelBG` and between `ActiveRowBG`/`PanelBG`. Relative
-luminance is about fifteen lines of Go.
+### 5.3 `ActiveRowBG` is remapped, then floored
 
-Floors: **1.6:1** for `Border`, **1.25:1** for `ActiveRowBG`. They are chosen
-to be achievable across all eighteen builtins while ruling out the 1.07:1 that
-shipped. **A theme that cannot meet a floor gets a hand-picked value, not a
-waiver.**
+`ActiveRowBG` moves from `active_row_bg` to **`selection_bg`**, the more
+faithful mapping: `active_row_bg` marks herdr's *active workspace* row against
+`sidebar_bg`, while our focused row is a **keyboard cursor**, which herdr
+paints with `selection_bg` — "the Navigate-mode cursor row in the sidebar"
+(`herdr:src/app/state.rs:78`).
+
+But no single field clears the floor: `selection_bg` fails on gruvbox-light
+(1.21), kanagawa-lotus (1.24), rose-pine-dawn (1.10) and vesper (1.11). So the
+translated value is **clamped up to the floor where it falls short**, by mixing
+`panel_bg` toward `text`. Twenty percent of the way clears 1.25 on every theme
+(worst 1.26) and tops out at 1.90, so it never glares.
+
+```go
+// ensureContrast returns fg when it already meets floor against bg, and
+// otherwise bg mixed toward `toward` until it does -- so an explicit
+// active_row_bg from a herdr theme or a user override is honoured wherever it
+// is legible, and raised only where it is not.
+func ensureContrast(bg, fg, toward Color, floor float64) Color
+```
+
+Applied at **load** time, so a user's own override goes through the same
+floor. The builtin table holds the straight `selection_bg` translation; the
+clamp is a load-time step, not a hand-edited table. A named or `NoColor` input
+passes through untouched rather than being mixed.
+
+Deriving beats hand-picking four values for one specific reason: a table cannot
+cover a **custom herdr theme or a user override**, and those take the same code
+path.
+
+### 5.3a The contrast test
+
+Over every builtin, asserting minimum WCAG contrast against `PanelBG`:
+
+- **`Overlay0` >= 1.6:1** — the rule stroke. Every builtin clears it by
+  construction; the assertion is what stops a future theme addition from
+  reintroducing the bug.
+- **`ActiveRowBG` >= 1.25:1**, on the *loaded* palette, so it guards that
+  §5.3's clamp is wired in and correct.
+
+Relative luminance is about fifteen lines of Go. `terminal` is the only
+exemption, and it is exempt for a stated reason rather than a waiver.
+
+Because the `ActiveRowBG` assertion passes by construction, it needs a direct
+unit test on `ensureContrast` beside it: a value already above the floor is
+returned unchanged; one below is raised to just above it; the floor is met for
+every builtin's `(panel_bg, selection_bg, text)` triple; and a named colour is
+passed through rather than mixed.
 
 This is the most valuable test in v3. Without it the defect it guards is
-invisible to every other form of verification the project has.
+invisible to every other form of verification the project has — a 1.07:1 rule
+and a 4:1 rule produce equally green golden frames.
+
 
 ### 5.4 Focus indication
 
@@ -498,7 +554,7 @@ its own items supplies spans itself.
 ### 8.5 Scrollbar and filter count
 
 **The scrollbar costs a column, not a line** — the last cell of each row,
-reserved only while the list outgrows the window. Track `▕` in `Faint`, thumb
+reserved only while the list outgrows the window. Track `▕` in `Border`, thumb
 `█` in `Overlay0`, geometry a pure sibling of `scrollOffset` (`:438-450`)
 ported from `herdr:src/ui/scrollbar.rs:36-69` and table-tested the same way.
 
@@ -722,7 +778,7 @@ performed. It becomes meaningful for the first time.
 |---|---|
 | §4, the mockups | replaced by §4 |
 | §6, the `account` row's value table | replaced by §10.1 |
-| §7, the palette table | extended by §5.1–5.2; two mappings changed |
+| §7, the palette table | extended by §5.2–5.3: one new field (`Overlay0`), one remapping (`ActiveRowBG`), and a load-time contrast floor. `Border` is unchanged |
 | §7, "focus indication is the full-width `ActiveRowBG` fill, not a gutter bar" | replaced by §5.4; the bar returns, with reasons |
 | §7, "width is capped and the content centred" | replaced by §6.2; no cap |
 | §7, "`widgets.Picker` needs no per-item style hook" | spirit stands, stated reason was wrong; see §8.1 |
