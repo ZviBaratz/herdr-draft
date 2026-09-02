@@ -1040,8 +1040,14 @@ func (p *Picker) scrollbarCell(lay rowLayout, row, thumbTop, thumbLength int) st
 // glyph the PANEL draws in its gutter (there is no second cursor glyph
 // inside the row -- CursorRow's doc comment records why it lives out
 // there). The brighter foreground is Text and NOT Accent: with an accent
-// gutter glyph and, once §8.4 lands, an accent match span, a third
-// accent on the same row is noise.
+// gutter glyph and §8.4's accent match span, a third accent on the same
+// row is noise.
+//
+// One cell per row may be routed through highlightCell instead of
+// fitCell: the one PickerItem.Match names, whose matched run is repainted
+// in matchStyle. Every other cell renders byte for byte as it did before
+// §8.4, which is most cells on most rows -- Match is unset except on a
+// filtered list.
 //
 // The badge keeps its own tone on the cursor row -- bolded like the
 // cells, but not repainted in Text -- because that tone IS the row's
@@ -1072,7 +1078,13 @@ func (p *Picker) renderRow(item PickerItem, lay rowLayout, width int, cursor boo
 		if i < len(item.Cells) {
 			text = item.Cells[i]
 		}
-		b.WriteString(cellStyle(p.column(i).Tone).Render(fitCell(text, w, p.column(i).Elide)))
+		col := p.column(i)
+		base := cellStyle(col.Tone)
+		if m := item.Match; m.Col == i && !m.empty() {
+			b.WriteString(highlightCell(text, w, m.Start, m.End, col.Elide, base, p.matchStyle()))
+			continue
+		}
+		b.WriteString(base.Render(fitCell(text, w, col.Elide)))
 	}
 	if lay.badge > 0 {
 		// Right-flush: pad out to the badge column and right-align the
@@ -1119,6 +1131,119 @@ func (p *Picker) renderMark(item PickerItem, width int) string {
 		pad = 0
 	}
 	return lipgloss.NewStyle().Foreground(tone.color(p.palette)).Render(glyph) + strings.Repeat(" ", pad)
+}
+
+// matchStyle is the one style v3 spec §8.4 paints a matched run in:
+// Accent, bold, and the SAME on the cursor row as off it.
+//
+// Same-on-both is the deliberate half. The cursor row already carries
+// three signals of its own (renderRow's doc comment lists them), so a
+// match span that changed colour under the cursor would be a fourth
+// signal saying nothing new -- and it would break the one thing the
+// highlight is for, which is letting the eye run DOWN the list comparing
+// where each row matched. A span that shifts hue on one row of the
+// column is exactly the noise §8.2 dropped Accent from the cursor row to
+// avoid.
+//
+// It is not a Tone: Tone is the closed enum a CALLER picks a column's
+// meaning from, and "the characters your query matched" is not a
+// property of the column at all.
+func (p *Picker) matchStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(p.palette.Accent).Bold(true)
+}
+
+// highlightCell is fitCell with one run of runes repainted in accent --
+// the span a query matched inside this cell, which is the whole of v3
+// spec §8.4's visible output. Everything outside the run renders in base
+// exactly as fitCell's own output does, and the result is still exactly
+// width cells wide.
+//
+// start and end are HALF-OPEN rune indices [start, end) into text:
+// PickerMatch's convention, NOT internal/form's fuzzySpan, whose End is
+// inclusive. Taking the widget-side one here is deliberate. This
+// function's only caller reads the span straight out of
+// PickerItem.Match, so accepting the inclusive convention instead would
+// bury a +1 inside the renderer -- and §8.4's boxed warning names that
+// bridge as the likeliest silent bug in the whole redesign. It belongs at
+// the FIELD that owns an inclusive span (form.dirMatch is the only one),
+// where a test can point at it.
+//
+// Order of operations is §8.4's and is not interchangeable: truncate on
+// RUNES first, then intersect the span with whatever survived. Slicing
+// the cell into head/span/tail and eliding each piece would spend an
+// ellipsis per piece and overshoot width -- and under ElideHead it would
+// elide the head of a piece that is not the head of the cell.
+//
+// The intersection is why a span that scrolled off the end degrades to a
+// plain cell rather than to a clamped one-rune highlight sitting against
+// the ellipsis: a highlight pointing at a character the reader cannot see
+// is worse than none.
+func highlightCell(text string, width, start, end int, mode ElideMode, base, accent lipgloss.Style) string {
+	if width <= 0 {
+		return ""
+	}
+	shown := KeepHead(text, width)
+	if mode == ElideHead {
+		shown = KeepTail(text, width)
+	}
+
+	// Which of text's runes survived, and where they sit in shown:
+	// text[from:to) is drawn starting at shown's rune index at. An
+	// untruncated cell is the identity. Both elide rules spend exactly one
+	// rune on Ellipsis (verified against KeepHead/KeepTail for wide runes
+	// too, where a cut lands on a cell boundary and not a rune one), so
+	// len(shown)-1 counts the survivors; ElideHead additionally shifts
+	// them one rune right, past its LEADING ellipsis, which is the offset
+	// §8.4 means by "carrying the offset ElideHead introduces".
+	sr := []rune(shown)
+	n := len([]rune(text))
+	from, to, at := 0, n, 0
+	if shown != text {
+		kept := len(sr) - 1
+		if kept < 0 {
+			kept = 0
+		}
+		if mode == ElideHead {
+			from, to, at = n-kept, n, 1
+		} else {
+			from, to, at = 0, kept, 0
+		}
+	}
+
+	lo, hi := start, end
+	if lo < from {
+		lo = from
+	}
+	if hi > to {
+		hi = to
+	}
+	if lo >= hi {
+		return base.Render(fitCell(text, width, mode))
+	}
+	lo, hi = lo-from+at, hi-from+at
+
+	// The pad is fitCell's, and it goes inside the trailing base.Render
+	// for the same reason fitCell's does: the blanks that hold the next
+	// column's start position have to carry the row's own styling, not
+	// the accent's.
+	tail := string(sr[hi:])
+	if pad := width - ansi.StringWidth(shown); pad > 0 {
+		tail += strings.Repeat(" ", pad)
+	}
+
+	var b strings.Builder
+	// Empty pieces are skipped rather than rendered: lipgloss emits the
+	// style's full SGR pair around an empty string, which would put two
+	// resets into the row for nothing -- and every reset is one more the
+	// cursor row's PaintLine has to repair (v3 spec §8.3).
+	if head := string(sr[:lo]); head != "" {
+		b.WriteString(base.Render(head))
+	}
+	b.WriteString(accent.Render(string(sr[lo:hi])))
+	if tail != "" {
+		b.WriteString(base.Render(tail))
+	}
+	return b.String()
 }
 
 // fitCell renders text at exactly width cells: elided per the column's

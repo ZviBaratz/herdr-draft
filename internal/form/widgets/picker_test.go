@@ -951,3 +951,193 @@ func TestPicker_DropBelowZeroNeverDrops(t *testing.T) {
 		t.Errorf("row = %q, want the undeclared column elided rather than dropped", row)
 	}
 }
+
+// --- v3 spec §8.4, match highlighting -------------------------------------
+
+// accentOpen is the exact escape sequence matchStyle emits before its
+// text, derived from the style itself rather than written out, so a
+// lipgloss change to SGR parameter ORDER moves these tests with it
+// instead of silently making every one of them assert nothing.
+func accentOpen(p *Picker) string {
+	open, _, _ := strings.Cut(p.matchStyle().Render("\x00"), "\x00")
+	return open
+}
+
+// accentRun returns the plain text of the first run in line painted in
+// matchStyle, or "" when there is none. It is the only assertion that
+// distinguishes "the highlight is on the right characters" from "the
+// highlight is somewhere on the row" -- rowsOf strips every escape, and a
+// stripped row reads identically whether the accent landed on the matched
+// run or on the two characters beside it.
+func accentRun(p *Picker, line string) string {
+	_, after, ok := strings.Cut(line, accentOpen(p))
+	if !ok {
+		return ""
+	}
+	run, _, _ := strings.Cut(after, "\x1b")
+	return run
+}
+
+// TestHighlightCell_SpanIsHalfOpen is the guard v3 spec §8.4's boxed
+// warning asks for by name. widgets.PickerMatch's End is HALF-OPEN and
+// internal/form's fuzzySpan's is INCLUSIVE, and the two conventions differ
+// by exactly one at exactly the coordinate a renderer indexes with -- so a
+// highlightCell that read its arguments as inclusive would still light up
+// on nearly every fixture, one character short at the end and one
+// character wide at the empty span [n, n).
+//
+// The first and last runes of the cell are the cases the brief singles
+// out, because they are the ones a fencepost error turns into NO
+// highlight rather than into a visibly wrong one.
+func TestHighlightCell_SpanIsHalfOpen(t *testing.T) {
+	p := NewPicker(testPalette())
+	for _, tc := range []struct {
+		name       string
+		start, end int
+		want       string
+	}{
+		{"the first rune alone", 0, 1, "a"},
+		{"the last rune alone", 4, 5, "a"},
+		{"an interior run", 1, 4, "lph"},
+		{"the whole cell", 0, 5, "alpha"},
+		{"an empty span paints nothing", 2, 2, ""},
+		{"a span past the end is clipped to it", 3, 99, "ha"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cell := highlightCell("alpha", 5, tc.start, tc.end, ElideTail, lipgloss.NewStyle(), p.matchStyle())
+			if got := accentRun(p, cell); got != tc.want {
+				t.Errorf("highlightCell(%q, [%d,%d)) accents %q, want %q (rendered %q)",
+					"alpha", tc.start, tc.end, got, tc.want, cell)
+			}
+			if got, want := ansi.StringWidth(ansi.Strip(cell)), 5; got != want {
+				t.Errorf("the cell is %d cells wide, want exactly %d: %q", got, want, cell)
+			}
+		})
+	}
+}
+
+// TestHighlightCell_PadsAndTonesLikeFitCell pins the two properties that
+// make this a drop-in for fitCell rather than a second cell renderer: the
+// cell is still exactly width cells however short its text, and the pad
+// carries the ROW's own style, not the accent's -- a padded run in Accent
+// would smear the highlight across the gap to the next column.
+func TestHighlightCell_PadsAndTonesLikeFitCell(t *testing.T) {
+	p := NewPicker(testPalette())
+	cell := highlightCell("ab", 8, 0, 1, ElideTail, lipgloss.NewStyle(), p.matchStyle())
+	if got, want := ansi.Strip(cell), "ab      "; got != want {
+		t.Errorf("highlightCell padded to %q, want %q", got, want)
+	}
+	if got, want := accentRun(p, cell), "a"; got != want {
+		t.Errorf("the accented run is %q, want %q -- the pad must not join it: %q", got, want, cell)
+	}
+}
+
+// TestHighlightCell_TruncatesFirstThenIntersects pins v3 spec §8.4's
+// stated ORDER of operations, which is not interchangeable with the
+// obvious alternative: slicing the cell into head/span/tail and eliding
+// each piece spends an ellipsis per piece and overshoots the width, where
+// doing it in this order spends one and lands on it.
+//
+// ElideHead is the case that carries an offset -- its ellipsis is a
+// LEADING rune, so every surviving character sits one rune right of where
+// the span was computed, on top of the runes the cut removed. Getting
+// that offset wrong shifts the highlight by a fixed amount on every path
+// in the project's most-filtered panel.
+func TestHighlightCell_TruncatesFirstThenIntersects(t *testing.T) {
+	p := NewPicker(testPalette())
+	base := lipgloss.NewStyle()
+
+	// ElideTail at 4 keeps "alp" and spends the fourth cell on the
+	// ellipsis. A span on the surviving "l" paints; a span on the "b"
+	// that was cut away paints nothing at all rather than clamping onto
+	// the ellipsis -- a highlight pointing at a character the reader
+	// cannot see is worse than none.
+	tail := highlightCell("alphabet", 4, 1, 2, ElideTail, base, p.matchStyle())
+	if got, want := ansi.Strip(tail), "alp"+Ellipsis; got != want {
+		t.Fatalf("elided cell = %q, want %q", got, want)
+	}
+	if got, want := accentRun(p, tail), "l"; got != want {
+		t.Errorf("the accented run is %q, want %q: %q", got, want, tail)
+	}
+	if got := accentRun(p, highlightCell("alphabet", 4, 5, 6, ElideTail, base, p.matchStyle())); got != "" {
+		t.Errorf("a span on a truncated-away rune accents %q, want nothing", got)
+	}
+
+	// ElideHead at 5 keeps "/bcd" behind a leading ellipsis. The "c" is
+	// rune 4 of the ORIGINAL and must land on rune 3 of what is drawn.
+	head := highlightCell("/a/bcd", 5, 4, 5, ElideHead, base, p.matchStyle())
+	if got, want := ansi.Strip(head), Ellipsis+"/bcd"; got != want {
+		t.Fatalf("elided cell = %q, want %q", got, want)
+	}
+	if got, want := accentRun(p, head), "c"; got != want {
+		t.Errorf("the accented run is %q, want %q -- the leading ellipsis's offset was not carried: %q", got, want, head)
+	}
+}
+
+// TestPicker_MatchIsPaintedOnTheColumnItNames walks the widget end to
+// end: applyFilter computes the span, renderRow routes that one cell
+// through highlightCell, and every other cell renders as it always did.
+// The SECOND column is the interesting one -- a renderer that ignored
+// Match.Col would light up the first.
+func TestPicker_MatchIsPaintedOnTheColumnItNames(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Cells: []string{"alpha", "beta"}},
+		{ID: "2", Cells: []string{"gamma", "delta"}},
+	})
+	p.SetQuery("elt")
+
+	line := strings.Split(p.View(40, 1), "\n")[0]
+	if got, want := accentRun(p, line), "elt"; got != want {
+		t.Errorf("the accented run is %q, want %q from cell 1 of %q: %q", got, want, "delta", line)
+	}
+	if !strings.Contains(ansi.Strip(line), "gamma") {
+		t.Errorf("row = %q, want the unmatched first cell still rendered", ansi.Strip(line))
+	}
+}
+
+// TestPicker_MatchIsTheSameAccentOnTheCursorRow pins v3 spec §8.4's "on
+// both cursor and non-cursor rows". The cursor row already carries three
+// signals of its own, and a span that changed colour under the cursor
+// would stop the eye running DOWN the column comparing where each row
+// matched -- which is the whole job of the highlight.
+func TestPicker_MatchIsTheSameAccentOnTheCursorRow(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetItems(1, []PickerItem{
+		{ID: "1", Cells: []string{"herdr"}},
+		{ID: "2", Cells: []string{"herdr-draft"}},
+	})
+	p.SetQuery("erd")
+
+	rows := strings.Split(p.View(40, 2), "\n")
+	cursorRun, plainRun := accentRun(p, rows[0]), accentRun(p, rows[1])
+	if cursorRun != "erd" || plainRun != "erd" {
+		t.Fatalf("accented runs are %q (cursor row) and %q (plain row), want %q on both", cursorRun, plainRun, "erd")
+	}
+	if got, want := strings.Count(rows[0], accentOpen(p)), 1; got != want {
+		t.Errorf("the cursor row opens the accent %d times, want %d: %q", got, want, rows[0])
+	}
+}
+
+// TestPicker_NoMatchRendersExactlyAsBefore is the regression half. Match
+// is unset on most items of every list in the project, so those rows must
+// come out byte for byte as they did before §8.4 -- which is what makes a
+// golden-frame diff after this change name only the rows that really
+// gained a highlight.
+func TestPicker_NoMatchRendersExactlyAsBefore(t *testing.T) {
+	p := NewPicker(testPalette())
+	items := []PickerItem{{ID: "1", Cells: []string{"alpha", "beta"}}}
+	p.SetItems(1, items)
+	plain := p.View(40, 1)
+
+	// Col -1 is §8.1's "nothing to paint" and an empty span says the same
+	// thing; both must be as inert as the zero value.
+	for _, m := range []PickerMatch{{Col: -1}, {Col: -1, Start: 1, End: 3}, {Col: 0, Start: 2, End: 2}} {
+		marked := append([]PickerItem(nil), items...)
+		marked[0].Match = m
+		p.SetItems(2, marked)
+		if got := p.View(40, 1); got != plain {
+			t.Errorf("Match %+v changed the rendering:\n got %q\nwant %q", m, got, plain)
+		}
+	}
+}

@@ -639,11 +639,20 @@ func (d *DirField) PanelRows() int {
 // refreshItems recomputes visibleItems() and feeds it to the wrapped
 // Picker, bumping pickerVersion first when bump is true -- see
 // pickerVersion's own doc comment for when each caller should pass which.
+//
+// It is also where this field supplies its own v3 spec §8.4 match spans,
+// because it is the only one of the five that has to. The other four
+// hand the picker an unranked list and let SetQuery narrow it, and
+// widgets.Picker.applyFilter computes Match for whatever it keeps; this
+// field ranks its own candidates and never calls SetQuery at all (see
+// the file doc), so the picker's query is permanently empty and it
+// copies every item's Match through untouched. Nothing would paint if
+// this loop did not fill it in -- see dirMatch.
 func (d *DirField) refreshItems(bump bool) {
 	if bump {
 		d.pickerVersion++
 	}
-	items := d.visibleItems()
+	items, query := d.visibleItems()
 	d.matchedCandidates = countCandidates(items, d.candidates)
 	pickerItems := make([]widgets.PickerItem, len(items))
 	for i, it := range items {
@@ -663,8 +672,11 @@ func (d *DirField) refreshItems(bump bool) {
 		// ID is the REAL path (Value()/SetValidity/every app-layer read go
 		// through it); the cell is what the panel shows, with the home
 		// prefix collapsed to "~" -- see SetHomeDir. The two differ only
-		// in presentation, which is exactly the split PickerItem is for.
-		pickerItems[i] = widgets.PickerItem{ID: it, Cells: []string{d.collapseHome(it)}}
+		// in presentation, which is exactly the split PickerItem is for --
+		// and the reason the match span is computed from the CELL rather
+		// than from `it`, per §8.4. See dirMatch.
+		cell := d.collapseHome(it)
+		pickerItems[i] = widgets.PickerItem{ID: it, Cells: []string{cell}, Match: dirMatch(cell, query)}
 	}
 	d.picker.SetItems(d.pickerVersion, pickerItems)
 }
@@ -687,19 +699,66 @@ func countCandidates(items, candidates []string) int {
 	return n
 }
 
-// visibleItems computes the current mode's displayed item list: every
+// visibleItems computes the current mode's displayed item list -- every
 // candidate (empty filter), a fuzzy-ranked subset of the candidate pool
 // (fragment mode), or a fuzzy-ranked-by-basename subset of the candidate
-// pool plus a literal fallback (path mode) -- see pathModeItems.
-func (d *DirField) visibleItems() []string {
+// pool plus a literal fallback (path mode), see pathModeItems -- and the
+// query that mode ranked them with.
+//
+// The query comes back FROM here, rather than being recovered by a second
+// caller re-testing LooksLikePath, because the two answers are one
+// decision: path mode ranks against SplitPath's base component and every
+// other mode against the whole raw string, and a highlight computed with
+// the wrong one of those would point at the wrong characters on every row
+// (v3 spec §8.4). Returning them together is the same reason
+// countCandidates recomputes rather than trusting a branch to report what
+// it appended -- a future third mode cannot make the pair disagree.
+func (d *DirField) visibleItems() (items []string, query string) {
 	raw := d.input.Value()
 	if raw == "" {
-		return append([]string(nil), d.candidates...)
+		return append([]string(nil), d.candidates...), ""
 	}
 	if !LooksLikePath(raw) {
-		return fuzzyRank(d.candidates, raw)
+		return fuzzyRank(d.candidates, raw), raw
 	}
-	return d.pathModeItems(raw)
+	_, base := SplitPath(raw)
+	return d.pathModeItems(raw), base
+}
+
+// dirMatch is v3 spec §8.4's highlight span for one candidate row,
+// computed against the string the panel will DRAW rather than the one
+// visibleItems ranked.
+//
+// The two differ in BOTH filtering modes, which is why the span cannot
+// simply be carried out of the ranker (fuzzyRankSpans exists and is not
+// used here for exactly this reason): fragment mode ranks the full path
+// and draws it home-collapsed, so every index shifts by however much
+// "~" saved; path mode ranks the BASENAME and draws the whole path, so
+// every index is relative to a different string entirely. §8.4 settles it
+// by re-running the matcher on the display text -- one extra O(len) pass
+// per surviving row, against translating rune coordinates through a
+// transform that changes the string's length at its head.
+//
+// The bridge between this project's two span conventions lives here, and
+// it is one character. fuzzyMatch's End is INCLUSIVE; widgets.PickerMatch's
+// is HALF-OPEN, deliberately, so that its zero value is inert on the
+// overwhelming majority of items that carry no match at all (see that
+// type's own doc comment). Hence End: end + 1, and hence this being the
+// single place in the codebase where the two meet.
+//
+// Two answers are "nothing to paint", and both are reachable. An empty
+// query is fuzzyMatch's own [0, -1], the resting panel with no filter
+// typed. A genuine miss is fragment mode: the row survived because the
+// FULL path matched, and the collapsed one may not -- "/home/zvi/x"
+// ranks against the query "home" and displays as "~/x", which contains
+// none of it. Painting nothing there is right; the row is still a real
+// answer to what was typed, it just cannot show where.
+func dirMatch(display, query string) widgets.PickerMatch {
+	ok, start, end := fuzzyMatch(display, query)
+	if !ok || end < start {
+		return widgets.PickerMatch{Col: -1}
+	}
+	return widgets.PickerMatch{Col: 0, Start: start, End: end + 1}
 }
 
 // pathModeItems ranks the FULL candidate list against SplitPath's own base

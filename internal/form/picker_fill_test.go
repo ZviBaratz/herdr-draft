@@ -156,6 +156,57 @@ func TestFrame_SelectedRowFillSurvivesTheFrameRepaint(t *testing.T) {
 	}
 }
 
+// TestFrame_SelectedRowFillSurvivesAMatchSpan is the case §8.3 was
+// written FOR, and until §8.4 landed there was nothing in the tree that
+// could exercise it: the test above proves the fill survives four toned
+// cells and a toned badge, but every one of those spans is a whole cell,
+// and the picker emits them in a loop it controls. A match span is
+// different -- it splits ONE cell into three renders, the middle one in
+// Accent, so the reset that clears the outer Surface now lands in the
+// middle of a column rather than at a column boundary. §8.3's own words:
+// "that is a byte-level argument, not a proof."
+//
+// It is the same latte palette and the same reasoning as above; see that
+// test's doc comment for why not theme.Default().
+func TestFrame_SelectedRowFillSurvivesAMatchSpan(t *testing.T) {
+	palette, ok := theme.Builtin("catppuccin-latte")
+	if !ok {
+		t.Fatal("theme.Builtin(\"catppuccin-latte\") is not a known builtin")
+	}
+	surface, accent := rgbKey(palette.Surface), rgbKey(palette.Accent)
+
+	frame := buildDirFilteredForm(palette).ViewAt(80, 24)
+	line, ok := lineWithBackground(frame, surface)
+	if !ok {
+		t.Fatalf("no line in the frame carries the Surface fill at all -- the selected row is unpainted:\n%s", frame)
+	}
+	if !strings.Contains(line, accent) {
+		t.Fatalf("the selected row carries no accent span, so this test is asserting nothing -- fixture drift:\n%q", line)
+	}
+
+	cells := backgroundPerCell(line)
+	first, last := -1, -1
+	for i, bg := range cells {
+		if bg != surface {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		last = i
+	}
+	for i := first; i <= last; i++ {
+		if cells[i] != surface {
+			t.Fatalf("cell %d of the selected row is on background %q, want the Surface fill %q unbroken across the match span at [%d,%d]:\n%q",
+				i, cells[i], surface, first, last, line)
+		}
+	}
+	if _, inner := contentBox(80); last-first+1 != inner {
+		t.Errorf("the Surface run is %d cells wide, want %d (the picker's whole row):\n%q",
+			last-first+1, inner, line)
+	}
+}
+
 // lineWithBackground returns the first line of frame on which bg is ever
 // the active background.
 func lineWithBackground(frame, bg string) (string, bool) {

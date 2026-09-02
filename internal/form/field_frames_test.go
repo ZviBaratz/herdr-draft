@@ -64,6 +64,41 @@ func TestFrames_DirPanel(t *testing.T) {
 	assertFrame(t, "dir-panel-80x24", buildDirPanelForm(theme.Default()), 80, 24)
 }
 
+// buildDirFilteredForm is v3 spec §8.4's match highlighting, on the field
+// that has to compute its own spans. It is FRAGMENT mode ("dr" starts with
+// none of "/", "~", "."), which buildDirPanelForm's path-mode frame does
+// not cover and which is where §8.4's "match the string that will be
+// DISPLAYED" actually bites: fragment mode ranks the FULL path and draws
+// it home-collapsed, so a span carried out of the ranker would be nine
+// runes adrift and would paint nothing at all on these rows.
+//
+// The candidate set is buildDirPanelForm's, so the two frames diff
+// cleanly, plus one deliberate outlier. "~/Downloads/reports" matches "dr"
+// across "ds/r" -- a longer window, in a different column, on a row that
+// ranks below the tight ones -- which is what makes this frame evidence
+// that the span is computed PER ROW rather than once for the list.
+// "atrium" carries no "d" at all and is filtered out, so the frame also
+// pins §8.5's readout at 3/4.
+func buildDirFilteredForm(palette theme.Palette) Model {
+	d := NewDirField(palette)
+	d.SetHomeDir("/home/zvi")
+	d.SetCandidates(1, []string{
+		"/home/zvi/Projects/herdr",
+		"/home/zvi/Projects/herdr-draft",
+		"/home/zvi/Projects/atrium",
+		"/home/zvi/Downloads/reports",
+	})
+	d.Focus() // an unfocused lineInput ignores keystrokes -- see lineinput.go
+	for _, r := range "dr" {
+		d.Update(rn(r))
+	}
+	return fieldFrame(palette, d)
+}
+
+func TestFrames_DirFiltered(t *testing.T) {
+	assertFrame(t, "dir-filtered-80x24", buildDirFilteredForm(theme.Default()), 80, 24)
+}
+
 // buildDirNotesForm is v2 spec §11's ignored-key report, on the panel that
 // carries it (DirField.SetNotes): the project row is what decides which
 // repository's `.herdr-draft.toml` applies, so its panel is where the
@@ -238,6 +273,36 @@ func buildIssueColumnsForm(palette theme.Palette) Model {
 
 func TestFrames_IssueColumns(t *testing.T) {
 	assertFrame(t, "issue-columns-80x16", buildIssueColumnsForm(theme.Default()), 80, 16)
+}
+
+// buildIssueFilteredForm is the OTHER half of v3 spec §8.4, the half
+// widgets.Picker computes for itself: this field hands the picker an
+// unranked list and lets SetQuery narrow it, so applyFilter owns every
+// span here where DirField owns its own.
+//
+// It exists because CLAUDE.md's standing warning applies squarely --
+// a golden suite proves only the states someone thought to fixture, and
+// before this frame no fixture in the project drew a MULTI-COLUMN picker
+// under a query at all. "at" is chosen so the answer differs per row and
+// a renderer that ignored Match.Col could not pass: it matches
+// PLATFORM-7 in the IDENTIFIER and revalidate in the TITLE, and ENG-1
+// not at all, which also pins §8.5's readout at 2/3.
+func buildIssueFilteredForm(palette theme.Palette) Model {
+	f := NewIssueField(palette)
+	f.SetIssues(1, []linear.Issue{
+		{Identifier: "ENG-1", Title: "Fix login bug", StateName: "Todo", Estimate: estimate(3)},
+		{Identifier: "ENG-101", Title: "revalidate and reset the candidate pool on every browse transition", StateName: "In Progress"},
+		{Identifier: "PLATFORM-7", Title: "short", StateName: "Done"},
+	})
+	f.Focus()
+	for _, r := range "at" {
+		f.Update(rn(r))
+	}
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_IssueFiltered(t *testing.T) {
+	assertFrame(t, "issue-filtered-80x16", buildIssueFilteredForm(theme.Default()), 80, 16)
 }
 
 // buildIssueScrollForm is #25's own acceptance fixture: a list far longer

@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -34,6 +36,14 @@ func typeInto(d *DirField, s string) {
 	for _, r := range s {
 		d.Update(rn(r))
 	}
+}
+
+// mustItems is visibleItems' item list alone, for the assertions that
+// care about WHICH directories are on offer rather than about the query
+// v3 spec §8.4's highlight is computed from.
+func mustItems(d *DirField) []string {
+	items, _ := d.visibleItems()
+	return items
 }
 
 // TestDirField_FragmentModeRanksByFuzzyMatch exercises the brief's own
@@ -402,7 +412,7 @@ func TestDirFieldLiteralFallbackUsesTheInstalledExpander(t *testing.T) {
 
 	d.Focus()
 	typeInto(d, "~/Projects/nope")
-	items := d.visibleItems()
+	items, _ := d.visibleItems()
 	last := items[len(items)-1]
 	if last != "/home/z/Projects/nope" {
 		t.Errorf("literal fallback = %q, want the expanded path", last)
@@ -413,13 +423,13 @@ func TestDirFieldLiteralFallbackUsesTheInstalledExpander(t *testing.T) {
 	d.input.SetValue("")
 	typeInto(d, "~/Projects/herdr")
 	seen := 0
-	for _, it := range d.visibleItems() {
+	for _, it := range mustItems(d) {
 		if it == "/home/z/Projects/herdr" {
 			seen++
 		}
 	}
 	if seen != 1 {
-		t.Errorf("%q appears %d times in %v, want exactly once", "/home/z/Projects/herdr", seen, d.visibleItems())
+		t.Errorf("%q appears %d times in %v, want exactly once", "/home/z/Projects/herdr", seen, mustItems(d))
 	}
 }
 
@@ -432,7 +442,7 @@ func TestDirFieldWithoutAnExpanderKeepsTheRawFallback(t *testing.T) {
 	d.Focus()
 	typeInto(d, "~/b")
 
-	items := d.visibleItems()
+	items, _ := d.visibleItems()
 	if last := items[len(items)-1]; last != "~/b" {
 		t.Errorf("literal fallback = %q, want the raw typed text", last)
 	}
@@ -524,4 +534,145 @@ func TestDirField_FilterCountDiscountsTheLiteralRow(t *testing.T) {
 	if got, want := d.filterCount(), "2/3 directories"; got != want {
 		t.Errorf("filterCount in path mode = %q, want %q", got, want)
 	}
+}
+
+// --- v3 spec §8.4, the spans this field supplies itself -------------------
+
+// TestDirMatch_BridgesTheInclusiveSpanToTheHalfOpenOne is the fencepost
+// guard for the ONE place in this codebase where the project's two span
+// conventions meet. fuzzyMatch's End is inclusive; widgets.PickerMatch's
+// is half-open, so that its zero value can be inert on the great majority
+// of items that carry no match. dirMatch is the +1, and §8.4's boxed
+// warning calls it the likeliest silent bug left in the redesign.
+//
+// The two cases that matter are the ends: a span on the FIRST rune with
+// the +1 dropped collapses to [0,0), which PickerMatch.empty() reads as
+// "nothing to paint", and a span on the LAST rune does the same at [n,n).
+// Both would render as a plainly unhighlighted row rather than as a
+// visibly misplaced highlight, which is why they are asserted on the
+// coordinates and not only on the pixels.
+func TestDirMatch_BridgesTheInclusiveSpanToTheHalfOpenOne(t *testing.T) {
+	const display = "~/Projects/atrium" // 17 runes: "~" at 0, "m" at 16
+	for _, tc := range []struct {
+		name    string
+		display string
+		query   string
+		want    widgets.PickerMatch
+	}{
+		{"the first rune of the cell", display, "~", widgets.PickerMatch{Col: 0, Start: 0, End: 1}},
+		{"the last rune of the cell", display, "m", widgets.PickerMatch{Col: 0, Start: 16, End: 17}},
+		{"a run in the middle", display, "atr", widgets.PickerMatch{Col: 0, Start: 11, End: 14}},
+		{"the whole cell", display, display, widgets.PickerMatch{Col: 0, Start: 0, End: 17}},
+		{"no filter typed", display, "", widgets.PickerMatch{Col: -1}},
+		{"a candidate the display cannot show the match in", display, "zzz", widgets.PickerMatch{Col: -1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dirMatch(tc.display, tc.query); got != tc.want {
+				t.Errorf("dirMatch(%q, %q) = %+v, want %+v", tc.display, tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDirField_HighlightsWhatIsDrawnNotWhatWasRanked is v3 spec §8.4's
+// "match the string that will be DISPLAYED" on the field that has to obey
+// it. Fragment mode ranks the FULL path and draws it home-collapsed, so
+// the ranker's own span is nine runes adrift of the cell -- far enough
+// past the end of "~/Projects/herdr-draft" that carrying it through would
+// paint nothing at all rather than paint the wrong characters.
+//
+// This field is also the only one of the five that must supply spans at
+// all: it ranks its own candidates and never calls SetQuery, so
+// widgets.Picker.applyFilter copies its Match through untouched and
+// nothing else would ever fill it in.
+func TestDirField_HighlightsWhatIsDrawnNotWhatWasRanked(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetHomeDir("/home/zvi")
+	d.SetCandidates(1, []string{"/home/zvi/Projects/herdr-draft"})
+	d.Focus()
+	typeInto(d, "draft") // no "/", "~" or "." -- fragment mode
+
+	item, ok := d.picker.Selected()
+	if !ok {
+		t.Fatal("nothing selected after filtering to the one matching candidate")
+	}
+	// "~/Projects/herdr-draft": the second "draft" starts at rune 17. The
+	// span against the RANKED "/home/zvi/Projects/herdr-draft" is [25,30),
+	// which is off the end of a 22-rune cell.
+	if want := (widgets.PickerMatch{Col: 0, Start: 17, End: 22}); item.Match != want {
+		t.Errorf("Match = %+v, want %+v -- the span must be computed against %q, not against %q",
+			item.Match, want, item.Cells[0], item.ID)
+	}
+	if got, want := accentedRun(theme.Default(), d.Panel(60, 4)), "draft"; got != want {
+		t.Errorf("the panel accents %q, want %q", got, want)
+	}
+}
+
+// TestDirField_PathModeHighlightsInsideTheFullPath is the other transform
+// §8.4 names: path mode ranks each candidate's BASENAME and draws the
+// whole path, so a span carried out of the ranker would be an index into
+// a string the panel never shows.
+func TestDirField_PathModeHighlightsInsideTheFullPath(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetHomeDir("/home/zvi")
+	d.SetCandidates(1, []string{"/home/zvi/Projects/herdr-draft"})
+	d.Focus()
+	typeInto(d, "~/Projects/hd")
+
+	item, ok := d.picker.Selected()
+	if !ok {
+		t.Fatal("nothing selected after filtering to the one matching candidate")
+	}
+	// The query the ranker used is SplitPath's base, "hd", not the whole
+	// raw text -- which does not occur in the cell at all.
+	//
+	// The painted run is the match WINDOW, not the matched characters:
+	// PickerMatch is one contiguous span by construction, and fuzzyMatch's
+	// backward pass tightens that window to "herd" (the "h" of "herdr"
+	// through the "d" of "herdr", not the later "d" of "draft"). Both
+	// halves are worth pinning -- a span that widened to the last "d"
+	// would mean the tightening pass had stopped running.
+	if want := (widgets.PickerMatch{Col: 0, Start: 11, End: 15}); item.Match != want {
+		t.Errorf("Match = %+v, want %+v for cell %q", item.Match, want, item.Cells[0])
+	}
+	if got, want := accentedRun(theme.Default(), d.Panel(60, 4)), "herd"; got != want {
+		t.Errorf("the panel accents %q, want %q", got, want)
+	}
+}
+
+// TestDirField_RestingPanelHighlightsNothing pins the state the golden
+// suite let through once before (CLAUDE.md's "a golden-frame suite proves
+// only the states someone thought to fixture"): the panel as it OPENS,
+// with nothing typed. fuzzyMatch answers an empty query with [0, -1],
+// which is End < Start and therefore inert -- but a bridge that added its
+// +1 unconditionally would turn that into the half-open [0, 0)... and a
+// bridge that also clamped a negative End would turn it into [0, 1) and
+// light the first character of every directory on the list.
+func TestDirField_RestingPanelHighlightsNothing(t *testing.T) {
+	d := NewDirField(theme.Default())
+	d.SetHomeDir("/home/zvi")
+	d.SetCandidates(1, []string{
+		"/home/zvi/Projects/herdr",
+		"/home/zvi/Projects/atrium",
+	})
+	d.Focus()
+
+	if got := accentedRun(theme.Default(), d.Panel(60, 4)); got != "" {
+		t.Errorf("the resting panel accents %q, want nothing at all", got)
+	}
+}
+
+// accentedRun returns the plain text of the first run in s painted in the
+// palette's Accent AND bold -- widgets.Picker.matchStyle, and nothing else
+// this form draws. The opening escape is derived from the style rather
+// than written out, so a lipgloss change to SGR parameter order moves
+// this with it instead of quietly making every caller assert nothing.
+func accentedRun(p theme.Palette, s string) string {
+	open, _, _ := strings.Cut(lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render("\x00"), "\x00")
+	_, after, ok := strings.Cut(s, open)
+	if !ok {
+		return ""
+	}
+	run, _, _ := strings.Cut(after, "\x1b")
+	return run
 }

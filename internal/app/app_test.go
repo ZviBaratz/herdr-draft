@@ -1611,8 +1611,16 @@ func browseModel(t *testing.T) (Model, *fakeGit) {
 // assert on what the user would actually see -- DirField's own item list
 // is private to the form package, and the rendered rows are the honest
 // end of this pipeline anyway.
+//
+// It STRIPS, and that is load-bearing rather than tidy: v3 spec §8.4's
+// match highlighting splits a candidate row at the matched run, so
+// "/repo-alpha" filtered by "repo" renders as "/" then an accent-styled
+// "repo" then "-alpha", and every strings.Contains below it went red on a
+// screen that was in fact correct. A caller here asks which DIRECTORIES
+// are on offer; the escapes that answer a different question have no
+// business in the comparison.
 func dirRows(m Model) string {
-	return m.dir.Row(60) + "\n" + m.dir.Panel(60, m.dir.PanelRows())
+	return ansi.Strip(m.dir.Row(60) + "\n" + m.dir.Panel(60, m.dir.PanelRows()))
 }
 
 // runBrowseRound drives one full browse: the debounce firing, then the
