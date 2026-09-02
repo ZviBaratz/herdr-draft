@@ -162,6 +162,12 @@ layout is `<herdr state dir>/plugins/draft` (`herdr:src/plugin_paths.rs`);
 on Windows the base is `%LOCALAPPDATA%\herdr` instead. Point both at the
 same directories the popup gets and the two paths share one memory.
 
+A shell started inside *another* plugin's pane can inherit that plugin's
+`HERDR_PLUGIN_*` variables. When `HERDR_PLUGIN_ID` says so, `create`
+ignores all of them — including the context JSON, whose pane and workspace
+ids are not necessarily where you are — rather than reading one plugin's
+config as another's, and tells you it did.
+
 ## Configuration
 
 herdr-draft reads `$HERDR_PLUGIN_CONFIG_DIR/config.toml`. Every key is

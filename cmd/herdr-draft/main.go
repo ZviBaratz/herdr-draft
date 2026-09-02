@@ -153,6 +153,7 @@ func runCreate(args []string) int {
 		ConfigDir:   os.Getenv("HERDR_PLUGIN_CONFIG_DIR"),
 		StateDir:    os.Getenv("HERDR_PLUGIN_STATE_DIR"),
 		ContextJSON: os.Getenv("HERDR_PLUGIN_CONTEXT_JSON"),
+		PluginID:    os.Getenv("HERDR_PLUGIN_ID"),
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		TabID:       os.Getenv("HERDR_TAB_ID"),
 		PaneID:      os.Getenv("HERDR_PANE_ID"),

@@ -79,12 +79,23 @@ type Env struct {
 	StateDir string
 	// ContextJSON is $HERDR_PLUGIN_CONTEXT_JSON, usually "".
 	ContextJSON string
+	// PluginID is $HERDR_PLUGIN_ID: which plugin the four variables above
+	// were exported for. herdr sets it alongside them for a launched
+	// plugin, and a shell started inside such a plugin's pane can inherit
+	// the whole set -- see usablePluginEnv, which is why this is read at
+	// all.
+	PluginID string
 	// WorkspaceID/TabID/PaneID are $HERDR_WORKSPACE_ID/$HERDR_TAB_ID/
 	// $HERDR_PANE_ID.
 	WorkspaceID string
 	TabID       string
 	PaneID      string
 }
+
+// pluginID is this plugin's own id (herdr-plugin.toml's `id`), the value
+// $HERDR_PLUGIN_ID carries when the surrounding plugin environment is
+// ours.
+const pluginID = "draft"
 
 // GitSource is the git/filesystem access this command needs: whether the
 // project directory exists, whether it is a repository, and which
@@ -221,13 +232,13 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 		return ExitUnreachable
 	}
 
-	return execute(ctx, resolved, req, env, deps, ops)
+	return execute(ctx, resolved, req, deps, ops)
 }
 
 // execute runs the plan and reports it. It is the only part of this
 // package that can leave anything behind, which is why the keep-or-clean
 // gate and the state write both live here rather than in a caller.
-func execute(ctx context.Context, resolved resolution, req request, env Env, deps Deps, ops []plan.Op) int {
+func execute(ctx context.Context, resolved resolution, req request, deps Deps, ops []plan.Op) int {
 	rep := report{
 		input:      resolved.input,
 		provenance: resolved.provenance,
@@ -256,7 +267,7 @@ func execute(ctx context.Context, resolved resolution, req request, env Env, dep
 		// Spec §10/§12's memory is written only by a successful create, the
 		// same rule app.persistStateCmd follows -- a failed one says nothing
 		// about what the user wants next.
-		remember(env, resolved, deps.now())
+		remember(resolved, deps.now())
 		rep.write(deps.stdout(), deps.stderr())
 		return ExitOK
 	}
@@ -306,8 +317,9 @@ func applyOnFailure(ctx context.Context, deps Deps, rep *report) {
 // disagreeing with what actually ran. Errors are dropped for spec §12's
 // reason -- state is loss-tolerant, and a session that just launched is
 // not worth failing over a recents file.
-func remember(env Env, resolved resolution, now time.Time) {
-	if env.StateDir == "" {
+func remember(resolved resolution, now time.Time) {
+	stateDir := resolved.env.StateDir
+	if stateDir == "" {
 		return
 	}
 	in := resolved.input
@@ -320,7 +332,7 @@ func remember(env Env, resolved resolution, now time.Time) {
 	st.LastPlacement = defaults.PlacementValue(in.Placement)
 	useWorktree := in.UseWorktree
 	st.LastWorktree = &useWorktree
-	_ = config.SaveState(env.StateDir, st)
+	_ = config.SaveState(stateDir, st)
 
 	if resolved.tiers.projectKey == "" {
 		return
@@ -331,7 +343,7 @@ func remember(env Env, resolved resolution, now time.Time) {
 		Placement: defaults.PlacementValue(in.Placement),
 		Base:      in.BaseRef,
 	}, now)
-	_ = config.SaveProjects(env.StateDir, projects)
+	_ = config.SaveProjects(stateDir, projects)
 }
 
 // usageError reports a pre-flight refusal and returns ExitUsage, so every

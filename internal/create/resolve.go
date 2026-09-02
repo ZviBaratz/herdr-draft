@@ -58,6 +58,11 @@ type resolution struct {
 	input      plan.Input
 	tiers      tiers
 	provenance map[string]string
+	// env is the environment the tiers were actually loaded from --
+	// usablePluginEnv's answer, not the raw one. The post-success state
+	// write must use THIS one, or a create that refused another plugin's
+	// state directory as a source would still write to it as a sink.
+	env Env
 }
 
 // resolveRequest is the whole pre-flight: locate the project, load every
@@ -68,7 +73,7 @@ type resolution struct {
 // known before any tier can be loaded, because two of the five tiers
 // (.herdr-draft.toml and projects.json) are per-project.
 func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resolution, error) {
-	warnMissingPluginDirs(env, deps.stderr())
+	env = usablePluginEnv(env, deps.stderr())
 
 	cfg, err := loadUserConfig(env.ConfigDir)
 	if err != nil {
@@ -126,7 +131,7 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	if err := requireContext(hctx, in); err != nil {
 		return resolution{}, err
 	}
-	return resolution{input: in, tiers: t, provenance: prov}, nil
+	return resolution{input: in, tiers: t, provenance: prov, env: env}, nil
 }
 
 // resolveProjectDir resolves --project, defaulting to the working directory --
@@ -235,12 +240,34 @@ func loadMemory(stateDir string) (config.State, config.Projects) {
 	return state, projects
 }
 
-// warnMissingPluginDirs says, once, that this create is resolving against
-// less than the form would. Silence would be worse: the whole point of
-// spec §13 is that the two produce the same session, and a create that
-// ignored the user's config.toml because a variable was unset would
-// produce a DIFFERENT one with nothing anywhere saying why.
-func warnMissingPluginDirs(env Env, stderr io.Writer) {
+// usablePluginEnv keeps the plugin-invocation half of env only when it is
+// OURS, and says, once, when this create is therefore resolving against
+// less than the form would.
+//
+// Two ways it can be less. The plainer one is that the variables are
+// simply unset, which is the normal headless case (see loadUserConfig).
+// The other is that they belong to a different plugin: a shell started
+// inside another plugin's pane can inherit its whole HERDR_PLUGIN_*
+// environment, and $HERDR_PLUGIN_ID names the plugin they were exported
+// for. Using them would read that plugin's config.toml as ours, write our
+// state files into its state directory, and -- worse -- take its
+// invocation context, whose pane and workspace ids are not necessarily
+// where this command is running. Dropping all four together is the only
+// coherent answer: they are one environment, not four variables.
+//
+// Silence in either case would be worse than a line on stderr: the whole
+// point of spec §13 is that the command and the form produce the same
+// session, and one that quietly resolved from different inputs would
+// produce a different session with nothing anywhere saying why.
+func usablePluginEnv(env Env, stderr io.Writer) Env {
+	if env.PluginID != "" && env.PluginID != pluginID {
+		fmt.Fprintf(stderr,
+			"herdr-draft create: the HERDR_PLUGIN_* environment here belongs to plugin %q, not to %q -- ignoring it and resolving from built-in defaults; export HERDR_PLUGIN_CONFIG_DIR=$(herdr plugin config-dir %s) to resolve exactly what the form resolves\n",
+			env.PluginID, pluginID, pluginID)
+		env.ConfigDir, env.StateDir, env.ContextJSON = "", "", ""
+		return env
+	}
+
 	var missing []string
 	if env.ConfigDir == "" {
 		missing = append(missing, "HERDR_PLUGIN_CONFIG_DIR")
@@ -248,12 +275,12 @@ func warnMissingPluginDirs(env Env, stderr io.Writer) {
 	if env.StateDir == "" {
 		missing = append(missing, "HERDR_PLUGIN_STATE_DIR")
 	}
-	if len(missing) == 0 {
-		return
+	if len(missing) > 0 {
+		fmt.Fprintf(stderr,
+			"herdr-draft create: %s not set -- resolving without your config.toml and remembered defaults; export them (herdr plugin config-dir %s) to resolve exactly what the form resolves\n",
+			strings.Join(missing, " and "), pluginID)
 	}
-	fmt.Fprintf(stderr,
-		"herdr-draft create: %s not set -- resolving without your config.toml and remembered defaults; export them (herdr plugin config-dir draft) to resolve exactly what the form resolves\n",
-		strings.Join(missing, " and "))
+	return env
 }
 
 // projectMemoryKey mirrors internal/app's function of the same name: the

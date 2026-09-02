@@ -683,6 +683,33 @@ func TestNoPluginDirectoriesNeverReadsTheWorkingDirectory(t *testing.T) {
 	}
 }
 
+// TestAnotherPluginsEnvironmentIsIgnored covers the leak this command can
+// actually meet: a shell started inside ANOTHER plugin's pane inherits its
+// HERDR_PLUGIN_* environment, so the directories point at that plugin and
+// the context JSON describes its invocation, not this pane. All of it is
+// dropped together, and the pane ids -- which are this pane's -- are kept.
+func TestAnotherPluginsEnvironmentIsIgnored(t *testing.T) {
+	h := newHarness(t)
+	otherState := t.TempDir()
+	h.env.PluginID = "someone.else"
+	h.env.StateDir = otherState
+	h.env.ContextJSON = `{"workspace_id":"wOTHER","tab_id":"tOTHER"}`
+	h.env.WorkspaceID, h.env.TabID = "wS9", "tT9"
+
+	if code := h.run("--title", "t", "--no-worktree", "--placement", "tab-here"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if !strings.Contains(strings.Join(h.runner.calls, " "), "TabCreate(wS9,") {
+		t.Errorf("calls = %v, want the tab in THIS pane's workspace, not the other plugin's", h.runner.calls)
+	}
+	if entries, _ := os.ReadDir(otherState); len(entries) != 0 {
+		t.Errorf("wrote %d file(s) into another plugin's state directory", len(entries))
+	}
+	if !strings.Contains(h.stderr.String(), `belongs to plugin "someone.else"`) {
+		t.Errorf("stderr = %q, want it to name the plugin whose environment was ignored", h.stderr)
+	}
+}
+
 // --- --issue --------------------------------------------------------------
 
 // TestIssueSeedsTitleBranchAndPrompt: the same three seedings the form
