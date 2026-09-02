@@ -35,9 +35,10 @@ import (
 // subsequence of candidate, and if so the rune-index span [start, end]
 // (inclusive) of the tightened match found by the two-pass algorithm
 // described in the package doc. An empty query always matches at [0, -1]
-// (a zero-width match at the very start -- see fuzzyRank, which never
-// calls this for an empty query in the first place, so the exact span
-// returned here is not otherwise observable).
+// -- a zero-width match at the very start, End < Start, which is how a
+// span-painting caller tells "nothing to highlight" apart from a real
+// one-rune match at index 0. fuzzyRankSpans reads that answer straight
+// out of here for its own empty-query branch rather than restating it.
 func fuzzyMatch(candidate, query string) (ok bool, start, end int) {
 	if query == "" {
 		return true, 0, -1
@@ -102,30 +103,64 @@ func lastIndexOfRuneUpto(s []rune, r rune, upto int) int {
 	return -1
 }
 
-// fuzzyHit pairs a matched candidate with the ranking key fuzzyRank sorts
-// on: span (end-start+1, tightness), start (earliness), and the
+// fuzzyHit pairs a matched candidate with the ranking key fuzzyRankSpans
+// sorts on -- span (end-start+1, tightness), start (earliness), and the
 // candidate's original index (an explicit, documented tiebreak rather
-// than an implicit reliance on sort.SliceStable alone).
+// than an implicit reliance on sort.SliceStable alone) -- plus end, which
+// is not a ranking key at all but half of the span fuzzyRankSpans hands
+// back to its caller.
 type fuzzyHit struct {
 	text  string
 	index int
 	span  int
 	start int
+	end   int
 }
 
-// fuzzyRank returns the subset of candidates that match query as a
+// fuzzySpan is a ranked candidate plus the rune span fuzzyMatch found.
+type fuzzySpan struct {
+	Text       string
+	Start, End int // inclusive rune indices; End < Start for an empty query
+}
+
+// fuzzyRankSpans returns the subset of candidates that match query as a
 // case-insensitive subsequence (see fuzzyMatch), ordered by tightness
 // (shorter matched span first), then earliness (earlier match start
-// first), then original input order. A non-matching candidate is dropped
-// entirely, never merely sorted to the end.
+// first), then original input order -- each paired with the span
+// fuzzyMatch already computed to rank it. A non-matching candidate is
+// dropped entirely, never merely sorted to the end.
 //
 // An empty query returns every candidate, unranked, in its original
 // order -- the same "no filter" convention widgets.Picker.SetQuery and
 // widgets.ChipRow use, so a caller does not need to special-case the
-// empty-query call itself.
-func fuzzyRank(candidates []string, query string) []string {
+// empty-query call itself -- each carrying fuzzyMatch's own empty-query
+// answer of [0, -1], an empty span with nothing to highlight.
+//
+// The spans are what v3 spec §8.4 needs: the data to paint the matched
+// characters is computed on every keystroke anyway, and fuzzyRank below
+// used to throw it away. Start and End are RUNE indices into Text, not
+// byte offsets -- a caller slicing Text with them must go through
+// []rune(Text) or it will mis-slice the first multi-byte candidate a user
+// types at.
+//
+// §8.4 also states the constraint on the caller, since these coordinates
+// only mean anything against the string they were computed from: a field
+// that ranks one string and DISPLAYS another (DirField ranks full paths
+// but shows them home-collapsed, and in path mode ranks basenames but
+// shows full paths) must re-run fuzzyMatch against the text it will
+// actually draw rather than translate these indices through the transform
+// in between.
+func fuzzyRankSpans(candidates []string, query string) []fuzzySpan {
 	if query == "" {
-		return append([]string(nil), candidates...)
+		// fuzzyMatch's own empty-query answer, taken from it rather than
+		// written out here so the two cannot drift; it does not depend on
+		// the candidate, hence the one call outside the loop.
+		_, start, end := fuzzyMatch("", query)
+		out := make([]fuzzySpan, len(candidates))
+		for i, c := range candidates {
+			out[i] = fuzzySpan{Text: c, Start: start, End: end}
+		}
+		return out
 	}
 
 	hits := make([]fuzzyHit, 0, len(candidates))
@@ -134,7 +169,7 @@ func fuzzyRank(candidates []string, query string) []string {
 		if !ok {
 			continue
 		}
-		hits = append(hits, fuzzyHit{text: c, index: i, span: end - start + 1, start: start})
+		hits = append(hits, fuzzyHit{text: c, index: i, span: end - start + 1, start: start, end: end})
 	}
 
 	sort.SliceStable(hits, func(i, j int) bool {
@@ -147,9 +182,23 @@ func fuzzyRank(candidates []string, query string) []string {
 		return hits[i].index < hits[j].index
 	})
 
-	out := make([]string, len(hits))
+	out := make([]fuzzySpan, len(hits))
 	for i, h := range hits {
-		out[i] = h.text
+		out[i] = fuzzySpan{Text: h.text, Start: h.start, End: h.end}
+	}
+	return out
+}
+
+// fuzzyRank is fuzzyRankSpans with the spans dropped -- same ranking, same
+// exclusions, same empty-query passthrough, unchanged signature. It stays
+// because most callers only ever wanted the ordered strings, and because
+// keeping it byte-identical in behavior is what lets fuzzy_test.go go on
+// pinning the ranking rules without knowing about spans at all.
+func fuzzyRank(candidates []string, query string) []string {
+	spans := fuzzyRankSpans(candidates, query)
+	out := make([]string, len(spans))
+	for i, s := range spans {
+		out[i] = s.Text
 	}
 	return out
 }
