@@ -10,6 +10,12 @@
   v1 spec stays authoritative and its `spec §N` citations keep resolving.
   Comments citing v1 §6 or §7 are updated as their code migrates; new
   comments cite this document as `v2 spec §N`.
+- **Superseded in part by**
+  `docs/specs/2026-09-02-herdr-draft-v3-design.md`, which replaces **§4**
+  (the screen), **§7** (skin, palette, mouse), **§9** (degradation) and
+  **§6's `account` row**, and corrects two errors noted below. Every other
+  section here stays authoritative and its `v2 spec §N` citations keep
+  resolving. That document's §13 itemises every superseded sentence.
 
 ## 1. Summary
 
@@ -77,6 +83,12 @@ consequence line. If it fails, it fails by being too terse, and the panel is
 the escape valve.
 
 ## 4. The screen
+
+> **SUPERSEDED by v3 spec §4.** The mockups below are v2's. The row grammar
+> they show is unchanged, but the frame around it is: the content fills the
+> pane instead of sitting in a centred 88-column box, the rules are visible,
+> the focused row carries an accent edge as well as a fill, and a third rule
+> closes the panel above the footer.
 
 Resting, fully configured, at the 80×24 floor:
 
@@ -291,6 +303,13 @@ so one `⇧⇥` reaches it. This order is declared in exactly one place,
 | `agent` | `claude` | — | — |
 | `account` | `personal · max · ok`, or `active · max · 12%` | — | `account pinning only applies to claude` |
 
+> **SUPERSEDED by v3 spec §10.** The `account` row above is wrong in three
+> ways. It shows `ok` — an auth status — *instead of* utilization whenever a
+> profile is pinned, which is backwards: `ok` is the state that needs no
+> words. It shows one window when clauth reports three. And "pinned" is
+> decided by `Pin()`, which returns the picker's cursor position, so moving
+> the cursor once silently pins an account for real (v3 §10.3).
+
 > **ERRATUM, the worktree row with no branch yet.** The table originally had
 > no cell for the state the form *opens* in: worktree on, in a repository,
 > with no title typed and therefore nothing to derive a branch from. Only
@@ -358,6 +377,15 @@ cells.
 
 ## 7. Skin, palette, mouse
 
+> **SUPERSEDED by v3 spec §5, §6 and §8.** Three specific failures, all
+> diagnosed after v2 shipped: the palette table below maps `Border` from
+> `surface_dim`, a *fill* colour, and using it as a *stroke* made both rules
+> invisible in eleven of eighteen themes; the focus-indication paragraph's
+> full-width fill has the same 1.07:1 problem and the `▎` gutter bar it
+> removed comes back beside it; and the width cap is deleted outright. The
+> mouse zones and the "adopt herdr's grammar" framing are unchanged and
+> still authoritative.
+
 herdr's `render_new_linked_worktree_overlay` (`herdr:src/ui/dialogs.rs:259`)
 is the house grammar: lowercase terse labels in a dim color, values brighter,
 no `Label:` colons, a lowercase modal header, status in dim, errors in red,
@@ -424,6 +452,12 @@ Mostly unchanged, so muscle memory survives.
 > zone `↵` submits from, and still carries `button:create`.
 
 ## 9. Degradation
+
+> **SUPERSEDED by v3 spec §7.** The five steps below survive as the first six
+> rungs of a nine-rung ladder, in the same order; v3 appends a third rule, a
+> cap on the region (`panelCapRows`, so leftover height stops becoming a
+> void), and a top/bottom margin. Everything at h ≤ 15 is byte-identical to
+> what this section describes.
 
 Fixed cost is header, rule, rows, rule, panel, footer. As height shrinks:
 
@@ -619,6 +653,13 @@ what makes "rows never move" a contract rather than a comment, since `Row`
 takes no height parameter by design.
 
 Golden frames regenerated with `go test ./... -update`. In `internal/form`:
+
+> **ERRATUM.** That command **fails**: `-update` is registered only in
+> `form_test.go` and `internal/app/frames_test.go`, so every other package
+> rejects the flag. Regenerate per package —
+> `go test ./internal/form/ -update` then `go test ./internal/app/ -update`.
+> Repeated as v3 spec §12.
+
 `empty-80x24` and `empty-120x40` keep their names; `title-verdict`,
 `dir-browse`, `issue-picker` and `account` become `*-panel-*`; new
 `prompt-panel-80x24` and `worktree-panel-80x24`; `degraded-80x20` becomes
@@ -651,6 +692,10 @@ screens.
   reads cached state rather than the screen, so the guard is load-bearing.
 - The plugin manifest does not change. At rest the form is roughly seventeen
   rows, which an 80%-height popup holds from 80×24 upward.
+
+  > **SUPERSEDED by v3 spec §6.1.** The manifest becomes a fixed-cell popup,
+  > `width = 104` / `height = 32`, so the form receives 101×30 and 77×22 on
+  > an 80×24 terminal. 64×19 stops being a reachable size.
 
 ## 16. Out of scope
 
