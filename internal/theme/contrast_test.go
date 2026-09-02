@@ -197,6 +197,85 @@ func TestLoadHerdrPalette_FloorsAnIllegibleOverride(t *testing.T) {
 	}
 }
 
+// TestBuiltinPalettes_InputFillIsVisibleOnBothGrounds is v3 spec §8.7's own
+// version of the floor above, and it exists because §8.7 specified a value
+// that fails it. §8.7 asks for a flat palette.Surface, justified by
+// "catppuccin #1e1e2e/#313244 is clear" -- which is Surface against PanelBG.
+// Three of the form's four inputs never render on PanelBG: they are drawn
+// only while their field is focused, and a focused stack row is filled
+// ActiveRowBG first. Against THAT ground, measured rather than assumed:
+//
+//	catppuccin       1.000:1  (Surface and ActiveRowBG are both #313244)
+//	tokyo-night-day  1.002:1
+//	catppuccin-latte 1.007:1
+//	gruvbox-light    1.074:1
+//	kanagawa-lotus   1.077:1
+//	dracula          1.078:1
+//
+// Six of seventeen below 1.08:1, the default theme at dead level. That is
+// v2's 1.07:1 rule again, in a different field, and it would have shipped
+// green: the frames would have changed bytes and not one pixel of screen.
+//
+// Both grounds are asserted, because InputFill takes the ground as an
+// argument precisely so the two call sites can differ.
+func TestBuiltinPalettes_InputFillIsVisibleOnBothGrounds(t *testing.T) {
+	for name := range builtinPalettes {
+		t.Run(name, func(t *testing.T) {
+			palette, ok := Builtin(name)
+			if !ok {
+				t.Fatalf("Builtin(%q) not found", name)
+			}
+			// The terminal palette's Surface is herdr's Color::Reset and
+			// nothing paints it at all, so there is no fill to measure --
+			// the same missing-data exemption the floors above take, and
+			// it is asserted rather than assumed in the form package's
+			// TestLineInput_TerminalThemeGetsNoFill.
+			if _, inherit := palette.Surface.(lipgloss.NoColor); inherit {
+				if name != "terminal" {
+					t.Fatalf("Surface is NoColor: only the terminal palette may be exempt")
+				}
+				return
+			}
+
+			for _, tc := range []struct {
+				where  string
+				ground Color
+			}{
+				{"a focused stack row", palette.ActiveRowBG},
+				{"the detail panel", palette.PanelBG},
+			} {
+				got, ok := contrastRatio(palette.InputFill(tc.ground), tc.ground)
+				if !ok {
+					t.Errorf("InputFill on %s is unmeasurable", tc.where)
+					continue
+				}
+				if got < InputFillContrastFloor-contrastAssertionEpsilon {
+					t.Errorf("an input on %s is %.3f:1 against it, want >= %.2f:1 -- an input nobody can see is not an input (v3 spec §8.7)",
+						tc.where, got, InputFillContrastFloor)
+				}
+			}
+		})
+	}
+}
+
+// TestInputFill_KeepsSurfaceWhereItIsAlreadyLegible is the fidelity half of
+// InputFill's contract, and the reason it is not simply "always mix": herdr
+// fills its own inputs with surface0, so where surface0 is visible against
+// the ground we use surface0 and the screen matches herdr's. rose-pine is
+// the case -- its Surface is 1.397:1 against its own focused row.
+func TestInputFill_KeepsSurfaceWhereItIsAlreadyLegible(t *testing.T) {
+	palette, ok := Builtin("rose-pine")
+	if !ok {
+		t.Fatal("Builtin(\"rose-pine\") not found")
+	}
+	if ratio, _ := contrastRatio(palette.Surface, palette.ActiveRowBG); ratio < InputFillContrastFloor {
+		t.Fatalf("rose-pine's Surface is %.3f:1 against its focused row -- this fixture needs a theme that clears the floor unaided", ratio)
+	}
+	if got := palette.InputFill(palette.ActiveRowBG); !colorEqual(got, palette.Surface) {
+		t.Errorf("InputFill = %v, want Surface %v unchanged where it is already legible", got, palette.Surface)
+	}
+}
+
 // TestRGB8_RecoversChannelsExactly pins the >>8 recovery relativeLuminance
 // depends on: a hex literal must come back as the bytes it was written with.
 func TestRGB8_RecoversChannelsExactly(t *testing.T) {

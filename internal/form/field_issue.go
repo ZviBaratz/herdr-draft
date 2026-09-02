@@ -129,8 +129,10 @@ type IssueField struct {
 func NewIssueField(palette theme.Palette) *IssueField {
 	f := &IssueField{
 		palette: palette,
-		input:   newLineInput(palette, 0),
-		picker:  widgets.NewPicker(palette),
+		// ActiveRowBG: Row draws this filter only while focused, so the
+		// row underneath it is always the focused one. See newLineInput.
+		input:  newLineInput(palette, 0, palette.ActiveRowBG),
+		picker: widgets.NewPicker(palette),
 	}
 	f.input.SetPlaceholder("type to filter")
 	// v3 spec §8.1's whole motivating example: the identifier gets its own

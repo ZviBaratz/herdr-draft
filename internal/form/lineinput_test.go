@@ -8,7 +8,7 @@ import (
 )
 
 func TestLineInput_CharLimitIsRuneBound(t *testing.T) {
-	l := newLineInput(theme.Default(), 3)
+	l := newLineInput(theme.Default(), 3, theme.Default().ActiveRowBG)
 	l.Focus()
 	for _, r := range "héllo" { // 5 runes, 6 bytes ('é' is 2 bytes)
 		l.Update(rn(r))
@@ -19,7 +19,7 @@ func TestLineInput_CharLimitIsRuneBound(t *testing.T) {
 }
 
 func TestLineInput_SetValueMovesCursorToEnd(t *testing.T) {
-	l := newLineInput(theme.Default(), 0)
+	l := newLineInput(theme.Default(), 0, theme.Default().ActiveRowBG)
 	l.SetValue("hello")
 	l.Focus()
 	l.Update(rn('!'))
@@ -29,7 +29,7 @@ func TestLineInput_SetValueMovesCursorToEnd(t *testing.T) {
 }
 
 func TestLineInput_BlurredIgnoresInput(t *testing.T) {
-	l := newLineInput(theme.Default(), 0)
+	l := newLineInput(theme.Default(), 0, theme.Default().ActiveRowBG)
 	l.Update(rn('x')) // never focused
 	if got := l.Value(); got != "" {
 		t.Fatalf("Value() = %q, want \"\" (blurred input must ignore keystrokes)", got)
@@ -43,7 +43,7 @@ func TestLineInput_BlurredIgnoresInput(t *testing.T) {
 // header) until newLineInput explicitly zeroed it -- see newLineInput's
 // own doc comment.
 func TestLineInput_NoDefaultPromptGlyph(t *testing.T) {
-	l := newLineInput(theme.Default(), 0)
+	l := newLineInput(theme.Default(), 0, theme.Default().ActiveRowBG)
 	l.Focus()
 	l.SetValue("hello")
 	if got := l.View(20); strings.Contains(got, "> ") {
@@ -52,7 +52,7 @@ func TestLineInput_NoDefaultPromptGlyph(t *testing.T) {
 }
 
 func TestLineInput_ViewIsSingleLineAndWidthBound(t *testing.T) {
-	l := newLineInput(theme.Default(), 0)
+	l := newLineInput(theme.Default(), 0, theme.Default().ActiveRowBG)
 	l.SetValue(strings.Repeat("x", 40))
 	got := l.View(10)
 	if strings.Contains(got, "\n") {

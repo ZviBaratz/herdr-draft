@@ -211,8 +211,10 @@ func NewWorktreeField(palette theme.Palette) *WorktreeField {
 	w := &WorktreeField{
 		palette: palette,
 		chips:   widgets.NewChipRow(palette),
-		branch:  newLineInput(palette, 0),
-		base:    widgets.NewPicker(palette),
+		// PanelBG, unlike every other input in the form: panelBranch
+		// renders this one inside the detail panel, not in a stack row.
+		branch: newLineInput(palette, 0, palette.PanelBG),
+		base:   widgets.NewPicker(palette),
 	}
 	w.chips.SetChips(worktreeChips)
 	w.chips.SetInert(true, worktreeNonGitPlaceholder) // safe default: see SetGitTarget

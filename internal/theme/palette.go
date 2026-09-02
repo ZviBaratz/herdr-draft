@@ -458,6 +458,25 @@ func parseHexColor(s string) (Color, bool) {
 // value, not a waiver. Do not lower this to make something pass.
 const ActiveRowContrastFloor = 1.25
 
+// InputFillContrastFloor is the minimum WCAG contrast ratio between a text
+// input's fill and whatever it is drawn on top of (v3 spec §8.7). It is the
+// same number as ActiveRowContrastFloor, for the same reason -- both mark a
+// background REGION whose edge the eye has to catch -- but it is its own
+// constant so that moving one floor never silently moves the other.
+//
+// §8.7 specifies the fill as a flat palette.Surface, on the strength of
+// "catppuccin #1e1e2e/#313244 is clear". That pair is Surface against
+// PanelBG, and it is the wrong pair for three of the four inputs: an input
+// is only ever rendered while its field is focused, and a focused stack row
+// is filled ActiveRowBG end to end before the input's own fill is composited
+// into it. Measured against ActiveRowBG instead, Surface is 1.000:1 on
+// catppuccin -- the DEFAULT theme, where the two fields are the byte-
+// identical #313244 -- 1.002:1 on tokyo-night-day and 1.007:1 on
+// catppuccin-latte. A flat Surface fill is therefore literally zero pixels
+// of change on the theme most users see, which is v2's invisible-rule defect
+// reproduced one field over. See Palette.InputFill.
+const InputFillContrastFloor = 1.25
+
 // contrastMixStep is how coarsely ensureContrast walks away from the
 // background. It is deliberately coarse: a fine search would land a clamped
 // theme a hair over the floor, which is compliant but still marginal, and
@@ -477,6 +496,38 @@ const contrastMixStep = 0.05
 func floorContrast(p Palette) Palette {
 	p.ActiveRowBG = ensureContrast(p.PanelBG, p.ActiveRowBG, p.Text, ActiveRowContrastFloor)
 	return p
+}
+
+// InputFill returns the background a text input should be painted with when
+// it is drawn on top of ground (v3 spec §8.7). It is Surface -- herdr's own
+// choice for the inputs in its dialogs (herdr:src/ui/dialogs.rs's
+// render_name_input_field) -- wherever Surface is actually distinguishable
+// from that ground, and Surface raised away from the ground where it is not.
+//
+// It is a method taking a ground rather than a Palette field because the two
+// call sites sit on DIFFERENT grounds and no single value serves both. The
+// issue, dir and title inputs render only while their field is focused, so
+// they sit on ActiveRowBG; the worktree branch input and the prompt textarea
+// live in the panel, so they sit on PanelBG. Surface clears the floor
+// against PanelBG on most builtins (it is the pairing herdr itself uses) and
+// against ActiveRowBG on almost none -- see InputFillContrastFloor for the
+// numbers, and note that catppuccin, the default, is exactly 1.000:1.
+//
+// The raise is ensureContrast, the same walk §5.3 uses for ActiveRowBG, so
+// there is one clamp in this package and not two. It mixes the GROUND toward
+// Text, which makes the input a slightly RAISED chip rather than an inset
+// well. That direction is deliberate: a well would be painted PanelBG, and a
+// PanelBG rectangle inside a focused row lines up vertically with the
+// unfocused rows above and below it, so the focused band reads as having a
+// hole punched through it rather than as carrying an input.
+//
+// A Surface or a ground this process cannot measure passes straight through
+// untouched, which is the terminal palette: its Surface is herdr's
+// Color::Reset, and widgets.PaintLine declines to paint a NoColor at all, so
+// that theme keeps inheriting the host terminal's own background exactly as
+// it does everywhere else.
+func (p Palette) InputFill(ground Color) Color {
+	return ensureContrast(ground, p.Surface, p.Text, InputFillContrastFloor)
 }
 
 // ensureContrast returns fg when it already meets floor against bg, and

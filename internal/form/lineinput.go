@@ -49,12 +49,28 @@ import (
 // lineInput wraps a single bubbles/v2 textinput.Model.
 type lineInput struct {
 	ti textinput.Model
+	// fill is the background painted across the input's whole width, so
+	// an empty input is a visible affordance rather than a stretch of
+	// the row it sits on (v3 spec §8.7). It is theme.Palette.InputFill
+	// of the GROUND the caller passed to newLineInput, not a flat
+	// palette.Surface -- read InputFill's own doc for why the ground has
+	// to be named at the call site.
+	fill theme.Color
 }
 
-// newLineInput returns an empty, blurred lineInput styled from palette.
-// charLimit <= 0 means no limit (textinput's own convention, passed
-// through unchanged).
-func newLineInput(palette theme.Palette, charLimit int) *lineInput {
+// newLineInput returns an empty, blurred lineInput styled from palette,
+// filled for the ground it will be drawn on. charLimit <= 0 means no
+// limit (textinput's own convention, passed through unchanged).
+//
+// ground is the background the composed row this input lands in is
+// painted with: palette.ActiveRowBG for an input rendered in a stack
+// row's value cell (which is every input that is only rendered while its
+// field is focused), palette.PanelBG for one rendered inside the detail
+// panel. It is a required argument rather than a default because getting
+// it wrong is invisible -- a fill that matches its ground renders
+// byte-different frames and an identical screen, which is exactly the
+// class of defect v3 exists to fix.
+func newLineInput(palette theme.Palette, charLimit int, ground theme.Color) *lineInput {
 	ti := textinput.New()
 	// textinput.New() defaults Prompt to "> " (verified in the vendored
 	// source), a shell-style leading glyph that would silently consume
@@ -66,16 +82,21 @@ func newLineInput(palette theme.Palette, charLimit int) *lineInput {
 	ti.Prompt = ""
 	ti.CharLimit = charLimit
 	ti.SetStyles(lineInputStyles(palette))
-	return &lineInput{ti: ti}
+	return &lineInput{ti: ti, fill: palette.InputFill(ground)}
 }
 
 // lineInputStyles builds a textinput.Styles from palette, matching
 // widgets/textarea.go's paletteStyles convention one level down: Text uses
 // palette.Text focused / palette.DimText blurred, Placeholder is always
-// palette.DimText and italic, and the cursor uses palette.Accent. No
-// Background is set here, for the same reason paletteStyles doesn't set
-// one -- sizes.go's paintLine paints the panel background across the
-// whole composed line, not any individual widget's own style.
+// palette.DimText and italic, and the cursor uses palette.Accent.
+//
+// Still no Background on any span, even now that View paints one. v3 spec
+// §8.7 asks for it here too, "belt and braces", and it is not needed:
+// PaintLine reasserts the fill after every reset a span leaves behind, and
+// a Foreground-only span emits no background SGR of its own to overwrite
+// it in between, so the fill is already unbroken across the whole line --
+// pinned cell by cell in input_fill_test.go rather than argued. Setting it
+// twice would only make every frame carry a second copy of the same color.
 func lineInputStyles(palette theme.Palette) textinput.Styles {
 	placeholder := lipgloss.NewStyle().Foreground(palette.DimText).Italic(true)
 	return textinput.Styles{
@@ -137,19 +158,34 @@ func (l *lineInput) Update(msg tea.Msg) tea.Cmd {
 }
 
 // View renders the input into exactly one physical line, clipped/padded to
-// width cells (floored at 1) via fitLine -- textinput.Model.View already
-// keeps its own typed content on one line via internal horizontal
+// width cells (floored at 1) and painted in l.fill -- textinput.Model.View
+// already keeps its own typed content on one line via internal horizontal
 // scrolling (verified in the vendored source: View computes an
-// offset/offsetRight window and never wraps), but fitLine's outer
+// offset/offsetRight window and never wraps), but paintLine's outer
 // Width/MaxWidth/Inline wrap is still applied as the same defensive
 // last-resort backstop sizes.go's paintLine and widgets/picker.go's
 // widthStyle both use, since this value is composed alongside a caller's
 // own label/marker text on the SAME row before that whole row is clipped
 // to the field's inner width.
+//
+// paintLine rather than fitLine is the whole of v3 spec §8.7: it pads and
+// clips to exactly width as fitLine did, and additionally reasserts the
+// fill after each of the several resets textinput.View embeds (the text
+// span, the placeholder span, the cursor span). It also declines to paint
+// a lipgloss.NoColor{} at all, which is what leaves the `terminal` theme's
+// inputs inheriting the host terminal's own background rather than being
+// filled with a fiction -- see paintLine's own doc, and
+// TestLineInput_TerminalThemeGetsNoFill.
+//
+// The composition with the caller's own paint is the same one
+// picker_fill_test.go proves for the picker: this fill goes in first, and
+// composeRows' outer paintLine then inserts ActiveRowBG (or PanelBG) after
+// every reset in a string that already carries this fill after those same
+// resets -- so this one is last and wins.
 func (l *lineInput) View(width int) string {
 	if width < 1 {
 		width = 1
 	}
 	l.ti.SetWidth(width)
-	return fitLine(l.ti.View(), width)
+	return paintLine(l.ti.View(), width, l.fill)
 }

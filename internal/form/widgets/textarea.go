@@ -40,6 +40,7 @@
 package widgets
 
 import (
+	"image/color"
 	"strings"
 	"time"
 
@@ -81,6 +82,12 @@ type PromptArea struct {
 	// not by ladder order, so a caller does not have to pre-sort it (see
 	// selectPlaceholder's doc).
 	ladder []string
+
+	// fill is the background View paints across each of its rows, or nil
+	// for the unfilled block this widget rendered before v3 spec §8.7.
+	// It is nil by default and set only through SetFill; see SetFill for
+	// why the opt-in is the point.
+	fill color.Color
 }
 
 // NewPromptArea returns an empty, blurred PromptArea at
@@ -116,8 +123,19 @@ func NewPromptArea(palette theme.Palette) *PromptArea {
 // palette.DimText and italic, and the cursor uses palette.Accent. No style
 // here sets Background or Width/Height -- backgrounds are the form root's
 // job to paint across the whole popup (task 16's brief step 1: "panel bg
-// painted explicitly across the full popup area"), matching Picker/
-// ChipRow's own styles (Foreground only, see picker.go/chiprow.go), and
+// painted explicitly across the full popup area"), and since v3 spec §8.7
+// SetFill's, which View applies over the finished block rather than per
+// span. §8.7 additionally asks for a Background on CursorLine and
+// EndOfBuffer here, to stop bubbles' distinct cursor-line style reading as
+// a stripe across that fill. It is not needed and was not added: these
+// styles set a Foreground only, so they emit no background code of their
+// own and PaintLine's reasserted fill stays in force across every row --
+// asserted row by row in the form package's
+// TestPromptArea_FillCoversEveryRowIncludingTheCursorLine, which is where a
+// future bubbles release that starts emitting one will be caught.
+//
+// Foreground-only also matches Picker/
+// ChipRow's own styles (see picker.go/chiprow.go), and
 // bubbles' own StyleState.computedText()/computedPlaceholder()/etc. append
 // Inline(true) unconditionally (verified in the vendored source) regardless
 // of what a caller-supplied Style sets, so the Task 14 word-wrap-before-
@@ -149,6 +167,25 @@ func paletteStyles(palette theme.Palette) textarea.Styles {
 			BlinkSpeed: 500 * time.Millisecond,
 		},
 	}
+}
+
+// SetFill turns on v3 spec §8.7's input fill, painting bg across every one
+// of View's rows so an empty prompt is a visible affordance rather than a
+// stretch of panel. Pass theme.Palette.InputFill of the background this
+// widget is composed onto -- PanelBG, for the only caller there is.
+//
+// It is an opt-in rather than a constructor argument, and that is §8.7's own
+// call: a filled block four rows tall is visually a great deal heavier than
+// a filled line one row tall, so the decision belongs where a reader can see
+// it being made rather than inside NewPromptArea where it would arrive as a
+// side effect of construction. A PromptArea nobody calls this on renders
+// byte-for-byte what it rendered before.
+//
+// bg == lipgloss.NoColor{} is accepted and paints nothing: PaintLine
+// declines that sentinel, so the `terminal` theme's prompt keeps the host
+// terminal's own background. nil is the "never opted in" state.
+func (p *PromptArea) SetFill(bg color.Color) {
+	p.fill = bg
 }
 
 // SetRows sets the textarea's height, flooring at PromptAreaMinRows -- the
@@ -228,6 +265,14 @@ func selectPlaceholder(ladder []string, width int) string {
 // Picker/ChipRow this widget does not need its own width/MaxWidth/Inline
 // wrapper on top: see paletteStyles' doc comment for why that footgun does
 // not apply here.
+//
+// Once SetFill has been called, each of those lines goes through PaintLine,
+// which carries that wrapper anyway -- so a filled block IS clipped and
+// padded to exactly width, and an unfilled one is returned untouched, the
+// byte-for-byte block this function produced before v3 spec §8.7. The paint
+// is per LINE rather than over the joined block because PaintLine reasserts
+// the fill after every embedded reset and pads to width, neither of which
+// survives a newline.
 func (p *PromptArea) View(width int) string {
 	if width <= 0 {
 		return strings.Join(make([]string, p.rows), "\n")
@@ -237,7 +282,15 @@ func (p *PromptArea) View(width int) string {
 	p.ta.SetHeight(p.rows)
 	p.ta.Placeholder = selectPlaceholder(p.ladder, width)
 
-	return p.ta.View()
+	rendered := p.ta.View()
+	if p.fill == nil {
+		return rendered
+	}
+	lines := strings.Split(rendered, "\n")
+	for i, line := range lines {
+		lines[i] = PaintLine(line, width, p.fill)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Value returns the textarea's current text.

@@ -206,8 +206,10 @@ type DirField struct {
 func NewDirField(palette theme.Palette) *DirField {
 	d := &DirField{
 		palette: palette,
-		input:   newLineInput(palette, 0),
-		picker:  widgets.NewPicker(palette),
+		// ActiveRowBG: Row draws this filter only while focused, so the
+		// row underneath it is always the focused one. See newLineInput.
+		input:  newLineInput(palette, 0, palette.ActiveRowBG),
+		picker: widgets.NewPicker(palette),
 	}
 	d.input.SetPlaceholder("type to search, or / ~ . to browse")
 	// One column, and the one place in the form where a picker cell

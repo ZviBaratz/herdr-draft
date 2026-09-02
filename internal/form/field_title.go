@@ -55,7 +55,10 @@ type TitleField struct {
 
 // NewTitleField returns an empty, blurred TitleField styled from palette.
 func NewTitleField(palette theme.Palette) *TitleField {
-	input := newLineInput(palette, titleCharLimit)
+	// The ground is ActiveRowBG, not PanelBG: Row renders this input
+	// only while the field is focused, and a focused stack row is filled
+	// ActiveRowBG end to end (form.go's compose loop).
+	input := newLineInput(palette, titleCharLimit, palette.ActiveRowBG)
 	input.SetPlaceholder("untitled")
 	return &TitleField{palette: palette, input: input}
 }

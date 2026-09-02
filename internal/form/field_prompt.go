@@ -97,6 +97,12 @@ type PromptField struct {
 func NewPromptField(palette theme.Palette) *PromptField {
 	area := widgets.NewPromptArea(palette)
 	area.SetPlaceholderLadder(promptPlaceholderLadder)
+	// v3 spec §8.7 makes the four-row fill an opt-in and then takes it
+	// anyway, for a stated reason: an empty prompt is exactly as invisible
+	// as an empty title, and the prompt is the field most often left empty.
+	// The ground is PanelBG -- Panel draws the textarea inside the detail
+	// panel, never in the stack row.
+	area.SetFill(palette.InputFill(palette.PanelBG))
 	return &PromptField{palette: palette, area: area}
 }
 
