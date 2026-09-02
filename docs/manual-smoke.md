@@ -162,7 +162,7 @@ new session                                                  herdr-draft · main
 ───────────────────────────────────────────────────────────────────────────────
   issue      none
   title      fix login redirect loop
-  prompt     Work on ENG-101: Fix login redirect loop
+▌ prompt     Work on ENG-101: Fix login redirect loop
   project    ~/Projects/herdr-draft
   worktree   on · zvi/fix-login-redirect-loop ← main
   placement  worktree opens as its own space
@@ -180,8 +180,10 @@ new session                                                  herdr-draft · main
   if one does, that is a regression, not a rendering quirk.
 - `issue` is absent unless Linear is configured, and `account` unless clauth
   is configured with ≥2 profiles. With neither, the stack is six rows.
-- **The focused row is painted**, full width, in `ActiveRowBG`. There is no
-  gutter column and no `▎` marker.
+- **The focused row carries three signals** (v3 spec §5.4): the full-width
+  `ActiveRowBG` paint, an accent `▌` in the two-cell gutter, and a bold
+  value. All three, on the same row, or it is a regression — v2 shipped the
+  paint alone and it was invisible.
 - **The panel below the second rule is the only chooser** — candidate lists,
   the prompt editor, verdicts, notes. It belongs to the focused row and to no
   other.
@@ -224,7 +226,9 @@ popup path.
 
 **Steps:**
 
-1. Open the popup. Confirm focus is on the **title** row (it is painted) and
+1. Open the popup. Confirm focus is on the **title** row (painted, barred and
+   bold — v3 spec §5.4; before v3 the paint was 1.07:1 and this check could
+   not actually be performed) and
    the footer reads `name it to create · ⇥ for the prompt`. Confirm the
    opening stack: `title untitled`, `prompt —`, and — this is the state that
    shipped broken once — `worktree  on · from main`, with no invented branch

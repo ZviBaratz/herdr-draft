@@ -33,10 +33,9 @@
 // label column -- the one thing §12 asks for by name. The glyph goes IN
 // the gutter instead, which is what §4's own panel mockup does with a
 // picker's cursor glyph ("a picker's own cursor glyph lands in exactly
-// that column", rowlayout.go's contentBox) and what v1's own compose
-// path did with its focus marker, back when focus was a `▎` in the
-// gutter rather than a full-width fill. Labels then land on the form's
-// label column exactly, which
+// that column", rowlayout.go's contentBox) and what the form's own row
+// stack does with its focus bar (v3 spec §5.4). Labels then land on the
+// form's label column exactly, which
 // TestSubmitView_LabelColumnMatchesTheForm pins.
 package form
 

@@ -866,22 +866,40 @@ func isRuleLine(s string) bool {
 // v2 sends every spare row to the panel instead (rowlayout.go's
 // layoutFrame).
 //
-// The comparison strips ANSI, because the one thing that legitimately
-// differs between these renders IS a color: the focused row's
-// full-width ActiveRowBG fill.
+// The comparison strips ANSI and blanks each stack row's two-cell
+// gutter, because those are exactly the two things v3 spec §5.4 lets
+// focus change: two colors (the full-width ActiveRowBG fill and the
+// value's bold) and one glyph (the accent bar). Blanking the gutter
+// rather than exempting the row is what keeps the bar honest -- a bar
+// that ever rendered wider than gutterWidth would shift the label and
+// still fail here.
 func TestRowStack_RowsNeverMoveAcrossFocus(t *testing.T) {
 	palette := theme.Default()
 	m, stubs := buildRowForm(palette, "a", "b", "c", "d")
 	const w, h = 80, 24
 
 	f := layoutFrame(h, len(stubs))
-	above := 2 + f.Rows + 1 // header, rule 1, the stack, rule 2
+	const firstRow = 2             // under the header and rule 1
+	above := firstRow + f.Rows + 1 // ... through rule 2
 
-	want := strippedLines(m, w, h)[:above]
+	padLeft, _ := contentBox(w)
+	blankGutter := func(lines []string) []string {
+		out := append([]string(nil), lines...)
+		for i := firstRow; i < firstRow+f.Rows; i++ {
+			r := []rune(out[i])
+			for c := padLeft; c < padLeft+gutterWidth && c < len(r); c++ {
+				r[c] = ' '
+			}
+			out[i] = string(r)
+		}
+		return out
+	}
+
+	want := blankGutter(strippedLines(m, w, h)[:above])
 	for step := 0; step < len(stubs)+1; step++ {
 		next, _ := m.Update(keyTab)
 		m = next.(Model)
-		got := strippedLines(m, w, h)[:above]
+		got := blankGutter(strippedLines(m, w, h)[:above])
 		for i := range want {
 			if got[i] != want[i] {
 				t.Fatalf("line %d moved after %d Tab(s) (focus is now %q):\n before: %q\n  after: %q",
@@ -1002,23 +1020,34 @@ func TestRowStack_SmallPanelDoesNotMoveTheFooter(t *testing.T) {
 	}
 }
 
-// TestRowStack_FocusIsAFullWidthFill pins v2 spec §7's replacement for
-// the `▎` gutter bar: the focused row is painted in ActiveRowBG across
-// the FULL window width, and no other row is. paintLine is what makes
-// that survive the styled spans inside the row (it reasserts the
-// background after every embedded ANSI reset), so this is really a test
-// that composeRows routes the focused row through it with the right
-// color.
-func TestRowStack_FocusIsAFullWidthFill(t *testing.T) {
+// TestRowStack_FocusCarriesThreeSignals pins v3 spec §5.4, and is v2's
+// own TestRowStack_FocusIsAFullWidthFill grown rather than replaced: the
+// full-width ActiveRowBG fill is still required, it is simply no longer
+// the only thing marking the focused row. All three signals -- the fill,
+// the accent bar in the gutter, and bold over the value -- are asserted
+// present on the focused row and absent from every other one, because the
+// defect v3 exists to fix was one signal that turned out to be
+// imperceptible, and a suite that checks any one of the three in
+// isolation could watch the other two rot.
+//
+// The fill half is really a test that composeRows routes the focused row
+// through paintLine with the right color (paintLine is what makes a
+// background survive the styled spans inside a row), and the bold half is
+// the same statement about boldSpan.
+func TestRowStack_FocusCarriesThreeSignals(t *testing.T) {
 	palette := theme.Default()
 	m, stubs := buildRowForm(palette, "a", "b", "c")
 	const w, h = 80, 24
+	padLeft, inner := contentBox(w)
+	labelW, _ := labelCol(inner)
 
 	fill := ansi.Style{}.BackgroundColor(palette.ActiveRowBG).String()
 	panelBG := ansi.Style{}.BackgroundColor(palette.PanelBG).String()
 	if fill == panelBG {
 		t.Fatalf("this test needs ActiveRowBG and PanelBG to differ in the default palette")
 	}
+	bold := ansi.Style{}.Bold().String()
+	accent := ansi.Style{}.ForegroundColor(palette.Accent).String()
 
 	for want, s := range stubs {
 		if cmd := m.FocusByID(s.id); cmd != nil {
@@ -1026,9 +1055,31 @@ func TestRowStack_FocusIsAFullWidthFill(t *testing.T) {
 		}
 		lines := viewLines(m, w, h)
 		for i := range stubs {
-			row := lines[2+i]
-			if got := strings.Contains(row, fill); got != (i == want) {
-				t.Errorf("with %q focused, row %d carries the ActiveRowBG fill = %v, want %v", s.id, i, got, i == want)
+			row, focused := lines[2+i], i == want
+
+			if got := strings.Contains(row, fill); got != focused {
+				t.Errorf("with %q focused, row %d carries the ActiveRowBG fill = %v, want %v", s.id, i, got, focused)
+			}
+			// The bar sits in the row's own gutter, which starts where
+			// the content box does -- derived rather than assumed, so
+			// this still holds when the box's left padding moves.
+			gutter := []rune(ansi.Strip(row))[padLeft : padLeft+gutterWidth]
+			if got := string(gutter) == focusBarGlyph+" "; got != focused {
+				t.Errorf("with %q focused, row %d's gutter is %q, want the accent bar = %v", s.id, i, string(gutter), focused)
+			}
+			if got := strings.Contains(row, accent); got != focused {
+				t.Errorf("with %q focused, row %d carries the accent foreground = %v, want %v", s.id, i, got, focused)
+			}
+			// Bold, and bold on the VALUE rather than the whole row:
+			// the label column is scenery and stays dim.
+			if got := strings.Contains(row, bold); got != focused {
+				t.Errorf("with %q focused, row %d carries bold = %v, want %v", s.id, i, got, focused)
+			}
+			if valueAt := padLeft + gutterWidth + labelW; focused {
+				at := ansi.StringWidth(ansi.Strip(row[:strings.Index(row, bold)]))
+				if at != valueAt {
+					t.Errorf("with %q focused, bold starts at column %d, want the value column at %d", s.id, at, valueAt)
+				}
 			}
 		}
 		// Full width, not just the content box.

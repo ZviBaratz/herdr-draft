@@ -97,6 +97,42 @@ func keepTail(s string, width int) string {
 // alone (form.go's rowSection.Panel).
 const panelCursorGlyph = "▸"
 
+// focusBarGlyph is the accent edge marking the focused STACK row (v3 spec
+// §5.4). It lands in the row's own copy of that same two-cell gutter, so
+// the bar and a panel's cursor glyph sit in one column.
+//
+// This REVERSES v2 deliberately, and the reason is the point of recording
+// it here rather than in a commit message. v2 removed v1's `▎` bar
+// because the full-width ActiveRowBG fill was going to replace it -- and
+// the fill turned out to be invisible, 1.07:1 against its own panel on
+// the default palette, which is the defect v3 spec §5.3 repaired. Even at
+// the repaired 1.40:1 a fill alone is a weak cursor, so the focused row
+// now carries THREE simultaneous signals (the fill, this bar, and bold on
+// the value) instead of one. That is herdr's own grammar, which marks a
+// selected row with four at once -- marker glyph, brighter foreground,
+// surface fill and bold (`herdr:src/ui/dialogs.rs:487-500`).
+//
+// The bar costs nothing: v2 deleted the glyph but kept the two-cell
+// gutterWidth it used to live in (sizes.go), so no column moves and no
+// row shifts.
+//
+// `▌` rather than v1's `▎`: a half block reads as the leading edge of the
+// fill it stands against, where a quarter block reads as a hairline
+// beside it.
+const focusBarGlyph = "▌"
+
+// rowGutter returns a stack row's two-cell gutter: the accent focus bar
+// plus a space when focused, two blanks otherwise. Always exactly
+// gutterWidth cells wide -- the row-stack counterpart of panelGutter
+// above, and deliberately the same shape, because the two glyphs share a
+// column.
+func rowGutter(focused bool, p theme.Palette) string {
+	if !focused {
+		return strings.Repeat(" ", gutterWidth)
+	}
+	return lipgloss.NewStyle().Foreground(p.Accent).Render(focusBarGlyph) + " "
+}
+
 // panelGutter returns a panel line's two-cell gutter: the accent-colored
 // cursor glyph plus a space when cursor is true, two blanks otherwise.
 // Always exactly gutterWidth cells wide.

@@ -62,11 +62,13 @@ const (
 // between the two sides, favouring the left on an odd remainder -- that
 // is the "centered" half of v2 spec §7's width cap.
 //
-// The gutterWidth column survives v2 as a plain two-cell INDENT, not as
-// a marker column: v2 spec §7 replaces the `▎` focus bar with a
-// full-width ActiveRowBG fill, but §4's mockups still inset the row
-// stack and the panel two cells from the header, the rules and the
-// footer, and a picker's own cursor glyph lands in exactly that column.
+// The gutterWidth column is a MARKER column again: v2 emptied it when it
+// replaced the `▎` focus bar with a full-width ActiveRowBG fill, and v3
+// spec §5.4 puts a bar back in it because that fill turned out to be
+// invisible (rowvalues.go's focusBarGlyph has the whole reversal). It
+// doubles as the two-cell inset §4's mockups show between the row stack
+// or the panel and the full-width header, rules and footer, and a
+// picker's own cursor glyph lands in exactly the same cell.
 //
 // Degenerate widths degrade rather than panic (the same contract
 // widgets/picker.go's widthStyle documents): inner is floored at 1 and

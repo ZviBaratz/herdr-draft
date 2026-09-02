@@ -72,6 +72,9 @@ package form
 
 import (
 	"image/color"
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 )
@@ -83,17 +86,19 @@ import (
 // has no equivalent in this form's flatter, borderless layout.
 //
 // Both serve the FORM: rowlayout.go's contentBox measures against both,
-// though the gutter is now a plain two-cell indent rather than a marker
-// column -- focus is a full-width fill, v2 spec §7. There is no VERTICAL
-// constant left here. v1 kept a verticalPadding = 1 for the blank row
+// and the gutter is a marker column again -- v2 emptied it, on the
+// premise that a full-width fill would carry focus by itself, and v3 spec
+// §5.4 puts rowvalues.go's focus bar back in it because the fill turned
+// out to be invisible (see focusBarGlyph for the whole reversal). There is
+// no VERTICAL constant left here. v1 kept a verticalPadding = 1 for the blank row
 // submitview.go reserved above and below its content; v2's frame has no
 // padding rows at all (v2 spec §9's six components, none of them a
 // spacer), so it went with the cascade that used to drop it again on a
 // short terminal.
 const (
-	// gutterWidth is the left-margin column count: one cell for a panel
-	// picker's own cursor glyph plus one separating space, and the same
-	// two-cell indent the row stack sits at.
+	// gutterWidth is the left-margin column count: one cell for a marker
+	// -- a panel picker's own cursor glyph, or a stack row's focus bar --
+	// plus one separating space.
 	gutterWidth = 2
 	// rightMargin is the column count of blank space kept between the
 	// widest content column and the popup's own right edge.
@@ -157,4 +162,30 @@ const (
 // citations pointing here all read paintLine.
 func paintLine(line string, width int, bg color.Color) string {
 	return widgets.PaintLine(line, width, bg)
+}
+
+// boldSpan renders s bold, surviving the ANSI resets a Section's own
+// accent- and dim-styled spans have already embedded in it. It is the
+// third of v3 spec §5.4's focus signals, applied by form.go's
+// renderStackRow to the focused row's VALUE cell only -- the label stays
+// dim, and the row's other two signals are the fill and rowvalues.go's
+// focus bar.
+//
+// This is paintLine's hazard in a second SGR key, so it takes paintLine's
+// fix: lipgloss.Style.Render's trailing reset is unconditional, so an
+// outer Bold(true).Render over content holding ANY inner styled span
+// leaves every run after that span un-bolded, exactly as it leaves them
+// unpainted. Reassert the attribute immediately after every reset already
+// present, prefix the whole run so it starts set, and close it so nothing
+// leaks into the padding. Read paintLine's doc above for the byte-level
+// derivation; this is the same argument with Bold in place of a
+// background color.
+//
+// It composes with paintLine rather than fighting it: paintLine runs last
+// over the finished line and inserts its own background code after these
+// same resets, leaving `reset + bg + bold` where this function left
+// `reset + bold`. So a focused row comes out both painted and bold.
+func boldSpan(s string) string {
+	on := ansi.Style{}.Bold().String()
+	return on + strings.ReplaceAll(s, ansi.ResetStyle, ansi.ResetStyle+on) + ansi.ResetStyle
 }

@@ -741,13 +741,14 @@ func (m Model) compose(w, h int) string {
 //
 // Every line is emitted at its own background: PanelBG for all of them
 // except the focused stack row, which is painted edge to edge in
-// ActiveRowBG. That full-width fill IS v2's focus indication (v2 spec
-// §7) -- the `▎` gutter bar is gone, and the gutter column survives only
-// as the two-cell indent v2 spec §4's mockups show, which is also where
-// a picker's own cursor glyph lands inside the panel. paintLine is what
-// makes the fill survive the accent- and dim-styled spans inside a row:
-// it reasserts the background SGR after every embedded ANSI reset, which
-// is exactly the hazard a full-width row highlight hits.
+// ActiveRowBG. That fill is ONE OF THREE focus signals (v3 spec §5.4),
+// not the whole of it -- renderStackRow adds the accent bar in the gutter
+// and bold on the value. v2 shipped the fill alone, on the premise that
+// it replaced v1's gutter bar; rowvalues.go's focusBarGlyph records why
+// that premise failed and why the bar is back. paintLine is what makes
+// the fill survive the accent- and dim-styled spans inside a row: it
+// reasserts the background SGR after every embedded ANSI reset, which is
+// exactly the hazard a full-width row highlight hits.
 //
 // No degradation ladder runs here and none is needed. layoutFrame's
 // components sum to exactly h by construction, and Create is on the
@@ -799,7 +800,7 @@ func (m Model) composeRows(w, h int) string {
 		// on the row focuses that field and then forwards the raw click
 		// to it, so whatever chip/picker zones the field nested in its
 		// own Row survive and resolve (bubblezone markers nest).
-		add(widgets.Zones.Mark(zoneFieldPrefix+s.ID(), renderStackRow(s, labelW, valueW, m.palette)), bg)
+		add(widgets.Zones.Mark(zoneFieldPrefix+s.ID(), renderStackRow(s, labelW, valueW, focused, m.palette)), bg)
 	}
 
 	if f.Rule2 {
@@ -819,7 +820,7 @@ func (m Model) composeRows(w, h int) string {
 	if f.Footer {
 		focused := m.ring.current()
 		rungs := footerRungsFor(focused, zoneFor(focused), m.clearArmed)
-		add(renderFooter(boxWidth, rungs, m.ring.index == lastIdx, m.palette), m.palette.PanelBG)
+		add(renderFooter(boxWidth, rungs, m.palette), m.palette.PanelBG)
 	}
 
 	painted := make([]string, 0, h)
@@ -852,19 +853,33 @@ func (m Model) renderHeaderLine(width int) string {
 	return spreadLine(name, context, width)
 }
 
-// renderStackRow renders one line of the row stack: the two-cell gutter
-// indent, the field's Label padded into the fixed label column, then its
-// own Row filling the value column. The label is dim and the value is
-// the field's business (v2 spec §7's "lowercase terse labels in a dim
-// color, values brighter"); focus is NOT signalled here at all -- it is
-// the caller's full-width ActiveRowBG fill -- which is precisely why Row
-// can be, and must be, focus- and height-independent.
-func renderStackRow(s Section, labelW, valueW int, p theme.Palette) string {
+// renderStackRow renders one line of the row stack: the two-cell gutter,
+// the field's Label padded into the fixed label column, then its own Row
+// filling the value column. The label is dim and the value is the field's
+// business (v2 spec §7's "lowercase terse labels in a dim color, values
+// brighter").
+//
+// Two of v3 spec §5.4's three focus signals are applied HERE -- the
+// accent bar in the gutter and bold over the value -- and the third, the
+// ActiveRowBG fill, is still the caller's. All three are the FORM's, not
+// the section's: `focused` is not passed on to Row, which keeps Row
+// focus- and height-independent and so keeps "row i is always at row i"
+// true as focus travels (field_rows_test.go pins it).
+//
+// The label is deliberately left un-bolded. §5.4 says "bold on the
+// value", and the whole point of the dim label column is that it is
+// scenery the eye skips; bolding the row's scenery would compete with the
+// signal rather than add to it.
+func renderStackRow(s Section, labelW, valueW int, focused bool, p theme.Palette) string {
 	label := ""
 	if labelW > 0 {
 		label = dimText(p).Width(labelW).MaxWidth(labelW).Inline(true).Render(s.Label())
 	}
-	return strings.Repeat(" ", gutterWidth) + label + fitLine(s.Row(valueW), valueW)
+	value := fitLine(s.Row(valueW), valueW)
+	if focused {
+		value = boldSpan(value)
+	}
+	return rowGutter(focused, p) + label + value
 }
 
 // renderPanelRegion renders exactly region lines of the focused
@@ -913,8 +928,8 @@ func (m Model) renderPanelRegion(width, region int) []string {
 // narrow for all three, the key ladder is what gets clipped, then cancel,
 // and create is the last thing standing -- it is the one control the
 // form cannot do without.
-func renderFooter(width int, rungs []string, createFocused bool, p theme.Palette) string {
-	create := widgets.Zones.Mark(zoneCreateButton, createButton(createFocused, p))
+func renderFooter(width int, rungs []string, p theme.Palette) string {
+	create := widgets.Zones.Mark(zoneCreateButton, createButton(p))
 	createWidth := lipgloss.Width(create)
 	if createWidth >= width {
 		return fitLine(create, width)
@@ -1035,21 +1050,18 @@ func (c *createSection) PanelRows() int        { return 0 }
 //   - createButtonFace takes herdr's dialogs.rs call-site convention
 //     for a PRIMARY button --
 //     `Style::default().fg(panel_contrast_fg(&app.palette)).bg(app.palette.accent).add_modifier(Modifier::BOLD)`,
-//     hint "↵" -- for this section's FOCUSED state, and cancelButton
-//     takes the SECONDARY convention beside it (v2 spec §7: "the primary
-//     filled with the accent color, the secondary on a surface
-//     background").
+//     hint "↵" -- and cancelButton takes the SECONDARY convention beside
+//     it (v2 spec §7: "the primary filled with the accent color, the
+//     secondary on a surface background").
 //
 // An earlier round rendered the unfocused primary as Atrium's plain
 // renderEnterButton -- no fill, no key glyph -- on the reasoning that
 // "this form has exactly one button, and its color instead needs to
 // convey FOCUS ... there is no second button here for color to
 // distinguish it from." v2 spec §4's footer has two, so that premise is
-// gone: color now tells primary from secondary exactly as herdr's own
-// dialogs use it, and FOCUS is carried by which way round the primary's
-// accent runs (accent as the fill when focused, as the text when not).
-// Both states keep the key glyph, because §7 makes the glyph part of
-// what a button IS, and because the footer's key ladder no longer
+// gone: color tells primary from secondary exactly as herdr's own dialogs
+// use it. Both states keep the key glyph, because §7 makes the glyph part
+// of what a button IS, and because the footer's key ladder no longer
 // repeats ↵ anywhere (footer.go's zoneRungs).
 func actionButtonText(hint, label string) string {
 	if hint == "" {
@@ -1065,27 +1077,37 @@ func panelContrastFG(p theme.Palette) theme.Color {
 	return p.PanelBG
 }
 
-// createButtonFace returns the primary button's text and style for the
-// given focus state -- the herdr port described above, with no sizing of
-// its own. The label is lowercase because every other word on this
-// screen is (v2 spec §3 rule 5, "copy is plain, lowercase and active"),
-// and it carries its key glyph in both states (v2 spec §7).
-func createButtonFace(focused bool, p theme.Palette) (string, lipgloss.Style) {
-	text := actionButtonText("↵", "create")
-	if focused {
-		return text, lipgloss.NewStyle().
-			Foreground(panelContrastFG(p)).
-			Background(p.Accent).
-			Bold(true)
-	}
-	return text, lipgloss.NewStyle().Foreground(p.Accent).Background(p.Surface)
+// createButtonFace returns the primary button's text and style -- the
+// herdr port described above, with no sizing of its own. The label is
+// lowercase because every other word on this screen is (v2 spec §3 rule
+// 5, "copy is plain, lowercase and active"), and it carries its key glyph
+// (v2 spec §7).
+//
+// ONE face, not two: v3 spec §5.5 makes `↵ create` filled, full stop.
+// v2 spent the fill on focus instead -- accent as the fill when focused,
+// accent as the TEXT on a Surface fill when not -- which meant the button
+// a user actually sees, the resting one, was the weaker half of herdr's
+// recipe on the busiest line of the screen. herdr fills its own primary
+// unconditionally (`dialogs.rs:324-343`); a dialog's default action reads
+// as the default action whether or not the cursor happens to be parked on
+// it.
+//
+// Create is still a focus stop, and its focus is still visible: landing
+// on it swaps the footer's whole key ladder to `⇧⇥ back to the form`
+// (footer.go's zoneRungs, ZoneCreate) -- the same line the button sits
+// on, so the two are read together.
+func createButtonFace(p theme.Palette) (string, lipgloss.Style) {
+	return actionButtonText("↵", "create"), lipgloss.NewStyle().
+		Foreground(panelContrastFG(p)).
+		Background(p.Accent).
+		Bold(true)
 }
 
 // createButton renders the primary button at its INTRINSIC width, for
 // the footer line (v2 spec §5): renderFooter places it flush right and
 // fits the key ladder into what is left.
-func createButton(focused bool, p theme.Palette) string {
-	text, style := createButtonFace(focused, p)
+func createButton(p theme.Palette) string {
+	text, style := createButtonFace(p)
 	return style.Inline(true).Render(text)
 }
 
