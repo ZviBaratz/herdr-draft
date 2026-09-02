@@ -652,7 +652,7 @@ func New(s Setup) Model {
 	// form is pointed at is not known until the first debounced dir check
 	// resolves its repository root, so applyProjectDefaults re-resolves
 	// with it (and on every later project change) once it is.
-	m.agentKinds = orderedAgentKinds(s.Config.Agents.Favorites)
+	m.agentKinds = OrderedAgentKinds(s.Config.Agents.Favorites)
 	m.resolved = defaults.Resolve(defaults.Sources{
 		Config:          s.Config,
 		Global:          s.State,
@@ -883,7 +883,7 @@ func (m Model) handleIssueChosen(msg form.IssueChosenMsg) (Model, tea.Cmd) {
 		m.selectedIssueBranch = iss.BranchName
 		m.title.SetTitle(iss.Title, true)
 		m.worktree.SetBranch(m.branchSuggestion(), true)
-		m.prompt.SetValue(renderPromptTemplate(m.cfg.Linear.PromptTemplate, iss), true)
+		m.prompt.SetValue(RenderPromptTemplate(m.cfg.Linear.PromptTemplate, iss), true)
 	}
 	cmds := m.reactToChanges()
 	return m, tea.Batch(cmds...)
@@ -905,10 +905,34 @@ func (m Model) handleIssueChosen(msg form.IssueChosenMsg) (Model, tea.Cmd) {
 // derivation rather than suggesting "", which would blank a branch the
 // user can see.
 func (m Model) branchSuggestion() string {
-	if m.linearIssueSelected && m.resolved.LinearBranchName && m.selectedIssueBranch != "" {
-		return m.selectedIssueBranch
+	issueBranch := ""
+	if m.linearIssueSelected {
+		issueBranch = m.selectedIssueBranch
 	}
-	return gitx.BranchSlug(m.resolved.BranchPrefix, m.title.Value())
+	return BranchFor(m.resolved, issueBranch, m.title.Value())
+}
+
+// BranchFor is branchSuggestion's rule with the form's state passed in
+// instead of read off a Model: the chosen Linear issue's own branchName
+// while spec §11's linear_branch_name leaves it in charge, and the title
+// run through the resolved prefix otherwise.
+//
+// Exported, and extracted from the method above rather than copied, for
+// spec §13's sake: the headless `create` command derives its branch from
+// the same resolved defaults, and "the command and the form produce the
+// same session from the same inputs" is a promise a second implementation
+// of this rule would quietly break -- branch_prefix and linear_branch_name
+// are both per-repository, so the two would disagree exactly where a
+// repository had configured something.
+//
+// issueBranch is "" when no issue is selected, or when the selected one
+// has no branchName of its own; both fall through to the title derivation
+// rather than suggesting an empty branch.
+func BranchFor(res defaults.Resolved, issueBranch, title string) string {
+	if res.LinearBranchName && issueBranch != "" {
+		return issueBranch
+	}
+	return gitx.BranchSlug(res.BranchPrefix, title)
 }
 
 // handleSubmit is form.SubmitMsg's own handler (spec §9's submit
@@ -1050,6 +1074,14 @@ func (m Model) accountAuthBlocked() (pin, status string, blocked bool) {
 	}
 	return pin, "", false
 }
+
+// PlanInput is the plan.Input this form would submit as it currently
+// stands -- buildPlanInput's own answer, exported because spec §13's
+// headless `create` has to produce the SAME one from the same inputs and
+// that equivalence is worth an assertion rather than a comment. Nothing in
+// production calls it; internal/create's equivalence test does, comparing
+// this form's answer against the command's field by field.
+func (m Model) PlanInput() plan.Input { return m.buildPlanInput() }
 
 // buildPlanInput composes plan.Input from the form's current field state
 // (spec §9) -- called only once checkSubmitValidation has cleared every
@@ -1626,7 +1658,7 @@ func (m Model) View() tea.View {
 
 // --- construction helpers -------------------------------------------------
 
-// orderedAgentKinds builds AgentField.SetKinds' own input list: favorites
+// OrderedAgentKinds builds AgentField.SetKinds' own input list: favorites
 // first (deduped, empty entries dropped), then every knownAgentKinds entry
 // not already present -- the carried requirement's exact wording ("config
 // [agents] favorites, then the remaining kinds"). AgentField itself treats
@@ -1634,7 +1666,13 @@ func (m Model) View() tea.View {
 // favorites is non-empty) IS the default; config.Config's own defaults()
 // already sets Agents.Favorites to ["claude"] when the user's config omits
 // it entirely, so this is never called with an empty list in practice.
-func orderedAgentKinds(favorites []string) []string {
+//
+// Exported for the headless `create` command (spec §13), which needs the
+// IDENTICAL list rather than a similar one: it is what
+// defaults.Sources.KnownAgentKinds validates each tier's remembered kind
+// against, so a command resolving against a different list would silently
+// pick a different agent than the form does from the same config.
+func OrderedAgentKinds(favorites []string) []string {
 	seen := make(map[string]bool, len(favorites)+len(knownAgentKinds))
 	out := make([]string, 0, len(favorites)+len(knownAgentKinds))
 	for _, k := range favorites {
@@ -1696,10 +1734,15 @@ func buildDirCandidates(ctx herdrc.Context, workspaces []herdrc.WorkspaceInfo, r
 	return out
 }
 
-// renderPromptTemplate composes a chosen Linear issue's seeded prompt text
+// RenderPromptTemplate composes a chosen Linear issue's seeded prompt text
 // (spec §10), using tmpl (config.Config.Linear.PromptTemplate) when
 // non-empty, or defaultPromptTemplate otherwise.
-func renderPromptTemplate(tmpl string, iss linear.Issue) string {
+//
+// Exported for spec §13's headless `create`: `create --issue` seeds its
+// prompt from the same template through the same substitutions, and a
+// second copy of them would be a second answer to "what does a
+// Linear-seeded session start with".
+func RenderPromptTemplate(tmpl string, iss linear.Issue) string {
 	if tmpl == "" {
 		tmpl = defaultPromptTemplate
 	}

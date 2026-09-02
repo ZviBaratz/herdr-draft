@@ -980,9 +980,9 @@ func equalStrings(a, b []string) bool {
 // --- agent kinds: favorites-first (carried requirement) --------------------
 
 func TestOrderedAgentKinds_FavoritesFirst(t *testing.T) {
-	got := orderedAgentKinds([]string{"codex", "claude"})
+	got := OrderedAgentKinds([]string{"codex", "claude"})
 	if len(got) < 2 || got[0] != "codex" || got[1] != "claude" {
-		t.Fatalf("orderedAgentKinds favorites prefix = %v, want [codex claude ...]", got[:2])
+		t.Fatalf("OrderedAgentKinds favorites prefix = %v, want [codex claude ...]", got[:2])
 	}
 	// Every known kind must still be reachable exactly once.
 	seen := map[string]int{}
@@ -991,18 +991,18 @@ func TestOrderedAgentKinds_FavoritesFirst(t *testing.T) {
 	}
 	for _, k := range knownAgentKinds {
 		if seen[k] != 1 {
-			t.Fatalf("known kind %q appears %d times in orderedAgentKinds output, want exactly 1", k, seen[k])
+			t.Fatalf("known kind %q appears %d times in OrderedAgentKinds output, want exactly 1", k, seen[k])
 		}
 	}
 	if len(got) != len(knownAgentKinds) {
-		t.Fatalf("orderedAgentKinds returned %d kinds, want %d (favorites are already known kinds here)", len(got), len(knownAgentKinds))
+		t.Fatalf("OrderedAgentKinds returned %d kinds, want %d (favorites are already known kinds here)", len(got), len(knownAgentKinds))
 	}
 }
 
 func TestOrderedAgentKinds_DropsEmptyAndDuplicates(t *testing.T) {
-	got := orderedAgentKinds([]string{"claude", "", "claude"})
+	got := OrderedAgentKinds([]string{"claude", "", "claude"})
 	if got[0] != "claude" {
-		t.Fatalf("orderedAgentKinds[0] = %q, want %q", got[0], "claude")
+		t.Fatalf("OrderedAgentKinds[0] = %q, want %q", got[0], "claude")
 	}
 	count := 0
 	for _, k := range got {

@@ -105,6 +105,63 @@ invoke it directly from a shell:
 herdr plugin pane open --plugin draft --entrypoint open
 ```
 
+## Headless `create`
+
+The same binary creates a session without the popup, for scripts and for
+agents already running inside a session. It is the plugin's own
+`bin/herdr-draft` (herdr builds it from the manifest; put it on `PATH` or
+call it by path):
+
+```bash
+herdr-draft create --title "fix login redirect loop" --worktree
+herdr-draft create --title "triage" --no-worktree --placement split-here
+git log -1 --format=%B | herdr-draft create --title "revert" --prompt -
+```
+
+Flags mirror the form's fields: `--project`, `--title`, `--prompt` (`-`
+reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
+`--placement`, `--agent`, `--account`, `--issue`, `--json`, `--on-failure
+keep|clean`. `herdr-draft create --help` lists them.
+
+**Anything you don't pass resolves exactly the way the form resolves it** —
+`projects.json`, then the repository's `.herdr-draft.toml`, then
+`last-used.json`, then `config.toml`, then the built-in default. The
+project directory defaults to the working directory. A successful create
+records what it used, so the form's next open defaults to it too.
+
+Progress goes to stderr, one line per step; the result to stdout, or a
+single JSON object with `--json` (which also carries a prompt the dialog
+guard withheld, since a headless caller has no pane to recover it from).
+It never prompts. Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | created |
+| 1 | the plan started and failed (`--on-failure` applied) |
+| 2 | bad usage, or a request that cannot be resolved |
+| 3 | herdr is unreachable |
+
+`--placement tab-here` and `split-here` need to know where "here" is, and
+read `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID`, which herdr
+sets in every pane's shell. A new space, and any worktree, need none of
+them. A missing one is named exactly.
+
+**Export the plugin directories.** herdr sets those three pane variables
+but not `HERDR_PLUGIN_CONFIG_DIR` / `HERDR_PLUGIN_STATE_DIR`, which it
+gives only to a launched plugin — so without them `create` resolves from
+built-in defaults instead of your own configuration, and says so. In your
+shell rc:
+
+```bash
+export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir draft)"
+export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/draft"
+```
+
+herdr has a CLI for the config directory but not for the state one, whose
+layout is `<herdr state dir>/plugins/draft` (`herdr:src/plugin_paths.rs`);
+on Windows the base is `%LOCALAPPDATA%\herdr` instead. Point both at the
+same directories the popup gets and the two paths share one memory.
+
 ## Configuration
 
 herdr-draft reads `$HERDR_PLUGIN_CONFIG_DIR/config.toml`. Every key is
