@@ -330,6 +330,21 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 		if zone.Kind == ZoneCreate {
 			return ActionSubmit, armed
 		}
+		if zone.Kind == ZoneAccount {
+			// ↵ COMMITS the account pin (v3 spec §10.3). Complete rather
+			// than a bespoke action because that is exactly what
+			// ActionComplete already means -- "accept the highlighted
+			// picker row" -- and because a Complete the field declines
+			// (nothing changed) falls through to a plain advance, so a
+			// second ↵ moves on.
+			//
+			// Enter and not Tab, even though Tab is the key isPicker()
+			// zones complete on: Tab is how a user LEAVES a row, and a Tab
+			// that pinned whatever the cursor was resting on would
+			// reintroduce the very defect §10.3 removes. ZoneAccount stays
+			// out of isPicker() for that reason.
+			return ActionComplete, armed
+		}
 		if zone.Kind == ZoneTitle && !zone.TitleEmpty {
 			// The quick-create contract: choosing a title is choosing a
 			// branch (spec §6 field 3), so "n -> name -> Enter" creates

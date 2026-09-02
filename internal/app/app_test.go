@@ -220,7 +220,16 @@ func (f *fakeClauth) Status(context.Context) (clauth.Status, error) {
 
 // noSleep is the injectable-clock fake every test uses: Sleep is a no-op,
 // so the 150ms debounce window never actually elapses in a test run.
-var noSleep = Clock{Sleep: func(time.Duration) {}}
+// testClockNow is the fixed instant every test model's Clock.Now answers
+// with. Fixed and never time.Now for the reason testHomeDir is fixed: the
+// account panel's reset times are relative to it (v3 spec §10.2), so a
+// golden frame carrying one has to be the same bytes tomorrow.
+var testClockNow = time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+
+var noSleep = Clock{
+	Sleep: func(time.Duration) {},
+	Now:   func() time.Time { return testClockNow },
+}
 
 // testSetup is newTestModel's own input -- a thin, test-friendly wrapper
 // over Setup that fills in sane defaults (theme.Default palette, a no-op
@@ -2104,5 +2113,51 @@ func TestChangingParentDropsThePreviousDirectorysChildren(t *testing.T) {
 	m.reactToChanges()
 	if m.dir.Complete() {
 		t.Errorf("Complete() built %q out of the previous directory's children", m.dir.Typed())
+	}
+}
+
+// TestAccountPin_BrowsingDoesNotReachThePlan is v3 spec §10.3 asserted
+// where it actually matters: on plan.Input, the struct that becomes
+// `clauth <profile>` on a real command line.
+//
+// Before the fix, AccountField.Pin() returned the picker's cursor
+// position, so tabbing onto the account row and pressing Down once was
+// enough to launch the session under an account the user never chose.
+// This drives the REAL model -- the same Update path a keypress takes --
+// rather than the field in isolation, because the field-level test cannot
+// see accountPin's own claude-kind gate or buildPlanInput at all.
+func TestAccountPin_BrowsingDoesNotReachThePlan(t *testing.T) {
+	m := newTestModel(t, testSetup{
+		Ctx:          herdrc.Context{WorkspaceCwd: "/home/zvi/Projects/herdr-draft"},
+		Clauth:       &fakeClauth{status: frameClauthStatus()},
+		ClauthStatus: frameClauthStatus(),
+	})
+	if m.account == nil {
+		t.Fatal("setup: no account field was constructed")
+	}
+	m.form.FocusByID("account")
+
+	press := func(k tea.KeyPressMsg) {
+		next, _ := m.Update(k)
+		m = next.(Model)
+	}
+
+	// Browse the whole list and leave.
+	for i := 0; i < 3; i++ {
+		press(key(tea.KeyDown, 0))
+	}
+	press(key(tea.KeyTab, 0))
+	if got := m.PlanInput().AccountPin; got != "" {
+		t.Errorf("AccountPin after browsing the account list and tabbing away = %q, want \"\"", got)
+	}
+
+	// Commit deliberately, and it does reach the plan. The cursor is
+	// still where the browsing above left it -- clamped on the last
+	// profile -- which is the distinction stated as an assertion: the
+	// CURSOR survived tabbing away and back, and the pin did not.
+	m.form.FocusByID("account")
+	press(key(tea.KeyEnter, 0))
+	if got, want := m.PlanInput().AccountPin, "work"; got != want {
+		t.Errorf("AccountPin after committing the row the cursor rests on = %q, want %q", got, want)
 	}
 }

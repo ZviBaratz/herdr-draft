@@ -280,7 +280,7 @@ func TestFrames_IssueScroll(t *testing.T) {
 func buildAccountPanelForm(palette theme.Palette) Model {
 	f := NewAccountField(palette)
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(sampleStatus())
+	f.SetProfiles(sampleStatus(), sampleNow())
 	f.Focus()
 	f.Update(key(tea.KeyDown, 0)) // active -> alpha
 	return fieldFrame(palette, f)
@@ -297,6 +297,20 @@ func TestFrames_AccountPanel(t *testing.T) {
 // is here because the first attempt chose wrong -- flexing the profile
 // NAME elided all four names to "…" while "Max 20x" kept every cell it
 // asked for, and no fixture at 80 cells could have shown it.
+// TestFrames_AccountGauge is #28's acceptance fixture, at the width the
+// popup actually ships in (101x30, v3 spec §6.1) rather than this file's
+// usual 80x24 measuring stick -- because the whole of v3 spec §10.2's
+// table only exists at a real width, and it is the state the author asked
+// for by name: three gauges at 0% / 12% / 100%, both windows, the `●`
+// marking clauth's live profile, and a reset countdown.
+//
+// It is the other side of a boundary account-panel-80x24 pins: there the
+// reset column cannot be given accountResetMinCells and is dropped
+// outright rather than elided to a lone `…` on every row.
+func TestFrames_AccountGauge(t *testing.T) {
+	assertFrame(t, "account-gauge-101x30", buildAccountPanelForm(theme.Default()), 101, 30)
+}
+
 func TestFrames_AccountPanelNarrow(t *testing.T) {
 	assertFrame(t, "account-panel-44x12", buildAccountPanelForm(theme.Default()), 44, 12)
 }

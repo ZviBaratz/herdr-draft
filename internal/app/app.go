@@ -66,11 +66,20 @@ var knownAgentKinds = []string{
 // whenever config.Config.Linear.PromptTemplate is empty.
 const defaultPromptTemplate = "Work on {identifier}: {title}\n\n{url}\n\n{description}"
 
-// Clock groups the sleep primitive every debounced source in async.go
-// needs, so tests can run the 150ms debounce window without a real sleep.
-// The zero value is production-ready (Sleep nil defaults to time.Sleep).
+// Clock groups the time primitives the app layer needs from outside
+// itself, so tests can run the 150ms debounce window without a real sleep
+// and pin a wall clock without a real one. The zero value is
+// production-ready (each nil field defaults to its time package
+// equivalent).
 type Clock struct {
 	Sleep func(time.Duration)
+	// Now is the wall clock. It exists for AccountField, whose panel shows
+	// how long until each clauth usage window resets (v3 spec §10.2) --
+	// internal/form performs no I/O, so the app layer supplies the "now"
+	// those relative times are measured against, alongside the status they
+	// come from. Injectable for the same reason Sleep is: a golden frame
+	// showing `in 2h11m` has to be the same bytes tomorrow.
+	Now func() time.Time
 }
 
 func (c Clock) sleep(d time.Duration) {
@@ -79,6 +88,13 @@ func (c Clock) sleep(d time.Duration) {
 		return
 	}
 	time.Sleep(d)
+}
+
+func (c Clock) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
 }
 
 // linearSource is the subset of Linear access Model needs -- satisfied by
@@ -706,7 +722,10 @@ func New(s Setup) Model {
 	// it, m.account is simply never non-nil when Deps.Clauth is nil).
 	if s.Deps.Clauth != nil && len(s.ClauthStatus.Profiles) >= 2 {
 		m.account = form.NewAccountField(palette)
-		m.account.SetProfiles(s.ClauthStatus)
+		// The clock rides along with the status: the panel's reset times
+		// are relative (v3 spec §10.2) and internal/form has no clock of
+		// its own -- see Clock.Now.
+		m.account.SetProfiles(s.ClauthStatus, s.Deps.Clock.now())
 		// [clauth] default (spec §12), when set to a real profile name --
 		// "" and the config's own documented "active" sentinel are both
 		// no-ops (AccountField.SetPin's own doc comment): the picker

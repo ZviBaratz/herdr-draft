@@ -1334,7 +1334,7 @@ func TestFooterRungs_PerZone(t *testing.T) {
 		ZoneWorktree:  "↑↓ part",
 		ZonePlacement: "←→ choose",
 		ZoneAgent:     "←→ favorites",
-		ZoneAccount:   "↑↓ pick",
+		ZoneAccount:   "↑↓ browse",
 		ZoneCreate:    "⇧⇥ back",
 	}
 	for kind, substr := range want {
@@ -1353,7 +1353,20 @@ func TestFooterRungs_PerZone(t *testing.T) {
 		// renderFooter). No rung may say them again: at 64 columns the
 		// pre-polish ladder plus the button spelled "create" three times
 		// on one line.
-		for _, dup := range []string{"↵", "esc cancel", "Esc"} {
+		//
+		// ZoneAccount is the one exception and it is a deliberate one.
+		// v3 spec §10.3 made pinning a DELIBERATE commit rather than
+		// wherever the cursor was resting, and the key that commits is ↵
+		// -- a gesture nobody can discover is no better than the defect
+		// it replaced. The cost is that ↵ appears twice on that line
+		// meaning two different things, which is recorded here rather
+		// than waived: the same reason the Title zone's own rung is
+		// allowed to correct the button below.
+		dups := []string{"↵", "esc cancel", "Esc"}
+		if kind == ZoneAccount {
+			dups = dups[1:]
+		}
+		for _, dup := range dups {
 			if strings.Contains(rungs[0], dup) {
 				t.Errorf("zone %v's widest rung = %q, want it NOT to repeat the button's %q", kind, rungs[0], dup)
 			}

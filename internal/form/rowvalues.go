@@ -14,6 +14,7 @@
 package form
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -67,6 +68,62 @@ func keepHead(s string, width int) string { return widgets.KeepHead(s, width) }
 //
 // Delegates to widgets.KeepTail -- see keepHead above.
 func keepTail(s string, width int) string { return widgets.KeepTail(s, width) }
+
+// gaugeWidth is how many cells a utilization gauge occupies (v3 spec
+// §8.6): ten, enough for a reader to judge a fraction at a glance and few
+// enough that the account panel can afford one per usage window beside
+// the profile name, the plan and the reset time.
+const gaugeWidth = 10
+
+const (
+	// gaugeFilledBlock and gaugeEmptyBlock are the gauge's only two runes.
+	// WHOLE blocks, v3 spec §8.6: the eighth-block partials a smoother bar
+	// would use render inconsistently across fonts and buy nothing at ten
+	// cells.
+	gaugeFilledBlock = "█"
+	gaugeEmptyBlock  = "░"
+)
+
+// gaugeBar renders fraction as exactly width cells of filled and empty
+// blocks (v3 spec §8.6). fraction is CLAMPED into 0..1 rather than
+// trusted -- it is derived from a utilization percentage clauth's own
+// unvalidated feed supplies, so a value past 100 (or a NaN) is a shape
+// this has to survive rather than one it can rule out. width < 1 renders
+// "", the same degenerate-size contract every other helper in this file
+// keeps.
+//
+// The filled count is ROUNDED rather than truncated, and the two rules
+// disagree on real data: v3 spec §10.2's own mockup draws 57% as five
+// blocks (truncation) and 98% as ten (rounding), so it cannot be read as
+// a specification of either. Rounding is chosen because the alternative
+// leaves a profile at 98% one block short of full, and a bar that will
+// not fill until 100% says least exactly where it matters most -- past
+// field_account.go's accountWarnThreshold, where the full bar and the
+// warning word land together.
+//
+// It returns PLAIN text, deliberately: the picker tones, pads and elides
+// it like any other cell, and §8.6 colors the WORD beside a gauge rather
+// than the gauge itself -- a themed bar next to a themed badge is two
+// things shouting once.
+func gaugeBar(fraction float64, width int) string {
+	if width < 1 {
+		return ""
+	}
+	switch {
+	case math.IsNaN(fraction), fraction < 0:
+		fraction = 0
+	case fraction > 1:
+		fraction = 1
+	}
+	filled := int(math.Round(fraction * float64(width)))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+	return strings.Repeat(gaugeFilledBlock, filled) + strings.Repeat(gaugeEmptyBlock, width-filled)
+}
 
 // panelCursorGlyph is the marker v2 spec §4's mockups draw beside the
 // selected row of a focused panel's list. It lands in the panel's own

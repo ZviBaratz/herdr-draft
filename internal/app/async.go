@@ -717,7 +717,7 @@ func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
 	if msg.version != m.clauthReqVersion || msg.err || m.account == nil {
 		return m, nil
 	}
-	m.account.SetProfiles(msg.status)
+	m.account.SetProfiles(msg.status, m.deps.Clock.now())
 	m.clauthStatus = msg.status // see Model.clauthStatus' own doc comment (accountAuthBlocked's lookup source).
 	return m, nil
 }

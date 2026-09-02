@@ -115,7 +115,12 @@ func zoneRungs(zone FocusZone) []string {
 	case ZoneAgent:
 		return []string{"←→ favorites · ↑↓ all kinds", "↑↓ all kinds"}
 	case ZoneAccount:
-		return []string{"↑↓ pick a profile", "↑↓ pick"}
+		// The one rung that has to name ↵ despite the button beside it
+		// already carrying the glyph, because here ↵ does something else
+		// entirely (v3 spec §10.3: it pins). A row where browsing and
+		// choosing are different gestures has to say which key chooses,
+		// or the distinction is invisible.
+		return []string{"↑↓ browse · ↵ pin", "↵ pin"}
 	case ZoneCreate:
 		return []string{"⇧⇥ back to the form", "⇧⇥ back"}
 	default:

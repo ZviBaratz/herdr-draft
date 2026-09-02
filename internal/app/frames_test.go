@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -75,15 +76,28 @@ func frameIssues() []linear.Issue {
 // frameClauthStatus is the two-profile clauth fixture the full-config
 // frames render the Account field over (spec §6 field 7 renders the field
 // only at >= 2 profiles).
+// frameResetIn is a *time.Time d after testClockNow, for a window that
+// reports one.
+func frameResetIn(d time.Duration) *time.Time {
+	t := testClockNow.Add(d)
+	return &t
+}
+
 func frameClauthStatus() clauth.Status {
 	return clauth.Status{
 		Schema:        1,
 		ActiveProfile: "personal",
 		Profiles: []clauth.Profile{
 			{Name: "personal", Active: true, Tier: "max", AuthStatus: "ok",
-				Windows: []clauth.Window{{Label: "5h", UtilizationPct: 12}}},
+				Windows: []clauth.Window{
+					{Label: "5h", UtilizationPct: 12, ResetsAt: frameResetIn(2*time.Hour + 11*time.Minute)},
+					{Label: "7d", UtilizationPct: 40},
+				}},
 			{Name: "work", Tier: "team", AuthStatus: "ok",
-				Windows: []clauth.Window{{Label: "5h", UtilizationPct: 71}}},
+				Windows: []clauth.Window{
+					{Label: "5h", UtilizationPct: 71, ResetsAt: frameResetIn(40 * time.Minute)},
+					{Label: "7d", UtilizationPct: 63},
+				}},
 		},
 	}
 }

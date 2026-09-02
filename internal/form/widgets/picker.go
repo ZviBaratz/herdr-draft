@@ -182,11 +182,28 @@ func (m PickerMatch) empty() bool { return m.Col < 0 || m.End <= m.Start }
 // identifier beside it, which must stay whole to be worth anything. It
 // does not grow a column: the badge column is flush right regardless, so
 // widening a cell column changes nothing visible.
+//
+// DropBelow is the fewest cells the column is worth drawing in. Squeezed
+// past it the column is dropped OUTRIGHT -- width 0, and left() takes its
+// gap with it -- rather than elided to a lone "…". That is v3 spec §8.1's
+// badge rule ("a status word with one cell left for it says nothing, and
+// the cells it would crowd out say something") offered to a cell column,
+// and the account panel is what needs it: its seven columns do not fit an
+// 80-column terminal, and the shrink loop's floor of one cell turned
+// `in 2h11m` into three cells of nothing on every row.
+//
+// 0 means never drop, which is the right default and what every other
+// column in this project uses. Declare it only for a column that is
+// genuinely optional, and only for one that can be lost ALONE: the drop
+// pass has no notion of columns that must go together, so a gauge and the
+// labelled percentage beside it -- which are meaningless apart -- both
+// leave it at 0.
 type PickerColumn struct {
-	Min, Max int
-	Flex     bool
-	Tone     Tone
-	Elide    ElideMode
+	Min, Max  int
+	Flex      bool
+	DropBelow int
+	Tone      Tone
+	Elide     ElideMode
 }
 
 // PickerItem is one selectable row in a Picker, as a TABLE row rather
@@ -623,6 +640,32 @@ func (p *Picker) layout(width, height int) rowLayout {
 			w = col.Min
 		}
 		lay.cells[i] = w
+	}
+
+	// Columns worth less than their DropBelow go before anything is
+	// squeezed, in shrink order, so the column the caller ranked most
+	// expendable goes first -- and only as far as the row actually needs.
+	// The walk stops at the first column that can absorb everything still
+	// over while staying at or above its own DropBelow, because the
+	// shrink loop below takes from exactly that column next.
+	//
+	// over is recomputed from left() each pass rather than adjusted by
+	// hand: a dropped column costs its width AND its gap, except when it
+	// was the only column left, and left() is the one place that
+	// arithmetic lives.
+	for _, i := range p.shrinkOrder(len(lay.cells)) {
+		over := lay.left() - lay.mark - avail
+		if over <= 0 {
+			break
+		}
+		col := p.column(i)
+		if col.DropBelow < 1 || lay.cells[i] < 1 {
+			continue
+		}
+		if lay.cells[i]-over >= col.DropBelow {
+			break
+		}
+		lay.cells[i] = 0
 	}
 
 	// Shrinking floors a non-empty column at 1, so which columns are zero

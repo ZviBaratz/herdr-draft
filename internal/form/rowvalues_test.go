@@ -1,6 +1,7 @@
 package form
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -107,5 +108,64 @@ func TestPanelStatusLine_CountIsDroppedRatherThanSqueezed(t *testing.T) {
 	fits := ansi.StringWidth(accountActiveLegend) + statusCountGap + len(count) + gutterWidth
 	if got := ansi.Strip(panelStatusLine(msg, count, fits, p)); !strings.HasSuffix(got, count) {
 		t.Errorf("at w=%d the count is the last thing that fits, but the line is %q", fits, got)
+	}
+}
+
+// TestGaugeBar tables v3 spec §8.6's gauge. The interesting answers are
+// the rounding boundary and the inputs clauth's unvalidated feed can
+// actually produce -- a percentage past 100, or none at all.
+func TestGaugeBar(t *testing.T) {
+	cases := []struct {
+		name     string
+		fraction float64
+		width    int
+		want     string
+	}{
+		{"empty", 0, 10, "░░░░░░░░░░"},
+		{"full", 1, 10, "██████████"},
+		{"half", 0.5, 10, "█████░░░░░"},
+
+		// The three the fixtures draw side by side.
+		{"0%", 0.00, 10, "░░░░░░░░░░"},
+		{"12%", 0.12, 10, "█░░░░░░░░░"},
+		{"100%", 1.00, 10, "██████████"},
+
+		// Rounded, not truncated: 98% is one block short of full under
+		// truncation, and a bar that will not fill until exactly 100 says
+		// least where it matters most -- past the warning threshold.
+		{"98% rounds up to full", 0.98, 10, "██████████"},
+		{"94% does not", 0.94, 10, "█████████░"},
+		{"5% rounds up to one block", 0.05, 10, "█░░░░░░░░░"},
+		{"4% rounds down to none", 0.04, 10, "░░░░░░░░░░"},
+
+		// Clamped rather than trusted: clauth's own feed is unvalidated.
+		{"over 100%", 1.7, 10, "██████████"},
+		{"negative", -0.3, 10, "░░░░░░░░░░"},
+
+		{"one cell", 0.6, 1, "█"},
+		{"zero width renders nothing", 0.5, 0, ""},
+		{"negative width renders nothing", 0.5, -4, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := gaugeBar(c.fraction, c.width); got != c.want {
+				t.Errorf("gaugeBar(%v, %d) = %q, want %q", c.fraction, c.width, got, c.want)
+			}
+		})
+	}
+
+	// NaN is its own case because it compares false against every bound,
+	// so a naive clamp lets it through and int(math.Round(NaN)) is
+	// implementation-defined.
+	if got, want := gaugeBar(math.NaN(), 10), "░░░░░░░░░░"; got != want {
+		t.Errorf("gaugeBar(NaN, 10) = %q, want %q", got, want)
+	}
+
+	// Every gauge in a table has to be the same number of cells or the
+	// column beside it does not line up.
+	for pct := 0; pct <= 100; pct++ {
+		if got := ansi.StringWidth(gaugeBar(float64(pct)/100, gaugeWidth)); got != gaugeWidth {
+			t.Fatalf("gaugeBar at %d%% is %d cells wide, want %d", pct, got, gaugeWidth)
+		}
 	}
 }

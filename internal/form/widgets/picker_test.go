@@ -892,3 +892,62 @@ func TestPicker_FilteredHasID(t *testing.T) {
 		t.Error(`FilteredHasID("ENG-1") = true under a query it does not match, want false`)
 	}
 }
+
+// TestPicker_DropBelowDropsRatherThanElides pins PickerColumn.DropBelow:
+// a column squeezed past the point where it can say anything goes
+// entirely -- taking its gap with it -- instead of showing a lone "…".
+// That is the badge's own rule, offered to a cell column.
+func TestPicker_DropBelowDropsRatherThanElides(t *testing.T) {
+	items := []PickerItem{
+		{ID: "a", Cells: []string{"alpha", "Team", "in 2h11m"}},
+		{ID: "b", Cells: []string{"bravo", "Max 20x", "in 45m"}},
+	}
+	newP := func() *Picker {
+		p := NewPicker(testPalette())
+		p.SetColumns(
+			PickerColumn{},
+			PickerColumn{},
+			PickerColumn{DropBelow: 6},
+		)
+		p.SetItems(1, items)
+		return p
+	}
+
+	// Wide enough for everything: the column is there.
+	if row := rowsOf(newP(), 40, 2)[0]; !strings.Contains(row, "in 2h11m") {
+		t.Errorf("at 40 cells the row = %q, want the whole third column", row)
+	}
+	// Narrow enough that shrinking the column would put it under its
+	// DropBelow, so it goes instead -- and nothing is elided. The natural
+	// row is 24 cells (5 + 2 + 7 + 2 + 8), so 20 is four over and the
+	// column could only keep four of its eight.
+	narrow := rowsOf(newP(), 20, 2)[0]
+	if strings.Contains(narrow, "…") {
+		t.Errorf("at 20 cells the row = %q, want the third column dropped rather than elided", narrow)
+	}
+	if strings.Contains(narrow, "in ") {
+		t.Errorf("at 20 cells the row = %q, want the third column gone entirely", narrow)
+	}
+	if !strings.Contains(narrow, "alpha") || !strings.Contains(narrow, "Team") {
+		t.Errorf("at 20 cells the row = %q, want the two columns it made room for intact", narrow)
+	}
+
+	// A column that can absorb the overflow while staying at or above its
+	// DropBelow is SHRUNK, not dropped: the drop is a last resort, not a
+	// cliff at the first missing cell.
+	if row := rowsOf(newP(), 23, 2)[0]; !strings.Contains(row, "in 2h1") {
+		t.Errorf("at 23 cells the row = %q, want the third column shrunk rather than dropped", row)
+	}
+}
+
+// TestPicker_DropBelowZeroNeverDrops is the default every other column in
+// the project relies on.
+func TestPicker_DropBelowZeroNeverDrops(t *testing.T) {
+	p := NewPicker(testPalette())
+	p.SetColumns(PickerColumn{}, PickerColumn{})
+	p.SetItems(1, []PickerItem{{ID: "a", Cells: []string{"alpha", "in 2h11m"}}})
+
+	if row := rowsOf(p, 12, 1)[0]; !strings.Contains(row, "…") {
+		t.Errorf("row = %q, want the undeclared column elided rather than dropped", row)
+	}
+}

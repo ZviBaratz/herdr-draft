@@ -79,7 +79,7 @@ func rowFields(palette theme.Palette) []Section {
 
 	account := NewAccountField(palette)
 	account.SetAgentIsClaude(true)
-	account.SetProfiles(sampleStatus())
+	account.SetProfiles(sampleStatus(), sampleNow())
 
 	return []Section{issue, title, prompt, dir, placement, agent, account}
 }
@@ -540,47 +540,95 @@ func TestAgentField_RowAndPanelVocabulary(t *testing.T) {
 	}
 }
 
-// TestAccountField_RowVocabulary pins v2 spec §6's account row in each of
-// its states, including the colored state words that replace v1's bare
-// "!" marker.
+// TestAccountField_RowVocabulary pins v3 spec §10.1's account row in each
+// of its states.
+//
+// The v2 row this replaces read `personal · Max 20x · ok`, because
+// accountRowState showed the literal AuthStatus for a PINNED profile and
+// the utilization only for an unpinned one. §10.1 calls that backwards
+// and says why in five words -- **ok is the state that needs no words**.
+// So both windows are shown either way, and the auth status appears only
+// when it is not "ok".
 func TestAccountField_RowVocabulary(t *testing.T) {
 	palette := theme.Default()
 
 	inert := NewAccountField(palette)
-	inert.SetProfiles(sampleStatus())
+	inert.SetProfiles(sampleStatus(), sampleNow())
 	if got := rowText(inert.Row(60)); got != accountInertPlaceholder {
 		t.Errorf("Row while the agent kind is not claude = %q, want %q", got, accountInertPlaceholder)
 	}
 
 	f := NewAccountField(palette)
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(sampleStatus())
+	f.SetProfiles(sampleStatus(), sampleNow())
 
-	// Unpinned: the LIVE profile's tier and utilization, which is exactly
-	// what v1's SetProfiles discarded along with status.ActiveProfile.
-	if got, want := rowText(f.Row(60)), "active · Team · 12%"; got != want {
+	// Unpinned: the LIVE profile's plan and BOTH windows, which is what
+	// the author actually asked the row for. v2 discarded the second
+	// window in a single constant nobody remembered.
+	if got, want := rowText(f.Row(60)), "active · Team · 5h 12% · 7d 40%"; got != want {
 		t.Errorf("Row with nothing pinned = %q, want %q", got, want)
 	}
 
 	f.SetPin("alpha")
-	if got, want := rowText(f.Row(60)), "alpha · Team · ok"; got != want {
-		t.Errorf("Row pinned to a healthy profile = %q, want %q", got, want)
+	if got, want := rowText(f.Row(60)), "alpha · Team · 5h 12% · 7d 40%"; got != want {
+		t.Errorf("Row pinned to a healthy profile = %q, want %q -- `ok` is the state that needs no words", got, want)
 	}
 
-	f.SetPin("gamma") // 5h window at 100%
-	if got, want := rowText(f.Row(60)), "gamma · Team · 100%"; got != want {
+	// gamma reports only a 5h window, at 100%: the missing 7d part is
+	// simply absent rather than rendered as an em dash, and its separator
+	// goes with it.
+	f.SetPin("gamma")
+	if got, want := rowText(f.Row(60)), "gamma · Team · 5h 100%"; got != want {
 		t.Errorf("Row pinned to a rate-limited profile = %q, want %q", got, want)
 	}
 	if !strings.Contains(f.Row(60), ansiColor(palette.Warning)) {
-		t.Errorf("a rate-limited row does not carry the warning color; v2 spec §6 puts the percentage in it")
+		t.Errorf("a rate-limited row does not carry the warning color; §10.1 puts the percentage in it")
 	}
 
 	f.SetPin("beta") // auth_status "expired"
-	if got, want := rowText(f.Row(60)), "beta · Max 20x · sign in again"; got != want {
+	if got, want := rowText(f.Row(60)), "beta · Max 20x · 5h 0% · sign in again"; got != want {
 		t.Errorf("Row pinned to an auth-failed profile = %q, want %q", got, want)
 	}
 	if !strings.Contains(f.Row(60), ansiColor(palette.Danger)) {
-		t.Errorf("an auth-failed row does not carry the danger color; v2 spec §6 puts the state word in it")
+		t.Errorf("an auth-failed row does not carry the danger color; §10.1 puts the state word in it")
+	}
+}
+
+// TestAccountField_RowWarnsAtNinetyFive is the threshold change of v3
+// spec §10.2, and the number it uses is the one that shipped broken: at
+// v2's >= 100 a profile sitting at 98% -- a real, observed live value --
+// warned nowhere, in either surface, and read exactly like one sitting
+// at 3%. 95 is clauth's own default auto-switch trip point.
+func TestAccountField_RowWarnsAtNinetyFive(t *testing.T) {
+	palette := theme.Default()
+	warned := ansiColor(palette.Warning)
+
+	for _, c := range []struct {
+		pct  float64
+		warn bool
+	}{{3, false}, {94, false}, {95, true}, {98, true}, {100, true}} {
+		f := NewAccountField(palette)
+		f.SetAgentIsClaude(true)
+		f.SetProfiles(clauth.Status{
+			Schema:        1,
+			ActiveProfile: "solo",
+			Profiles: []clauth.Profile{{
+				Name: "solo", Tier: "Team", AuthStatus: "ok",
+				Windows: []clauth.Window{{Label: "5h", UtilizationPct: c.pct}},
+			}},
+		}, sampleNow())
+
+		if got := strings.Contains(f.Row(60), warned); got != c.warn {
+			t.Errorf("at %.0f%% the row carries the warning color = %v, want %v (threshold is %.0f)",
+				c.pct, got, c.warn, accountWarnThreshold)
+		}
+		// The panel's own badge must fire on the same number; v2 had the
+		// two disagree, the marker at >= 100 and nothing else anywhere.
+		badge := strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), accountWarnRateLimited)
+		if badge != c.warn {
+			t.Errorf("at %.0f%% the panel badge says rate limited = %v, want %v -- it must fire on the same threshold as the row",
+				c.pct, badge, c.warn)
+		}
 	}
 }
 
@@ -594,7 +642,7 @@ func TestAccountField_RowDegradesToNamesOnly(t *testing.T) {
 
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(status)
+	f.SetProfiles(status, sampleNow())
 	f.SetPin("alpha")
 
 	if got := rowText(f.Row(60)); got != "alpha" {
@@ -616,7 +664,7 @@ func TestAccountField_RowWithNoThirdPart(t *testing.T) {
 		Schema:        1,
 		ActiveProfile: "bare",
 		Profiles:      []clauth.Profile{{Name: "bare", Tier: "Pro"}},
-	})
+	}, sampleNow())
 
 	if got, want := rowText(f.Row(60)), "active · Pro"; got != want {
 		t.Errorf("unpinned Row over a bare profile = %q, want %q", got, want)
@@ -638,7 +686,7 @@ func TestAccountField_RowWithoutAResolvableProfile(t *testing.T) {
 		t.Errorf("Row with no profiles at all = %q, want %q", got, accountRowActive)
 	}
 
-	f.SetProfiles(clauth.Status{Schema: 1, ActiveProfile: "vanished"})
+	f.SetProfiles(clauth.Status{Schema: 1, ActiveProfile: "vanished"}, sampleNow())
 	if got := rowText(f.Row(60)); got != accountRowActive {
 		t.Errorf("Row whose active profile is not in the feed = %q, want %q", got, accountRowActive)
 	}

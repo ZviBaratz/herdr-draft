@@ -178,8 +178,19 @@ func TestMapKey_GrammarTable(t *testing.T) {
 		{
 			name: "enter in a plain zone still advances",
 			msg:  keyEnter,
-			zone: FocusZone{Kind: ZoneAccount},
+			zone: FocusZone{Kind: ZoneWorktree},
 			want: ActionAdvance,
+		},
+		{
+			// v3 spec §10.3: ↵ on the account row COMMITS the pin, so
+			// browsing the list with ↑↓ cannot silently choose an account
+			// the session then really launches under. Complete rather than
+			// a bespoke action, and Enter rather than Tab -- see MapKey's
+			// own comment for both.
+			name: "enter on the account row pins",
+			msg:  keyEnter,
+			zone: FocusZone{Kind: ZoneAccount},
+			want: ActionComplete,
 		},
 		{
 			name: "enter on an EMPTY title still advances",

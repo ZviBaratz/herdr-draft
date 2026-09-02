@@ -3,12 +3,29 @@ package form
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
+
+// sampleNow is the wall clock every account fixture is measured against
+// (v3 spec §10.2's reset times are relative, and internal/form takes its
+// clock from the caller -- AccountField.SetProfiles). A FIXED instant,
+// never time.Now: a golden frame reading `in 2h11m` has to be the same
+// bytes tomorrow.
+func sampleNow() time.Time {
+	return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+}
+
+// resetIn is a *time.Time d from sampleNow, for a window that reports one.
+func resetIn(d time.Duration) *time.Time {
+	t := sampleNow().Add(d)
+	return &t
+}
 
 func sampleStatus() clauth.Status {
 	return clauth.Status{
@@ -17,15 +34,18 @@ func sampleStatus() clauth.Status {
 		Profiles: []clauth.Profile{
 			{
 				Name: "alpha", Active: true, Tier: "Team", AuthStatus: "ok",
-				Windows: []clauth.Window{{Label: "5h", UtilizationPct: 12}, {Label: "7d", UtilizationPct: 40}},
+				Windows: []clauth.Window{
+					{Label: "5h", UtilizationPct: 12, ResetsAt: resetIn(2*time.Hour + 11*time.Minute)},
+					{Label: "7d", UtilizationPct: 40},
+				},
 			},
 			{
 				Name: "beta", Active: false, Tier: "Max 20x", AuthStatus: "expired",
-				Windows: []clauth.Window{{Label: "5h", UtilizationPct: 0}},
+				Windows: []clauth.Window{{Label: "5h", UtilizationPct: 0, ResetsAt: resetIn(45 * time.Minute)}},
 			},
 			{
 				Name: "gamma", Active: false, Tier: "Team", AuthStatus: "ok",
-				Windows: []clauth.Window{{Label: "5h", UtilizationPct: 100}},
+				Windows: []clauth.Window{{Label: "5h", UtilizationPct: 100, ResetsAt: resetIn(time.Hour + 40*time.Minute)}},
 			},
 		},
 	}
@@ -48,7 +68,7 @@ func TestAccountField_IDAndDefaultInert(t *testing.T) {
 // requirement: "account inert flips with agent kind".
 func TestAccountField_InertFlipsWithAgentKind(t *testing.T) {
 	f := NewAccountField(theme.Default())
-	f.SetProfiles(sampleStatus())
+	f.SetProfiles(sampleStatus(), sampleNow())
 
 	f.SetAgentIsClaude(false)
 	if f.Enabled() {
@@ -74,23 +94,95 @@ func TestAccountField_InertFlipsWithAgentKind(t *testing.T) {
 	}
 }
 
-func TestAccountField_PinCyclesThroughProfiles(t *testing.T) {
+// browseTo walks the account cursor down n rows WITHOUT committing --
+// the gesture that used to pin an account by accident (v3 spec §10.3) and
+// now does not.
+func browseTo(f *AccountField, downs int) {
+	for i := 0; i < downs; i++ {
+		f.Update(key(tea.KeyDown, 0))
+	}
+}
+
+// TestAccountField_BrowsingDoesNotPin is v3 spec §10.3, and it is a
+// CORRECTNESS test rather than a cosmetic one: Pin() feeds
+// plan.Input.AccountPin, so before this the session really did launch
+// under `clauth <whatever row the cursor was resting on>`. Tabbing onto
+// this row and pressing Down once was enough.
+func TestAccountField_BrowsingDoesNotPin(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(sampleStatus())
+	f.SetProfiles(sampleStatus(), sampleNow())
 
-	f.Update(key(tea.KeyDown, 0)) // active -> alpha
-	if got := f.Pin(); got != "alpha" {
-		t.Fatalf("Pin() after one Down = %q, want %q", got, "alpha")
-	}
-	f.Update(key(tea.KeyDown, 0)) // alpha -> beta
-	if got := f.Pin(); got != "beta" {
-		t.Fatalf("Pin() after two Downs = %q, want %q", got, "beta")
-	}
-	f.Update(key(tea.KeyUp, 0))
-	f.Update(key(tea.KeyUp, 0))
+	browseTo(f, 1) // active -> alpha, cursor only
 	if got := f.Pin(); got != "" {
-		t.Fatalf("Pin() back at the top = %q, want \"\" (active)", got)
+		t.Fatalf("Pin() after one Down = %q, want \"\" -- moving the cursor is browsing, not choosing", got)
+	}
+	browseTo(f, 3) // ... and off the end, still nothing committed
+	if got := f.Pin(); got != "" {
+		t.Fatalf("Pin() after walking the whole list = %q, want \"\"", got)
+	}
+}
+
+// TestAccountField_EnterCommitsThePin is the other half: the deliberate
+// gesture works, it is reversible in the same place, and a second press
+// reports false so form.go's handleKey falls through to a plain advance.
+func TestAccountField_EnterCommitsThePin(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow())
+
+	browseTo(f, 1)
+	if !f.Complete() {
+		t.Fatal("Complete() on a row that is not the pin = false, want true (it moved the pin)")
+	}
+	if got := f.Pin(); got != "alpha" {
+		t.Fatalf("Pin() after committing = %q, want %q", got, "alpha")
+	}
+	if f.Complete() {
+		t.Error("a second Complete() on the same row = true, want false so the key advances instead")
+	}
+
+	browseTo(f, 1)
+	if !f.Complete() {
+		t.Fatal("Complete() after moving on = false, want true")
+	}
+	if got := f.Pin(); got != "beta" {
+		t.Fatalf("Pin() after committing the next row = %q, want %q", got, "beta")
+	}
+
+	// Committing on the `active` sentinel REMOVES the pin: the same
+	// gesture in the same place, which is why it is a row and not a key.
+	f.Update(key(tea.KeyUp, 0))
+	f.Update(key(tea.KeyUp, 0))
+	if !f.Complete() {
+		t.Fatal("Complete() back on the active row = false, want true")
+	}
+	if got := f.Pin(); got != "" {
+		t.Fatalf("Pin() after committing the active row = %q, want \"\"", got)
+	}
+}
+
+// TestAccountField_CommittingMarksTheRowWithoutMovingTheCursor pins what
+// the ✓ is for. commitPin re-feeds the picker at the SAME version, so the
+// mark moves and the cursor does not.
+func TestAccountField_CommittingMarksTheRowWithoutMovingTheCursor(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow())
+
+	browseTo(f, 2) // active -> alpha -> beta
+	f.Complete()
+	sel, ok := f.picker.Selected()
+	if !ok || sel.ID != "beta" {
+		t.Fatalf("cursor after committing = %+v, want it still on beta", sel)
+	}
+	if !sel.Current {
+		t.Error("the committed row is not marked Current, so nothing on screen says which profile is pinned")
+	}
+
+	browseTo(f, 1) // beta -> gamma, browsing again
+	if sel, _ := f.picker.Selected(); sel.Current {
+		t.Error("the row under the cursor is marked Current after merely browsing to it")
 	}
 }
 
@@ -101,7 +193,7 @@ func TestAccountField_PinCyclesThroughProfiles(t *testing.T) {
 func TestAccountField_SetPin(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(sampleStatus())
+	f.SetProfiles(sampleStatus(), sampleNow())
 
 	f.SetPin("")
 	if got := f.Pin(); got != "" {
@@ -134,12 +226,14 @@ func TestAccountField_SetPin(t *testing.T) {
 func TestAccountField_SetVerdict(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(sampleStatus())
+	f.SetProfiles(sampleStatus(), sampleNow())
 	f.SetPin("beta")
 
+	// The pre-existing `auth failed` badge on beta's own row is not the
+	// verdict and never was; what must be absent is the verdict TEXT.
 	frame := fieldText(f, 60)
-	if strings.Contains(frame, "auth") && !strings.Contains(frame, "expired") {
-		t.Fatalf("View(60) before SetVerdict unexpectedly mentions auth: %q", frame)
+	if strings.Contains(frame, "blocked") {
+		t.Fatalf("View(60) before SetVerdict already shows a verdict: %q", frame)
 	}
 
 	f.SetVerdict(f.Pin(), "blocked — auth: expired")
@@ -163,9 +257,9 @@ func TestAccountField_SetVerdict(t *testing.T) {
 func TestAccountField_SetProfilesRefreshPreservesPinByName(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(sampleStatus())
-	f.Update(key(tea.KeyDown, 0))
-	f.Update(key(tea.KeyDown, 0))
+	f.SetProfiles(sampleStatus(), sampleNow())
+	browseTo(f, 2)
+	f.Complete()
 	if got := f.Pin(); got != "beta" {
 		t.Fatalf("setup: Pin() = %q, want %q", got, "beta")
 	}
@@ -173,7 +267,7 @@ func TestAccountField_SetProfilesRefreshPreservesPinByName(t *testing.T) {
 	// A re-poll with reordered profiles.
 	refreshed := sampleStatus()
 	refreshed.Profiles[0], refreshed.Profiles[1] = refreshed.Profiles[1], refreshed.Profiles[0]
-	f.SetProfiles(refreshed)
+	f.SetProfiles(refreshed, sampleNow())
 
 	if got := f.Pin(); got != "beta" {
 		t.Errorf("Pin() after a reordering SetProfiles refresh = %q, want %q (preserved by name)", got, "beta")
@@ -187,7 +281,7 @@ func TestAccountField_DegradedRendersNameOnly(t *testing.T) {
 	f.SetAgentIsClaude(true)
 	status := sampleStatus()
 	status.Degraded = true
-	f.SetProfiles(status)
+	f.SetProfiles(status, sampleNow())
 
 	frame := fieldText(f, 60)
 	if strings.Contains(frame, "Team") || strings.Contains(frame, "expired") {
@@ -203,7 +297,7 @@ func TestAccountField_DegradedRendersNameOnly(t *testing.T) {
 func TestAccountField_WarnsOnAuthFailedAndRateLimited(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(sampleStatus())
+	f.SetProfiles(sampleStatus(), sampleNow())
 
 	frame := fieldText(f, 60)
 	if !strings.Contains(frame, accountWarnAuthFailed) {
@@ -222,7 +316,7 @@ func TestAccountField_HealthyProfileCarriesNoWarning(t *testing.T) {
 		{Name: "solo", Tier: "Team", AuthStatus: "ok", Windows: []clauth.Window{{Label: "5h", UtilizationPct: 12}}},
 	}}
 	f.SetAgentIsClaude(true)
-	f.SetProfiles(status)
+	f.SetProfiles(status, sampleNow())
 
 	frame := fieldText(f, 60)
 	if strings.Contains(frame, accountWarnAuthFailed) || strings.Contains(frame, accountWarnRateLimited) {
@@ -245,17 +339,19 @@ func TestAccountField_EmptyProfileNameSkipped(t *testing.T) {
 	f.SetProfiles(clauth.Status{Profiles: []clauth.Profile{
 		{Name: "", Tier: "Team", AuthStatus: "ok"},
 		{Name: "real", Tier: "Team", AuthStatus: "ok"},
-	}})
+	}}, sampleNow())
 
-	f.Update(key(tea.KeyDown, 0)) // active -> the only real row (empty-name profile skipped)
+	browseTo(f, 1) // active -> the only real row (empty-name profile skipped)
+	f.Complete()
 	if got := f.Pin(); got != "real" {
 		t.Fatalf("Pin() after one Down = %q, want %q (the empty-name profile must not occupy a row)", got, "real")
 	}
 
 	// A further Down must clamp on the same last real row -- if the
 	// empty-name profile had produced its own row, this would instead
-	// move Pin() back to "" and make it indistinguishable from "active".
-	f.Update(key(tea.KeyDown, 0))
+	// leave the cursor on it and the commit below would pin "".
+	browseTo(f, 1)
+	f.Complete()
 	if got := f.Pin(); got != "real" {
 		t.Fatalf("Pin() after a second (clamped) Down = %q, want %q", got, "real")
 	}
@@ -273,13 +369,15 @@ func TestAccountField_DuplicateProfileNamesDeduped(t *testing.T) {
 		{Name: "dup", Tier: "Team", AuthStatus: "ok"},
 		{Name: "dup", Tier: "Max 20x", AuthStatus: "expired"}, // same name -- must not add a second row
 		{Name: "unique", Tier: "Team", AuthStatus: "ok"},
-	}})
+	}}, sampleNow())
 
-	f.Update(key(tea.KeyDown, 0)) // active -> dup (first-seen wins)
+	browseTo(f, 1) // active -> dup (first-seen wins)
+	f.Complete()
 	if got := f.Pin(); got != "dup" {
 		t.Fatalf("Pin() after one Down = %q, want %q", got, "dup")
 	}
 	f.Update(key(tea.KeyDown, 0)) // dup -> unique (the second "dup" must not have its own row)
+	f.Complete()
 	if got := f.Pin(); got != "unique" {
 		t.Fatalf("Pin() after two Downs = %q, want %q (a duplicate name must yield exactly one row)", got, "unique")
 	}
@@ -317,4 +415,117 @@ func TestAccountField_NoPanicBeforeSetProfiles(t *testing.T) {
 	f.Update(key(tea.KeyDown, 0))
 	f.Update(key(tea.KeyUp, 0))
 	_ = f.Pin()
+}
+
+// TestAccountResetText pins the panel's reset cell. The zero-padding is
+// the load-bearing part: `2h5m` and `2h11m` are different widths, and a
+// column that changes width re-lays the whole table on a list that
+// re-renders every keystroke.
+func TestAccountResetText(t *testing.T) {
+	now := sampleNow()
+	cases := []struct {
+		name string
+		in   time.Duration
+		want string
+	}{
+		{"hours and minutes", 2*time.Hour + 11*time.Minute, "in 2h11m"},
+		{"minutes are zero padded past the first hour", 2*time.Hour + 5*time.Minute, "in 2h05m"},
+		{"exactly an hour", time.Hour, "in 1h00m"},
+		{"under an hour", 45 * time.Minute, "in 45m"},
+		{"a single minute", time.Minute, "in 1m"},
+
+		// clauth's feed can be minutes behind the clock, and a negative
+		// countdown says nothing a reader can use.
+		{"already due", 0, "due"},
+		{"overdue", -30 * time.Minute, "due"},
+		// Rounded to the minute, so the last half-minute reads `due`
+		// rather than `in 0m`.
+		{"under half a minute", 20 * time.Second, "due"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := accountResetText(now.Add(c.in), now); got != c.want {
+				t.Errorf("accountResetText(now+%v, now) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+
+	// Every hour-and-minute reading is the same width, which is what the
+	// padding is for.
+	width := -1
+	for m := 60; m < 600; m++ {
+		got := ansi.StringWidth(accountResetText(now.Add(time.Duration(m)*time.Minute), now))
+		if width < 0 {
+			width = got
+		}
+		if got != width {
+			t.Fatalf("at %d minutes the reset cell is %d cells wide, want %d like every other", m, got, width)
+		}
+	}
+}
+
+// TestAccountField_LiveProfileIsMarked is the question the author asked
+// that the screen could not answer: *what is the active account*. clauth
+// reports it, the app has always read it as a lookup key, and nothing
+// ever displayed it (v3 spec §10.2).
+func TestAccountField_LiveProfileIsMarked(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow()) // ActiveProfile: "alpha"
+
+	panel := ansi.Strip(f.Panel(101, f.PanelRows()))
+	if !strings.Contains(panel, "alpha "+accountLiveGlyph) {
+		t.Errorf("panel does not mark the live profile:\n%s", panel)
+	}
+	for _, other := range []string{"beta " + accountLiveGlyph, "gamma " + accountLiveGlyph} {
+		if strings.Contains(panel, other) {
+			t.Errorf("panel marks %q as live too:\n%s", other, panel)
+		}
+	}
+	if !strings.Contains(panel, accountLiveLegend) {
+		t.Errorf("panel does not explain the glyph it just drew:\n%s", panel)
+	}
+
+	// With no live profile among the rows there is no glyph to explain,
+	// so the line goes back to saying what the `active` row means.
+	orphaned := sampleStatus()
+	orphaned.ActiveProfile = "vanished"
+	f.SetProfiles(orphaned, sampleNow())
+	panel = ansi.Strip(f.Panel(101, f.PanelRows()))
+	if strings.Contains(panel, accountLiveGlyph) {
+		t.Errorf("panel draws the live glyph with no live profile on it:\n%s", panel)
+	}
+	if !strings.Contains(panel, accountActiveHint) {
+		t.Errorf("panel explains a glyph that is not there instead of the `active` row:\n%s", panel)
+	}
+}
+
+// TestAccountField_PanelDropsTheResetColumnRatherThanEliding pins the
+// widths on either side of PickerColumn.DropBelow. Before it, an
+// 80-column terminal -- which is a real popup size (v3 spec §6.1 clamps
+// the 104-cell card to the terminal) -- ended every profile row in a lone
+// `…` where `in 2h11m` should be: three cells spent saying nothing.
+func TestAccountField_PanelDropsTheResetColumnRatherThanEliding(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow())
+
+	wide := ansi.Strip(f.Panel(101, f.PanelRows()))
+	if !strings.Contains(wide, "in 2h11m") {
+		t.Errorf("the shipped width does not carry the reset column:\n%s", wide)
+	}
+
+	narrow := ansi.Strip(f.Panel(80, f.PanelRows()))
+	if strings.Contains(narrow, "in 2h11m") {
+		t.Errorf("80 cells fits the reset column after all -- this test no longer covers the drop:\n%s", narrow)
+	}
+	if strings.Contains(narrow, "…") {
+		t.Errorf("a column was elided to nothing instead of being dropped:\n%s", narrow)
+	}
+	// The columns the reset time made room for are all still whole.
+	for _, want := range []string{"█░░░░░░░░░", "5h 12%", "████░░░░░░", "7d 40%"} {
+		if !strings.Contains(narrow, want) {
+			t.Errorf("dropping the reset column cost %q too:\n%s", want, narrow)
+		}
+	}
 }
