@@ -85,7 +85,7 @@ Supersedes v2 §4. At the shipped size — a 104×32 popup, so 101×30 of termin
 │ new session                                                          herdr-draft · main   │
 │ ───────────────────────────────────────────────────────────────────────────────────────  │
 │   issue      none                                                                         │
-│▌  title      fix login redirect loop▏                                          required   │
+│ ▌ title      fix login redirect loop▏                                          required   │
 │   prompt     —                                                                            │
 │   project    ~/Projects/herdr-draft                                       invoking pane   │
 │   worktree   on · zvi/fix-login-redirect-loop ← main                     remembered here  │
@@ -107,6 +107,13 @@ Supersedes v2 §4. At the shipped size — a 104×32 popup, so 101×30 of termin
 
 The outer box is herdr's, not ours. `▌` is the focused row's accent edge (§5);
 the fill across the rest of that row cannot be drawn in plain text.
+
+**The bar sits in the two-cell gutter, one column in from the border — not
+flush against it.** An earlier draft of this mockup drew `│▌`, which is wrong
+for a concrete reason: herdr paints the popup border in **`accent`**
+(`herdr:src/ui/panes.rs:468`) and the bar is `accent` too, so flush the two
+merge into a single thick stroke and the bar stops reading as a row marker.
+The `sideMargin` column of §6.2 is what keeps them apart.
 
 Focus on `issue`. Nothing above the second rule moves:
 
@@ -255,6 +262,13 @@ The bar costs nothing: v2 removed the glyph but kept the two-cell
 `↵ create` is filled — `Background(Accent)`, `Foreground(panel-contrast)`,
 bold — which is herdr's recipe (`herdr:src/ui/dialogs.rs:324-343`). v2
 implemented the weaker half: accent *foreground* on a `Surface` fill.
+
+**Known cost, accepted:** v2 used fill-versus-text to show whether the focus
+ring was *on* Create. One unconditional face gives that up, and herdr is no
+guide here — its dialogs have no focus ring that includes buttons. Two signals
+remain: no row in the stack carries the §5.4 bar, and `zoneRungs(ZoneCreate)`
+swaps the whole footer ladder to `⇧⇥ back to the form`. Judged sufficient,
+but it is a real loss and it is recorded rather than discovered later.
 
 ## 6. Layout — horizontal
 
@@ -424,9 +438,13 @@ below by nothing. Enclose it and the same rows read as an empty panel inside a
 card, which is what they are.
 
 The zero-row alternative — painting the footer line in `Surface` to make it a
-bar — is rejected on a hard fact: `cancelButton` (`form.go:1097`) and the
-unfocused `createButton` (`:1074`) are themselves filled with `Surface`, so
-both buttons would vanish into it.
+bar — is rejected on a hard fact: **`cancelButton` (`form.go:1097`) is itself
+filled with `Surface`**, so it would vanish into the bar.
+
+(This paragraph originally cited the unfocused `createButton` as well. §5.5
+made Create unconditionally accent-filled, so only cancel is a `Surface` face
+now. The conclusion is unchanged — one disappearing button is enough — but do
+not cite the second half.)
 
 ### 7.5 The footer, and `submitview`
 
@@ -747,6 +765,13 @@ Everything in v2 §14 still applies. v3 adds and changes:
   terminal, in the band where rule 3 is gone but rule 2 is not), and one
   oversized **150×44** whose only job is to pin the pads and the footer's
   full-width reach.
+
+  **This applies to the whole-form frames only.** `internal/form`'s
+  single-field fixtures (`title-panel-80x24` and its siblings) render a
+  synthetic one-section form that no popup ever shows, so their width is an
+  arbitrary measuring stick rather than a claim about a real terminal. They
+  keep 80×24; renaming them would churn every fixture in the package to say
+  nothing new.
 - **Four states nobody currently fixtures**, each made load-bearing by v3: a
   small panel in a large region on the *assembled* form (`title` focused,
   `PanelRows() == 1` — the exact screen §7 is judged by, and it does not
