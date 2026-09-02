@@ -136,20 +136,27 @@ type fuzzySpan struct {
 // empty-query call itself -- each carrying fuzzyMatch's own empty-query
 // answer of [0, -1], an empty span with nothing to highlight.
 //
-// The spans are what v3 spec §8.4 needs: the data to paint the matched
-// characters is computed on every keystroke anyway, and fuzzyRank below
-// used to throw it away. Start and End are RUNE indices into Text, not
-// byte offsets -- a caller slicing Text with them must go through
-// []rune(Text) or it will mis-slice the first multi-byte candidate a user
-// types at.
+// Start and End are RUNE indices into Text, not byte offsets -- a caller
+// slicing Text with them must go through []rune(Text) or it will
+// mis-slice the first multi-byte candidate a user types at. End is
+// INCLUSIVE, unlike widgets.PickerMatch's; field_dir.go's dirMatch is the
+// one place in the tree the two conventions meet, and it is where the
+// bridge belongs.
 //
-// §8.4 also states the constraint on the caller, since these coordinates
-// only mean anything against the string they were computed from: a field
-// that ranks one string and DISPLAYS another (DirField ranks full paths
-// but shows them home-collapsed, and in path mode ranks basenames but
-// shows full paths) must re-run fuzzyMatch against the text it will
-// actually draw rather than translate these indices through the transform
-// in between.
+// **Nothing consumes the spans, and v3 spec §8.4 is why.** They were
+// added for §8.4's highlighting, but §8.4 then requires the span to be
+// computed against the string that will be DISPLAYED -- and the only
+// field that ranks its own items, DirField, displays neither string it
+// ranks: fragment mode ranks full paths and draws them home-collapsed,
+// path mode ranks basenames and draws whole paths. So dirMatch re-runs
+// fuzzyMatch on the cell text instead, and fuzzyRank below is this
+// function's only caller.
+//
+// It is kept rather than folded back into fuzzyRank because it is the
+// honest shape of the computation -- the ranking IS a span search, and
+// fuzzyRank is the projection that drops half the answer -- and because a
+// caller that ranks and displays the same string could use it directly
+// tomorrow. Do not add one that does not.
 func fuzzyRankSpans(candidates []string, query string) []fuzzySpan {
 	if query == "" {
 		// fuzzyMatch's own empty-query answer, taken from it rather than

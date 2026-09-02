@@ -602,6 +602,22 @@ for every item it keeps whenever `p.query != ""`; when the query is empty the
 caller's own `Match` is preserved verbatim, which is how a field that ranks
 its own items supplies spans itself.
 
+**The highlight paints the match WINDOW, not the matched characters.** This
+was not stated when the section was written and falls out of the type:
+`PickerMatch` carries one contiguous span, so a fuzzy query `dr` against
+`~/Downloads/reports` accents `ds/r` — the window `fuzzyMatch` scored — and
+not `d` plus `r`. Keep it. That window is the ranking's own tightness key,
+so what the accent shows is *why this row sorts where it does*, which is the
+more useful fact; and per-character indices would mean a span list per item
+on a list rebuilt every keystroke. `dir-filtered-80x24` pins it.
+
+**`fuzzyRankSpans` ends up with no span consumer**, and this section is the
+reason: the one field that ranks its own items displays neither string it
+ranks, so it re-runs `fuzzyMatch` on the cell text. That is not a defect in
+either place — it is what "match the string that will be DISPLAYED" costs —
+but a reader arriving at `fuzzyRankSpans` expecting a highlighting caller
+will not find one.
+
 ### 8.5 Scrollbar and filter count
 
 **The scrollbar costs a column, not a line** — the last cell of each row,
