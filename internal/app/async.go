@@ -96,6 +96,21 @@ type dirResultMsg struct {
 	// the validity check (projectMemoryKey), since it costs a `git
 	// rev-parse` and a symlink walk.
 	memoryKey string
+	// repoConfig is the selected project's committed .herdr-draft.toml
+	// (spec §11), read in the same background call for the same reason the
+	// memory key is: both hang off the repository root this check already
+	// resolves, and both are inputs to the SINGLE defaults.Resolve that
+	// applyProjectDefaults runs when this lands.
+	//
+	// It rides on the dir check's own request/version guard rather than
+	// having a source of its own, deliberately: "which repository the form
+	// points at" is one question with one answer, and two independently
+	// versioned answers to it could land in either order and resolve the
+	// defaults twice from a half-updated set of tiers.
+	//
+	// Zero value for a project that is not a repository, whose root could
+	// not be resolved, or that has no such file.
+	repoConfig config.RepoConfig
 }
 
 // scheduleDirCheck bumps the directory-validity source's own request
@@ -117,6 +132,7 @@ func (m *Model) scheduleDirCheck(path string) tea.Cmd {
 // whether it's a git repo).
 func (m Model) runDirCheck(req request) tea.Cmd {
 	git := m.deps.Git
+	loadRepoConfig := m.repoConfigLoader()
 	// req.key stays the RAW typed text -- DirField.SetValidity keys its own
 	// inline marker on it and only renders while it still equals Value().
 	// Only the path actually handed to the filesystem is expanded (finding
@@ -128,38 +144,58 @@ func (m Model) runDirCheck(req request) tea.Cmd {
 	return func() tea.Msg {
 		exists := git.DirExists(path)
 		isRepo := exists && git.IsGitRepo(path)
+		// Resolved ONCE and used twice: it is a `git rev-parse`, and both
+		// spec §10's memory key and spec §11's committed config are
+		// questions about the same repository.
+		root := projectRepoRoot(git, path, exists, isRepo)
 		return dirResultMsg{
-			req:       req,
-			dirExists: exists,
-			isGitRepo: isRepo,
-			memoryKey: projectMemoryKey(git, path, exists, isRepo),
+			req:        req,
+			dirExists:  exists,
+			isGitRepo:  isRepo,
+			memoryKey:  projectMemoryKey(path, exists, root),
+			repoConfig: loadRepoConfig(root),
 		}
 	}
 }
 
+// projectRepoRoot resolves the ORIGIN repository root behind path, which
+// must already be tilde-expanded -- gitx.RepoRoot's answer, derived from
+// `--git-common-dir` rather than `--show-toplevel`, so every worktree of
+// one repository resolves to the same root.
+//
+// "" for a directory that does not exist, for a plain non-repository
+// (which RepoRoot itself reports as ("", nil) rather than as a failure),
+// and for a repository whose root could not be read at all.
+func projectRepoRoot(git gitSource, path string, exists, isRepo bool) string {
+	if !exists || !isRepo {
+		return ""
+	}
+	root, err := git.RepoRoot(context.Background(), path)
+	if err != nil {
+		return ""
+	}
+	return root
+}
+
 // projectMemoryKey resolves spec §10's per-project memory key for path,
-// which must already be tilde-expanded: the ORIGIN repository root for a
-// repo (gitx.RepoRoot -- so every worktree of one repository shares a
-// single entry rather than accumulating one each), the canonical absolute
-// path otherwise.
+// which must already be tilde-expanded: the ORIGIN repository root when
+// one resolved (projectRepoRoot -- so every worktree of one repository
+// shares a single entry rather than accumulating one each), the canonical
+// absolute path otherwise.
 //
 // Both branches end in pathx.CanonicalKey, deliberately: one normalization
 // rule for both means a directory cannot acquire two keys by being reached
 // once as a repo and once not, or through differently-symlinked parents.
 //
 // A directory that does not exist gets no key. A repo whose root cannot be
-// resolved (git missing, an unreadable repository) falls back to the path
-// key rather than losing its memory entirely -- a slightly wrong key still
-// remembers something, and RepoRoot reports a plain non-repository as ("",
-// nil) rather than as a failure.
-func projectMemoryKey(git gitSource, path string, exists, isRepo bool) string {
+// resolved falls back to the path key rather than losing its memory
+// entirely -- a slightly wrong key still remembers something.
+func projectMemoryKey(path string, exists bool, repoRoot string) string {
 	if !exists {
 		return ""
 	}
-	if isRepo {
-		if root, err := git.RepoRoot(context.Background(), path); err == nil && root != "" {
-			return pathx.CanonicalKey(root)
-		}
+	if repoRoot != "" {
+		return pathx.CanonicalKey(repoRoot)
 	}
 	return pathx.CanonicalKey(path)
 }
@@ -179,7 +215,8 @@ func (m Model) handleDirDebounce(msg dirDebounceMsg) (Model, tea.Cmd) {
 // be applied once the target is known to be a usable git repo).
 //
 // The defaults are re-applied on EVERY project change, not once per form
-// open: the top tier is per-project, so a new project genuinely has a new
+// open: the top two tiers are per-project (projects.json and spec §11's
+// committed .herdr-draft.toml), so a new project genuinely has a new
 // answer. What keeps that from fighting the user is the touched rule
 // (Model.worktreeTouched and friends), which replaced the one-shot flag
 // this handler used to carry.
@@ -203,21 +240,27 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	m.worktree.SetGitTarget(msg.isGitRepo)
 
 	worktreeOnBefore := m.worktree.On()
-	m.applyProjectDefaults(msg.memoryKey, msg.isGitRepo)
+	// The branch is watched alongside the toggle because the repo tier can
+	// move it on its own: a project whose .herdr-draft.toml sets a
+	// different branch_prefix, or turns linear_branch_name off, produces a
+	// different branch for the same title (see applyProjectDefaults).
+	branchBefore := m.worktree.Branch()
+	m.applyProjectDefaults(msg.memoryKey, msg.isGitRepo, msg.repoConfig)
 
 	var cmd tea.Cmd
-	if m.worktree.On() != worktreeOnBefore {
-		// The worktree default just flipped the toggle -- runTitleCheck's
-		// own branch-exists half depends on it (skipped entirely while
-		// worktree is off), so re-run the title-duplicate check now rather
-		// than waiting for the next title/branch/dir edit to happen to
-		// notice: applyProjectDefaults' own syncDerivedInertness already
-		// resynced lastWorktreeOn to the NEW value, so reactToChanges' own
-		// diff would otherwise never see this specific transition.
+	if m.worktree.On() != worktreeOnBefore || m.worktree.Branch() != branchBefore {
+		// A default just flipped the toggle or rewrote the branch --
+		// runTitleCheck's own branch-exists half depends on both (it is
+		// skipped entirely while worktree is off), so re-run the
+		// title-duplicate check now rather than waiting for the next
+		// title/branch/dir edit to happen to notice: applyProjectDefaults'
+		// own syncDerivedInertness already resynced lastWorktreeOn to the
+		// NEW value, and this handler never runs reactToChanges, so its
+		// diff would otherwise never see either transition.
 		cmd = m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), msg.req.key, m.worktree.On())
-		// ...and the title panel's resting note follows the toggle for
-		// the same reason: "branch will be X" is true only while a
-		// worktree is going to be created (see Model.titleNote).
+		// ...and the title panel's resting note follows both for the same
+		// reason: it names the branch, and is true only while a worktree
+		// is going to be created (see Model.titleNote).
 		m.title.SetVerdict(m.title.Value(), m.titleNote(""))
 	}
 	return m, cmd

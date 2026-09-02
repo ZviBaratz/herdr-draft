@@ -219,6 +219,54 @@ underscore-optional). Values must be a strict `#RGB` or
 malformed string) is silently ignored and that field keeps its previous
 value.
 
+## Repo-level shared config (`.herdr-draft.toml`)
+
+A repository can commit a `.herdr-draft.toml` at its root so a team shares
+creation defaults instead of each person configuring their own machine. It
+is read from the *origin* repository root, so a linked worktree and its
+origin see the same file, and re-read whenever you change the Project row.
+
+```toml
+branch_prefix = "team/"
+default_worktree = true
+default_placement = "new-space"
+default_base = "develop"
+linear_branch_name = false
+```
+
+**Trust model.** This file arrives with `git clone`, so it may only choose
+among values you could already have picked in the form yourself. It may
+never name a command to run, a path outside the repository, or a
+credential — anything else would make checking out a repository a
+code-execution vector.
+
+The list above is therefore the *complete* set of keys it may set:
+
+- `branch_prefix` — same rules and same validation as the `config.toml`
+  key. An unusable value is ignored with a reason, and *your own*
+  configured prefix applies instead (not the built-in default).
+- `default_worktree`, `default_placement`, `default_base` — as above.
+- `linear_branch_name` (default: `true`) — whether a selected Linear
+  issue's own `branchName` owns the branch. Set it to `false` in a
+  repository with its own branch naming: the branch is then derived from
+  the title and `branch_prefix` exactly as in manual mode, while the issue
+  still seeds the title and the prompt.
+
+**Everything else in the file is ignored and reported**, including every
+other key `config.toml` accepts — `[agents.extra_args]` (it becomes part
+of a launched agent's command line), `[agents] favorites`/`default` (a
+repository doesn't choose which agent runs on your machine), `[linear]
+prompt_template` (it would become the agent's first instruction),
+`[linear] api_key`/`api_key_cmd` (a credential, and a command), and all of
+`[clauth]`, `[timeouts]` and `[palette]`. So is a key that is simply
+misspelled. A malformed file is ignored too — it never blocks the form.
+
+**Precedence**, highest first: `projects.json` (your last choice in *this*
+project) → `.herdr-draft.toml` → `last-used.json` (your last choice
+anywhere) → `config.toml` → the built-in default. A team's committed
+default beats whatever you last did in some *other* repository, and loses
+to what you last did in this one.
+
 ## clauth integration
 
 When clauth is configured and ≥2 profiles exist, the Account field lets you

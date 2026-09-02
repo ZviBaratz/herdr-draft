@@ -237,6 +237,12 @@ type testSetup struct {
 	Workspaces   []herdrc.WorkspaceInfo
 	ClauthStatus clauth.Status
 	LinearCache  []linear.Issue
+	// RepoConfig stands in for config.LoadRepoConfig (spec §11), so a test
+	// gets a deterministic .herdr-draft.toml without putting one on disk.
+	// nil leaves Deps.RepoConfig nil, which is the production reader --
+	// see repoConfigModel and TestRepoConfig_ProductionLoaderReadsTheFile
+	// in repoconfig_test.go.
+	RepoConfig func(repoRoot string) config.RepoConfig
 }
 
 // testHomeDir is the home every test model collapses paths against. It is
@@ -269,11 +275,12 @@ func newTestModel(t *testing.T, s testSetup) Model {
 
 	return New(Setup{
 		Deps: Deps{
-			Runner: &fakeRunner{workspaces: s.Workspaces},
-			Linear: linSrc,
-			Clauth: clSrc,
-			Git:    git,
-			Clock:  noSleep,
+			Runner:     &fakeRunner{workspaces: s.Workspaces},
+			Linear:     linSrc,
+			Clauth:     clSrc,
+			Git:        git,
+			Clock:      noSleep,
+			RepoConfig: s.RepoConfig,
 		},
 		Ctx:          s.Ctx,
 		Config:       cfg,

@@ -22,13 +22,6 @@ import (
 // --json` prints its provenance). The constants are ordered by precedence:
 // a LATER tier overrides an earlier one, which is spec §10's "precedence,
 // highest first" list read bottom-up.
-//
-// TierRepoConfig is declared here without a producer: nothing resolves
-// .herdr-draft.toml yet (that is the repo-config issue's job). Declaring it
-// now is deliberate -- the enum then reads as the complete precedence
-// ladder rather than a subset of it, and adding the tier later becomes a
-// pure insertion instead of an iota renumbering of TierProjectMemory that
-// every caller naming a tier would have to be re-checked against.
 type Tier int
 
 const (
@@ -40,9 +33,9 @@ const (
 	// TierGlobalMemory is last-used.json: the user's last choice ANYWHERE.
 	TierGlobalMemory
 	// TierRepoConfig is <repo root>/.herdr-draft.toml, the repository's
-	// committed default. It outranks TierGlobalMemory because a team's
-	// committed default should beat whatever the user last happened to do
-	// in some OTHER repository. No producer yet -- see the type's doc.
+	// committed default (config.LoadRepoConfig). It outranks
+	// TierGlobalMemory because a team's committed default should beat
+	// whatever the user last happened to do in some OTHER repository.
 	TierRepoConfig
 	// TierProjectMemory is projects.json[key]: the user's last choice in
 	// THIS project. Highest, because it is both deliberate and recent,
@@ -87,6 +80,17 @@ type Sources struct {
 	Config config.Config
 	// Global is last-used.json (TierGlobalMemory).
 	Global config.State
+	// Repo is the selected project's committed .herdr-draft.toml
+	// (TierRepoConfig), already through config.LoadRepoConfig's own
+	// allow-list -- spec §11's trust model is enforced THERE, not here.
+	// Its zero value means "no repo config", which is what a non-repo
+	// project, an absent file and a malformed one all look like.
+	//
+	// It needs no HaveRepo companion the way Project needs HaveProject:
+	// every field on it is already a nil pointer or "" when unset, since
+	// nothing writes this file back and so no entry can exist with
+	// meaningfully-zero contents.
+	Repo config.RepoConfig
 	// Project is this project's projects.json entry (TierProjectMemory),
 	// meaningful only when HaveProject is true.
 	Project config.ProjectDefaults
@@ -140,10 +144,12 @@ type Resolved struct {
 	BaseRef string
 	// LinearBranchName reports whether a chosen Linear issue's own
 	// branchName owns the branch (spec §11's repo-config key of the same
-	// name). Always true until TierRepoConfig has a producer, so the app
-	// layer does not consult it yet: what the form should do INSTEAD of
-	// seeding from branchName is the repo-config issue's to define, and a
-	// half-defined alternative would be worse than none.
+	// name). True unless a repo config says otherwise, and false means the
+	// branch is derived from the TITLE with BranchPrefix, exactly as it is
+	// in manual mode -- the app layer's reading of a key the spec names
+	// without defining its alternative, so that a repository whose branch
+	// naming is its own can keep it while still seeding title and prompt
+	// from Linear.
 	LinearBranchName bool
 
 	// From maps each Field* key to the tier that supplied its value.
@@ -190,9 +196,24 @@ func Resolve(s Sources) Resolved {
 	r.setAgentKind(&r.AgentKind, s.Global.LastKind, TierGlobalMemory, s.KnownAgentKinds)
 
 	// --- TierRepoConfig: .herdr-draft.toml -------------------------------
-	// No producer yet; the repo-config issue inserts its block here, which
-	// is the whole reason the tiers are applied as an ordered sequence of
-	// independent blocks rather than one nested expression per field.
+	// The repository's committed default (spec §11). It sits here, above
+	// last-used.json and below projects.json, because a team's committed
+	// default should beat whatever the user last did in some OTHER
+	// repository and lose to what they last did in THIS one.
+	//
+	// Every value arriving here has already been through
+	// config.LoadRepoConfig's allow-list, so this block needs no trust
+	// rules of its own -- and deliberately has none: a second, partial copy
+	// of the trust model in a package that performs no I/O would be the
+	// one that goes stale. BranchPrefix in particular is already validated
+	// there (a rejected one arrives as "", which setString reads as "this
+	// tier supplies nothing", landing the fallback on the user's own
+	// configured prefix one tier down).
+	r.setString(FieldBranchPrefix, &r.BranchPrefix, s.Repo.BranchPrefix, TierRepoConfig)
+	r.setBool(FieldWorktree, &r.UseWorktree, s.Repo.DefaultWorktree, TierRepoConfig)
+	r.setPlacement(&r.Placement, s.Repo.DefaultPlacement, TierRepoConfig)
+	r.setString(FieldBaseRef, &r.BaseRef, s.Repo.DefaultBase, TierRepoConfig)
+	r.setBool(FieldLinearBranchName, &r.LinearBranchName, s.Repo.LinearBranchName, TierRepoConfig)
 
 	// --- TierProjectMemory: projects.json[key] ---------------------------
 	if s.HaveProject {

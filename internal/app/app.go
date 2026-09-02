@@ -131,6 +131,18 @@ type Deps struct {
 	Clauth clauthSource
 	Git    gitSource
 	Clock  Clock
+	// RepoConfig reads spec §11's committed .herdr-draft.toml from a
+	// repository root. nil means config.LoadRepoConfig, the production
+	// reader -- it is a func rather than an interface for the same reason
+	// Clock.Sleep is: one call, no state, and a test that needs a
+	// deterministic answer should not have to put a real file on disk to
+	// get one.
+	//
+	// It is grouped here, with the other I/O collaborators, rather than
+	// called directly from async.go, because this package's own rule is
+	// that no test in it performs real I/O against something it did not
+	// create.
+	RepoConfig func(repoRoot string) config.RepoConfig
 }
 
 // Env is the plugin-invocation environment Bootstrap needs, read from the
@@ -354,8 +366,18 @@ type Model struct {
 	// linearIssueSelected tracks IssueField's own "none" vs a real
 	// selection (spec §6 field 1: "In Linear mode branchName owns the
 	// branch and the title is free text") -- reactToChanges only derives a
-	// branch suggestion from the typed title while this is false.
+	// branch suggestion from the typed title while this is false, OR while
+	// spec §11's linear_branch_name has been turned off for this
+	// repository.
 	linearIssueSelected bool
+
+	// selectedIssueBranch is the chosen Linear issue's own branchName,
+	// kept because the answer to "what should the branch be" can be
+	// re-asked after the selection was made: switching to a project whose
+	// .herdr-draft.toml turns linear_branch_name off (or sets a different
+	// branch_prefix) has to re-derive it, and IssueField exposes the
+	// chosen issue only through the one-shot form.IssueChosenMsg.
+	selectedIssueBranch string
 
 	// last-observed getter snapshots -- reactToChanges diffs the CURRENT
 	// value against these after every message routed through form.Model,
@@ -423,11 +445,25 @@ type Model struct {
 	fetchedRepos map[string]bool
 
 	// resolved is spec §10's layered default resolution -- every tier
-	// (config.toml, last-used.json, projects.json) collapsed into one value
-	// per field, plus the tier each came from. Recomputed by
-	// applyProjectDefaults whenever the project row changes, since the
-	// top tier is per-project. See internal/defaults.
+	// (config.toml, last-used.json, .herdr-draft.toml, projects.json)
+	// collapsed into one value per field, plus the tier each came from.
+	// Recomputed by applyProjectDefaults whenever the project row changes,
+	// since the top two tiers are per-project. See internal/defaults.
 	resolved defaults.Resolved
+
+	// repoConfig is the SELECTED project's committed .herdr-draft.toml
+	// (spec §11), re-read by the debounced dir check on every project
+	// change and kept here for two reasons: applyProjectDefaults feeds it
+	// back into defaults.Resolve, and its Notes are the visible report of
+	// everything in that file the trust model refused.
+	//
+	// THE NOTES ARE NOT YET RENDERED. Spec §11 puts them in the focused
+	// row's panel, which needs a setter internal/form does not have; that
+	// package is being rewritten under the key-grammar/polish issue, so
+	// the value is plumbed to here -- where a view can read it -- and the
+	// display is left for that work rather than collided with. See
+	// repoConfigNotes.
+	repoConfig config.RepoConfig
 
 	// projects is projects.json, loaded once at Bootstrap: nothing but this
 	// process writes it, and it only writes on a successful submit, one
@@ -836,16 +872,49 @@ func (m Model) routeToForm(msg tea.Msg) (Model, tea.Cmd) {
 // layer routes seeding — the form does NOT"). A nil Issue (the "none" row,
 // manual mode) seeds nothing; it only flips linearIssueSelected back to
 // false so reactToChanges resumes deriving the branch from typed title text.
+//
+// The prompt template is taken from the USER's config.toml and never from
+// the repository's own .herdr-draft.toml: a repo-controlled template would
+// become the agent's first instruction, which is a prompt-injection
+// surface rather than a preference (spec §11, which lists
+// `[linear] prompt_template` as forbidden after an earlier draft allowed
+// it). config.LoadRepoConfig ignores the key outright, so there is nothing
+// here to guard against -- this comment exists so the absence reads as a
+// decision rather than an oversight.
 func (m Model) handleIssueChosen(msg form.IssueChosenMsg) (Model, tea.Cmd) {
 	m.linearIssueSelected = msg.Issue != nil
+	m.selectedIssueBranch = ""
 	if msg.Issue != nil {
 		iss := *msg.Issue
+		m.selectedIssueBranch = iss.BranchName
 		m.title.SetTitle(iss.Title, true)
-		m.worktree.SetBranch(iss.BranchName, true)
+		m.worktree.SetBranch(m.branchSuggestion(), true)
 		m.prompt.SetValue(renderPromptTemplate(m.cfg.Linear.PromptTemplate, iss), true)
 	}
 	cmds := m.reactToChanges()
 	return m, tea.Batch(cmds...)
+}
+
+// branchSuggestion is the branch a SEEDED WorktreeField.SetBranch should
+// carry for the form as it currently stands -- the chosen Linear issue's
+// own branchName, or the title run through the resolved branch prefix.
+//
+// Which one depends on spec §11's linear_branch_name, the repo-config key
+// a repository sets to keep its own branch naming. The spec names the key
+// and its default (true) but does not say what false DOES; this is the app
+// layer's reading: false means the branch is derived from the title
+// exactly as in manual mode, so a Linear selection still seeds title and
+// prompt while the branch stays the repository's own shape. That is the
+// only alternative that needs no further configuration to be usable.
+//
+// An issue with no branchName of its own falls through to the title
+// derivation rather than suggesting "", which would blank a branch the
+// user can see.
+func (m Model) branchSuggestion() string {
+	if m.linearIssueSelected && m.resolved.LinearBranchName && m.selectedIssueBranch != "" {
+		return m.selectedIssueBranch
+	}
+	return gitx.BranchSlug(m.resolved.BranchPrefix, m.title.Value())
 }
 
 // handleSubmit is form.SubmitMsg's own handler (spec §9's submit
@@ -1145,13 +1214,13 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	titleVal := m.title.Value()
 	if titleVal != m.lastTitle {
 		m.lastTitle = titleVal
-		if !m.linearIssueSelected {
-			// Manual mode (spec §6 field 3): "choosing a title is choosing
-			// a branch" -- WorktreeField.SetBranch's own touched guard
-			// means this is a no-op the moment the user has edited Branch
-			// themselves.
-			m.worktree.SetBranch(gitx.BranchSlug(m.resolved.BranchPrefix, titleVal), true)
-		}
+		// Manual mode (spec §6 field 3): "choosing a title is choosing a
+		// branch" -- WorktreeField.SetBranch's own touched guard means
+		// this is a no-op the moment the user has edited Branch
+		// themselves, and branchSuggestion returns the chosen issue's own
+		// branchName unchanged while that is what owns the branch, so the
+		// call is safe to make unconditionally.
+		m.worktree.SetBranch(m.branchSuggestion(), true)
 	}
 
 	branchVal := m.worktree.Branch()
@@ -1239,21 +1308,25 @@ func (m *Model) snapshotAppliedDefaults() {
 }
 
 // applyProjectDefaults re-resolves spec §10's layered defaults for the
-// project the form now points at (key, from the debounced dir check) and
-// applies each resolved value to the field that shows it -- unless the
-// user has already touched that field, in which case their choice stands.
-// This is "per-project memory re-applies when the project row changes."
+// project the form now points at (key and repo, both from the debounced
+// dir check) and applies each resolved value to the field that shows it --
+// unless the user has already touched that field, in which case their
+// choice stands. This is "per-project memory re-applies when the project
+// row changes", now with the repository's own committed default (spec §11)
+// sitting between it and last-used.json.
 //
 // isGitRepo gates the worktree toggle alone: WorktreeField.SetOn is
 // meaningless for a target that cannot host a worktree (the chip row is
 // inert), so a remembered `true` waits for a repository rather than being
 // spent on a plain directory.
-func (m *Model) applyProjectDefaults(key string, isGitRepo bool) {
+func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.RepoConfig) {
 	m.projectKey = key
+	m.repoConfig = repo
 	entry, have := m.projects.Get(key)
 	m.resolved = defaults.Resolve(defaults.Sources{
 		Config:          m.cfg,
 		Global:          m.state,
+		Repo:            repo,
 		Project:         entry,
 		HaveProject:     have,
 		KnownAgentKinds: m.agentKinds,
@@ -1286,11 +1359,52 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool) {
 		m.worktree.SetBase(m.resolved.BaseRef)
 	}
 
+	// The branch follows the project too, which it did not have to before
+	// spec §11: branch_prefix and linear_branch_name are both per-repo now,
+	// so the same title produces a different branch in a different
+	// repository. Seeded, so a branch the user typed themselves still
+	// stands (WorktreeField.SetBranch's own touched guard), and no touched
+	// flag of this package's own is needed -- the field carries that one.
+	//
+	// The emptiness guard is load-bearing, not defensive:
+	// gitx.BranchSlug answers an EMPTY title with a deterministic
+	// "session-xxxxxxxx" rather than with nothing, so re-deriving
+	// unconditionally would fill the branch input with a hash on the very
+	// first dir check, before the user had typed a character.
+	// reactToChanges never hits this because it only derives when the
+	// title CHANGES, and a freshly opened form's title has not.
+	if m.title.Value() != "" || m.linearIssueSelected {
+		m.worktree.SetBranch(m.branchSuggestion(), true)
+	}
+
 	// Again, because the agent kind above drives AccountField's own inert
 	// condition (spec §6 field 7, "inert while the kind is not claude").
 	m.syncDerivedInertness()
 	m.snapshotAppliedDefaults()
 }
+
+// repoConfigLoader returns the .herdr-draft.toml reader to use --
+// Deps.RepoConfig when a caller supplied one, config.LoadRepoConfig
+// otherwise. Snapshotted by runDirCheck at scheduling time, like every
+// other dependency a background Cmd closes over.
+func (m Model) repoConfigLoader() func(string) config.RepoConfig {
+	if m.deps.RepoConfig != nil {
+		return m.deps.RepoConfig
+	}
+	return config.LoadRepoConfig
+}
+
+// repoConfigNotes is spec §11's visible report: one line per key in the
+// selected repository's .herdr-draft.toml that the trust model refused,
+// plus the reason. Empty when there is no such file, or when everything in
+// it was allowed.
+//
+// NOT YET RENDERED -- see Model.repoConfig's own doc comment. Spec §11 puts
+// this in the focused row's panel, which needs a setter internal/form does
+// not currently expose; that package is mid-rewrite under a separate
+// issue, so this is the reachable value a view will read rather than a
+// panel line collided into it.
+func (m Model) repoConfigNotes() []string { return m.repoConfig.Notes }
 
 // reactToTypedDir keeps DirField's candidate pool in step with what the
 // user is typing into the Project field (spec §6 field 2's dual mode):

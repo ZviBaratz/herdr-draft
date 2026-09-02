@@ -28,7 +28,11 @@ func TestResolve_Precedence(t *testing.T) {
 		wantPlacement    plan.Placement
 		wantAgentKind    string
 		wantBaseRef      string
-		wantFrom         map[string]Tier
+		// wantLinearBranchNameOff is stated as the NEGATIVE so the zero
+		// value is the built-in answer (true): only a repo config can turn
+		// it off, so all but a couple of these cases expect it on.
+		wantLinearBranchNameOff bool
+		wantFrom                map[string]Tier
 	}{
 		{
 			name: "everything falls through to the built-in",
@@ -198,6 +202,153 @@ func TestResolve_Precedence(t *testing.T) {
 			},
 		},
 		{
+			// Spec §11's whole allowed surface arriving at once, with
+			// every tier below it stacked differently, so nothing here can
+			// pass by accident. branch_prefix is the one the repo tier
+			// takes from config.toml, which no other tier can.
+			name: ".herdr-draft.toml beats last-used.json and config.toml",
+			src: Sources{
+				Config: config.Config{
+					BranchPrefix:     "zvi/",
+					DefaultWorktree:  false,
+					DefaultPlacement: "tab-here",
+					Agents:           config.AgentsConfig{Default: "codex"},
+				},
+				Global: config.State{
+					LastKind:      "gemini",
+					LastPlacement: "new-space",
+					LastWorktree:  boolp(false),
+				},
+				Repo: config.RepoConfig{
+					BranchPrefix:     "team/",
+					DefaultWorktree:  boolp(true),
+					DefaultPlacement: "split-here",
+					DefaultBase:      "trunk",
+					LinearBranchName: boolp(false),
+				},
+				KnownAgentKinds: knownKinds,
+			},
+
+			wantBranchPrefix: "team/",
+			wantWorktree:     true,
+			wantPlacement:    plan.PlacementSplitHere,
+			// A repository does not choose which agent runs on your
+			// machine (spec §11's forbidden list), so the agent kind stays
+			// last-used.json's.
+			wantAgentKind:           "gemini",
+			wantBaseRef:             "trunk",
+			wantLinearBranchNameOff: true,
+			wantFrom: map[string]Tier{
+				FieldBranchPrefix:     TierRepoConfig,
+				FieldWorktree:         TierRepoConfig,
+				FieldPlacement:        TierRepoConfig,
+				FieldAgentKind:        TierGlobalMemory,
+				FieldBaseRef:          TierRepoConfig,
+				FieldLinearBranchName: TierRepoConfig,
+			},
+		},
+		{
+			// The other side of spec §10's tier 1-vs-2 ordering: what you
+			// last did in THIS repository outranks what the repository
+			// itself ships, because it is both deliberate and recent while
+			// the committed default is what a NEW checkout starts from.
+			name: "projects.json beats .herdr-draft.toml",
+			src: Sources{
+				Repo: config.RepoConfig{
+					DefaultWorktree:  boolp(false),
+					DefaultPlacement: "tab-here",
+					DefaultBase:      "trunk",
+				},
+				Project: config.ProjectDefaults{
+					Worktree:  boolp(true),
+					Placement: "split-here",
+					Base:      "develop",
+				},
+				HaveProject:     true,
+				KnownAgentKinds: knownKinds,
+			},
+
+			wantWorktree:  true,
+			wantPlacement: plan.PlacementSplitHere,
+			wantBaseRef:   "develop",
+			wantFrom: map[string]Tier{
+				// branch_prefix and linear_branch_name have no per-project
+				// tier at all, so the repo config keeps them.
+				FieldBranchPrefix:     TierBuiltin,
+				FieldWorktree:         TierProjectMemory,
+				FieldPlacement:        TierProjectMemory,
+				FieldAgentKind:        TierBuiltin,
+				FieldBaseRef:          TierProjectMemory,
+				FieldLinearBranchName: TierBuiltin,
+			},
+		},
+		{
+			// A repo config that names only some keys must not zero the
+			// others -- the same partial-entry rule projects.json has, and
+			// the reason every field on RepoConfig is a pointer or "".
+			name: "a partial .herdr-draft.toml leaves the tiers below alone",
+			src: Sources{
+				Config:          config.Config{BranchPrefix: "zvi/", DefaultWorktree: true},
+				Global:          config.State{LastPlacement: "tab-here", LastKind: "gemini"},
+				Repo:            config.RepoConfig{DefaultBase: "trunk"},
+				KnownAgentKinds: knownKinds,
+			},
+
+			wantBranchPrefix: "zvi/",
+			wantWorktree:     true,
+			wantPlacement:    plan.PlacementTabHere,
+			wantAgentKind:    "gemini",
+			wantBaseRef:      "trunk",
+			wantFrom: map[string]Tier{
+				FieldBranchPrefix:     TierUserConfig,
+				FieldWorktree:         TierUserConfig,
+				FieldPlacement:        TierGlobalMemory,
+				FieldAgentKind:        TierGlobalMemory,
+				FieldBaseRef:          TierRepoConfig,
+				FieldLinearBranchName: TierBuiltin,
+			},
+		},
+		{
+			// config.LoadRepoConfig drops a prefix gitx.ValidateBranchPrefix
+			// rejects to "", which is how the fallback lands on the USER's
+			// own configured value rather than on the built-in -- the
+			// difference from config.Load's handling of the same key.
+			name: "a rejected repo branch_prefix arrives as nothing and the user's applies",
+			src: Sources{
+				Config:          config.Config{BranchPrefix: "zvi/"},
+				Repo:            config.RepoConfig{BranchPrefix: ""},
+				KnownAgentKinds: knownKinds,
+			},
+
+			wantBranchPrefix: "zvi/",
+			wantFrom: map[string]Tier{
+				FieldBranchPrefix:     TierUserConfig,
+				FieldWorktree:         TierUserConfig,
+				FieldPlacement:        TierBuiltin,
+				FieldAgentKind:        TierBuiltin,
+				FieldBaseRef:          TierBuiltin,
+				FieldLinearBranchName: TierBuiltin,
+			},
+		},
+		{
+			// A repo config is allowed to say true explicitly, which must
+			// stay distinguishable from saying nothing.
+			name: "an explicit repo linear_branch_name = true is still the repo's answer",
+			src: Sources{
+				Repo:            config.RepoConfig{LinearBranchName: boolp(true)},
+				KnownAgentKinds: knownKinds,
+			},
+
+			wantFrom: map[string]Tier{
+				FieldBranchPrefix:     TierBuiltin,
+				FieldWorktree:         TierUserConfig,
+				FieldPlacement:        TierBuiltin,
+				FieldAgentKind:        TierBuiltin,
+				FieldBaseRef:          TierBuiltin,
+				FieldLinearBranchName: TierRepoConfig,
+			},
+		},
+		{
 			name: "projects.json beats every tier below it",
 			src: Sources{
 				Config: config.Config{
@@ -211,6 +362,11 @@ func TestResolve_Precedence(t *testing.T) {
 					LastPlacement: "new-space",
 					LastWorktree:  boolp(false),
 				},
+				Repo: config.RepoConfig{
+					DefaultWorktree:  boolp(false),
+					DefaultPlacement: "new-space",
+					DefaultBase:      "trunk",
+				},
 				Project: config.ProjectDefaults{
 					Kind:      "claude",
 					Worktree:  boolp(true),
@@ -221,7 +377,9 @@ func TestResolve_Precedence(t *testing.T) {
 				KnownAgentKinds: knownKinds,
 			},
 
-			// branch_prefix has no per-project tier, so it stays config's.
+			// branch_prefix has no per-project tier, so it stays the
+			// highest tier that HAS one -- config.toml here, since this
+			// repo config sets no prefix.
 			wantBranchPrefix: "zvi/",
 			wantWorktree:     true,
 			wantPlacement:    plan.PlacementSplitHere,
@@ -322,17 +480,26 @@ func TestResolve_Precedence(t *testing.T) {
 			if got.BaseRef != c.wantBaseRef {
 				t.Errorf("BaseRef = %q, want %q", got.BaseRef, c.wantBaseRef)
 			}
+			if got.LinearBranchName == c.wantLinearBranchNameOff {
+				t.Errorf("LinearBranchName = %v, want %v", got.LinearBranchName, !c.wantLinearBranchNameOff)
+			}
 			assertFrom(t, got.From, c.wantFrom)
 		})
 	}
 }
 
-// TestResolve_LinearBranchNameDefaultsOn pins the one field no tier can
-// currently move: until .herdr-draft.toml has a producer, a Linear issue's
-// own branchName always owns the branch, which is what the form does today.
+// TestResolve_LinearBranchNameDefaultsOn pins the built-in: with no repo
+// config -- which is every project that has not committed one -- a Linear
+// issue's own branchName owns the branch, which is what the form has
+// always done. Only .herdr-draft.toml can turn it off.
 func TestResolve_LinearBranchNameDefaultsOn(t *testing.T) {
 	if !Resolve(Sources{}).LinearBranchName {
 		t.Error("LinearBranchName = false with no tier set, want true (today's form behavior)")
+	}
+	// A repo config that omits the key is not a repo config that turns it
+	// off: nil has to stay distinct from a recorded false.
+	if !Resolve(Sources{Repo: config.RepoConfig{DefaultBase: "trunk"}}).LinearBranchName {
+		t.Error("LinearBranchName = false for a repo config that omits the key, want true")
 	}
 }
 
