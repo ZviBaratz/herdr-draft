@@ -1,9 +1,15 @@
 # herdr-draft — new session creation dialog for herdr
 
 - **Date:** 2026-08-31
-- **Status:** draft for review
+- **Status:** implemented; §6 and §7 superseded
 - **Repo:** `~/Projects/herdr-draft` (this repo)
 - **License:** MIT (see §14 — Licensing & code provenance)
+
+> **§6 (The form) and §7 (herdr-native skin & mouse) are superseded by**
+> `docs/specs/2026-09-02-herdr-draft-v2-design.md`. Read that document for
+> the form's layout, field set, key grammar, palette and mouse behavior.
+> Every other section here remains authoritative, and `spec §N` citations
+> in the code still resolve to this file unless they name v1 §6 or §7.
 
 ## 1. Summary
 
