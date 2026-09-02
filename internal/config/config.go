@@ -17,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 )
 
 // configFileName is the config file's name inside $HERDR_PLUGIN_CONFIG_DIR
@@ -67,10 +69,24 @@ type TimeoutsConfig struct {
 type Config struct {
 	// BranchPrefix defaults to the lowercased current user's username plus
 	// "/" (spec §12's config.toml comment: `default: lowercased $USER +
-	// "/"`).
+	// "/"`). A value Load reads from the file is always one
+	// gitx.ValidateBranchPrefix accepted -- see BranchPrefixWarning.
 	BranchPrefix     string `toml:"branch_prefix"`
 	DefaultWorktree  bool   `toml:"default_worktree"`
 	DefaultPlacement string `toml:"default_placement"`
+
+	// BranchPrefixWarning is non-empty when the file's own branch_prefix
+	// was rejected by gitx.ValidateBranchPrefix and BranchPrefix therefore
+	// holds the built-in default instead: it is the short reason, naming
+	// both the rejected value and its replacement. Never decoded from the
+	// file (`toml:"-"`) -- it is Load's own output.
+	//
+	// This is the degrade-with-a-reason shape the rest of the plugin uses
+	// for an optional input it cannot trust (app.Setup.LinearUnavailable is
+	// the other): the plugin still opens, the feature still works off the
+	// default, and the reason travels with the value instead of vanishing.
+	// A bad branch_prefix is a typo, not a reason to refuse startup.
+	BranchPrefixWarning string `toml:"-"`
 
 	Linear   LinearConfig   `toml:"linear"`
 	Clauth   ClauthConfig   `toml:"clauth"`
@@ -101,15 +117,30 @@ func defaults() Config {
 	}
 }
 
+// fallbackBranchPrefix is the last-resort prefix: used when the current OS
+// user can't be determined, and when their username makes a prefix even
+// gitx.ValidateBranchPrefix won't take.
+const fallbackBranchPrefix = "user/"
+
 // defaultBranchPrefix returns the lowercased current OS user's username
 // plus "/", or "user/" when the current user can't be determined (e.g. no
 // passwd entry in a minimal container).
+//
+// The username is run through gitx.ValidateBranchPrefix too, because it is
+// not guaranteed to be ref-safe either -- a Windows "DOMAIN\user" is the
+// obvious case, and this value is the very thing Load falls back TO, so it
+// had better not be the one broken prefix nothing checks. Ordinary
+// usernames containing "." or "-" pass unchanged.
 func defaultBranchPrefix() string {
 	u, err := user.Current()
 	if err != nil || u.Username == "" {
-		return "user/"
+		return fallbackBranchPrefix
 	}
-	return strings.ToLower(u.Username) + "/"
+	prefix := strings.ToLower(u.Username) + "/"
+	if gitx.ValidateBranchPrefix(prefix) != nil {
+		return fallbackBranchPrefix
+	}
+	return prefix
 }
 
 // Load reads $configDir/config.toml and returns the resulting Config, with
@@ -118,8 +149,14 @@ func defaultBranchPrefix() string {
 // keys in the file are ignored rather than rejected (no strict/disallow-
 // unknown-fields mode), so an older herdr-draft binary tolerates a newer
 // config file.
+//
+// An unusable branch_prefix falls back to the default the same way an
+// omitted one does, with the reason left on BranchPrefixWarning; it never
+// makes Load fail. Only a file that cannot be read or parsed does, which
+// is what app.Bootstrap turns into spec §9's pre-open refusal.
 func Load(configDir string) (Config, error) {
 	cfg := defaults()
+	defaultPrefix := cfg.BranchPrefix
 
 	path := filepath.Join(configDir, configFileName)
 	b, err := os.ReadFile(path)
@@ -132,6 +169,17 @@ func Load(configDir string) (Config, error) {
 
 	if _, err := toml.Decode(string(b), &cfg); err != nil {
 		return Config{}, fmt.Errorf("load config: parse %s: %w", path, err)
+	}
+
+	// The prefix reaches `herdr worktree create --branch <value>` as an
+	// argv element by way of gitx.BranchSlug, so it is validated at the
+	// point it is first trusted rather than at the point it is used. The
+	// same gitx.ValidateBranchPrefix call is what a repo-supplied
+	// .herdr-draft.toml will need; only the fallback differs there.
+	if verr := gitx.ValidateBranchPrefix(cfg.BranchPrefix); verr != nil {
+		cfg.BranchPrefixWarning = fmt.Sprintf("ignoring branch_prefix %q: %v; using %q",
+			cfg.BranchPrefix, verr, defaultPrefix)
+		cfg.BranchPrefix = defaultPrefix
 	}
 	return cfg, nil
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 )
 
 // fullConfigTOML is the spec §12 example config, reproduced verbatim
@@ -52,7 +55,177 @@ func defaultBranchPrefixForTest(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("user.Current: %v", err)
 	}
-	return strings.ToLower(u.Username) + "/"
+	prefix := strings.ToLower(u.Username) + "/"
+	// Mirrors defaultBranchPrefix's own guard: a username that can't make a
+	// valid ref prefix (a Windows "DOMAIN\user") falls all the way back.
+	// A no-op for any ordinary username, including one with "." or "-".
+	if gitx.ValidateBranchPrefix(prefix) != nil {
+		return "user/"
+	}
+	return prefix
+}
+
+// writeConfig writes a config.toml containing exactly one branch_prefix key
+// set to prefix, rendered as a TOML basic string. Several of the rejected
+// shapes contain a control character that cannot appear literally in a TOML
+// file, so the escaping is done here rather than in each fixture.
+func writeConfig(t *testing.T, prefix string) string {
+	t.Helper()
+	dir := t.TempDir()
+	body := "branch_prefix = " + tomlBasicString(prefix) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	return dir
+}
+
+// tomlBasicString renders s as a TOML basic string, escaping the quote, the
+// backslash, and every control character (TOML forbids those literally, but
+// accepts them as \uXXXX).
+func tomlBasicString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, "\\u%04X", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// TestLoad_InvalidBranchPrefix_FallsBackWithAReason is the degrade path for
+// issue #13: branch_prefix is prepended raw by gitx.BranchSlug and the
+// result reaches `herdr worktree create --branch <value>` as an argv
+// element, so a prefix starting with "-" is read by herdr's flag parser as
+// a flag. A bad value is a typo in the user's own file, though, so it
+// degrades -- the built-in default takes over and the reason rides along on
+// BranchPrefixWarning -- rather than refusing startup.
+//
+// One case per rule; gitx.ValidateBranchPrefix's own test covers the rules
+// exhaustively. What is pinned here is the fallback and the reason, and in
+// particular that the reason names BOTH the value that was thrown away and
+// the one now in force: "your branch_prefix is not being used" is not
+// actionable without saying which value replaced it.
+func TestLoad_InvalidBranchPrefix_FallsBackWithAReason(t *testing.T) {
+	def := defaultBranchPrefixForTest(t)
+
+	cases := []struct{ name, prefix, wantReason string }{
+		{"leading dash", "-zvi/", `starts with "-"`},
+		{"leading dash that is a real flag", "--focus/", `starts with "-"`},
+		{"NUL", "zvi\x00/", "control character"},
+		{"tab", "zvi\t/", "control character"},
+		{"DEL", "zvi\x7f/", "control character"},
+		{"space", "zvi x/", "contains a space"},
+		{"tilde", "zvi~/", "git forbids"},
+		{"colon", "zvi:/", "git forbids"},
+		{"asterisk", "zvi*/", "git forbids"},
+		{"backslash", "DOMAIN\\zvi/", "git forbids"},
+		{"double dot", "zvi../", `contains ".."`},
+		{"reflog syntax", "zvi@{0}/", `contains "@{"`},
+		{"leading slash", "/zvi/", "empty path component"},
+		{"double slash", "zvi//x/", "empty path component"},
+		{"hidden component", ".git/", `begins with "."`},
+		{"lock component", "zvi.lock/", `ends with ".lock"`},
+		{"lock trailing partial component", "zvi/x.lock", `ends with ".lock"`},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, c.prefix))
+			if err != nil {
+				t.Fatalf("Load: %v, want no error -- a bad branch_prefix must never refuse startup", err)
+			}
+			if cfg.BranchPrefix != def {
+				t.Errorf("BranchPrefix = %q, want the built-in default %q", cfg.BranchPrefix, def)
+			}
+			if cfg.BranchPrefixWarning == "" {
+				t.Fatalf("BranchPrefixWarning is empty, want the reason %q was rejected", c.prefix)
+			}
+			if !strings.Contains(cfg.BranchPrefixWarning, c.wantReason) {
+				t.Errorf("BranchPrefixWarning = %q, want it to mention %q",
+					cfg.BranchPrefixWarning, c.wantReason)
+			}
+			if !strings.Contains(cfg.BranchPrefixWarning, fmt.Sprintf("%q", c.prefix)) {
+				t.Errorf("BranchPrefixWarning = %q, want it to quote the rejected value %q",
+					cfg.BranchPrefixWarning, c.prefix)
+			}
+			if !strings.Contains(cfg.BranchPrefixWarning, fmt.Sprintf("%q", def)) {
+				t.Errorf("BranchPrefixWarning = %q, want it to name the replacement %q",
+					cfg.BranchPrefixWarning, def)
+			}
+		})
+	}
+}
+
+// TestLoad_ValidBranchPrefix_Unchanged pins that validation is a filter, not
+// a normalizer: an acceptable prefix reaches BranchPrefix byte-for-byte and
+// leaves no warning behind. The default's own shape is first, and the two
+// after it are the usernames most likely to be mistaken for ref-illegal.
+func TestLoad_ValidBranchPrefix_Unchanged(t *testing.T) {
+	prefixes := []string{
+		defaultBranchPrefixForTest(t),
+		"zvi/",
+		"first.last/",
+		"first-last/",
+		"j.doe-2/",
+		"team/zvi/",
+		"wip-",
+	}
+	for _, p := range prefixes {
+		t.Run(p, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, p))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.BranchPrefix != p {
+				t.Errorf("BranchPrefix = %q, want %q unchanged", cfg.BranchPrefix, p)
+			}
+			if cfg.BranchPrefixWarning != "" {
+				t.Errorf("BranchPrefixWarning = %q, want empty for a valid prefix", cfg.BranchPrefixWarning)
+			}
+		})
+	}
+}
+
+// TestLoad_EmptyBranchPrefix_MeansNoPrefix pins the one shape that could
+// plausibly have gone either way. An empty branch_prefix stays empty: the
+// key being ABSENT is what selects the username default (defaults() fills
+// it in before the decode), so an explicit "" is the only way to ask for an
+// unprefixed branch, and quietly turning it back into the default would
+// take away a legal configuration. It is also not a hazard -- gitx.
+// BranchSlug's own "no prefix" case yields a bare sanitized slug, which is
+// a legal one-level branch name.
+func TestLoad_EmptyBranchPrefix_MeansNoPrefix(t *testing.T) {
+	cfg, err := Load(writeConfig(t, ""))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BranchPrefix != "" {
+		t.Errorf("BranchPrefix = %q, want %q -- an explicit empty prefix means no prefix", cfg.BranchPrefix, "")
+	}
+	if cfg.BranchPrefixWarning != "" {
+		t.Errorf("BranchPrefixWarning = %q, want empty", cfg.BranchPrefixWarning)
+	}
+}
+
+// TestDefaultBranchPrefix_IsItselfValid closes the loop: the value Load
+// falls back TO must pass the same validation the file's value must pass,
+// or an unusable OS username would leave the plugin with a broken prefix
+// and no remaining fallback.
+func TestDefaultBranchPrefix_IsItselfValid(t *testing.T) {
+	if err := gitx.ValidateBranchPrefix(defaultBranchPrefix()); err != nil {
+		t.Errorf("defaultBranchPrefix() = %q, which is not a valid prefix: %v", defaultBranchPrefix(), err)
+	}
+	if err := gitx.ValidateBranchPrefix(fallbackBranchPrefix); err != nil {
+		t.Errorf("fallbackBranchPrefix = %q, which is not a valid prefix: %v", fallbackBranchPrefix, err)
+	}
 }
 
 func TestLoad_MissingFile_Defaults(t *testing.T) {

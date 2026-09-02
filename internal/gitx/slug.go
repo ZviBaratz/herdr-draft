@@ -36,6 +36,15 @@ func SanitizeBranch(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// BranchSlug derives a branch name from a title: SanitizeBranch's slug (or
+// a deterministic "session-xxxxxxxx" when the title sanitizes away to
+// nothing) with prefix prepended verbatim.
+//
+// The prefix is NOT sanitized here -- it is a configured value whose "/"
+// separators are meaningful, and mangling it would be worse than refusing
+// it. Callers must have run it through ValidateBranchPrefix first: the
+// result reaches `herdr worktree create --branch <value>` as an argv
+// element, so an unchecked prefix is an argument-injection surface.
 func BranchSlug(prefix, title string) string {
 	body := SanitizeBranch(title)
 	if body == "" {

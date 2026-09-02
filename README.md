@@ -123,7 +123,12 @@ herdr plugin config-dir draft
 - `branch_prefix` (default: your lowercased OS username plus `/`, e.g.
   `zvi/`, or `user/` if the username can't be determined) — prefix
   prepended to the sanitized title when herdr-draft derives a branch name
-  in manual mode.
+  in manual mode. It must be usable as the leading part of a git ref
+  (`git check-ref-format`'s rules, minus the ones a prefix is exempt from:
+  a trailing `/` is fine, and an explicit empty value means "no prefix"),
+  and it may not start with `-`, which the herdr CLI would read as a flag.
+  An unusable value is ignored with a reason and the default takes over;
+  it never stops herdr-draft from opening.
 - `default_worktree` (default: `true`) — whether the Worktree chip starts
   On or Off for a git target.
 - `default_placement` (default: `"new-space"`) — where a non-worktree
