@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -55,7 +54,7 @@ func TestAccountField_InertFlipsWithAgentKind(t *testing.T) {
 	if f.Enabled() {
 		t.Errorf("Enabled() = true after SetAgentIsClaude(false), want false")
 	}
-	inertFrame := ansi.Strip(f.View(60, f.Height(24)))
+	inertFrame := fieldText(f, 60)
 	if !strings.Contains(inertFrame, accountInertPlaceholder) {
 		t.Errorf("View(60) while inert = %q, want it to contain %q", inertFrame, accountInertPlaceholder)
 	}
@@ -64,7 +63,7 @@ func TestAccountField_InertFlipsWithAgentKind(t *testing.T) {
 	if !f.Enabled() {
 		t.Errorf("Enabled() = false after SetAgentIsClaude(true), want true")
 	}
-	claudeFrame := ansi.Strip(f.View(60, f.Height(24)))
+	claudeFrame := fieldText(f, 60)
 	if strings.Contains(claudeFrame, accountInertPlaceholder) {
 		t.Errorf("View(60) after re-enabling still contains the inert placeholder: %q", claudeFrame)
 	}
@@ -138,20 +137,20 @@ func TestAccountField_SetVerdict(t *testing.T) {
 	f.SetProfiles(sampleStatus())
 	f.SetPin("beta")
 
-	frame := ansi.Strip(f.View(60, f.Height(24)))
+	frame := fieldText(f, 60)
 	if strings.Contains(frame, "auth") && !strings.Contains(frame, "expired") {
 		t.Fatalf("View(60) before SetVerdict unexpectedly mentions auth: %q", frame)
 	}
 
 	f.SetVerdict(f.Pin(), "blocked — auth: expired")
-	frame = ansi.Strip(f.View(60, f.Height(24)))
+	frame = fieldText(f, 60)
 	if !strings.Contains(frame, "blocked — auth: expired") {
 		t.Fatalf("View(60) after SetVerdict = %q, want it to contain the verdict text", frame)
 	}
 
 	// Moving the pin away must silently drop the now-stale verdict.
 	f.SetPin("gamma")
-	frame = ansi.Strip(f.View(60, f.Height(24)))
+	frame = fieldText(f, 60)
 	if strings.Contains(frame, "blocked — auth: expired") {
 		t.Fatalf("View(60) after moving the pin away still shows the stale verdict: %q", frame)
 	}
@@ -190,7 +189,7 @@ func TestAccountField_DegradedRendersNameOnly(t *testing.T) {
 	status.Degraded = true
 	f.SetProfiles(status)
 
-	frame := ansi.Strip(f.View(60, f.Height(24)))
+	frame := fieldText(f, 60)
 	if strings.Contains(frame, "Team") || strings.Contains(frame, "expired") {
 		t.Errorf("View(60) while degraded = %q, want no tier/auth_status text", frame)
 	}
@@ -206,7 +205,7 @@ func TestAccountField_WarnsOnAuthFailedAndRateLimited(t *testing.T) {
 	f.SetAgentIsClaude(true)
 	f.SetProfiles(sampleStatus())
 
-	frame := ansi.Strip(f.View(60, f.Height(24)))
+	frame := fieldText(f, 60)
 	if !strings.Contains(frame, accountWarnAuthFailed) {
 		t.Errorf("View(60) = %q, want it to contain the auth-failed marker for beta", frame)
 	}
@@ -225,7 +224,7 @@ func TestAccountField_HealthyProfileCarriesNoWarning(t *testing.T) {
 	f.SetAgentIsClaude(true)
 	f.SetProfiles(status)
 
-	frame := ansi.Strip(f.View(60, f.Height(24)))
+	frame := fieldText(f, 60)
 	if strings.Contains(frame, accountWarnAuthFailed) || strings.Contains(frame, accountWarnRateLimited) {
 		t.Errorf("View(60) = %q, want no warning markers for a healthy profile", frame)
 	}
@@ -292,28 +291,6 @@ func TestAccountField_DuplicateProfileNamesDeduped(t *testing.T) {
 	}
 }
 
-func TestAccountField_HeightIsConstant(t *testing.T) {
-	f := NewAccountField(theme.Default())
-	base := f.Height(24)
-
-	f.SetProfiles(sampleStatus())
-	f.SetAgentIsClaude(true)
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) after enabling = %d, want %d", got, base)
-	}
-	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
-		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
-	}
-
-	f.SetAgentIsClaude(false)
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) while inert = %d, want %d", got, base)
-	}
-	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
-		t.Errorf("View(60) while inert rendered %d physical lines, want Height()'s own %d", got, base)
-	}
-}
-
 func TestAccountField_NoPanicOnDegenerateWidth(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -321,8 +298,10 @@ func TestAccountField_NoPanicOnDegenerateWidth(t *testing.T) {
 		}
 	}()
 	f := NewAccountField(theme.Default())
-	_ = f.View(0, f.Height(24))
-	_ = f.View(-3, f.Height(24))
+	_ = f.Row(0)
+	_ = f.Panel(0, f.PanelRows())
+	_ = f.Row(-3)
+	_ = f.Panel(-3, f.PanelRows())
 }
 
 func TestAccountField_NoPanicBeforeSetProfiles(t *testing.T) {
@@ -333,7 +312,8 @@ func TestAccountField_NoPanicBeforeSetProfiles(t *testing.T) {
 	}()
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
-	_ = f.View(60, f.Height(24))
+	_ = f.Row(60)
+	_ = f.Panel(60, f.PanelRows())
 	f.Update(key(tea.KeyDown, 0))
 	f.Update(key(tea.KeyUp, 0))
 	_ = f.Pin()

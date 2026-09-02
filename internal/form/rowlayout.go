@@ -9,9 +9,9 @@
 // This file is written fresh for v2, not derived from atrium
 // (github.com/ZviBaratz/atrium): Atrium's textInput_size.go spends one
 // shared row budget across a closed enum of variable-height field kinds
-// (the shape sizes.go's allocateHeights ports), which is exactly the
-// design v2 replaces -- v2's stack rows are one line each, always, and
-// the only variable-height region is the single panel.
+// (the shape sizes.go's own deleted allocateHeights ported), which is
+// exactly the design v2 replaces -- v2's stack rows are one line each,
+// always, and the only variable-height region is the single panel.
 //
 // It deliberately does NOT reuse sizes.go's innerWidth: that is v1's own
 // measurement, kept for exactly as long as compose's v1 branch is.

@@ -38,8 +38,6 @@ import (
 // the brief names explicitly.
 const issuePickerRows = 6
 
-const issueLabel = "Issue: "
-
 // issueNoneID is the "none" row's internal widgets.PickerItem.ID -- a
 // leading-NUL sentinel that can never collide with a real Linear
 // identifier (Linear issue identifiers are always
@@ -96,15 +94,6 @@ const (
 // TitleField/WorktreeField.SetBranch/PromptField's own setters itself,
 // honoring the touched-vs-preselected rule those setters already
 // implement.
-//
-// IssueField PREFERS 2+issuePickerRows physical lines -- independent of
-// focus, issue set, and filter text (this task's own "verified fact":
-// Section.Height must be hint-independent) -- and renders into whatever
-// compose's own budget allocation gives it (Section.View's h, sizes.go's
-// allocateHeights), shedding rows from the bottom: a header row (label +
-// typed filter/selection) first, then a reserved hint row, then candidate
-// rows (blank while unfocused, matching field_dir.go's DirField.View
-// convention).
 type IssueField struct {
 	palette theme.Palette
 	input   *lineInput
@@ -118,8 +107,6 @@ type IssueField struct {
 
 	pickerVersion  int
 	lastSelectedID string
-
-	hint string
 
 	// unavailable, when non-empty, is SetUnavailable's own reason: Linear
 	// is configured but could not be reached, so the field renders inert
@@ -348,13 +335,7 @@ func (f *IssueField) Selected() *linear.Issue {
 	return f.issueByID(sel.ID)
 }
 
-// Hint sets the text shown on the always-reserved hint row.
-func (f *IssueField) Hint(s string) { f.hint = s }
-
-// --- v2 row stack (form.go's rowSection) ---------------------------------
-//
-// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
-// section comment for why their arrival moves no golden frame.
+// --- the row and its panel ------------------------------------------------
 
 // Label is v2's row label (v2 spec §6's field table).
 func (f *IssueField) Label() string { return issueRowLabel }
@@ -405,8 +386,12 @@ func (f *IssueField) Panel(w, h int) string {
 }
 
 // panelStatus renders the panel's last line: the unavailable reason, the
-// field's own empty-list sentence, or whatever the app layer last set via
-// Hint.
+// field's own empty-list sentence, or nothing.
+//
+// v1 also had a Hint(string) setter feeding this line. It was deleted
+// with the v1 path: nothing in internal/app ever called it, so the row it
+// reserved was permanently blank in production -- one of the two defects
+// v2 spec §2 names by hand.
 func (f *IssueField) panelStatus() string {
 	switch {
 	case f.unavailable != "":
@@ -414,7 +399,7 @@ func (f *IssueField) panelStatus() string {
 	case f.picker.FilteredLen() == 0 || len(f.issues) == 0:
 		return issuePanelEmpty
 	default:
-		return f.hint
+		return ""
 	}
 }
 
@@ -426,73 +411,6 @@ func (f *IssueField) PanelRows() int {
 		return 1
 	}
 	return capRows(1+f.picker.FilteredLen(), issuePanelMaxRows)
-}
-
-// Height reports IssueField's PREFERRED footprint in a popup winH rows
-// tall: its header and hint rows plus as many candidate rows as a window
-// that size can hold (pickerRowsAt, sizes.go). Independent of focus, issue
-// set, and filter text, per Section.Height's own contract -- whether this
-// field actually gets its preference is compose's allocator's call, not
-// this field's.
-func (f *IssueField) Height(winH int) int {
-	return pickerChromeRows + pickerRowsAt(issuePickerRows, winH)
-}
-
-// MinHeight is the header row alone -- the label plus the current
-// selection, which is what a user who is not currently editing this field
-// needs to see of it.
-func (f *IssueField) MinHeight() int { return 1 }
-
-// View renders the field into exactly h physical lines: the header first,
-// then the reserved hint row, then whatever candidate rows are left over
-// (real rows while focused, blanks otherwise -- see the type doc comment).
-func (f *IssueField) View(inner, h int) string {
-	if inner < 1 {
-		inner = 1
-	}
-	// An inert field (SetUnavailable) carries its reason on the hint row,
-	// where the full inner width is available for it, rather than sharing
-	// the header row with the label.
-	hint := f.hint
-	if f.unavailable != "" {
-		hint = f.unavailable
-	}
-
-	rows := []string{f.renderHeader(inner), fitLine(dimHint(f.palette).Render(hint), inner)}
-	if candidates := h - pickerChromeRows; candidates > 0 {
-		if f.focused && f.unavailable == "" {
-			rows = append(rows, strings.Split(f.picker.MarkedView(inner, candidates, "row:"+f.ID()+":"), "\n")...)
-		} else {
-			rows = append(rows, blankRows(candidates, inner)...)
-		}
-	}
-	return sectionLines(h, inner, rows...)
-}
-
-// renderHeader renders the label plus, while focused, the raw typed
-// filter text, or, while unfocused, the resolved current selection --
-// matching field_dir.go's DirField.renderHeader convention.
-func (f *IssueField) renderHeader(inner int) string {
-	labelStyled := lipgloss.NewStyle().Foreground(f.palette.Text).Render(issueLabel)
-	budget := inner - lipgloss.Width(issueLabel)
-	if budget < 1 {
-		budget = 1
-	}
-
-	var body string
-	switch {
-	case f.unavailable != "":
-		body = fitLine(dimHint(f.palette).Render(issueUnavailableLabel), budget)
-	case f.focused:
-		body = f.input.View(budget)
-	case f.Selected() == nil:
-		body = fitLine(dimHint(f.palette).Render(issueNoneLabel), budget)
-	default:
-		sel := f.Selected()
-		body = fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(sel.Identifier+" · "+sel.Title), budget)
-	}
-
-	return fitLine(labelStyled+body, inner)
 }
 
 // IssueChosenMsg is emitted (as a tea.Cmd's result) whenever IssueField's

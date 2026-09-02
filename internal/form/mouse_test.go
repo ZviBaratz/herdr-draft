@@ -1,5 +1,5 @@
 // mouse_test.go is task 21's own TDD suite: bubblezone/v2 zone
-// registration (form.go's compose/createSection.View, field_*.go's
+// registration (form.go's compose/renderFooter, field_*.go's
 // MarkedView call sites) and this package's own click/wheel handling
 // (form.go's handleMouseClick/handleMouseWheel, field_*.go's Update
 // additions). New code, not a port of anything in atrium
@@ -47,7 +47,7 @@ func clickAt(x, y int) tea.MouseClickMsg {
 
 // TestMouseZones_ButtonCreate is the brief's own "zone-ID map" test:
 // render a form at 120x40, confirm the Create section's own
-// "button:create" zone (createSection.View, form.go's zoneCreateButton
+// "button:create" zone (form.go's renderFooter and its zoneCreateButton
 // constant) resolved to real on-screen bounds, and that a synthesized
 // left-click at those bounds' own top-left corner produces SubmitMsg --
 // the same message Enter from Create already produces (keys.go's

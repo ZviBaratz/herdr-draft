@@ -584,7 +584,7 @@ func (w *WorktreeField) rowBase() string {
 	return baseHeadID
 }
 
-// --- v2 row stack (form.go's rowSection) ---------------------------------
+// --- the row and its panel ------------------------------------------------
 
 // Label is v2's row label (v2 spec §6's field table).
 func (w *WorktreeField) Label() string { return worktreeRowLabel }
@@ -815,21 +815,4 @@ func (w *WorktreeField) FooterRungs() []string {
 		}
 		return []string{"↑↓ part · ←→ toggle", "↑↓ part"}
 	}
-}
-
-// --- v1 Section (deleted with compose's legacy path) ---------------------
-//
-// View/Height/MinHeight exist only because form.go's Section interface
-// still declares them while composeLegacy does. Nothing reaches them --
-// internal/app's section slice is all rowSections now, so compose always
-// takes the row-stack path -- and the next change deletes the whole v1
-// interface. They render the row rather than a stub, so a stray caller
-// would still see the truth.
-
-func (w *WorktreeField) Height(int) int { return 1 }
-
-func (w *WorktreeField) MinHeight() int { return 1 }
-
-func (w *WorktreeField) View(inner, h int) string {
-	return sectionLines(h, inner, w.Row(inner))
 }

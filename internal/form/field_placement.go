@@ -60,20 +60,12 @@ var placementChips = []widgets.Chip{
 const placementRowLabel = "placement"
 
 // PlacementField is the form's Placement Section (spec §6 field 5): a
-// three-chip row selecting where a non-worktree creation attaches
-// relative to the invoking pane (internal/plan.Placement). It renders at a
-// preferred 2 physical lines (the chip row, plus a reserved second line --
-// ChipRow.View's own line count varies with whether the selected chip
-// carries a FocusHint or the row is inert, so this field's own wrapper
-// pads to two lines, matching this task's "verified fact": "your
-// Section.Height() must be hint-independent"), shrinking to the chip row
-// alone when compose's own budget allocation cannot afford the second.
+// one-line row naming where a non-worktree creation will attach relative
+// to the invoking pane (internal/plan.Placement), over a two-line panel
+// holding the three chips and the selected chip's own explanation.
 type PlacementField struct {
-	chips   *widgets.ChipRow
-	focused bool
-	// palette is retained for v2's Row/Panel, which style dim and inert
-	// text themselves; v1's View delegates every style to ChipRow and
-	// never reads it.
+	chips      *widgets.ChipRow
+	focused    bool
 	palette    theme.Palette
 	worktreeOn bool
 }
@@ -97,8 +89,7 @@ func (f *PlacementField) Enabled() bool { return !f.worktreeOn }
 
 // Focus gives the field input focus. ChipRow has no Focus/Blur of its own
 // (widgets/chiprow.go's own package doc) -- focused is tracked only for
-// Section-interface completeness, matching form_test.go's own
-// chipRowSection stub.
+// Section-interface completeness.
 func (f *PlacementField) Focus() tea.Cmd {
 	f.focused = true
 	return nil
@@ -203,10 +194,7 @@ func (f *PlacementField) Value() plan.Placement {
 	}
 }
 
-// --- v2 row stack (form.go's rowSection) ---------------------------------
-//
-// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
-// section comment for why their arrival moves no golden frame.
+// --- the row and its panel ------------------------------------------------
 
 // Label is v2's row label (v2 spec §6's field table).
 func (f *PlacementField) Label() string { return placementRowLabel }
@@ -262,30 +250,3 @@ func (f *PlacementField) Panel(w, h int) string {
 
 // PanelRows is two: the chips and their explanation.
 func (f *PlacementField) PanelRows() int { return 2 }
-
-// Height reports PlacementField's preferred two-line footprint --
-// independent of winH, focus, selection, and inert state.
-func (f *PlacementField) Height(int) int { return 2 }
-
-// MinHeight is the chip row itself, without the reserved hint line beneath
-// it: which placement is selected (or the inert placeholder explaining why
-// the choice does not currently apply) is the fact this section exists to
-// show.
-func (f *PlacementField) MinHeight() int { return 1 }
-
-// View renders the chip row into exactly h physical lines, reserving the
-// hint line beneath it whenever h affords one (ChipRow.View itself
-// produces a single line when the selected chip carries no FocusHint and
-// the row is not inert) -- see the type doc comment. Uses MarkedView (task
-// 21) so every chip registers its own "chip:placement:<chipID>" zone
-// (see Update's own mouse-click handling above).
-func (f *PlacementField) View(inner, h int) string {
-	if inner < 1 {
-		inner = 1
-	}
-	v := f.chips.MarkedView(inner, "chip:"+f.ID()+":")
-	if !strings.Contains(v, "\n") {
-		v += "\n" + fitLine("", inner)
-	}
-	return fitBlock(v, h, inner)
-}

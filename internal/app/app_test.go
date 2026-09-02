@@ -288,6 +288,15 @@ func newTestModel(t *testing.T, s testSetup) Model {
 	})
 }
 
+// fieldText is a form field's whole visible surface as the reader sees
+// it: its one row plus its full panel, ANSI stripped. internal/form's own
+// tests carry an identical helper -- v1's Section had one rendering to
+// assert against and v2 has two, and a fact this package cares about (a
+// verdict, a freshly applied issue) can be in either.
+func fieldText(s form.Section, w int) string {
+	return ansi.Strip(s.Row(w) + "\n" + s.Panel(w, s.PanelRows()))
+}
+
 func key(code rune, mod tea.KeyMod) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code, Mod: mod} }
 func rn(r rune) tea.KeyPressMsg                     { return tea.KeyPressMsg{Code: r, Text: string(r)} }
 
@@ -440,9 +449,9 @@ func TestDupVerdictsPushedToTitleField(t *testing.T) {
 	m2, _ = m.handleTitleResult(result)
 	m = m2
 
-	frame := ansi.Strip(m.title.View(60, m.title.Height(24)))
+	frame := fieldText(m.title, 60)
 	if !strings.Contains(frame, "branch & label in use") {
-		t.Fatalf("TitleField.View(60) = %q, want it to contain the composed dup verdict", frame)
+		t.Fatalf("the title panel = %q, want it to contain the composed dup verdict", frame)
 	}
 }
 
@@ -486,18 +495,18 @@ func TestTitleResult_StaleVersionDropped(t *testing.T) {
 	// v2 (fresher) resolves first: no duplicates.
 	m2, _ := m.handleTitleResult(titleResultMsg{req: request{version: v2, key: "t"}})
 	m = m2
-	frame := ansi.Strip(m.title.View(60, m.title.Height(24)))
+	frame := fieldText(m.title, 60)
 	if strings.Contains(frame, "exists") || strings.Contains(frame, "in use") {
-		t.Fatalf("TitleField.View(60) = %q, fresh v2's clean verdict was not applied", frame)
+		t.Fatalf("the title panel = %q, fresh v2's clean verdict was not applied", frame)
 	}
 
 	// v1 (stale) resolves second, reporting a collision -- must be dropped,
 	// not overwriting v2's already-applied clean verdict.
 	m2, _ = m.handleTitleResult(titleResultMsg{req: request{version: v1, key: "t"}, branchExists: true, labelTaken: true})
 	m = m2
-	frame = ansi.Strip(m.title.View(60, m.title.Height(24)))
+	frame = fieldText(m.title, 60)
 	if strings.Contains(frame, "in use") {
-		t.Fatalf("TitleField.View(60) = %q, stale v1 result was wrongly applied", frame)
+		t.Fatalf("the title panel = %q, stale v1 result was wrongly applied", frame)
 	}
 }
 
@@ -1215,9 +1224,9 @@ func TestLinearResult_AppliesIssuesAndSavesCache(t *testing.T) {
 	// SetIssues applied -- confirmed indirectly via the rendered picker
 	// containing the fresh issue's own identifier once focused.
 	m.issue.Focus()
-	frame := ansi.Strip(m.issue.View(80, m.issue.Height(24)))
+	frame := fieldText(m.issue, 80)
 	if !strings.Contains(frame, "ENG-5") {
-		t.Fatalf("IssueField.View(80) = %q, want it to contain the freshly applied issue", frame)
+		t.Fatalf("the issue panel = %q, want it to contain the freshly applied issue", frame)
 	}
 
 	cached, _, err := linear.LoadCache(m.stateDir)
@@ -1240,9 +1249,9 @@ func TestLinearResult_ErrorLeavesIssuesUntouched(t *testing.T) {
 	m = m2
 
 	m.issue.Focus()
-	frame := ansi.Strip(m.issue.View(80, m.issue.Height(24)))
+	frame := fieldText(m.issue, 80)
 	if !strings.Contains(frame, "ENG-6") {
-		t.Fatalf("IssueField.View(80) = %q, want the cache-rendered issue still present after a failed refresh", frame)
+		t.Fatalf("the issue panel = %q, want the cache-rendered issue still present after a failed refresh", frame)
 	}
 }
 
@@ -1289,8 +1298,8 @@ func TestReactToChanges_AccountFocusReloadsClauth(t *testing.T) {
 
 	m2, _ := m.handleClauthResult(result)
 	m = m2
-	if !strings.Contains(ansi.Strip(m.account.View(80, m.account.Height(24))), "a") {
-		t.Fatalf("AccountField.View(80) does not show the reloaded profile")
+	if !strings.Contains(fieldText(m.account, 80), "a") {
+		t.Fatalf("the account panel does not show the reloaded profile")
 	}
 
 	// Re-running reactToChanges without a further focus change must not
@@ -1565,7 +1574,7 @@ func browseModel(t *testing.T) (Model, *fakeGit) {
 // is private to the form package, and the rendered rows are the honest
 // end of this pipeline anyway.
 func dirRows(m Model) string {
-	return m.dir.View(60, 10)
+	return m.dir.Row(60) + "\n" + m.dir.Panel(60, m.dir.PanelRows())
 }
 
 // runBrowseRound drives one full browse: the debounce firing, then the

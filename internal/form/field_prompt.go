@@ -17,8 +17,6 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
-const promptLabel = "Prompt: "
-
 const (
 	// promptRowLabel is v2's row label (v2 spec §6).
 	promptRowLabel = "prompt"
@@ -56,8 +54,7 @@ var promptPlaceholderLadder = []string{
 //
 // PromptField renders a one-line label header plus the wrapped
 // PromptArea's own rows: spec §6 field 8's "4 rows preferred, 1 floor",
-// scaled to the window by promptRowsAt (sizes.go) and then to whatever
-// compose's own budget allocation could actually afford (Section.View's h).
+// scaled to whatever the panel's own region can afford (Panel's h).
 // Height stays independent of focus and content, per Section.Height's own
 // contract -- PromptArea.View already renders exactly its configured row
 // count regardless of what has been typed into it (see its own doc
@@ -186,10 +183,7 @@ func (f *PromptField) SetValue(s string, seeded bool) {
 	}
 }
 
-// --- v2 row stack (form.go's rowSection) ---------------------------------
-//
-// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
-// section comment for why their arrival moves no golden frame.
+// --- the row and its panel ------------------------------------------------
 
 // Label is v2's row label (v2 spec §6's field table).
 func (f *PromptField) Label() string { return promptRowLabel }
@@ -268,35 +262,4 @@ func (f *PromptField) PanelRows() int {
 		want = promptPanelMinRows
 	}
 	return capRows(want, promptPanelMaxRows)
-}
-
-// Height reports PromptField's PREFERRED footprint in a popup winH rows
-// tall: the one-line label header plus spec §6 field 8's own "4 rows
-// preferred, 1 floor" textarea, shrunk between those two bounds by
-// promptRowsAt (sizes.go) as the window gets short. Independent of focus
-// and content, per Section.Height's own contract.
-func (f *PromptField) Height(winH int) int {
-	return promptLabelRows + promptRowsAt(widgets.PromptAreaPreferredRows, widgets.PromptAreaMinRows, winH)
-}
-
-// MinHeight is the label plus spec §6 field 8's own one-row floor. Unlike
-// every other field in this package, Prompt cannot usefully collapse to
-// its header alone: a textarea with no rows shows the user neither what
-// they have typed nor where to type it.
-func (f *PromptField) MinHeight() int { return promptLabelRows + widgets.PromptAreaMinRows }
-
-// View renders the field into exactly h physical lines: a one-line label
-// header, then the wrapped PromptArea sized to whatever h leaves over
-// (floored at PromptAreaMinRows by SetRows' own contract). SetRows is
-// applied here, per render, the same way PromptArea.View already applies
-// SetWidth/SetHeight on every call -- the widget caches no geometry of its
-// own, so the render it was allocated for is the only place the form's
-// allocation can reach it.
-func (f *PromptField) View(inner, h int) string {
-	if inner < 1 {
-		inner = 1
-	}
-	f.area.SetRows(h - promptLabelRows)
-	header := fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(promptLabel), inner)
-	return sectionLines(h, inner, header, f.area.View(inner))
 }

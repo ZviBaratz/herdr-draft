@@ -111,8 +111,6 @@ const (
 // shaped" fields default to the same visual weight.
 const dirPickerRows = 4
 
-const dirLabel = "Project: "
-
 const (
 	// dirRowLabel is v2's row label. Note it is NOT this Section's ID()
 	// ("dir", which zoneKindByID and every mouse zone already spell that
@@ -128,7 +126,7 @@ const (
 	// this row, replacing v1's parenthesized "(invalid)"/"(direct)"
 	// markers. The row-stack rewrite plan kept v1's wording; the spec's
 	// table is normative and says `invalid` / `not a repository`, so that
-	// is what the v2 row says. v1's own marker() is untouched.
+	// is what the row says.
 	dirRowInvalid   = "invalid"
 	dirRowNotRepo   = "not a repository"
 	dirRowMarkerGap = "  " // separates a path from its marker
@@ -146,14 +144,6 @@ const (
 // ranked filtering of the full candidate pool) when the typed text
 // doesn't look like a path, path mode (browsing whatever children the app
 // layer has most recently supplied for the current prefix) when it does.
-//
-// DirField PREFERS 2+dirPickerRows physical lines -- independent of focus,
-// candidates, and validity state -- and renders into whatever compose's
-// own budget allocation gives it (Section.View's h, sizes.go's
-// allocateHeights), shedding rows from the bottom: a header row (label +
-// typed text/selection + inline validity marker) first, then a reserved
-// hint row, then candidate rows (blank while unfocused, matching Atrium's
-// own DirectoryPicker.Render contract).
 type DirField struct {
 	palette theme.Palette
 	input   *lineInput
@@ -186,13 +176,10 @@ type DirField struct {
 	pathExpander func(string) string
 
 	// homeDir is SetHomeDir's app-supplied home directory, used ONLY to
-	// collapse a leading home prefix to "~" in v2's row (v2 spec §6:
-	// "path, ~-shortened"). Purely cosmetic: Value() and every
-	// PickerItem.ID stay the real path, and v1's View never reads it, so
-	// installing one cannot move a golden frame.
+	// collapse a leading home prefix to "~" where a path is DISPLAYED
+	// (v2 spec §6: "path, ~-shortened"). Purely cosmetic: Value() and
+	// every PickerItem.ID stay the real path.
 	homeDir string
-
-	hint string
 }
 
 // NewDirField returns an empty, blurred DirField styled from palette.
@@ -458,10 +445,7 @@ func (d *DirField) collapseHome(p string) string {
 	return p
 }
 
-// --- v2 row stack (form.go's rowSection) ---------------------------------
-//
-// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
-// section comment for why their arrival moves no golden frame.
+// --- the row and its panel ------------------------------------------------
 
 // Label is v2's row label -- "project", not this Section's ID (see
 // dirRowLabel's own doc comment).
@@ -526,94 +510,23 @@ func (d *DirField) Panel(w, h int) string {
 }
 
 // panelStatus renders the panel's last line: the field's own empty-list
-// sentence, or whatever the app layer last set via Hint.
+// sentence, or nothing.
+//
+// v1 also had a Hint(string) setter feeding this line. It was deleted
+// with the v1 path: nothing in internal/app ever called it, so the row it
+// reserved was permanently blank in production -- one of the two defects
+// v2 spec §2 names by hand.
 func (d *DirField) panelStatus() string {
 	if d.picker.FilteredLen() == 0 {
 		return dirPanelEmpty
 	}
-	return d.hint
+	return ""
 }
 
 // PanelRows is one row per candidate plus the status line, capped at
 // dirPanelMaxRows.
 func (d *DirField) PanelRows() int {
 	return capRows(1+d.picker.FilteredLen(), dirPanelMaxRows)
-}
-
-// Hint sets the text shown on the always-reserved hint row.
-func (d *DirField) Hint(s string) { d.hint = s }
-
-// Height reports DirField's PREFERRED footprint in a popup winH rows tall
-// -- independent of focus, candidates, and validity state, per
-// Section.Height's own contract (see the type doc comment); the candidate
-// row count itself shrinks with winH via pickerRowsAt (sizes.go).
-func (d *DirField) Height(winH int) int {
-	return pickerChromeRows + pickerRowsAt(dirPickerRows, winH)
-}
-
-// MinHeight is the header row alone -- the label, the current project
-// path, and its inline validity marker, which is what a user not currently
-// editing this field needs to see of it.
-func (d *DirField) MinHeight() int { return 1 }
-
-// View renders the field into exactly h physical lines: the header first,
-// then the reserved hint row, then whatever candidate rows are left over.
-func (d *DirField) View(inner, h int) string {
-	if inner < 1 {
-		inner = 1
-	}
-	rows := []string{d.renderHeader(inner), fitLine(dimHint(d.palette).Render(d.hint), inner)}
-	if candidates := h - pickerChromeRows; candidates > 0 {
-		if d.focused {
-			rows = append(rows, strings.Split(d.picker.MarkedView(inner, candidates, "row:"+d.ID()+":"), "\n")...)
-		} else {
-			rows = append(rows, blankRows(candidates, inner)...)
-		}
-	}
-	return sectionLines(h, inner, rows...)
-}
-
-// renderHeader renders the label plus, while focused, the raw editable
-// filter/path text, or, while unfocused, the resolved current selection
-// (matching Atrium's own Render: "when unfocused it shows the chosen
-// project on the header line") -- followed in both cases by the inline
-// validity marker.
-func (d *DirField) renderHeader(inner int) string {
-	labelStyled := lipgloss.NewStyle().Foreground(d.palette.Text).Render(dirLabel)
-	marker := d.marker()
-	chrome := lipgloss.Width(dirLabel) + lipgloss.Width(marker)
-	budget := inner - chrome
-	if budget < 1 {
-		budget = 1
-	}
-
-	var body string
-	if d.focused {
-		body = d.input.View(budget)
-	} else if val := d.Value(); val == "" {
-		body = fitLine(dimHint(d.palette).Render("(none)"), budget)
-	} else {
-		body = fitLine(lipgloss.NewStyle().Foreground(d.palette.Text).Render(val), budget)
-	}
-
-	return fitLine(labelStyled+body+marker, inner)
-}
-
-// marker renders SetValidity's own inline indicator, or "" when no
-// verdict currently applies to the CURRENT selection (see SetValidity's
-// doc comment).
-func (d *DirField) marker() string {
-	if !d.validityKnown || d.validityPath != d.Value() {
-		return ""
-	}
-	switch d.validity {
-	case ValidityInvalid:
-		return "  " + lipgloss.NewStyle().Foreground(d.palette.Danger).Render("(invalid)")
-	case ValidityDirect:
-		return "  " + dimHint(d.palette).Render("(direct)")
-	default:
-		return ""
-	}
 }
 
 // refreshItems recomputes visibleItems() and feeds it to the wrapped

@@ -14,10 +14,11 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
-// field_rows_test.go covers the seven fields migrated to v2's rowSection
-// (form.go) in the additive half of the port: issue, title, prompt,
-// project, placement, agent, account. The worktree trio still implements
-// v1's Section alone and is covered by field_worktree_test.go unchanged.
+// field_rows_test.go covers Section's row-and-panel contract (form.go)
+// across the fields that answer it the same way: issue, title, prompt,
+// project, placement, agent, account. The worktree field's own row,
+// panel and sub-focus grammar are covered in field_worktree_test.go,
+// where the sub-cursor they all turn on lives.
 
 // --- helpers --------------------------------------------------------------
 
@@ -29,15 +30,24 @@ func rowText(s string) string { return strings.TrimRight(ansi.Strip(s), " ") }
 // the two-cell gutter Panel composes every line into (rowvalues.go).
 func panelLineText(s string) string { return strings.TrimPrefix(rowText(s), "  ") }
 
+// fieldText is a field's whole visible surface as the reader sees it --
+// its one row plus its full panel, ANSI stripped. It replaces v1's
+// View(inner, h) in the per-field tests, which had one rendering to
+// assert against; v2 has two, and every fact they used to check lives in
+// one or the other.
+func fieldText(s Section, w int) string {
+	return ansi.Strip(s.Row(w) + "\n" + s.Panel(w, s.PanelRows()))
+}
+
 // panelLineAt returns panel line i of a Panel(w, h) render, as text.
 func panelLineAt(panel string, i int) string {
 	return panelLineText(strings.Split(panel, "\n")[i])
 }
 
-// migratedFields builds one of each converted field, populated with the
-// representative data v2 spec §6's own table uses, in the spec's row
-// order (minus the un-migrated worktree trio).
-func migratedFields(palette theme.Palette) []rowSection {
+// rowFields builds one of each, populated with the representative data
+// v2 spec §6's own table uses, in the spec's row order (minus the
+// worktree, which field_worktree_test.go covers).
+func rowFields(palette theme.Palette) []Section {
 	issue := NewIssueField(palette)
 	issue.SetIssues(1, sampleIssues())
 	issue.Update(key(tea.KeyDown, 0)) // none -> ENG-1
@@ -61,12 +71,12 @@ func migratedFields(palette theme.Palette) []rowSection {
 	account.SetAgentIsClaude(true)
 	account.SetProfiles(sampleStatus())
 
-	return []rowSection{issue, title, prompt, dir, placement, agent, account}
+	return []Section{issue, title, prompt, dir, placement, agent, account}
 }
 
 // --- Row: exactly one line, exactly the width it was handed ---------------
 
-// TestFieldRow_IsAlwaysExactlyOneLine pins rowSection.Row's hardest
+// TestFieldRow_IsAlwaysExactlyOneLine pins Section.Row's hardest
 // contract (form.go): "exactly ONE physical line, exactly w cells wide".
 // It is what makes "row i is always at row i" mechanically true, and it
 // is the contract lipgloss most readily breaks -- Style.Render word-wraps
@@ -74,7 +84,7 @@ func migratedFields(palette theme.Palette) []rowSection {
 // silently becomes two lines at exactly the widths a real terminal hits.
 func TestFieldRow_IsAlwaysExactlyOneLine(t *testing.T) {
 	widths := []int{1, 2, 3, 5, 8, 12, 20, 40, 79, 200}
-	for _, s := range migratedFields(theme.Default()) {
+	for _, s := range rowFields(theme.Default()) {
 		for _, w := range widths {
 			row := s.Row(w)
 			if strings.Contains(row, "\n") {
@@ -99,11 +109,7 @@ func TestFieldRow_IsAlwaysExactlyOneLine(t *testing.T) {
 // afterwards is what turns the doc comment into a contract.
 func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 	palette := theme.Default()
-	fields := migratedFields(palette)
-	sections := make([]Section, len(fields))
-	for i, f := range fields {
-		sections[i] = f
-	}
+	fields := rowFields(palette)
 
 	const w = 80
 	// h = 11 affords all seven rows with no header and no rules; h = 60
@@ -119,11 +125,8 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 		t.Fatalf("both heights must show the whole stack; got %d and %d rows", shortFrame.Rows, tallFrame.Rows)
 	}
 
-	m := New(Setup{Palette: palette, Sections: sections, Name: "new session"})
+	m := New(Setup{Palette: palette, Sections: fields, Name: "new session"})
 	m.Init()
-	if !m.allRowSections() {
-		t.Fatalf("a form of the seven migrated fields is not on the row-stack path")
-	}
 
 	// Every field's own Row, sampled between renders at each height.
 	before := make([]string, len(fields))
@@ -153,7 +156,7 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 
 // --- Panel: exactly h lines ----------------------------------------------
 
-// TestFieldPanel_IsAlwaysExactlyHLines pins rowSection.Panel's contract
+// TestFieldPanel_IsAlwaysExactlyHLines pins Section.Panel's contract
 // (form.go): "exactly h physical lines". The form books the panel's
 // height from PanelRows BEFORE calling Panel, so a field that returned a
 // different number would push the footer off the frame -- the one line
@@ -161,7 +164,7 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 func TestFieldPanel_IsAlwaysExactlyHLines(t *testing.T) {
 	heights := []int{1, 2, 3, 4, 6, 10, 24}
 	widths := []int{4, 20, 80}
-	for _, s := range migratedFields(theme.Default()) {
+	for _, s := range rowFields(theme.Default()) {
 		for _, w := range widths {
 			for _, h := range heights {
 				lines := strings.Split(s.Panel(w, h), "\n")
@@ -180,7 +183,7 @@ func TestFieldPanel_IsAlwaysExactlyHLines(t *testing.T) {
 // the form hands Panel min(PanelRows(), Region)) always a height Panel
 // itself honors.
 func TestFieldPanelRows_NeverReservesRowsItCannotFill(t *testing.T) {
-	for _, s := range migratedFields(theme.Default()) {
+	for _, s := range rowFields(theme.Default()) {
 		want := s.PanelRows()
 		if want < 1 {
 			t.Errorf("%s.PanelRows() = %d, want at least 1 (0 means 'no panel at all', which none of these fields is)", s.ID(), want)
@@ -192,7 +195,7 @@ func TestFieldPanelRows_NeverReservesRowsItCannotFill(t *testing.T) {
 	}
 }
 
-// TestFieldLabel_IsBarePlainLowercase pins rowSection.Label's contract:
+// TestFieldLabel_IsBarePlainLowercase pins Section.Label's contract:
 // the FORM owns the label column, so a label carries no colon, no
 // padding, and no capital -- v2 spec §7's "lowercase terse labels".
 func TestFieldLabel_IsBarePlainLowercase(t *testing.T) {
@@ -205,7 +208,7 @@ func TestFieldLabel_IsBarePlainLowercase(t *testing.T) {
 		"agent":     "agent",
 		"account":   "account",
 	}
-	for _, s := range migratedFields(theme.Default()) {
+	for _, s := range rowFields(theme.Default()) {
 		got := s.Label()
 		if got != want[s.ID()] {
 			t.Errorf("%s.Label() = %q, want %q", s.ID(), got, want[s.ID()])
@@ -252,9 +255,8 @@ func TestIssueField_RowVocabulary(t *testing.T) {
 }
 
 // TestTitleField_RowAndPanelVocabulary pins v2 spec §6's title row and
-// the verdict's move into the panel -- the change that retires
-// titleVerdictMaxCells' 21-cell clamp. The constant itself must stay:
-// v1's verdictLine still uses it, and v1's path still runs.
+// the verdict's move into the panel -- the change that retired v1's
+// 21-cell titleVerdictMaxCells clamp, which cut this exact verdict.
 func TestTitleField_RowAndPanelVocabulary(t *testing.T) {
 	palette := theme.Default()
 
@@ -279,8 +281,8 @@ func TestTitleField_RowAndPanelVocabulary(t *testing.T) {
 	if got, want := panelLineAt(f.Panel(80, 1), 0), verdict; got != want {
 		t.Errorf("Panel verdict = %q, want the whole of %q -- the panel is full width", got, want)
 	}
-	if len(verdict) <= titleVerdictMaxCells {
-		t.Fatalf("this test is only meaningful with a verdict longer than titleVerdictMaxCells (%d)", titleVerdictMaxCells)
+	if len(verdict) <= 21 {
+		t.Fatalf("this test is only meaningful with a verdict longer than v1's retired 21-cell clamp")
 	}
 	if got := rowText(f.Row(80)); strings.Contains(got, "branch:") {
 		t.Errorf("Row = %q, want no verdict at all: v2 spec §6 puts verdicts in the panel so a recomputing verdict cannot shift text under the cursor", got)

@@ -4,9 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/x/ansi"
-
-	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -110,25 +107,9 @@ func TestPromptField_FocusReturnsBlinkCmd(t *testing.T) {
 	}
 }
 
-func TestPromptField_HeightIsConstant(t *testing.T) {
-	f := NewPromptField(theme.Default())
-	base := f.Height(24)
-	if base != 1+widgets.PromptAreaPreferredRows {
-		t.Errorf("Height(24) = %d, want %d", base, 1+widgets.PromptAreaPreferredRows)
-	}
-
-	f.SetValue("some text\nacross multiple lines\nof content", false)
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) after SetValue = %d, want %d", got, base)
-	}
-	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
-		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
-	}
-}
-
 func TestPromptField_ViewShowsPlaceholderLadderEntry(t *testing.T) {
 	f := NewPromptField(theme.Default())
-	frame := ansi.Strip(f.View(80, f.Height(24)))
+	frame := fieldText(f, 80)
 	if !strings.Contains(frame, "Optional") {
 		t.Errorf("View(80) = %q, want it to contain a placeholder ladder entry", frame)
 	}
@@ -141,6 +122,8 @@ func TestPromptField_NoPanicOnDegenerateWidth(t *testing.T) {
 		}
 	}()
 	f := NewPromptField(theme.Default())
-	_ = f.View(0, f.Height(24))
-	_ = f.View(-3, f.Height(24))
+	_ = f.Row(0)
+	_ = f.Panel(0, f.PanelRows())
+	_ = f.Row(-3)
+	_ = f.Panel(-3, f.PanelRows())
 }

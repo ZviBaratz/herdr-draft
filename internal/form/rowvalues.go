@@ -1,12 +1,12 @@
-// rowvalues.go holds the rendering helpers v2's Section methods
-// (Label/Row/Panel/PanelRows, form.go's rowSection) share across
-// field_*.go -- the elision rule for a one-line value cell, and the
-// two-cell gutter every panel line is composed into.
+// rowvalues.go holds the rendering helpers Section's Label/Row/Panel/
+// PanelRows share across field_*.go -- the elision rule for a one-line
+// value cell, and the two-cell gutter every panel line is composed
+// into.
 //
-// It is the v2 counterpart of layout.go, kept in its own file so the
-// deletion step that removes v1's View/Height/MinHeight can take
-// layout.go's blankRows/sectionLines with it and leave this file
-// standing.
+// It is the row-stack counterpart of layout.go's width-and-height
+// primitives, kept in its own file because the two are used at different
+// levels: layout.go fits a line or a block to a size, rowvalues.go decides
+// what a row or a panel line SAYS at that size.
 //
 // Written fresh for v2; nothing here is derived from atrium
 // (github.com/ZviBaratz/atrium), whose own overlay has neither a

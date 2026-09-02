@@ -20,36 +20,6 @@ package form
 
 import "charm.land/lipgloss/v2"
 
-// legacyFooterRungs returns spec §6's key-ladder hint, widest (most
-// descriptive) first, narrowest last, for the form's global grammar:
-// Tab/Shift+Tab move the focus ring, Enter advances (or submits from
-// Title/Create), Ctrl+S submits from anywhere, Esc/Ctrl+C cancel, and
-// Ctrl+R Ctrl+R clears. armed selects between "⌃R clear" (arm the
-// gesture) and "⌃R again" (fire it) for the trailing clause, matching
-// keys.go's own MapKey/HandlePaste arm-state contract.
-//
-// This is the form-global footer only, with no idea which field holds
-// focus -- v1's whole footer, and the reason v1 needed a per-field hint
-// ROW under every field. v2 replaces it with footerRungs below and
-// deletes those rows (v2 spec §3 rule 4). It survives, under this name,
-// only for as long as compose's v1 path does.
-func legacyFooterRungs(armed bool) []string {
-	clearHint := "⌃R clear"
-	if armed {
-		clearHint = "⌃R again"
-	}
-	base := []string{
-		"Tab/⇧Tab move · ↵ advance · ⌃S create · Esc cancel",
-		"Tab move · ⌃S create · Esc cancel",
-		"⌃S create · Esc cancel",
-	}
-	rungs := make([]string, len(base))
-	for i, b := range base {
-		rungs[i] = b + " · " + clearHint
-	}
-	return rungs
-}
-
 // footerRungs returns v2's CONTEXTUAL key ladder for one focused zone
 // (v2 spec §3 rule 4: "the footer teaches the focused field, then states
 // the constants"): the zone's own rungs crossed with the constant tail,
@@ -85,9 +55,11 @@ func footerRungsFor(s Section, zone FocusZone, armed bool) []string {
 // mockups' and the view plan's; a field with something better to say
 // overrides it via footerHinter.
 //
-// ZoneBranch and ZoneBase still appear here because v1's Worktree is
-// three sections; the field migration collapses them into one and these
-// two entries go with them.
+// ZoneBranch and ZoneBase still appear here, with no section currently
+// mapped onto them: the worktree collapse took form.go's zoneKindByID
+// entries for those IDs, but the ZoneKinds themselves are still part of
+// keys.go's vocabulary, and a table that answers for every member of an
+// enum is cheaper to trust than one that answers for most of them.
 func zoneRungs(zone FocusZone) []string {
 	switch zone.Kind {
 	case ZoneIssue:

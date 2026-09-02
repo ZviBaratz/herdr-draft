@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
@@ -176,19 +175,21 @@ func TestDirField_ValidityMarkerRendersOnlyForCurrentSelection(t *testing.T) {
 	d.Focus()
 	d.SetCandidates(1, []string{"/home/z/repo-a", "/home/z/repo-b"})
 
+	// The marker lives on the ROW, and v1's parenthesized "(invalid)"/
+	// "(direct)" became v2 spec §6's own words.
 	d.SetValidity("/home/z/repo-a", ValidityInvalid)
-	if got := ansi.Strip(d.View(60, d.Height(24))); !strings.Contains(got, "(invalid)") {
-		t.Fatalf("View(60) = %q, want it to contain \"(invalid)\" for the current selection", got)
+	if got := rowText(d.Row(60)); !strings.Contains(got, dirRowInvalid) {
+		t.Fatalf("Row(60) = %q, want it to contain %q for the current selection", got, dirRowInvalid)
 	}
 
 	d.picker.CursorNext() // selection moves to repo-b, which has no verdict yet
-	if got := ansi.Strip(d.View(60, d.Height(24))); strings.Contains(got, "(invalid)") {
-		t.Fatalf("View(60) = %q, still shows the stale (invalid) marker after selection moved", got)
+	if got := rowText(d.Row(60)); strings.Contains(got, dirRowInvalid) {
+		t.Fatalf("Row(60) = %q, still shows the stale marker after the selection moved", got)
 	}
 
 	d.SetValidity("/home/z/repo-b", ValidityDirect)
-	if got := ansi.Strip(d.View(60, d.Height(24))); !strings.Contains(got, "(direct)") {
-		t.Fatalf("View(60) = %q, want it to contain \"(direct)\" for repo-b", got)
+	if got := rowText(d.Row(60)); !strings.Contains(got, dirRowNotRepo) {
+		t.Fatalf("Row(60) = %q, want it to contain %q for repo-b", got, dirRowNotRepo)
 	}
 }
 
@@ -267,25 +268,6 @@ func TestDirField_ArrowKeysMoveCursorNotText(t *testing.T) {
 	}
 }
 
-func TestDirField_HeightIsConstant(t *testing.T) {
-	d := NewDirField(theme.Default())
-	base := d.Height(24)
-
-	d.Focus()
-	if got := d.Height(24); got != base {
-		t.Errorf("Height(24) while focused = %d, want %d", got, base)
-	}
-	d.SetCandidates(1, []string{"/a", "/b"})
-	d.SetValidity("/a", ValidityInvalid)
-	d.Hint("some hint")
-	if got := d.Height(24); got != base {
-		t.Errorf("Height(24) with candidates/validity/hint set = %d, want %d", got, base)
-	}
-	if got := strings.Count(d.View(60, d.Height(24)), "\n") + 1; got != base {
-		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
-	}
-}
-
 // TestDirField_NoPanicOnDegenerateInputs is this project's own "no panics
 // in production code" rule, exercised directly against a fresh field with
 // no candidates and a pathologically narrow render width.
@@ -296,13 +278,16 @@ func TestDirField_NoPanicOnDegenerateInputs(t *testing.T) {
 		}
 	}()
 	d := NewDirField(theme.Default())
-	_ = d.View(0, d.Height(24))
+	_ = d.Row(0)
+	_ = d.Panel(0, d.PanelRows())
 	_ = d.Value()
 	_ = d.Complete()
 	d.Focus()
-	_ = d.View(-5, d.Height(24))
+	_ = d.Row(-5)
+	_ = d.Panel(-5, d.PanelRows())
 	d.SetCandidates(1, nil)
-	_ = d.View(1, d.Height(24))
+	_ = d.Row(1)
+	_ = d.Panel(1, d.PanelRows())
 }
 
 // TestDirFieldTypedIsTheRawTextNotTheSelection pins the distinction the

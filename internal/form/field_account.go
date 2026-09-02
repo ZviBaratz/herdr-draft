@@ -35,8 +35,6 @@ import (
 // handful), so this doesn't need field_issue.go's larger issuePickerRows.
 const accountPickerRows = 4
 
-const accountLabel = "Account: "
-
 // accountActiveID is the "active" row's internal widgets.PickerItem.ID --
 // a leading-NUL sentinel that can never collide with a real clauth
 // profile name (clauth profile names are plain user-chosen identifiers,
@@ -116,18 +114,6 @@ const (
 // Enabled() instead reports the DYNAMIC half of that same spec sentence
 // ("inert unless the selected agent kind is claude"), driven by
 // SetAgentIsClaude.
-//
-// AccountField PREFERS 2+accountPickerRows physical lines -- independent
-// of focus, agent-kind inertness, profile set, and degraded status (this
-// task's own "verified fact": Section.Height must be hint-independent) --
-// and renders into whatever compose's own budget allocation gives it
-// (Section.View's h, sizes.go's allocateHeights), shedding rows from the
-// bottom: a header row (label + current pin display) first, then a
-// reserved hint row, then profile rows (shown regardless of focus,
-// matching field_worktree.go's base-picker convention: a short profile
-// list is small enough that hiding it while unfocused buys nothing --
-// reclaiming those rows when the popup cannot afford them is the
-// allocator's job, not this field's).
 type AccountField struct {
 	palette theme.Palette
 	picker  *widgets.Picker
@@ -137,23 +123,17 @@ type AccountField struct {
 	degraded      bool
 
 	// profiles and activeProfile are the parts of the most recent
-	// SetProfiles payload v2's Row needs and v1's View does not: the row
-	// reads the LIVE profile's tier and utilization when nothing is
-	// pinned, which needs both the profile records themselves and
-	// clauth's own answer to "which one is active".
-	//
-	// They are read only by the v2 methods at the bottom of this file.
-	// v1's View still renders from the picker's item labels alone, so
-	// recording them here cannot move a golden frame -- the constraint
-	// that kept this data discarded until the second half of the
-	// migration could carry it onto the row.
+	// SetProfiles payload the ROW needs: with nothing pinned it reads the
+	// LIVE profile's tier and utilization, which needs both the profile
+	// records themselves and clauth's own answer to "which one is
+	// active". v1 discarded both.
 	profiles      []clauth.Profile
 	activeProfile string
 
 	// verdictKey/verdictText are SetVerdict's own staleness guard, the
 	// same "clears the moment the underlying value changes" discipline
 	// field_title.go's TitleField.verdictKey/field_dir.go's
-	// DirField.validityPath document: verdictLine (View) only shows
+	// DirField.validityPath document: panelStatus only shows
 	// verdictText when verdictKey still equals the CURRENT Pin(), so a
 	// verdict computed for a pin the user has since moved away from (Up/
 	// Down, or a later SetPin) stops rendering on its own, with no
@@ -417,10 +397,7 @@ func (f *AccountField) Pin() string {
 	return sel.ID
 }
 
-// --- v2 row stack (form.go's rowSection) ---------------------------------
-//
-// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
-// section comment for why their arrival moves no golden frame.
+// --- the row and its panel ------------------------------------------------
 
 // Label is v2's row label (v2 spec §6's field table).
 func (f *AccountField) Label() string { return accountRowLabel }
@@ -531,7 +508,7 @@ func accountPercent(pct float64) string {
 }
 
 // Panel is the profile picker plus one status line, which carries -- in
-// the same priority order v1's View already implements -- a live verdict,
+// the same priority order v1 used -- a live verdict,
 // then the degraded-status hint, then nothing.
 func (f *AccountField) Panel(w, h int) string {
 	if h < 1 {
@@ -567,63 +544,4 @@ func (f *AccountField) panelStatus() string {
 // line, capped at accountPanelMaxRows.
 func (f *AccountField) PanelRows() int {
 	return capRows(2+len(f.profiles), accountPanelMaxRows)
-}
-
-// Height reports AccountField's PREFERRED footprint in a popup winH rows
-// tall -- independent of focus, agent-kind inertness, profile set, and
-// degraded status (see the type doc comment); the profile row count
-// shrinks with winH via pickerRowsAt (sizes.go).
-func (f *AccountField) Height(winH int) int {
-	return pickerChromeRows + pickerRowsAt(accountPickerRows, winH)
-}
-
-// MinHeight is the header row alone -- the label plus the pinned profile
-// (or the inert placeholder), which is what a user not currently editing
-// this field needs to see of it.
-func (f *AccountField) MinHeight() int { return 1 }
-
-// View renders the field into exactly h physical lines: the header first,
-// then the reserved hint/verdict row, then whatever profile rows are left
-// over.
-func (f *AccountField) View(inner, h int) string {
-	if inner < 1 {
-		inner = 1
-	}
-	labelStyled := lipgloss.NewStyle().Foreground(f.palette.Text).Render(accountLabel)
-	budget := inner - lipgloss.Width(accountLabel)
-	if budget < 1 {
-		budget = 1
-	}
-	candidates := h - pickerChromeRows
-
-	if !f.agentIsClaude {
-		header := fitLine(labelStyled+fitLine(dimHint(f.palette).Render(accountInertPlaceholder), budget), inner)
-		rows := append([]string{header, fitLine("", inner)}, blankRows(candidates, inner)...)
-		return sectionLines(h, inner, rows...)
-	}
-
-	pin := f.Pin()
-	display := accountActiveLabel
-	if pin != "" {
-		display = pin
-	}
-	body := fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(display), budget)
-	header := fitLine(labelStyled+body, inner)
-
-	// SetVerdict's own live message takes priority over the degraded
-	// hint when both would otherwise apply -- a blocking submit-time
-	// verdict (spec §9) is the more urgent of the two.
-	hintLine := fitLine("", inner)
-	switch {
-	case f.verdictKey == pin && f.verdictText != "":
-		hintLine = fitLine(lipgloss.NewStyle().Foreground(f.palette.Danger).Render(f.verdictText), inner)
-	case f.degraded:
-		hintLine = fitLine(dimHint(f.palette).Render(accountDegradedHint), inner)
-	}
-
-	rows := []string{header, hintLine}
-	if candidates > 0 {
-		rows = append(rows, strings.Split(f.picker.MarkedView(inner, candidates, "row:"+f.ID()+":"), "\n")...)
-	}
-	return sectionLines(h, inner, rows...)
 }

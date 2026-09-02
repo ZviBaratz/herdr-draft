@@ -115,24 +115,6 @@ func TestPlacementField_WorktreeOffReenables(t *testing.T) {
 	}
 }
 
-func TestPlacementField_HeightIsConstant(t *testing.T) {
-	f := NewPlacementField(theme.Default())
-	base := f.Height(24)
-
-	f.Update(key(tea.KeyRight, 0))
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) after moving selection = %d, want %d", got, base)
-	}
-
-	f.SetWorktreeOn(true)
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) while inert = %d, want %d", got, base)
-	}
-	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
-		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
-	}
-}
-
 func TestPlacementField_NoPanicOnDegenerateWidth(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -140,6 +122,8 @@ func TestPlacementField_NoPanicOnDegenerateWidth(t *testing.T) {
 		}
 	}()
 	f := NewPlacementField(theme.Default())
-	_ = f.View(0, f.Height(24))
-	_ = f.View(-3, f.Height(24))
+	_ = f.Row(0)
+	_ = f.Panel(0, f.PanelRows())
+	_ = f.Row(-3)
+	_ = f.Panel(-3, f.PanelRows())
 }

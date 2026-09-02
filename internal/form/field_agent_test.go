@@ -114,26 +114,6 @@ func TestAgentField_ListReachesAKindNotOnTheChipRow(t *testing.T) {
 	}
 }
 
-func TestAgentField_HeightIsConstant(t *testing.T) {
-	f := NewAgentField(theme.Default())
-	base := f.Height(24)
-
-	f.SetKinds(manyKinds())
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) after SetKinds = %d, want %d", got, base)
-	}
-	for range agentFavoriteChips {
-		f.Update(key(tea.KeyRight, 0))
-	}
-	f.Update(key(tea.KeyDown, 0)) // expand
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) while expanded = %d, want %d", got, base)
-	}
-	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
-		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
-	}
-}
-
 func TestAgentField_NoPanicOnDegenerateWidth(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -141,8 +121,10 @@ func TestAgentField_NoPanicOnDegenerateWidth(t *testing.T) {
 		}
 	}()
 	f := NewAgentField(theme.Default())
-	_ = f.View(0, f.Height(24))
-	_ = f.View(-3, f.Height(24))
+	_ = f.Row(0)
+	_ = f.Panel(0, f.PanelRows())
+	_ = f.Row(-3)
+	_ = f.Panel(-3, f.PanelRows())
 }
 
 func TestAgentField_NoPanicBeforeSetKinds(t *testing.T) {
@@ -152,7 +134,8 @@ func TestAgentField_NoPanicBeforeSetKinds(t *testing.T) {
 		}
 	}()
 	f := NewAgentField(theme.Default())
-	_ = f.View(60, f.Height(24))
+	_ = f.Row(60)
+	_ = f.Panel(60, f.PanelRows())
 	f.Update(key(tea.KeyRight, 0))
 	f.Update(key(tea.KeyDown, 0))
 	if got := f.Value(); got != "" {

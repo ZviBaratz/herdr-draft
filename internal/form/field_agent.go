@@ -6,23 +6,20 @@
 // both Task 14 ports, the same "compose two existing widgets, own the
 // glue" shape every other Task 17-18 field already uses.
 //
-// Design note on the single SetKinds setter (flagged for controller
-// review): the brief's own interfaces line gives AgentField exactly one
-// data setter, SetKinds([]string) ("populated by app layer from config +
-// the spec's known 23"), with no separate favorites-vs-full-list split at
-// the API boundary. AgentField resolves this by treating SetKinds' own
-// ORDER as the signal: the app layer is expected to order its favorites
+// Design note on the single SetKinds setter: the field takes exactly one
+// data setter, SetKinds([]string) (populated by the app layer from config
+// plus the spec's known 23), with no separate favorites-vs-full-list
+// split at the API boundary. AgentField resolves that by treating
+// SetKinds' own ORDER as the signal: the app layer orders its favorites
 // first (config's own `[agents] favorites` list, spec §12), followed by
 // the remaining known kinds -- the same "index 0 is the default" contract
 // field_placement.go's PlacementField and field_worktree.go's HEAD-first
-// base list already rely on callers to honor. AgentField then shows the
-// leading agentFavoriteChips entries directly as chips (a config with
-// fewer favorites than that just gets fewer chips -- SetChips handles a
-// short slice fine), appends a synthetic "more…" chip when the full list
-// is longer than that, and makes the ENTIRE SetKinds list (not just the
-// excess) reachable through it -- so a favorite is always still pickable
-// from the expanded list too, and there is no "how do I get back to a
-// favorite after expanding" dead end to design around.
+// base list already rely on callers to honor. The leading
+// agentFavoriteChips entries become chips (a config with fewer favorites
+// than that just gets fewer chips) and the ENTIRE list, favorites
+// included, is in the panel's picker below them -- so a favorite is
+// always pickable both ways, and there is no "how do I get back to a
+// favorite" dead end to design around.
 package form
 
 import (
@@ -41,24 +38,6 @@ import (
 // example config (`favorites = ["claude", "codex"]`) plus a little room to
 // grow before the row needs horizontal scrolling ChipRow doesn't have.
 const agentFavoriteChips = 3
-
-// agentPickerRows is the full-kind-list picker's fixed row count, reserved
-// unconditionally so Height() stays constant whether or not the list is
-// currently expanded -- the same "always reserve, sometimes render blank"
-// discipline field_dir.go's DirField uses for focus, applied here to an
-// internal expanded/collapsed toggle instead (see Height's own doc
-// comment: the contract is about focus-independence specifically, not
-// every kind of internal state).
-const agentPickerRows = 4
-
-// agentMoreChipID is the synthetic "more…" chip's internal Chip.ID -- a
-// leading-NUL sentinel that can never collide with a real agent kind name
-// (herdr kind identifiers are plain lowercase words, e.g. "claude",
-// "codex"; none begin with a NUL byte), matching field_issue.go's
-// issueNoneID and field_worktree.go's baseHeadID sentinel discipline.
-const agentMoreChipID = "\x00more"
-
-const agentMoreLabel = "more…"
 
 const (
 	// agentRowLabel is v2's row label. v1 rendered this field with no
@@ -80,47 +59,32 @@ const (
 	agentPanelEmpty = "no agent kinds configured"
 )
 
-// AgentField is the form's Agent Section (spec §6 field 6): a row of
-// favorite chips plus a "more…" chip that expands into a full-kind-list
-// picker. Value() always returns a real kind name, never the internal
-// "more…" sentinel -- see the file doc's design note.
-//
-// AgentField PREFERS 2+agentPickerRows physical lines -- independent of
-// focus, kind set, and expanded state (this task's own "verified fact":
-// Section.Height must be hint-independent) -- and renders into whatever
-// compose's own budget allocation gives it (Section.View's h, sizes.go's
-// allocateHeights), shedding rows from the bottom: the chip row first,
-// then a reserved second line (field_placement.go's own
-// hint-independent-Height pattern, applied here even though no chip
-// currently sets a FocusHint -- reserved defensively in case one later
-// does), then candidate rows (blank while collapsed).
+// AgentField is the form's Agent Section (spec §6 field 6): a one-line
+// row naming the selected kind, over a panel holding the favorite chips
+// and the full kind list at once -- see the file doc's design note.
 type AgentField struct {
 	chips  *widgets.ChipRow
 	picker *widgets.Picker
 
-	// palette is retained for v2's Row/Panel, which style dim text
-	// themselves; v1's View delegates every style to ChipRow/Picker and
-	// never reads it.
 	palette theme.Palette
 
-	focused  bool
-	expanded bool
+	focused bool
 
 	kinds         []string
 	lastConfirmed string
 
 	// pickerRowsShown is how many kind rows the last Panel render drew.
 	// widgets.Picker.SelectAt needs the SAME height MarkedView was called
-	// with to map a click back to an item, and unlike v1's fixed
-	// agentPickerRows the v2 panel's list height varies with the window.
+	// with to map a click back to an item, and the panel's list height
+	// varies with the window.
 	pickerRowsShown int
 
 	// pickerVersion is bumped on every setPickerItems call so
 	// widgets.Picker.SetItems always sees a strictly newer version --
 	// deliberately never relying on its same-version preserve-by-ID
-	// behavior here (see expand's own doc comment: this field always
-	// wants explicit, deterministic control over where the cursor lands,
-	// not whatever the picker's own last-remembered selection happened to
+	// behavior here (see seedPickerCursor: this field always wants
+	// explicit, deterministic control over where the cursor lands, not
+	// whatever the picker's own last-remembered selection happened to
 	// be).
 	pickerVersion int
 }
@@ -160,7 +124,7 @@ func (f *AgentField) Blur() { f.focused = false }
 // kind-list picker's, and either one confirms the kind it lands on.
 //
 // v1 had to arbitrate: its chip row and its list occupied the same rows,
-// so ↑↓ meant "move the chips" until a "more…" chip expanded the list and
+// so ↑↓ meant "move the chips" until a "more…" chip revealed the list and
 // then meant "move the list", with ↑ at the top collapsing back. Nothing
 // in v2 is collapsed, so nothing has two meanings, and the "more…" chip
 // that opened the list has no job left -- SetKinds stopped emitting it.
@@ -222,28 +186,13 @@ func (f *AgentField) handleClick(msg tea.MouseClickMsg) {
 	}
 }
 
-// pickerAtTop reports whether the full-list picker's cursor is already on
-// its first row (or the list is empty) -- Up from here collapses instead
-// of moving the cursor.
-func (f *AgentField) pickerAtTop() bool {
-	sel, ok := f.picker.Selected()
-	if !ok {
-		return true
-	}
-	items := f.fullListItems()
-	return len(items) == 0 || items[0].ID == sel.ID
-}
-
-// expand switches to the full-list picker, seeding its cursor at
-// lastConfirmed when that kind is present in the full list (0 otherwise)
-// -- so opening the list never silently loses the currently effective
-// selection. setPickerItems always resets the cursor to row 0 first
-// (a fresh, strictly-newer version every call -- see pickerVersion's own
-// doc comment), so the CursorNext walk below always starts from a known
-// baseline rather than wherever widgets.Picker's own same-version
-// preserve-by-ID logic might otherwise have left it.
-func (f *AgentField) expand() {
-	f.expanded = true
+// seedPickerCursor moves the kind list's cursor onto lastConfirmed when
+// that kind is present, so a programmatic SetKind and the panel's own
+// list never disagree about what is selected. setPickerItems always
+// resets the cursor to row 0 first (a fresh, strictly-newer version every
+// call -- see pickerVersion's own doc comment), so the CursorNext walk
+// below always starts from a known baseline.
+func (f *AgentField) seedPickerCursor() {
 	items := f.fullListItems()
 	f.setPickerItems(items)
 	for i, it := range items {
@@ -267,7 +216,7 @@ func (f *AgentField) setPickerItems(items []widgets.PickerItem) {
 }
 
 func (f *AgentField) syncConfirmedFromChip() {
-	if sel := f.chips.Selected(); sel.ID != "" && sel.ID != agentMoreChipID {
+	if sel := f.chips.Selected(); sel.ID != "" {
 		f.lastConfirmed = sel.ID
 	}
 }
@@ -290,7 +239,6 @@ func (f *AgentField) syncConfirmedFromPicker() {
 // control with no effect.
 func (f *AgentField) SetKinds(kinds []string) {
 	f.kinds = append([]string(nil), kinds...)
-	f.expanded = false
 
 	chips := make([]widgets.Chip, 0, agentFavoriteChips)
 	for i, k := range f.kinds {
@@ -339,11 +287,9 @@ func (f *AgentField) SetKind(kind string) {
 	}
 
 	f.chips.SelectID(kind) // a no-op for a kind with no chip of its own
-	// expand() seeds the kind list's cursor from lastConfirmed, so set
-	// that first. Its own `expanded` flag is v1's and means nothing here:
-	// v2's panel shows the list whether or not anything "expanded" it.
+	// seedPickerCursor reads lastConfirmed, so set it first.
 	f.lastConfirmed = kind
-	f.expand()
+	f.seedPickerCursor()
 }
 
 // fullListItems builds the full-kind-list picker's item set from f.kinds
@@ -366,16 +312,7 @@ func (f *AgentField) fullListItems() []widgets.PickerItem {
 // submit" posture spec §6 field 3 documents for Title).
 func (f *AgentField) Value() string { return f.lastConfirmed }
 
-// --- v2 row stack (form.go's rowSection) ---------------------------------
-//
-// Added ALONGSIDE View/Height/MinHeight; see field_title.go's identical
-// section comment for why their arrival moves no golden frame.
-//
-// v2 retires the expand/collapse mechanism (expanded, expand,
-// pickerAtTop, agentMoreChipID) -- Panel shows the favorites and the full
-// kind list at the same time, so there is nothing to expand INTO. Those
-// members survive here only because v1's View and Update still drive
-// them; deleting them is part of the same change that deletes v1's path.
+// --- the row and its panel ------------------------------------------------
 
 // Label is v2's row label (v2 spec §6's field table).
 func (f *AgentField) Label() string { return agentRowLabel }
@@ -427,39 +364,4 @@ func (f *AgentField) PanelRows() int {
 		return 2
 	}
 	return capRows(1+len(f.kinds), agentPanelMaxRows)
-}
-
-// Height reports AgentField's PREFERRED footprint in a popup winH rows
-// tall -- independent of focus, kind set, and expanded state (see the type
-// doc comment); the full-kind-list row count shrinks with winH via
-// pickerRowsAt (sizes.go).
-func (f *AgentField) Height(winH int) int {
-	return pickerChromeRows + pickerRowsAt(agentPickerRows, winH)
-}
-
-// MinHeight is the chip row alone -- the selected agent kind, which is
-// what a user not currently editing this field needs to see of it.
-func (f *AgentField) MinHeight() int { return 1 }
-
-// View renders the field into exactly h physical lines: the chip row
-// first, then the reserved hint row, then whatever full-kind-list rows are
-// left over (real rows while expanded, blanks otherwise).
-func (f *AgentField) View(inner, h int) string {
-	if inner < 1 {
-		inner = 1
-	}
-	chipView := f.chips.MarkedView(inner, "chip:"+f.ID()+":")
-	if !strings.Contains(chipView, "\n") {
-		chipView += "\n" + fitLine("", inner)
-	}
-
-	rows := strings.Split(fitBlock(chipView, pickerChromeRows, inner), "\n")
-	if candidates := h - pickerChromeRows; candidates > 0 {
-		if f.expanded {
-			rows = append(rows, strings.Split(f.picker.MarkedView(inner, candidates, "row:"+f.ID()+":"), "\n")...)
-		} else {
-			rows = append(rows, blankRows(candidates, inner)...)
-		}
-	}
-	return sectionLines(h, inner, rows...)
 }

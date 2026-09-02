@@ -44,16 +44,16 @@ func assertFrame(t *testing.T, name string, m Model, w, h int) {
 	}
 }
 
-// stubSection is a minimal, fully configurable Section test double --
-// "Stub sections for tests are fine and expected; real fields land in
-// Tasks 17-18" (task-16 brief). It also spies on Focus/Blur/Update call
-// counts so focus-ring and grammar-wiring tests can assert on behavior,
-// not just rendered output.
+// stubSection is a minimal, fully configurable Section test double. It
+// also spies on Focus/Blur/Update call counts so focus-ring and
+// grammar-wiring tests can assert on behavior, not just rendered output.
 type stubSection struct {
 	id      string
 	enabled bool
-	height  func(winH int) int
-	content func(inner int) string
+
+	label      string
+	value      string
+	panelLines []string
 
 	focused     bool
 	focusCalls  int
@@ -66,24 +66,35 @@ func newStub(id string) *stubSection {
 	return &stubSection{
 		id:      id,
 		enabled: true,
-		height:  func(int) int { return 1 },
-		content: func(int) string { return id },
+		label:   id,
+		value:   id + " value",
 	}
 }
 
-func (s *stubSection) ID() string       { return s.id }
-func (s *stubSection) Enabled() bool    { return s.enabled }
-func (s *stubSection) Height(w int) int { return s.height(w) }
+// withPanel gives the stub a panel n lines tall, each line naming its
+// own index so a test can tell real panel content from the blank fill
+// the form adds under it.
+func (s *stubSection) withPanel(n int) *stubSection {
+	s.panelLines = make([]string, n)
+	for i := range s.panelLines {
+		s.panelLines[i] = fmt.Sprintf("%s panel %d", s.id, i)
+	}
+	return s
+}
 
-// MinHeight deliberately equals the stub's own reported Height: these
-// stubs are not self-degrading, so a form built from them exercises
-// sizes.go's last-resort line-dropping ladder rather than its budget
-// allocation. Nothing golden renders through them any more -- every
-// committed frame is on v2's row-stack path -- so what they still cover
-// is compose's v1 branch itself, until the change that deletes it.
-func (s *stubSection) MinHeight() int { return s.height(0) }
+func (s *stubSection) ID() string    { return s.id }
+func (s *stubSection) Enabled() bool { return s.enabled }
+func (s *stubSection) Label() string { return s.label }
 
-func (s *stubSection) View(inner, _ int) string { return s.content(inner) }
+// Row deliberately consults nothing but the width it is handed -- not
+// the window height, not its own focus state. That is the contract
+// TestRowStack_RowsRenderIdenticallyAtEveryHeight enforces from the
+// outside.
+func (s *stubSection) Row(w int) string { return fitLine(s.value, w) }
+
+func (s *stubSection) Panel(w, h int) string { return sectionLines(h, w, s.panelLines...) }
+
+func (s *stubSection) PanelRows() int { return len(s.panelLines) }
 
 func (s *stubSection) Focus() tea.Cmd {
 	s.focused = true
@@ -111,64 +122,14 @@ type titledStub struct {
 
 func (t *titledStub) Value() string { return t.value }
 
-// rowStub is a v2 Section double: a stubSection that ALSO implements
-// rowSection (form.go), which is what puts a form built from these on
-// compose's row-stack path.
-//
-// It is deliberately a separate type from stubSection rather than four
-// more methods on it: the two stubs are the two compose paths, and
-// keeping them apart is what lets a test state which one it means. That
-// separation loses its job with the v1 path itself.
-type rowStub struct {
-	stubSection
-	label      string
-	value      string
-	panelLines []string
-}
-
-func newRowStub(id string) *rowStub {
-	s := &rowStub{
-		label: id,
-		value: id + " value",
-	}
-	s.id = id
-	s.enabled = true
-	s.height = func(int) int { return 1 }
-	s.content = func(int) string { return id }
-	return s
-}
-
-// withPanel gives the stub a panel n lines tall, each line naming its
-// own index so a test can tell real panel content from the blank fill
-// the form adds under it.
-func (s *rowStub) withPanel(n int) *rowStub {
-	s.panelLines = make([]string, n)
-	for i := range s.panelLines {
-		s.panelLines[i] = fmt.Sprintf("%s panel %d", s.id, i)
-	}
-	return s
-}
-
-func (s *rowStub) Label() string { return s.label }
-
-// Row deliberately consults nothing but the width it is handed -- not
-// the window height, not its own focus state. That is the contract
-// TestRowStack_RowsRenderIdenticallyAtEveryHeight enforces from the
-// outside.
-func (s *rowStub) Row(w int) string { return fitLine(s.value, w) }
-
-func (s *rowStub) Panel(w, h int) string { return sectionLines(h, w, s.panelLines...) }
-
-func (s *rowStub) PanelRows() int { return len(s.panelLines) }
-
-// hintingRowStub layers footerHinter (form.go) onto a rowStub, for the
+// hintingStub layers footerHinter (form.go) onto a stubSection, for the
 // contextual footer.
-type hintingRowStub struct {
-	rowStub
+type hintingStub struct {
+	stubSection
 	rungs []string
 }
 
-func (s *hintingRowStub) FooterRungs() []string { return s.rungs }
+func (s *hintingStub) FooterRungs() []string { return s.rungs }
 
 // --- focus ring: wrap + skip disabled -----------------------------------
 
@@ -517,15 +478,9 @@ func TestZoneFor_TitleEmpty(t *testing.T) {
 // always exactly h, so nothing above or below the form shifts as the user
 // Tabs.
 //
-// What it deliberately does NOT claim any more is that each SECTION keeps
-// a fixed height as focus moves. sizes.go's allocateHeights refills the
-// focused section to its full preference when the popup cannot afford
-// every section's, which reflows the form -- a disclosed trade, made
-// because at 80x24 the ten-field form has roughly two rows per field, and
-// a layout that keeps every section fixed at that size is a layout in
-// which no picker ever shows a single candidate. Section.Height() itself
-// is still focus-independent (see its own doc comment); the arbitration
-// lives in the allocator, one level up.
+// TestRowStack_RowsNeverMoveAcrossFocus is the sharper claim this one
+// could not make in v1, where a shared height budget refilled the focused
+// section and reflowed the whole form.
 func TestModel_ConstantHeightAcrossFocusMoves(t *testing.T) {
 	m := New(Setup{Palette: theme.Default(), Sections: []Section{newStub("a"), newStub("b")}})
 	m.Init()
@@ -618,10 +573,8 @@ func TestZeroValueModel_DoesNotPanic(t *testing.T) {
 // its "✓" Marker convention, ChipRow's cursor highlighting), not just
 // plain unstyled stub text.
 //
-// Both are rowSections: they render a one-line value row and put their
-// widget in the panel, exactly as a real field does, so the empty-* golden
-// frames exercise v2's compose path (the only one production takes) rather
-// than a stub-only branch nothing ships.
+// Both render a one-line value row and put their widget in the panel,
+// exactly as a real field does.
 type pickerSection struct {
 	id      string
 	picker  *widgets.Picker
@@ -660,7 +613,6 @@ type chipRowSection struct {
 	id      string
 	row     *widgets.ChipRow
 	enabled bool
-	width   int
 }
 
 func (s *chipRowSection) ID() string             { return s.id }
@@ -737,7 +689,7 @@ func TestFrames_Empty(t *testing.T) {
 func buildManySections(palette theme.Palette, n, panelRows int) Model {
 	sections := make([]Section, 0, n)
 	for i := 0; i < n; i++ {
-		sections = append(sections, newRowStub(fmt.Sprintf("field-%d", i)).withPanel(panelRows))
+		sections = append(sections, newStub(fmt.Sprintf("field-%d", i)).withPanel(panelRows))
 	}
 	m := New(Setup{Palette: palette, Sections: sections, Name: "new session"})
 	m.Init()
@@ -777,17 +729,15 @@ func TestDegradation_FooterAndFocusedRowSurvive(t *testing.T) {
 	}
 }
 
-// --- v2 row stack: the dual-path bridge -----------------------------------
+// --- the row stack -----------------------------------------------------
 
-// buildRowForm returns a form whose caller sections are all rowStubs --
-// so, with the internal Create section implementing rowSection too, one
-// that composes on v2's row-stack path. Every stub gets a three-line
-// panel unless a test replaces it.
-func buildRowForm(palette theme.Palette, ids ...string) (Model, []*rowStub) {
-	stubs := make([]*rowStub, 0, len(ids))
+// buildRowForm returns a form over the named stub sections, each with a
+// three-line panel unless a test replaces it.
+func buildRowForm(palette theme.Palette, ids ...string) (Model, []*stubSection) {
+	stubs := make([]*stubSection, 0, len(ids))
 	sections := make([]Section, 0, len(ids))
 	for _, id := range ids {
-		s := newRowStub(id).withPanel(3)
+		s := newStub(id).withPanel(3)
 		stubs = append(stubs, s)
 		sections = append(sections, s)
 	}
@@ -807,51 +757,6 @@ func strippedLines(m Model, w, h int) []string {
 		out[i] = ansi.Strip(l)
 	}
 	return out
-}
-
-// TestCompose_GateSelectsThePath pins the bridge itself: the row-stack
-// path is reachable only when EVERY section implements rowSection, and
-// the internal Create section implements it so the answer depends on the
-// caller's own sections alone.
-//
-// The claim that matters now that the migration is finished is the last
-// one: EVERY real field implements rowSection, so the assembled
-// production form takes v2's path. Until the v1 interface is deleted
-// outright, this is what says so.
-func TestCompose_GateSelectsThePath(t *testing.T) {
-	palette := theme.Default()
-
-	rows, _ := buildRowForm(palette, "a", "b")
-	if !rows.allRowSections() {
-		t.Errorf("a form of rowStubs is not on the row-stack path")
-	}
-
-	mixed := New(Setup{Palette: palette, Sections: []Section{newRowStub("a"), newStub("b")}})
-	if mixed.allRowSections() {
-		t.Errorf("a form with one v1 section took the row-stack path; the gate must be unanimous")
-	}
-
-	var zero Model
-	if zero.allRowSections() {
-		t.Errorf("a zero-value Model reported the row-stack path")
-	}
-
-	// Every field internal/app can assemble, in v2 spec §6's own row
-	// order. A field that regressed off the row-stack path would take the
-	// whole form back to v1's layout with it.
-	assembled := New(Setup{Palette: palette, Sections: []Section{
-		NewIssueField(palette),
-		NewTitleField(palette),
-		NewPromptField(palette),
-		NewDirField(palette),
-		NewWorktreeField(palette),
-		NewPlacementField(palette),
-		NewAgentField(palette),
-		NewAccountField(palette),
-	}})
-	if !assembled.allRowSections() {
-		t.Errorf("the assembled production field list is NOT on the row-stack path")
-	}
 }
 
 // TestRowStack_FrameMatchesLayoutFrame pins composeRows against
@@ -899,10 +804,10 @@ func isRuleLine(s string) bool {
 // TestRowStack_RowsNeverMoveAcrossFocus is the test v1 never had, and
 // the defect v2 exists to remove: at a fixed (w, h), everything above
 // the panel -- header, rule, every stack row, the second rule -- must be
-// byte-identical whatever holds focus. v1's allocateHeights refilled the
-// focused section from a shared budget, so moving focus reflowed the
-// whole form; v2 sends every spare row to the panel instead
-// (rowlayout.go's layoutFrame).
+// byte-identical whatever holds focus. v1 refilled the focused section
+// from a shared height budget, so moving focus reflowed the whole form;
+// v2 sends every spare row to the panel instead (rowlayout.go's
+// layoutFrame).
 //
 // The comparison strips ANSI, because the one thing that legitimately
 // differs between these renders IS a color: the focused row's
@@ -930,7 +835,7 @@ func TestRowStack_RowsNeverMoveAcrossFocus(t *testing.T) {
 }
 
 // TestRowStack_RowsRenderIdenticallyAtEveryHeight is the mechanical
-// enforcement of rowSection.Row's "takes no height by design" contract.
+// enforcement of Section.Row's "takes no height by design" contract.
 // A doc comment saying a method must not consult the window height is a
 // comment; rendering the same row at two very different heights and
 // comparing the bytes is the contract.
@@ -1005,9 +910,9 @@ func TestRowStack_FocusedRowAndFooterSurviveEveryHeight(t *testing.T) {
 // focus landed on a quiet field.
 func TestRowStack_SmallPanelDoesNotMoveTheFooter(t *testing.T) {
 	palette := theme.Default()
-	big := newRowStub("big").withPanel(12)
-	small := newRowStub("small").withPanel(1)
-	none := newRowStub("none") // PanelRows() == 0
+	big := newStub("big").withPanel(12)
+	small := newStub("small").withPanel(1)
+	none := newStub("none") // PanelRows() == 0
 	m := New(Setup{Palette: palette, Sections: []Section{big, small, none}, Name: "new session"})
 	m.Init()
 
@@ -1015,7 +920,7 @@ func TestRowStack_SmallPanelDoesNotMoveTheFooter(t *testing.T) {
 	f := layoutFrame(h, 3)
 	rule2 := 2 + f.Rows
 
-	for _, s := range []*rowStub{big, small, none} {
+	for _, s := range []*stubSection{big, small, none} {
 		if cmd := m.FocusByID(s.id); cmd != nil {
 			cmd()
 		}
@@ -1107,7 +1012,7 @@ func TestModel_InitialFocusID(t *testing.T) {
 	palette := theme.Default()
 	build := func(initial string) Model {
 		m := New(Setup{Palette: palette, Sections: []Section{
-			newRowStub("a"), newRowStub("b"), newRowStub("c"),
+			newStub("a"), newStub("b"), newStub("c"),
 		}, InitialFocusID: initial})
 		m.Init()
 		return m
@@ -1125,9 +1030,9 @@ func TestModel_InitialFocusID(t *testing.T) {
 
 	// Unlike Tab navigation, and like FocusByID, a named section is
 	// reached even when it is disabled.
-	disabled := newRowStub("b")
+	disabled := newStub("b")
 	disabled.enabled = false
-	m := New(Setup{Palette: palette, Sections: []Section{newRowStub("a"), disabled}, InitialFocusID: "b"})
+	m := New(Setup{Palette: palette, Sections: []Section{newStub("a"), disabled}, InitialFocusID: "b"})
 	m.Init()
 	if got := m.FocusedID(); got != "b" {
 		t.Errorf("InitialFocusID on a disabled section: FocusedID() = %q, want %q", got, "b")
@@ -1141,9 +1046,9 @@ func TestModel_InitialFocusID(t *testing.T) {
 // grammar uses.
 func TestRowStack_FooterIsContextual(t *testing.T) {
 	palette := theme.Default()
-	hinting := &hintingRowStub{rungs: []string{"⇥ do the thing"}}
-	hinting.rowStub = *newRowStub("prompt")
-	plain := newRowStub("placement").withPanel(2)
+	hinting := &hintingStub{rungs: []string{"⇥ do the thing"}}
+	hinting.stubSection = *newStub("prompt")
+	plain := newStub("placement").withPanel(2)
 
 	m := New(Setup{Palette: palette, Sections: []Section{hinting, plain}, Name: "new session"})
 	m.Init()

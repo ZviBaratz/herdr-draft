@@ -1,7 +1,6 @@
-// layout.go holds small rendering helpers shared by Tasks 17-18's concrete
-// field Sections (field_dir.go, field_title.go, field_worktree.go,
-// field_placement.go, and, per the task-18 brief, the fields that follow
-// them) -- written fresh for this task, not derived from atrium
+// layout.go holds the width-and-height primitives every rendering in this
+// package is built on (see rowvalues.go for the row/panel-specific ones)
+// -- written fresh, not derived from atrium
 // (github.com/ZviBaratz/atrium).
 package form
 
@@ -31,17 +30,14 @@ func fitLine(s string, width int) string {
 	return lipgloss.NewStyle().Width(width).MaxWidth(width).Inline(true).Render(s)
 }
 
-// fitBlock normalizes a Section's rendered block to exactly h physical
-// lines, width cells wide: extra lines are dropped from the BOTTOM (a
-// Section renders its label/value header first, per Section.View's own
-// contract, so the bottom is always its least important end), and a short
-// block is padded with blank rows.
+// fitBlock normalizes a rendered block to exactly h physical lines, width
+// cells wide: extra lines are dropped from the BOTTOM and a short block is
+// padded with blank rows.
 //
-// form.go's compose applies this to every Section's own View output before
-// composing it, so the line count it books against sizes.go's own
-// allocation is the line count actually emitted even if a Section's View
-// and its Height/MinHeight ever disagree. h < 1 is treated as 1: every
-// Section occupies at least one row.
+// form.go's renderPanelRegion applies it to the focused Section's own
+// Panel output, so the line count the layout booked is the line count
+// actually emitted even if a Panel and its PanelRows ever disagree. h < 1
+// is treated as 1.
 func fitBlock(block string, h, width int) string {
 	if h < 1 {
 		h = 1
@@ -56,27 +52,10 @@ func fitBlock(block string, h, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// sectionLines assembles a field Section's own View output from an ordered
-// list of already-rendered rows, most important first, truncated or padded
-// to exactly h lines -- the shared shape every concrete field in this
-// package uses to honor Section.View's "shed rows from the bottom as h
-// shrinks" contract.
+// sectionLines assembles a block from an ordered list of already-rendered
+// rows, most important first, truncated or padded to exactly h lines.
 func sectionLines(h, width int, rows ...string) string {
 	return fitBlock(strings.Join(rows, "\n"), h, width)
-}
-
-// blankRows returns n blank lines, width cells wide, joined -- the
-// reserved-but-empty candidate rows an unfocused picker field renders when
-// the form's budget still affords them.
-func blankRows(n, width int) []string {
-	if n < 1 {
-		return nil
-	}
-	out := make([]string, n)
-	for i := range out {
-		out[i] = fitLine("", width)
-	}
-	return out
 }
 
 // dimText returns a plain dim-foreground style from palette, the base for

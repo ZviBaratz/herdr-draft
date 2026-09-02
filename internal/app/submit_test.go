@@ -393,10 +393,10 @@ func TestSubmit_PinnedProfileAuthFailedBlocksWithAccountVerdict(t *testing.T) {
 	// AccountField.SetVerdict pushes a NEW hint-row message with a
 	// "blocked" prefix nothing else in the view ever renders -- that's
 	// the actual signal this fix adds.
-	frame := ansi.Strip(m.account.View(60, m.account.Height(24)))
+	frame := fieldText(m.account, 60)
 	wantVerdict := "blocked — auth: expired"
 	if !strings.Contains(frame, wantVerdict) {
-		t.Fatalf("AccountField.View(60) after a blocked submit = %q, want it to contain the new blocking verdict %q", frame, wantVerdict)
+		t.Fatalf("the account panel after a blocked submit = %q, want it to contain the new blocking verdict %q", frame, wantVerdict)
 	}
 }
 

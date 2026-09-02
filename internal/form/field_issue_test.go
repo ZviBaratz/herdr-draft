@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -160,35 +159,12 @@ func TestIssueField_SetIssuesRefreshPreservesSelectionByID(t *testing.T) {
 	}
 }
 
-func TestIssueField_HeightIsConstant(t *testing.T) {
-	f := NewIssueField(theme.Default())
-	base := f.Height(24)
-
-	f.SetIssues(1, sampleIssues())
-	f.Focus()
-	f.Update(key(tea.KeyDown, 0))
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) after selecting = %d, want %d", got, base)
-	}
-	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
-		t.Errorf("View(60) rendered %d physical lines, want Height()'s own %d", got, base)
-	}
-
-	f.Blur()
-	if got := f.Height(24); got != base {
-		t.Errorf("Height(24) while blurred = %d, want %d", got, base)
-	}
-	if got := strings.Count(f.View(60, f.Height(24)), "\n") + 1; got != base {
-		t.Errorf("View(60) while blurred rendered %d physical lines, want Height()'s own %d", got, base)
-	}
-}
-
 func TestIssueField_RowShowsStatusAndEstimateHint(t *testing.T) {
 	f := NewIssueField(theme.Default())
 	f.Focus()
 	f.SetIssues(1, sampleIssues())
 
-	frame := ansi.Strip(f.View(60, f.Height(24)))
+	frame := fieldText(f, 60)
 	if !strings.Contains(frame, "Todo") || !strings.Contains(frame, "est 3") {
 		t.Errorf("View(60) = %q, want it to contain the status/estimate hint", frame)
 	}
@@ -201,8 +177,10 @@ func TestIssueField_NoPanicOnDegenerateWidth(t *testing.T) {
 		}
 	}()
 	f := NewIssueField(theme.Default())
-	_ = f.View(0, f.Height(24))
-	_ = f.View(-3, f.Height(24))
+	_ = f.Row(0)
+	_ = f.Panel(0, f.PanelRows())
+	_ = f.Row(-3)
+	_ = f.Panel(-3, f.PanelRows())
 }
 
 func TestIssueField_NoPanicBeforeSetIssues(t *testing.T) {
@@ -213,7 +191,8 @@ func TestIssueField_NoPanicBeforeSetIssues(t *testing.T) {
 	}()
 	f := NewIssueField(theme.Default())
 	f.Focus()
-	_ = f.View(60, f.Height(24))
+	_ = f.Row(60)
+	_ = f.Panel(60, f.PanelRows())
 	f.Update(key(tea.KeyDown, 0))
 	f.Update(key(tea.KeyUp, 0))
 	_ = f.Selected()
@@ -240,7 +219,7 @@ func TestIssueField_UnavailableIsInertAndCarriesTheReason(t *testing.T) {
 		t.Error("Enabled() = true while unavailable, want false (present-but-inert, skipped by the focus ring)")
 	}
 
-	frame := ansi.Strip(f.View(70, f.Height(40)))
+	frame := fieldText(f, 70)
 	if !strings.Contains(frame, "unavailable") {
 		t.Errorf("View = %q, want the field marked unavailable", frame)
 	}
@@ -254,7 +233,7 @@ func TestIssueField_UnavailableIsInertAndCarriesTheReason(t *testing.T) {
 	// Even focused (a click can still land on an inert section), the
 	// picker stays out of the way.
 	f.Focus()
-	if frame := ansi.Strip(f.View(70, f.Height(40))); strings.Contains(frame, "ENG-1") {
+	if frame := fieldText(f, 70); strings.Contains(frame, "ENG-1") {
 		t.Errorf("View while focused = %q, want no candidate rows while unavailable", frame)
 	}
 
