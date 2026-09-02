@@ -13,9 +13,12 @@
 // design v2 replaces -- v2's stack rows are one line each, always, and
 // the only variable-height region is the single panel.
 //
-// It deliberately does NOT reuse sizes.go's innerWidth: submitview.go
-// still measures itself with innerWidth, and folding the two together
-// would move the two submit golden frames for no reason at all.
+// It deliberately does NOT reuse sizes.go's innerWidth: that is v1's own
+// measurement, kept for exactly as long as compose's v1 branch is.
+// submitview.go used to measure itself with innerWidth too and now takes
+// contentBox/labelCol like everything else on v2's path -- v2 spec §12
+// requires the submit screen to share the form's label column, which is
+// what moved the two submit golden frames.
 package form
 
 // Horizontal metrics of v2's content box.

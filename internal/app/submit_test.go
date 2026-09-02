@@ -262,17 +262,26 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 		t.Fatal("Update(SubmitMsg{}) returned a nil cmd, want the submit-pipeline chain")
 	}
 
-	// Seeded progress (before any real event arrives) must already show
-	// every op, matching Task 12's first matrix case exactly.
+	// Seeded rows (before any real event arrives) must already show every
+	// op, matching Task 12's first matrix case exactly -- as v2 spec
+	// §12's short nouns, which is what the submit view's label column
+	// holds (see async.go's submitStepLabel).
 	wantLabels := []string{"creating worktree", "launching claude via clauth", "waiting for agent detection", "sending prompt"}
-	if len(m.submitProgress) != len(wantLabels) {
-		t.Fatalf("seeded submitProgress = %d entries, want %d: %+v", len(m.submitProgress), len(wantLabels), m.submitProgress)
+	wantRows := []string{"worktree", "claude", "detection", "prompt"}
+	if len(m.submitSteps) != len(wantRows) {
+		t.Fatalf("seeded submitSteps = %d entries, want %d: %+v", len(m.submitSteps), len(wantRows), m.submitSteps)
 	}
-	for i, label := range wantLabels {
-		p := m.submitProgress[i]
-		if p.Label != label || p.Index != i || p.Total != len(wantLabels) || p.State != plan.StepPending {
-			t.Fatalf("seeded submitProgress[%d] = %+v, want Label=%q Index=%d Total=%d State=StepPending", i, p, label, i, len(wantLabels))
+	for i, label := range wantRows {
+		s := m.submitSteps[i]
+		if s.Label != label || s.State != plan.StepPending {
+			t.Fatalf("seeded submitSteps[%d] = %+v, want Label=%q State=StepPending", i, s, label)
 		}
+	}
+	if got, want := m.submitSteps[0].Detail, "zvi/fix-pagination from HEAD"; got != want {
+		t.Errorf("seeded worktree row detail = %q, want %q", got, want)
+	}
+	if got, want := m.submitSteps[1].Detail, "under clauth work"; got != want {
+		t.Errorf("seeded clauth row detail = %q, want %q", got, want)
 	}
 
 	m, log, done := drainSubmitProgress(t, m, cmd)
@@ -448,7 +457,7 @@ func TestSubmit_FailedStepShowsFailureWithCleanCheckReasonThreaded(t *testing.T)
 	}
 
 	frame := ansi.Strip(m.submitView.ViewAt(80, 24))
-	if !containsAll(frame, "starting agent", "k keep", "c clean") {
+	if !containsAll(frame, "claude", "boom", "k keep it", "c remove it") {
 		t.Fatalf("SubmitView.ViewAt(80,24) = %q, want it to show the failed step plus an allowed keep-or-clean choice", frame)
 	}
 }
@@ -476,6 +485,71 @@ func TestSubmit_CleanMsgOnDeniedCheckDoesNothing(t *testing.T) {
 		t.Fatalf("runner.calls = %v after a denied CleanMsg, want none (plan.Clean never called)", runner.calls)
 	}
 	_ = next.(Model)
+}
+
+// TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd is the whole
+// safety property in one table (v2 spec §12 restates it unchanged):
+// Esc/Ctrl+C quit from the step-one dead end and from nowhere else in
+// the submitting lifecycle. Every other state either has a background
+// goroutine mid-run that would be stranded on runSubmitCmd's unbuffered
+// progress channel, or a keep-or-clean decision the user must not be
+// able to skip past silently.
+//
+// TestUpdateSubmitting_EscDuringActiveStreamingDoesNotQuit above drives
+// the mid-stream case through a REAL plan.Execute run; this one pins the
+// remaining states (the CleanCheck wait, the keep-or-clean prompt with
+// clean allowed, and the same prompt with clean denied) directly against
+// updateSubmitting's own dispatch, which is where the scoping lives.
+func TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd(t *testing.T) {
+	cases := []struct {
+		name     string
+		setup    func(m *Model)
+		wantQuit bool
+	}{
+		{
+			name:  "waiting on CleanCheck",
+			setup: func(m *Model) { m.submitCreated = herdrc.CreatedTopology{WorkspaceID: "ws-1"} },
+		},
+		{
+			name: "keep-or-clean, clean allowed",
+			setup: func(m *Model) {
+				m.submitCleanDecision = plan.CleanDecision{Allowed: true}
+				m.submitView.SetFailure(plan.ExecResult{FailedIndex: 1}, m.submitCleanDecision)
+			},
+		},
+		{
+			name: "keep-or-clean, clean denied",
+			setup: func(m *Model) {
+				m.submitCleanDecision = plan.CleanDecision{Allowed: false, Reason: "uncommitted changes"}
+				m.submitView.SetFailure(plan.ExecResult{FailedIndex: 1}, m.submitCleanDecision)
+			},
+		},
+		{
+			name:     "step-one dead end",
+			setup:    func(m *Model) { m.submitDeadEnd = true; m.submitView.SetDeadEnd() },
+			wantQuit: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{})
+			m.submitting = true
+			m.submitView = form.NewSubmitView(m.palette)
+			tc.setup(&m)
+
+			for _, k := range []tea.KeyPressMsg{{Code: tea.KeyEscape}, key('c', tea.ModCtrl)} {
+				_, cmd := m.updateSubmitting(k)
+				quit := false
+				if cmd != nil {
+					_, quit = cmd().(tea.QuitMsg)
+				}
+				if quit != tc.wantQuit {
+					t.Errorf("updateSubmitting(%v) quit = %v, want %v", k, quit, tc.wantQuit)
+				}
+			}
+		})
+	}
 }
 
 // --- additional coverage: validations beyond the required five ---------
@@ -702,10 +776,10 @@ func TestSubmit_CleanFailureSurfacesErrorAndStaysInPrompt(t *testing.T) {
 	}
 
 	frame := ansi.Strip(m.submitView.ViewAt(80, 24))
-	if !strings.Contains(frame, "clean failed") || !strings.Contains(frame, "herdr: workspace not found") {
+	if !strings.Contains(frame, "remove failed") || !strings.Contains(frame, "herdr: workspace not found") {
 		t.Fatalf("SubmitView.ViewAt(80,24) after a Clean failure = %q, want the error surfaced", frame)
 	}
-	if !strings.Contains(frame, "k keep") || !strings.Contains(frame, "c clean") {
+	if !strings.Contains(frame, "k keep it") || !strings.Contains(frame, "c remove it") {
 		t.Fatalf("SubmitView.ViewAt(80,24) after a Clean failure = %q, want the k/c choice still available", frame)
 	}
 }

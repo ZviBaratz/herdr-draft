@@ -703,18 +703,156 @@ func waitForSubmitProgress(progressCh <-chan plan.Progress, resultCh <-chan plan
 }
 
 // handleSubmitProgress applies one streamed plan.Progress event to the
-// working progress slice startSubmit seeded (by Index, replacing the row
-// it originally seeded at StepPending) and re-renders SubmitView, then
+// working row list startSubmit seeded (by Index, updating the row it
+// originally seeded at StepPending) and re-renders SubmitView, then
 // re-arms waitForSubmitProgress for the next event.
+//
+// Only the STATE (and, on a failure, the detail) is taken from the
+// event: the row's label and detail were resolved once, from the op
+// itself, and plan.Progress carries nothing that could improve on them.
 func (m Model) handleSubmitProgress(msg submitProgressMsg) (Model, tea.Cmd) {
-	if msg.progress.Index >= 0 && msg.progress.Index < len(m.submitProgress) {
-		m.submitProgress[msg.progress.Index] = msg.progress
+	if i := msg.progress.Index; i >= 0 && i < len(m.submitSteps) {
+		step := m.submitSteps[i]
+		step.State = msg.progress.State
+		if msg.progress.State == plan.StepFailed {
+			step.Detail = submitStepError(msg.progress.Err, msg.progress.Label)
+		}
+		m.submitSteps[i] = step
 	}
 	if m.submitView != nil {
-		m.submitView.SetProgress(m.submitProgress)
+		m.submitView.SetSteps(m.submitSteps)
 	}
 	return m, waitForSubmitProgress(msg.progressCh, msg.resultCh)
 }
+
+// --- op -> row mapping (v2 spec §12) --------------------------------------
+//
+// v2 spec §12's rows are `<glyph> <noun> <detail>` ("✓ worktree
+// zvi/fix-login-redirect-loop from main"), which is neither what
+// plan.Op.Label is (a verb phrase, "creating worktree") nor something
+// plan.Progress carries at all. This layer resolves both, once, from the
+// op list and the plan.Input they were built from -- keyed on
+// plan.OpKind, never on a label string -- and pushes them into the view,
+// the same way it pushes every other verdict into a field. See
+// form.Step's own doc comment for why internal/form must not do this
+// itself.
+
+// submitHeaderName is the header's left half on the submit screen: the
+// form's own name, so the pipeline does not read as a different program
+// (v2 spec §12).
+const submitHeaderName = "new session"
+
+// submitHeaderContext is the header's right half: the selected project,
+// which is the part of v2 spec §4's "repository name and its current
+// branch" this layer resolves without any extra I/O. "" when there is no
+// project directory to name, which renders the half empty.
+func submitHeaderContext(in plan.Input) string {
+	if in.ProjectDir == "" {
+		return ""
+	}
+	return filepath.Base(in.ProjectDir)
+}
+
+// submitSteps maps a built plan to the submit view's rows, one per op,
+// all at StepPending -- the full checklist the user sees before the
+// first event arrives.
+func submitSteps(ops []plan.Op, in plan.Input) []form.Step {
+	steps := make([]form.Step, len(ops))
+	for i, op := range ops {
+		steps[i] = form.Step{
+			Label:  submitStepLabel(op, in),
+			Detail: submitStepDetail(op, in),
+			State:  plan.StepPending,
+		}
+	}
+	return steps
+}
+
+// submitStepLabel is the short noun an op occupies the label column
+// with. It must stay inside the form's eleven-cell label column, so
+// these are all one word.
+func submitStepLabel(op plan.Op, in plan.Input) string {
+	switch op.Kind {
+	case plan.OpWorktreeCreate:
+		return "worktree"
+	case plan.OpWorkspaceCreate:
+		return "workspace"
+	case plan.OpTabCreate:
+		return "tab"
+	case plan.OpPaneSplit:
+		return "pane"
+	case plan.OpAgentStart, plan.OpClauthLaunch:
+		if in.AgentKind != "" {
+			return in.AgentKind
+		}
+		return "agent"
+	case plan.OpAwaitDetection:
+		return "detection"
+	case plan.OpAgentPrompt:
+		return "prompt"
+	default:
+		return op.Label
+	}
+}
+
+// submitStepDetail is what an op puts in the value column: the concrete
+// thing it is creating, phrased so it reads correctly both while the
+// step runs and after it has finished ("zvi/fix-login-redirect-loop from
+// main", not "creating zvi/..."). "" is a legitimate answer -- the view
+// renders the state's own word ("queued", "working…", "done") instead,
+// which is exactly what v2 spec §12's mockup shows for the prompt row.
+func submitStepDetail(op plan.Op, in plan.Input) string {
+	switch op.Kind {
+	case plan.OpWorktreeCreate:
+		base := in.BaseRef
+		if base == "" {
+			base = "HEAD"
+		}
+		if in.Branch == "" {
+			return "from " + base
+		}
+		return in.Branch + " from " + base
+	case plan.OpWorkspaceCreate, plan.OpTabCreate, plan.OpPaneSplit:
+		return in.Title
+	case plan.OpAgentStart:
+		if op.Agent != nil {
+			return op.Agent.Name
+		}
+		return ""
+	case plan.OpClauthLaunch:
+		if in.AccountPin != "" {
+			return "under clauth " + in.AccountPin
+		}
+		return "under clauth"
+	case plan.OpAwaitDetection:
+		return "waiting for the agent"
+	default:
+		return ""
+	}
+}
+
+// submitStepError renders a failed step's error into the value column.
+//
+// plan.Execute wraps every op error as "plan: execute: <op label>: ...",
+// a prefix identical for every failure that would otherwise spend most
+// of a sixty-cell column saying nothing -- and the op label is already
+// the row's own label. Both are trimmed; anything unexpected is left
+// exactly as it came, so a wrapper this does not recognize is never
+// silently swallowed.
+func submitStepError(err error, opLabel string) string {
+	if err == nil {
+		return ""
+	}
+	text := strings.TrimPrefix(err.Error(), execErrorPrefix)
+	if opLabel != "" {
+		text = strings.TrimPrefix(text, opLabel+": ")
+	}
+	return text
+}
+
+// execErrorPrefix is plan.Execute's own error wrapper (exec.go:
+// `fmt.Errorf("plan: execute: %s: %w", op.Label, runErr)`).
+const execErrorPrefix = "plan: execute: "
 
 // handleSubmitDone applies plan.Execute's own final ExecResult. A fully
 // successful run (FailedIndex == -1) has nothing further to show -- the
@@ -746,6 +884,12 @@ func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 	}
 	if msg.result.Created == nil {
 		m.submitDeadEnd = true // see Model.submitDeadEnd's own doc comment.
+		if m.submitView != nil {
+			// The view needs to be told too, so its footer offers the one
+			// key this state actually honors ("esc close") and says so
+			// nowhere else -- see SubmitView.footerParts.
+			m.submitView.SetDeadEnd()
+		}
 		return m, nil
 	}
 	m.submitCreated = *msg.result.Created

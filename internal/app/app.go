@@ -522,15 +522,20 @@ type Model struct {
 	submitInput         plan.Input
 	submitCreated       herdrc.CreatedTopology
 	submitCleanDecision plan.CleanDecision
-	// submitProgress is the full, Total-length working progress list
-	// startSubmit seeds at StepPending and handleSubmitProgress updates
-	// in place by Index as each streamed plan.Progress event arrives --
-	// SubmitView.SetProgress REPLACES its own displayed list on every
-	// call, so this is what makes "every step, including ones not yet
-	// started, visible from the first frame" possible (plan.Execute's own
-	// onProgress never itself emits a StepPending event for a step that
-	// hasn't started yet).
-	submitProgress []plan.Progress
+	// submitSteps is the full, one-per-op working row list startSubmit
+	// seeds at StepPending (submitSteps, async.go) and
+	// handleSubmitProgress updates in place by Index as each streamed
+	// plan.Progress event arrives -- SubmitView.SetSteps REPLACES its own
+	// displayed stack on every call, so this is what makes "every step,
+	// including ones not yet started, visible from the first frame"
+	// possible (plan.Execute's own onProgress never itself emits a
+	// StepPending event for a step that hasn't started yet).
+	//
+	// It holds form.Steps rather than plan.Progresses because the label
+	// and detail v2 spec §12's rows show are this layer's to write: see
+	// form.Step's own doc comment for why internal/form must not derive
+	// them from an op's verb-phrase label itself.
+	submitSteps []form.Step
 	// submitView is constructed fresh by startSubmit for each submit
 	// attempt (nil before the first one) -- a *form.SubmitView, not a
 	// form.Section: it takes no part in form.Model's own focus ring (see
@@ -986,12 +991,15 @@ func (m Model) buildPlanInput() plan.Input {
 func (m Model) startSubmit(ops []plan.Op, in plan.Input) (Model, tea.Cmd) {
 	m.submitting = true
 	m.submitInput = in
-	m.submitProgress = make([]plan.Progress, len(ops))
-	for i, op := range ops {
-		m.submitProgress[i] = plan.Progress{Index: i, Total: len(ops), Label: op.Label, State: plan.StepPending}
-	}
+	m.submitSteps = submitSteps(ops, in)
 	m.submitView = form.NewSubmitView(m.palette)
-	m.submitView.SetProgress(m.submitProgress)
+	// v2 spec §12's first requirement is that the pipeline wear the
+	// form's own header. The name is the form's name; the context half
+	// is the selected project, which is as much of spec §4's
+	// "repository · branch" line as this layer currently resolves (the
+	// form's own live context is wired separately).
+	m.submitView.SetHeader(submitHeaderName, submitHeaderContext(in))
+	m.submitView.SetSteps(m.submitSteps)
 	return m, runSubmitCmd(context.Background(), m.deps.Runner, ops)
 }
 

@@ -167,10 +167,11 @@ func innerWidth(w int) int {
 // replaces with a fixed row stack plus one panel (rowlayout.go). They
 // are kept, unchanged, for exactly as long as compose's v1 branch and
 // the field Sections' View/Height/MinHeight are, and are deleted with
-// them; nothing in the row-stack path calls any of them. (paintLine,
-// dropLinesToFit, clipKeeping, fitToHeight and innerWidth are NOT in
-// that set: they stay permanently, and innerWidth in particular keeps
-// serving submitview.go.)
+// them; nothing in the row-stack path calls any of them -- innerWidth
+// included, now that submitview.go measures itself with rowlayout.go's
+// contentBox instead (v2 spec §12). (paintLine, dropLinesToFit,
+// clipKeeping and fitToHeight are NOT in that set: they stay
+// permanently.)
 //
 // pickerChromeRows is the row count every picker-backed field Section
 // spends on its own fixed chrome before a single candidate row is drawn:
