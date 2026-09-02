@@ -28,13 +28,6 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
-// accountPickerRows is the account picker's fixed candidate-row count
-// (spec §6 field 7's own constant-height contract), matching
-// field_dir.go's dirPickerRows/field_worktree.go's basePickerRows -- a
-// clauth profile list is short (spec's own example config lists a
-// handful), so this doesn't need field_issue.go's larger issuePickerRows.
-const accountPickerRows = 4
-
 // accountActiveID is the "active" row's internal widgets.PickerItem.ID --
 // a leading-NUL sentinel that can never collide with a real clauth
 // profile name (clauth profile names are plain user-chosen identifiers,
@@ -130,6 +123,14 @@ type AccountField struct {
 	profiles      []clauth.Profile
 	activeProfile string
 
+	// pickerRowsShown is how many profile rows the last Panel render
+	// drew. widgets.Picker.SelectAt needs the SAME height MarkedView was
+	// called with to map a click back to an item, and v2's panel height
+	// varies with the window -- so the fixed v1 constant this used to
+	// pass (accountPickerRows, 4, deleted with this field) picked the
+	// wrong profile on any list the panel had scrolled.
+	pickerRowsShown int
+
 	// verdictKey/verdictText are SetVerdict's own staleness guard, the
 	// same "clears the moment the underlying value changes" discipline
 	// field_title.go's TitleField.verdictKey/field_dir.go's
@@ -183,7 +184,9 @@ func (f *AccountField) Blur() { f.focused = false }
 // comment).
 func (f *AccountField) Update(msg tea.Msg) tea.Cmd {
 	if click, ok := msg.(tea.MouseClickMsg); ok {
-		f.picker.SelectAt(click, accountPickerRows, "row:"+f.ID()+":")
+		if f.pickerRowsShown > 0 {
+			f.picker.SelectAt(click, f.pickerRowsShown, "row:"+f.ID()+":")
+		}
 		return nil
 	}
 	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
@@ -515,7 +518,9 @@ func (f *AccountField) Panel(w, h int) string {
 		h = 1
 	}
 	lines := make([]string, 0, h)
+	f.pickerRowsShown = 0
 	if h > 1 {
+		f.pickerRowsShown = h - 1
 		lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
 	}
 	lines = append(lines, panelText(f.panelStatus(), w))

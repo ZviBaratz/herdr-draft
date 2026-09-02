@@ -161,10 +161,12 @@ func TestWorktreeField_SubFocusGrammar(t *testing.T) {
 	}
 }
 
-// TestWorktreeField_ArrowsDriveTheChipsExceptOnTheBranch pins the other
-// half of the grammar: ←→ mean the toggle everywhere except the branch
-// part, where they belong to the text cursor.
-func TestWorktreeField_ArrowsDriveTheChipsExceptOnTheBranch(t *testing.T) {
+// TestWorktreeField_ArrowsDriveTheChipsOnlyFromTheChips pins the other
+// half of the grammar: ←→ mean the toggle on the CHIPS part and nowhere
+// else -- the text cursor's on the branch, and nothing at all on the
+// base, where they used to turn the worktree off and throw away the ref
+// the user was in the middle of choosing.
+func TestWorktreeField_ArrowsDriveTheChipsOnlyFromTheChips(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 	w.SetGitTarget(true)
 	w.SetOn(true)
@@ -172,29 +174,33 @@ func TestWorktreeField_ArrowsDriveTheChipsExceptOnTheBranch(t *testing.T) {
 	w.SetBaseItems(1, []string{"main"})
 	w.Focus()
 
-	// From the base part, ←→ still reach the toggle.
+	// From the base part, ←→ do nothing: not the toggle, not the cursor.
 	w.Update(key(tea.KeyDown, 0))
 	w.Update(key(tea.KeyDown, 0))
 	if w.part != partBase {
 		t.Fatalf("setup: part = %v, want partBase", w.part)
 	}
-	w.Update(key(tea.KeyLeft, 0))
-	if w.On() {
-		t.Errorf("Left from the base part did not reach the on/off toggle")
+	w.Update(key(tea.KeyDown, 0)) // off the HEAD sentinel, onto "main"
+	if got := w.Base(); got != "main" {
+		t.Fatalf("setup: Base() = %q, want the base cursor moved off HEAD", got)
 	}
-	// ...and turning it off strands nothing.
-	if w.part != partChips {
-		t.Errorf("part after the toggle went off = %v, want it clamped to partChips", w.part)
+	w.Update(key(tea.KeyRight, 0))
+	if !w.On() {
+		t.Errorf("Right from the base part turned the worktree OFF; it must be inert there")
+	}
+	if got := w.Base(); got != "main" {
+		t.Errorf("Base() after Right on the base part = %q, want the choice untouched", got)
+	}
+	w.Update(key(tea.KeyLeft, 0))
+	if !w.On() || w.part != partBase {
+		t.Errorf("Left from the base part moved something: On() = %v, part = %v", w.On(), w.part)
 	}
 
 	// On the branch part they are the text cursor's, not the toggle's.
-	w.Update(key(tea.KeyRight, 0)) // back on
-	w.Update(key(tea.KeyDown, 0))  // -> branch
+	w.Update(key(tea.KeyUp, 0)) // -> branch (the base cursor is off its top row)
+	w.Update(key(tea.KeyUp, 0))
 	if w.part != partBranch {
 		t.Fatalf("setup: part = %v, want partBranch", w.part)
-	}
-	if !w.On() {
-		t.Fatalf("setup: On() = false, want true")
 	}
 	w.Update(key(tea.KeyLeft, 0))
 	w.Update(key(tea.KeyLeft, 0))
@@ -205,6 +211,24 @@ func TestWorktreeField_ArrowsDriveTheChipsExceptOnTheBranch(t *testing.T) {
 	w.Update(rn('X'))
 	if got := w.Branch(); got != "zvi/keep-X" && !strings.Contains(got, "X") {
 		t.Errorf("Branch() after typing on the branch part = %q, want the edit applied", got)
+	}
+
+	// And from the chips they still work, both ways.
+	w.Update(key(tea.KeyUp, 0))
+	if w.part != partChips {
+		t.Fatalf("setup: part = %v, want partChips", w.part)
+	}
+	w.Update(key(tea.KeyLeft, 0))
+	if w.On() {
+		t.Errorf("Left on the chips part did not reach the on/off toggle")
+	}
+	// ...and turning it off strands nothing.
+	if w.part != partChips {
+		t.Errorf("part after the toggle went off = %v, want it clamped to partChips", w.part)
+	}
+	w.Update(key(tea.KeyRight, 0))
+	if !w.On() {
+		t.Errorf("Right on the chips part did not turn the worktree back on")
 	}
 }
 
@@ -536,6 +560,24 @@ func TestWorktreeField_NonGitPlaceholdersAreDistinct(t *testing.T) {
 	if !strings.Contains(off, worktreeOffPlaceholder) {
 		t.Errorf("off panel = %q, want it to name the reason", off)
 	}
+
+	// Each reason is named ONCE, by the chips line that owns it. The
+	// branch and base parts below carry an em dash instead: repeating a
+	// six-word reason down three consecutive lines said nothing the
+	// first line had not, and "branch  off" reads as a verb phrase
+	// before it reads as a value.
+	for name, panel := range map[string]string{"non-git": nonGit, "off": off} {
+		lines := strings.Split(panel, "\n")
+		if len(lines) < 3 {
+			t.Fatalf("%s panel has %d lines, want the three parts", name, len(lines))
+		}
+		for i, part := range []string{"branch", "base"} {
+			line := lines[i+1]
+			if !strings.Contains(line, rowValueNone) {
+				t.Errorf("%s panel's %s part = %q, want %q", name, part, line, rowValueNone)
+			}
+		}
+	}
 }
 
 // TestWorktreeField_FooterRungsFollowThePart pins v2 spec §3 rule 4 for
@@ -558,9 +600,21 @@ func TestWorktreeField_FooterRungsFollowThePart(t *testing.T) {
 	if got := widest(); !strings.Contains(got, "type to edit") || strings.Contains(got, "←→") {
 		t.Errorf("rung on the branch part = %q, want it to teach typing and NOT the toggle", got)
 	}
+	// On the base part the toggle is gone too: ←→ are a no-op there
+	// (Update), because they used to discard the ref being chosen.
 	w.Update(key(tea.KeyDown, 0))
-	if got := widest(); !strings.Contains(got, "↑↓ pick") {
-		t.Errorf("rung on the base part = %q, want it to teach the list", got)
+	atTop := widest()
+	if !strings.Contains(atTop, "pick a base") || strings.Contains(atTop, "←→") {
+		t.Errorf("rung on the base part = %q, want it to teach the list and NOT the toggle", atTop)
+	}
+	// At the top of the list ↑ leaves the part; below it ↑ moves the
+	// list. One wording cannot be true in both places, so it isn't one.
+	if !strings.Contains(atTop, "↑ back to the branch") {
+		t.Errorf("rung at the top of the base list = %q, want the way back out", atTop)
+	}
+	w.Update(key(tea.KeyDown, 0))
+	if got := widest(); strings.Contains(got, "back to the branch") || !strings.Contains(got, "↑↓ pick a base") {
+		t.Errorf("rung below the top of the base list = %q, want ↑↓ to mean the list", got)
 	}
 
 	// A non-git target must not be promised keys that do nothing -- which
@@ -611,9 +665,20 @@ func TestWorktreeField_HeadRowNamesTheCurrentBranch(t *testing.T) {
 	if !strings.Contains(frame, "HEAD (main)") {
 		t.Errorf("base panel = %q, want the HEAD row to name the current branch", frame)
 	}
-	// The base part's own selection display must agree with the row.
-	if !strings.Contains(strings.Split(frame, "\n")[2], "HEAD (main)") {
-		t.Errorf("base part = %q, want it to show the same HEAD label as row 0", frame)
+	// And it names it EXACTLY ONCE: the base part line yields to the
+	// list below it rather than printing the same six cells one line
+	// apart (see panelBase).
+	if n := strings.Count(frame, "HEAD (main)"); n != 1 {
+		t.Errorf("base panel names HEAD (main) %d times:\n%s", n, frame)
+	}
+	if part := strings.Split(frame, "\n")[2]; strings.Contains(part, "HEAD") {
+		t.Errorf("base part = %q, want it left to the list's own cursor row", part)
+	}
+	// With no room for a list, the part line is the only place the base
+	// can appear -- so there it says it.
+	short := ansi.Strip(w.Panel(60, worktreePanelParts))
+	if part := strings.Split(short, "\n")[2]; !strings.Contains(part, "HEAD (main)") {
+		t.Errorf("base part with no list rows = %q, want the selection named there", part)
 	}
 	// The sentinel's own public contract is unchanged: HEAD still means "".
 	if got := w.Base(); got != "" {

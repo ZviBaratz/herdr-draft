@@ -239,8 +239,15 @@ func (w *WorktreeField) Blur() {
 //   - ↑↓ move the part cursor, clamped -- except on the base list, where
 //     ↓ is CursorNext and ↑ is CursorPrev, or, at the top row, a handoff
 //     back to the branch part.
-//   - ←→ drive the on/off chips from every part but the branch, so the
-//     toggle keeps one meaning throughout the field.
+//   - ←→ drive the on/off chips ONLY from the chips part. They used to
+//     reach the toggle from the base part too, on the reasoning that
+//     "the toggle keeps one meaning throughout the field" -- which meant
+//     a → while choosing a base ref silently turned the worktree off and
+//     threw the choice away, three lines below a list the user was
+//     visibly working in. A key that destroys the thing you are editing
+//     is worse than a key that does nothing, so on the base part they
+//     now do nothing at all; ↑ still walks the part cursor up to the
+//     chips, and FooterRungs stops advertising a toggle there.
 //   - On the branch part everything except ↑↓ forwards to the lineInput,
 //     so ←→/Home/End move the text cursor rather than the toggle.
 //   - A click on a "chip:worktree:<id>" or "row:base:<n>" zone selects
@@ -276,14 +283,20 @@ func (w *WorktreeField) Update(msg tea.Msg) tea.Cmd {
 			}
 			return w.setPart(w.part + 1)
 		case "left":
-			if w.part != partBranch {
+			if w.part == partChips {
 				w.chips.Prev()
 				return w.clampPart()
 			}
+			if w.part == partBase {
+				return nil
+			}
 		case "right":
-			if w.part != partBranch {
+			if w.part == partChips {
 				w.chips.Next()
 				return w.clampPart()
+			}
+			if w.part == partBase {
+				return nil
 			}
 		}
 	}
@@ -676,24 +689,38 @@ func (w *WorktreeField) Panel(width, h int) string {
 		chipLabelW, chipValueW = labelW-1, valueW+1
 	}
 
+	// The base list's height is settled BEFORE the base part line is
+	// composed, because whether the list is on screen is what decides
+	// whether that line names the selection at all -- see panelBase.
+	rows := h - worktreePanelParts
+	if rows < 0 || !w.isGitRepo || !w.On() {
+		rows = 0
+	}
+	w.baseRowsShown = rows
+
 	lines := make([]string, 0, h)
 	lines = append(lines, w.panelPart(partChips, worktreeRowLabel, w.panelChips(chipValueW), chipLabelW))
 	if h > 1 {
 		lines = append(lines, w.panelPart(partBranch, worktreeBranchLabel, w.panelBranch(valueW), labelW))
 	}
 	if h > 2 {
-		lines = append(lines, w.panelPart(partBase, worktreeBaseLabel, w.panelBase(valueW), labelW))
+		lines = append(lines, w.panelPart(partBase, worktreeBaseLabel, w.panelBase(valueW, w.baseListNamesSelection(rows)), labelW))
 	}
 
-	rows := h - worktreePanelParts
-	if rows < 0 || !w.isGitRepo || !w.On() {
-		rows = 0
-	}
-	w.baseRowsShown = rows
 	if rows > 0 {
 		lines = append(lines, w.panelBaseRows(labelW, valueW, rows)...)
 	}
 	return panelBlock(width, h, lines...)
+}
+
+// baseListNamesSelection reports whether the candidate list rendered
+// under the base part will itself show the selected ref, given the rows
+// it was allotted: the picker's own window always follows its cursor
+// (widgets.Picker.CursorRow recomputes the same scrollOffset the render
+// uses), so this is false only when there is no list -- no rows at all,
+// an empty pool, or a worktree that is off or impossible.
+func (w *WorktreeField) baseListNamesSelection(rows int) bool {
+	return rows > 0 && w.base.CursorRow(rows) >= 0
 }
 
 // panelPart composes one of the three part lines: the gutter marker, the
@@ -723,10 +750,15 @@ func (w *WorktreeField) panelChips(valueW int) string {
 // inert placeholders when there is no branch to name.
 func (w *WorktreeField) panelBranch(valueW int) string {
 	switch {
-	case !w.isGitRepo:
-		return fitLine(dimHint(w.palette).Render(worktreeNonGitPlaceholder), valueW)
-	case !w.On():
-		return fitLine(dimHint(w.palette).Render(worktreeOffPlaceholder), valueW)
+	case !w.isGitRepo, !w.On():
+		// An em dash, not the reason. The chips line one row above IS
+		// the reason -- `off` selected, or the inert non-git
+		// placeholder -- and repeating it here and again on the base
+		// part printed "not a git repository" three times down a
+		// four-line panel. "branch  off" also reads as a verb phrase
+		// before it reads as a value, which is the sort of thing a copy
+		// pass exists to catch.
+		return fitLine(dimHint(w.palette).Render(rowValueNone), valueW)
 	case w.focused && w.part == partBranch:
 		return w.branch.View(valueW)
 	case w.Branch() == "":
@@ -738,13 +770,33 @@ func (w *WorktreeField) panelBranch(valueW int) string {
 
 // panelBase renders the base part: the current selection plus whatever
 // SetBaseStatus last reported, or the matching inert placeholder.
-func (w *WorktreeField) panelBase(valueW int) string {
+//
+// listNamesSelection is the fix for the base saying itself twice. The
+// candidate list sits directly under this line with its own accent
+// cursor on the selected ref, so naming that ref here as well rendered
+//
+//	base       HEAD (main)
+//	             HEAD (main)
+//	             main
+//
+// -- the same six cells, twice, one line apart, which v2 spec §4's own
+// mockup does not do. Of the two ways to stop repeating it, dropping the
+// value from THIS line is the one that leaves widgets.Picker alone: the
+// alternative (hide the selected candidate from the list) would mean
+// reimplementing the picker's windowed render and its click-to-row
+// mapping inside this field to omit one row, and would give the list a
+// membership that changes as the cursor moves through it. So the part
+// line yields to the list -- but only while the list is actually there
+// to say it. With no rows to spare it names the base itself, which is
+// what keeps the selection on screen at a panel height too short for a
+// list at all.
+//
+// The status text (SetBaseStatus: "searching…", "couldn't list") is not
+// a repeat of anything and stays either way.
+func (w *WorktreeField) panelBase(valueW int, listNamesSelection bool) string {
 	if !w.isGitRepo || !w.On() {
-		placeholder := worktreeOffPlaceholder
-		if !w.isGitRepo {
-			placeholder = worktreeNonGitPlaceholder
-		}
-		return fitLine(dimHint(w.palette).Render(placeholder), valueW)
+		// See panelBranch: the reason belongs to the chips line, once.
+		return fitLine(dimHint(w.palette).Render(rowValueNone), valueW)
 	}
 	status := ""
 	if w.baseStatus != "" {
@@ -754,7 +806,11 @@ func (w *WorktreeField) panelBase(valueW int) string {
 	if budget < 1 {
 		budget = 1
 	}
-	body := lipgloss.NewStyle().Foreground(w.palette.Branch).Render(keepHead(w.baseDisplay(), budget))
+	display := ""
+	if !listNamesSelection {
+		display = keepHead(w.baseDisplay(), budget)
+	}
+	body := lipgloss.NewStyle().Foreground(w.palette.Branch).Render(display)
 	return fitLine(fitLine(body, budget)+status, valueW)
 }
 
@@ -808,7 +864,18 @@ func (w *WorktreeField) FooterRungs() []string {
 	case partBranch:
 		return []string{"type to edit · ↑↓ part", "↑↓ part"}
 	case partBase:
-		return []string{"↑↓ pick a base · ←→ toggle", "↑↓ pick"}
+		// No ←→ here: they are a no-op on this part (Update), and saying
+		// otherwise is what made a stray → look like a working key right
+		// up until it discarded the base you were picking.
+		//
+		// ↑ is position-dependent for the same reason ZoneTitle's Enter
+		// is (footer.go): at the top of the list it hands the part
+		// cursor back to the branch, and anywhere else it just moves the
+		// list, so one wording cannot be true in both places.
+		if w.baseAtTop() {
+			return []string{"↓ pick a base · ↑ back to the branch", "↓ pick a base"}
+		}
+		return []string{"↑↓ pick a base"}
 	default:
 		if !w.On() {
 			return []string{"←→ turn it on", "←→ toggle"}

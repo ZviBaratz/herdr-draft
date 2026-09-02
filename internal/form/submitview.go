@@ -313,10 +313,14 @@ func (v *SubmitView) compose(w, h int) string {
 		add(v.stepRow(v.steps[i], labelW, valueW), bg)
 	}
 
+	// Rule 2 is the REGION's own top border here, not a fixed line under
+	// the steps, so its line is spent out of the region's budget rather
+	// than ahead of it -- see regionLines.
+	region := f.Region
 	if f.Rule2 {
-		add(dividerLine(boxWidth, v.palette), v.palette.PanelBG)
+		region++
 	}
-	for _, l := range v.regionLines(boxWidth, f.Region) {
+	for _, l := range v.regionLines(boxWidth, region, f.Rule2) {
 		add(l, v.palette.PanelBG)
 	}
 	if f.Footer {
@@ -443,8 +447,10 @@ func (v *SubmitView) stepValue(s Step, width int) string {
 	return style.Render(text)
 }
 
-// regionLines renders the panel region: blank while the pipeline is
-// running, and the failure explanation once it has stopped.
+// regionLines renders the panel region, INCLUDING rule 2 when rule is
+// true (compose spends the rule's line out of region for exactly this
+// reason): blank while the pipeline is running, and the failure
+// explanation, under its own rule, once the pipeline has stopped.
 //
 // The explanation is BOTTOM-aligned, unlike the form's panel, which is
 // top-aligned: every line of it exists to explain the buttons on the
@@ -452,14 +458,26 @@ func (v *SubmitView) stepValue(s Step, width int) string {
 // line immediately above the button row), so it is anchored to them
 // rather than floating a screen away under the rule. When the region is
 // too short for the whole explanation it is clipped from the TOP, which
-// makes the clean rationale/denial -- the last line, and the one §12
-// requires to be on screen whenever remove is disabled -- the line that
-// survives.
-func (v *SubmitView) regionLines(width, region int) []string {
+// takes the rule first and makes the clean rationale/denial -- the last
+// line, and the one §12 requires to be on screen whenever remove is
+// disabled -- the line that survives.
+//
+// The rule travels DOWN with the explanation instead of sitting under
+// the step rows, and is omitted entirely when there is no explanation.
+// The form draws its own rule 2 above a region that always holds the
+// focused field's chooser, so slack under it is correct there; this view
+// has no chooser, and a rule with nothing beneath it -- sixteen blank
+// lines above a footer, on the progress screen -- was a divider drawn
+// over nothing. Trailing blanks above a bottom-anchored footer are not
+// the defect and are left alone.
+func (v *SubmitView) regionLines(width, region int, rule bool) []string {
 	if region <= 0 {
 		return nil
 	}
 	body := v.failureBody(width)
+	if rule && len(body) > 0 && len(body) < region {
+		body = append([]string{dividerLine(width, v.palette)}, body...)
+	}
 	if len(body) > region {
 		body = body[len(body)-region:]
 	}
@@ -495,8 +513,13 @@ func (v *SubmitView) failureBody(width int) []string {
 		out = append(out, indentedLine(dimText(v.palette).Render(
 			"remove undoes everything this create made"), width))
 	} else {
+		// `<state>  <reason>`, two spaces and no dash: v2 spec §6's own
+		// form for "unavailable, with a reason" (§6.1's `unavailable  no
+		// API key`, and the issue row that already renders it that way).
+		// This line used an em dash, which made the form's two screens
+		// spell the same idiom two ways.
 		out = append(out, indentedLine(lipgloss.NewStyle().Foreground(v.palette.Warning).Render(
-			"remove unavailable — "+v.clean.Reason), width))
+			"remove unavailable"+unavailableReasonSep+v.clean.Reason), width))
 	}
 	return out
 }

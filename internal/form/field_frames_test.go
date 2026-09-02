@@ -63,15 +63,17 @@ func TestFrames_DirPanel(t *testing.T) {
 }
 
 // buildTitlePanelForm types a title into TitleField and sets a matching
-// SetVerdict message -- 35 cells of it, longer than v1's retired 21-cell
-// clamp, so the frame shows the verdict whole.
+// SetVerdict message -- the app layer's own resting note, verbatim
+// (internal/app's titleNote: "branch will be <branch>", v2 spec §4's own
+// mockup), and 42 cells of it, longer than v1's retired 21-cell clamp,
+// so the frame shows the verdict whole.
 func buildTitlePanelForm(palette theme.Palette) Model {
 	f := NewTitleField(palette)
 	f.Focus()
 	for _, r := range "fix login redirect loop" {
 		f.Update(rn(r))
 	}
-	f.SetVerdict(f.Value(), "branch: zvi/fix-login-redirect-loop")
+	f.SetVerdict(f.Value(), "branch will be zvi/fix-login-redirect-loop")
 	return fieldFrame(palette, f)
 }
 

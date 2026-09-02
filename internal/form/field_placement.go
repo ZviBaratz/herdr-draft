@@ -250,3 +250,17 @@ func (f *PlacementField) Panel(w, h int) string {
 
 // PanelRows is two: the chips and their explanation.
 func (f *PlacementField) PanelRows() int { return 2 }
+
+// FooterRungs implements form.go's footerHinter for the one state
+// footer.go's per-ZONE table cannot see: with the worktree on, this
+// field's chips are inert (SetWorktreeOn -> widgets.ChipRow.SetInert,
+// whose Next/Prev are then no-ops), so the table's "←→ choose" promises
+// a key that does nothing -- and this is the DEFAULT configuration's
+// resting state, not an edge case. Same judgement, and the same
+// sentence, as field_worktree.go's non-git rung.
+func (f *PlacementField) FooterRungs() []string {
+	if f.worktreeOn {
+		return []string{"nothing to set here"}
+	}
+	return nil
+}

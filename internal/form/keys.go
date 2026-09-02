@@ -190,11 +190,19 @@ const (
 	// ZoneAccount is the clauth account picker (spec §6 field 7).
 	ZoneAccount
 	// ZonePrompt is the prompt textarea (spec §6 field 8) -- the only zone
-	// in which MapKey ever returns ActionNewline.
+	// in which MapKey ever returns ActionNewline, and (v2 spec §8) one of
+	// the three from which a bare Enter submits.
 	ZonePrompt
 	// ZoneCreate is the Create button (spec §6 field 9): the form's last
-	// focus stop, and, along with a non-empty ZoneTitle, one of the two
-	// zones from which Enter submits instead of advancing.
+	// focus stop, and, along with ZonePrompt and a non-empty ZoneTitle,
+	// one of the three zones from which Enter submits instead of
+	// advancing.
+	//
+	// v2 spec §8's closing line, "ZoneCreate is removed with the Create
+	// section", is a spec ERRATUM: it predates the decision (v2 spec §5,
+	// and issue #3's authoritative Revision) to keep Create as a Section
+	// rendered on the footer line. The section stayed, so this zone stays
+	// with it.
 	ZoneCreate
 )
 
@@ -277,9 +285,9 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 	case "esc", "ctrl+c":
 		return ActionCancel, armed
 	case "ctrl+s":
-		// Submit from any field -- Enter submits only from Create and a
-		// filled Title (it advances everywhere else, including the
-		// prompt), so Ctrl+S is the submit-from-anywhere shortcut.
+		// Submit from any field -- Enter submits only from Create, the
+		// prompt and a filled Title (it advances everywhere else), so
+		// Ctrl+S is the submit-from-anywhere shortcut.
 		return ActionSubmit, armed
 	case "ctrl+j":
 		// Newline-only, and only in the prompt: ctrl+j is bubbles
@@ -298,9 +306,10 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 		// textInput_keys.go) -- Ctrl+J and Alt+Enter remain the routes that
 		// also work on a terminal that does not. Deliberately its own
 		// case, not folded into "enter"/"alt+enter" below: that case
-		// submits from Create and a filled Title before it ever reaches
-		// the prompt, so sharing it would mean Shift+Enter creating a
-		// session from the field next door. Outside the prompt it is
+		// submits from Create, from a filled Title and (v2 spec §8) from
+		// the prompt itself, so sharing it would mean Shift+Enter
+		// creating a session instead of breaking a line. Outside the
+		// prompt it is
 		// inert (ActionNone), matching Atrium's silent swallow -- it is
 		// not a navigation key and no footer claims it is anywhere else.
 		if zone.Kind == ZonePrompt {
@@ -319,17 +328,29 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 			// bounce off the title-required validation).
 			return ActionSubmit, armed
 		}
-		if zone.Kind == ZonePrompt && msg.Mod.Contains(tea.ModAlt) {
-			// Alt+Enter inserts a newline in the prompt: the
-			// terminal-independent route that arrives even on a legacy
-			// terminal (as ESC CR), unlike the real Shift+Enter.
-			return ActionNewline, armed
+		if zone.Kind == ZonePrompt {
+			if msg.Mod.Contains(tea.ModAlt) {
+				// Alt+Enter inserts a newline in the prompt: the
+				// terminal-independent route that arrives even on a
+				// legacy terminal (as ESC CR), unlike the real
+				// Shift+Enter.
+				return ActionNewline, armed
+			}
+			// A BARE Enter in the prompt submits (v2 spec §8: "↵ from the
+			// prompt submits rather than advancing. Nothing used it for a
+			// newline; ⌃J, ⇧↵ and ⌥↵ keep that job"). The prompt is the
+			// last field a user fills before creating, and v1's advance
+			// only moved focus onto the Create button -- one keystroke to
+			// save, at the cost of a newline key nothing was using. The
+			// companion view plan's footer table still says "↵ next" for
+			// this zone; the spec wins, and footer.go's ZonePrompt rung
+			// says so.
+			return ActionSubmit, armed
 		}
-		// Every other field (Title, pickers, chip rows) -- and the
-		// prompt on a bare Enter -- advances to the next enabled zone,
-		// exactly like Tab in a non-picker zone. Advancing by one rather
-		// than jumping to Create keeps Enter consistent regardless of
-		// where a field sits in the order.
+		// Every other field (an empty Title, pickers, chip rows) advances
+		// to the next enabled zone, exactly like Tab in a non-picker
+		// zone. Advancing by one rather than jumping to Create keeps
+		// Enter consistent regardless of where a field sits in the order.
 		return ActionAdvance, armed
 	default:
 		return ActionNone, armed

@@ -29,15 +29,6 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
-// issuePickerRows is IssueField's fixed candidate-row count (spec §6
-// field 1's own constant-height contract), picked larger than
-// field_dir.go's dirPickerRows/field_worktree.go's basePickerRows (4)
-// since an assigned-issue list is the field most likely to have enough
-// rows to make a taller window worth showing (spec §10: up to 50 issues
-// per fetch) -- most visible at the "issue-picker-120x40" golden frame
-// the brief names explicitly.
-const issuePickerRows = 6
-
 // issueNoneID is the "none" row's internal widgets.PickerItem.ID -- a
 // leading-NUL sentinel that can never collide with a real Linear
 // identifier (Linear issue identifiers are always
@@ -69,11 +60,6 @@ const (
 	// value and the list row offers a choice, but there is only one honest
 	// word for this one and repeating it costs nothing.
 	issueRowNone = "none"
-	// issueRowUnavailableSep joins "unavailable" to its reason. v2 spec
-	// §6's table spells this cell `unavailable  <reason>`, two spaces --
-	// the row-stack rewrite plan wrote it with an em dash, and the spec
-	// wins.
-	issueRowUnavailableSep = "  "
 	// issuePanelMaxRows caps PanelRows: spec §10 fetches up to 50 issues,
 	// far more than a panel should claim from the rest of the form.
 	issuePanelMaxRows = 24
@@ -107,6 +93,14 @@ type IssueField struct {
 
 	pickerVersion  int
 	lastSelectedID string
+
+	// pickerRowsShown is how many issue rows the last Panel render drew.
+	// widgets.Picker.SelectAt needs the SAME height MarkedView was called
+	// with to map a click back to an item, and v2's panel height varies
+	// with the window -- so the fixed v1 constant this used to pass
+	// (issuePickerRows, 6, deleted with this field) picked the wrong
+	// issue on any list the panel had scrolled.
+	pickerRowsShown int
 
 	// unavailable, when non-empty, is SetUnavailable's own reason: Linear
 	// is configured but could not be reached, so the field renders inert
@@ -188,8 +182,10 @@ func (f *IssueField) Blur() {
 // quality (spec §3 goal 5).
 func (f *IssueField) Update(msg tea.Msg) tea.Cmd {
 	if click, ok := msg.(tea.MouseClickMsg); ok {
-		if _, ok := f.picker.SelectAt(click, issuePickerRows, "row:"+f.ID()+":"); ok {
-			return f.selectionChangedCmd()
+		if f.pickerRowsShown > 0 {
+			if _, ok := f.picker.SelectAt(click, f.pickerRowsShown, "row:"+f.ID()+":"); ok {
+				return f.selectionChangedCmd()
+			}
 		}
 		return nil
 	}
@@ -353,7 +349,7 @@ func (f *IssueField) Row(w int) string {
 	}
 	switch {
 	case f.unavailable != "":
-		text := issueUnavailableLabel + issueRowUnavailableSep + f.unavailable
+		text := issueUnavailableLabel + unavailableReasonSep + f.unavailable
 		return fitLine(dimHint(f.palette).Render(keepHead(text, w)), w)
 	case f.focused:
 		return f.input.View(w)
@@ -375,7 +371,9 @@ func (f *IssueField) Panel(w, h int) string {
 		h = 1
 	}
 	lines := make([]string, 0, h)
+	f.pickerRowsShown = 0
 	if f.unavailable == "" && h > 1 {
+		f.pickerRowsShown = h - 1
 		lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
 	}
 	for len(lines) < h-1 {
@@ -411,6 +409,19 @@ func (f *IssueField) PanelRows() int {
 		return 1
 	}
 	return capRows(1+f.picker.FilteredLen(), issuePanelMaxRows)
+}
+
+// FooterRungs implements form.go's footerHinter for the state
+// footer.go's per-ZONE table cannot see: an unavailable field draws no
+// picker and no filter input at all (Panel/Row), so the table's
+// "type to filter · ↑↓ choose · ⇥ complete" would advertise three keys
+// with nothing to act on. Same judgement, and the same sentence, as
+// field_worktree.go's non-git rung.
+func (f *IssueField) FooterRungs() []string {
+	if f.unavailable != "" {
+		return []string{"nothing to set here"}
+	}
+	return nil
 }
 
 // IssueChosenMsg is emitted (as a tea.Cmd's result) whenever IssueField's

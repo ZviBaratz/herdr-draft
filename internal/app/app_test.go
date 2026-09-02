@@ -935,11 +935,33 @@ func TestNew_SectionOrder(t *testing.T) {
 // TestNew_FocusOpensOnTitle pins v2 spec §8's opening state: the whole
 // redesign is "open, type a title, Enter", which is only true if focus
 // starts on the title rather than on the first enabled section.
+//
+// Both configurations, because the section list is what a first-enabled
+// walk would key off and the two differ in exactly that: the full one
+// puts Issue above Title, the minimal one (Linear unconfigured, fewer
+// than two clauth profiles -- v2 spec §6.1's "absent by design") starts
+// the stack at Title itself, so a regression to first-enabled would look
+// correct there and only there.
 func TestNew_FocusOpensOnTitle(t *testing.T) {
-	m := newTestModel(t, testSetup{Linear: &fakeLinear{}})
-	m.Init()
-	if got := m.form.FocusedID(); got != "title" {
-		t.Errorf("FocusedID() after Init = %q, want %q", got, "title")
+	for _, tc := range []struct {
+		name  string
+		setup testSetup
+	}{
+		{"full-config", testSetup{
+			Linear:       &fakeLinear{issues: frameIssues()},
+			LinearCache:  frameIssues(),
+			Clauth:       &fakeClauth{status: frameClauthStatus()},
+			ClauthStatus: frameClauthStatus(),
+		}},
+		{"minimal-config", testSetup{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModel(t, tc.setup)
+			m.Init()
+			if got := m.form.FocusedID(); got != "title" {
+				t.Errorf("FocusedID() after Init = %q, want %q (sections: %v)", got, "title", m.form.SectionIDs())
+			}
+		})
 	}
 }
 

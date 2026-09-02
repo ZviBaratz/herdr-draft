@@ -105,12 +105,6 @@ const (
 	ValidityInvalid
 )
 
-// dirPickerRows is DirField's fixed candidate-row count (spec §6 field 2's
-// own constant-height contract) -- chosen to match
-// widgets.PromptArea.PromptAreaPreferredRows so the form's two "list-
-// shaped" fields default to the same visual weight.
-const dirPickerRows = 4
-
 const (
 	// dirRowLabel is v2's row label. Note it is NOT this Section's ID()
 	// ("dir", which zoneKindByID and every mouse zone already spell that
@@ -153,6 +147,14 @@ type DirField struct {
 	haveCandVersion bool
 	candVersion     int
 	candidates      []string
+
+	// pickerRowsShown is how many candidate rows the last Panel render
+	// drew. widgets.Picker.SelectAt needs the SAME height MarkedView was
+	// called with to map a click back to an item, and v2's panel height
+	// varies with the window -- so the fixed v1 constant this used to
+	// pass (dirPickerRows, 4, deleted with this field) picked the wrong
+	// candidate on any list the panel had scrolled.
+	pickerRowsShown int
 
 	// pickerVersion is bumped only when the FILTER TEXT changes (a fresh
 	// result set the user is now looking at, which should reset the
@@ -227,7 +229,9 @@ func (d *DirField) Blur() {
 // user has already selected with the arrow keys back to the top.
 func (d *DirField) Update(msg tea.Msg) tea.Cmd {
 	if click, ok := msg.(tea.MouseClickMsg); ok {
-		d.picker.SelectAt(click, dirPickerRows, "row:"+d.ID()+":")
+		if d.pickerRowsShown > 0 {
+			d.picker.SelectAt(click, d.pickerRowsShown, "row:"+d.ID()+":")
+		}
 		return nil
 	}
 	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
@@ -502,7 +506,9 @@ func (d *DirField) Panel(w, h int) string {
 		h = 1
 	}
 	lines := make([]string, 0, h)
+	d.pickerRowsShown = 0
 	if h > 1 {
+		d.pickerRowsShown = h - 1
 		lines = append(lines, panelPickerLines(d.picker, w, h-1, "row:"+d.ID()+":", d.palette)...)
 	}
 	lines = append(lines, panelText(dimHint(d.palette).Render(d.panelStatus()), w))

@@ -116,7 +116,7 @@ func TestModel_ComposeFitsExactlyTheWindow(t *testing.T) {
 			t.Errorf("ViewAt(80, %d) produced %d lines, want exactly %d", h, lines, h)
 		}
 		rows := strings.Split(got, "\n")
-		if last := ansi.Strip(rows[len(rows)-1]); !strings.Contains(last, "Create") {
+		if last := ansi.Strip(rows[len(rows)-1]); !strings.Contains(last, "↵ create") {
 			t.Errorf("ViewAt(80, %d) last row = %q, want the Create button", h, last)
 		}
 	}

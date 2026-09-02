@@ -23,6 +23,21 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
+// rowValueNone is the em dash v2 spec §6's table uses for a cell with
+// nothing in it -- the prompt's unset row, the agent's, and the
+// worktree panel's branch and base parts while there is no worktree to
+// name one for. One spelling, in one place, for the same idea.
+const rowValueNone = "—"
+
+// unavailableReasonSep joins a state word to the reason for it:
+// `unavailable  no API key`, `remove unavailable  uncommitted changes`.
+// Two spaces, no dash -- v2 spec §6's table and §6.1's worked example
+// both spell it that way, and it is the whole reason this lives in one
+// place rather than in each field: the form's own row and the submit
+// screen's own explanation each had a spelling, and they were not the
+// same one.
+const unavailableReasonSep = "  "
+
 // rowEllipsis marks an elided row value. sizes.go's own file doc records
 // the v1 decision this reverses and why: v1 clipped silently because
 // running out of room on a HINT line costs the reader a suggestion they

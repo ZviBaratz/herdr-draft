@@ -32,7 +32,10 @@ import (
 // compose (below), the whole detail region registers one "panel" zone,
 // the Create section registers "button:create" (renderFooter) since its
 // click semantics differ from every other section (submit, not focus),
-// and a concrete field's own chip/picker rows register
+// the cancel button beside it registers "button:cancel" (v2 spec §7's
+// zone list names both) even though no Section owns it -- it is esc's
+// own affordance, not a focus stop -- and a concrete field's own
+// chip/picker rows register
 // "chip:<sectionID>:<chipID>"/"row:<sectionID>:<n>" zones themselves via
 // widgets.ChipRow.MarkedView/widgets.Picker.MarkedView (see e.g.
 // field_placement.go's PlacementField.Panel/Update). createSectionID
@@ -56,6 +59,7 @@ import (
 const (
 	createSectionID  = "create"
 	zoneCreateButton = "button:create"
+	zoneCancelButton = "button:cancel"
 	zoneFieldPrefix  = "field:"
 	zonePanel        = "panel"
 )
@@ -493,7 +497,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleMouseClick implements task 21's click grammar (spec §7: herdr is
 // mouse-first): a left-button click on the Create button's own
 // "button:create" zone (see renderFooter) submits, exactly like Enter
-// from Create; a left-button click inside the "panel" zone is forwarded
+// from Create; a click on the cancel button's "button:cancel" zone
+// beside it cancels, exactly like Esc; a left-button click inside the
+// "panel" zone is forwarded
 // to the FOCUSED section WITHOUT changing focus; and a left-button click
 // on any stack row's own "field:<id>" zone (see compose) moves the ring
 // directly to that section -- the same ring.set plumbing Tab navigation
@@ -527,6 +533,9 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	}
 	if widgets.Zones.Get(zoneCreateButton).InBounds(msg) {
 		return m, submitCmd
+	}
+	if widgets.Zones.Get(zoneCancelButton).InBounds(msg) {
+		return m, cancelCmd
 	}
 
 	if widgets.Zones.Get(zonePanel).InBounds(msg) {
@@ -877,22 +886,37 @@ func (m Model) renderPanelRegion(width, region int) []string {
 }
 
 // renderFooter composes v2's footer line: the contextual key ladder on
-// the left, the Create button flush right (v2 spec §5, "Create stays a
-// focus stop but moves onto the footer line").
+// the left, the two action buttons flush right (v2 spec §4's mockup
+// footer, `↵ create · esc cancel`, and §5's "Create stays a focus stop
+// but moves onto the footer line").
 //
-// The rungs are fitted into width - the button's own width - a two-cell
-// gap, and the button is NEVER traded away for hint text: on a window
-// too narrow for both, the key ladder is what gets clipped. On one too
-// narrow even for the button, the button is all that is drawn -- it is
-// the one control the form cannot do without.
+// There are TWO buttons, not one, because v2 spec §4 puts both actions
+// there and §7 adopts herdr's own two-button grammar wholesale ("action
+// buttons carrying a key glyph plus a verb -- the primary filled with
+// the accent color, the secondary on a surface background"). Only the
+// primary is a Section and a focus stop; cancel is esc's own clickable
+// affordance ("button:cancel", v2 spec §7's zone list), which is also
+// what retires `Esc cancel` from the key ladder -- see footer.go's
+// zoneRungs.
+//
+// The rungs are fitted into width - both buttons - a two-cell gap, and
+// the buttons are NEVER traded away for hint text: on a window too
+// narrow for all three, the key ladder is what gets clipped, then cancel,
+// and create is the last thing standing -- it is the one control the
+// form cannot do without.
 func renderFooter(width int, rungs []string, createFocused bool, p theme.Palette) string {
-	button := createButton(createFocused, p)
-	buttonWidth := lipgloss.Width(button)
-	marked := widgets.Zones.Mark(zoneCreateButton, button)
-	if buttonWidth >= width {
-		return fitLine(marked, width)
+	create := widgets.Zones.Mark(zoneCreateButton, createButton(createFocused, p))
+	createWidth := lipgloss.Width(create)
+	if createWidth >= width {
+		return fitLine(create, width)
 	}
-	return spreadLine(fitFooter(rungs, width-buttonWidth-footerButtonGap), marked, width)
+
+	buttons, buttonsWidth := create, createWidth
+	cancel := widgets.Zones.Mark(zoneCancelButton, cancelButton(p))
+	if both := createWidth + footerButtonGap + lipgloss.Width(cancel); both < width {
+		buttons, buttonsWidth = create+strings.Repeat(" ", footerButtonGap)+cancel, both
+	}
+	return spreadLine(fitFooter(rungs, width-buttonsWidth-footerButtonGap), buttons, width)
 }
 
 // footerButtonGap is the minimum blank space kept between the footer's
@@ -1016,20 +1040,22 @@ func (c *createSection) PanelRows() int        { return 0 }
 //   - createButtonFace takes herdr's dialogs.rs call-site convention
 //     for a PRIMARY button --
 //     `Style::default().fg(panel_contrast_fg(&app.palette)).bg(app.palette.accent).add_modifier(Modifier::BOLD)`,
-//     hint "↵" -- for this section's FOCUSED state.
+//     hint "↵" -- for this section's FOCUSED state, and cancelButton
+//     takes the SECONDARY convention beside it (v2 spec §7: "the primary
+//     filled with the accent color, the secondary on a surface
+//     background").
 //
-// What's NOT ported, and is this task's own synthesis (flagged in
-// task-16-report.md): herdr's own call sites give DIFFERENT buttons
-// different FIXED colors regardless of focus (accent-filled for the
-// primary action, a dimmer surface0-filled style for a cancel/clear
-// button rendered alongside it), because herdr's own dialogs render more
-// than one button at once and use color to tell primary from secondary.
-// This form has exactly one button, and its color instead needs to
-// convey FOCUS (whether the ring is currently on it) -- there is no
-// second button here for color to distinguish it from. So the unfocused
-// state instead mirrors Atrium's own renderEnterButton
-// (textInput_render.go, on the clean list): plain text, no background
-// fill, no hint glyph, until the ring actually reaches it.
+// An earlier round rendered the unfocused primary as Atrium's plain
+// renderEnterButton -- no fill, no key glyph -- on the reasoning that
+// "this form has exactly one button, and its color instead needs to
+// convey FOCUS ... there is no second button here for color to
+// distinguish it from." v2 spec §4's footer has two, so that premise is
+// gone: color now tells primary from secondary exactly as herdr's own
+// dialogs use it, and FOCUS is carried by which way round the primary's
+// accent runs (accent as the fill when focused, as the text when not).
+// Both states keep the key glyph, because §7 makes the glyph part of
+// what a button IS, and because the footer's key ladder no longer
+// repeats ↵ anywhere (footer.go's zoneRungs).
 func actionButtonText(hint, label string) string {
 	if hint == "" {
 		return " " + label + " "
@@ -1044,23 +1070,43 @@ func panelContrastFG(p theme.Palette) theme.Color {
 	return p.PanelBG
 }
 
-// createButtonFace returns the button's text and style for the given
-// focus state -- the herdr port described above, with no sizing of its
-// own.
+// createButtonFace returns the primary button's text and style for the
+// given focus state -- the herdr port described above, with no sizing of
+// its own. The label is lowercase because every other word on this
+// screen is (v2 spec §3 rule 5, "copy is plain, lowercase and active"),
+// and it carries its key glyph in both states (v2 spec §7).
 func createButtonFace(focused bool, p theme.Palette) (string, lipgloss.Style) {
+	text := actionButtonText("↵", "create")
 	if focused {
-		return actionButtonText("↵", "Create"), lipgloss.NewStyle().
+		return text, lipgloss.NewStyle().
 			Foreground(panelContrastFG(p)).
 			Background(p.Accent).
 			Bold(true)
 	}
-	return actionButtonText("", "Create"), lipgloss.NewStyle().Foreground(p.Text)
+	return text, lipgloss.NewStyle().Foreground(p.Accent).Background(p.Surface)
 }
 
-// createButton renders the button at its INTRINSIC width, for the footer
-// line (v2 spec §5): renderFooter places it flush right and fits the key
-// ladder into what is left.
+// createButton renders the primary button at its INTRINSIC width, for
+// the footer line (v2 spec §5): renderFooter places it flush right and
+// fits the key ladder into what is left.
 func createButton(focused bool, p theme.Palette) string {
 	text, style := createButtonFace(focused, p)
 	return style.Inline(true).Render(text)
+}
+
+// cancelButton renders the SECONDARY footer button, `esc cancel` -- the
+// second half of v2 spec §4's footer, on herdr's own surface-filled
+// secondary face (v2 spec §7).
+//
+// It has no focused state because it is not a focus stop: esc works from
+// every field, and the ring never lands here. Rendering it beside Create
+// is what lets footer.go's key ladder stop repeating `Esc cancel` on
+// every zone -- the button says it once, in the place the eye already
+// goes for an action.
+func cancelButton(p theme.Palette) string {
+	return lipgloss.NewStyle().
+		Foreground(p.Text).
+		Background(p.Surface).
+		Inline(true).
+		Render(actionButtonText("esc", "cancel"))
 }

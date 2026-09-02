@@ -74,6 +74,108 @@ func TestMouseZones_ButtonCreate(t *testing.T) {
 	}
 }
 
+// TestMouseZones_ButtonCancel is the same contract for the SECOND footer
+// button v2 spec §4 puts beside Create: a click on "button:cancel"
+// produces CancelMsg, exactly like Esc (keys.go's ActionCancel). It owns
+// no Section and takes no focus stop -- it is esc's clickable
+// affordance, and the reason footer.go's key ladder no longer spends
+// cells repeating "Esc cancel" on every zone.
+func TestMouseZones_ButtonCancel(t *testing.T) {
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{newStub("a")}})
+	m.Init()
+	_ = m.ViewAt(120, 40)
+	syncZones()
+
+	zi := widgets.Zones.Get(zoneCancelButton)
+	if zi.IsZero() {
+		t.Fatalf("zone %q never resolved after ViewAt(120, 40)'s own Scan", zoneCancelButton)
+	}
+
+	next, cmd := m.Update(clickAt(zi.StartX, zi.StartY))
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatalf("click on button:cancel's own top-left corner (%d,%d) produced a nil cmd", zi.StartX, zi.StartY)
+	}
+	if _, ok := cmd().(CancelMsg); !ok {
+		t.Fatalf("click on button:cancel cmd's message = %#v, want CancelMsg{}", cmd())
+	}
+}
+
+// TestMouseZones_ClickOnAScrolledPanelListPicksTheClickedRow is the
+// regression for the click/row mismatch v2's variable-height panel
+// introduced: widgets.Picker.SelectAt maps a physical row back to an
+// item by recomputing the SAME scrollOffset the render used, which only
+// works if it is handed the SAME height MarkedView got. DirField,
+// IssueField and AccountField each kept passing v1's fixed row count
+// (4/6/4), so on any list the panel had scrolled -- which is every list
+// longer than the panel, at every window size but one -- a click landed
+// on a different candidate than the one under the pointer.
+//
+// The list here is deliberately longer than the panel and the cursor is
+// driven to its END, so the render is scrolled and a height mismatch
+// cannot coincidentally agree.
+func TestMouseZones_ClickOnAScrolledPanelListPicksTheClickedRow(t *testing.T) {
+	palette := theme.Default()
+
+	d := NewDirField(palette)
+	d.SetHomeDir("/home/zvi")
+	dirs := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
+		dirs = append(dirs, "/home/zvi/Projects/p"+string(rune('a'+i)))
+	}
+	d.SetCandidates(1, dirs)
+
+	m := New(Setup{Palette: palette, Sections: []Section{d}, Name: "new session"})
+	m.Init()
+	if cmd := m.FocusByID("dir"); cmd != nil {
+		cmd()
+	}
+	// Drive the cursor past the bottom of any window this panel gets, so
+	// the render really is scrolled.
+	for i := 0; i < len(dirs); i++ {
+		next, _ := m.Update(key(tea.KeyDown, 0))
+		m = next.(Model)
+	}
+	_ = m.ViewAt(80, 24)
+	syncZones()
+
+	// The cursor row is the LAST rendered row of a list scrolled to its
+	// end; clicking it must be a no-op on the selection, and clicking the
+	// row above it must select exactly the candidate rendered there.
+	const zoneID = "row:dir:0"
+	zi := widgets.Zones.Get(zoneID)
+	if zi.IsZero() {
+		t.Fatalf("zone %q never resolved after ViewAt(80, 24)'s own Scan", zoneID)
+	}
+
+	// What is actually drawn on that physical row, per the picker's own
+	// windowing -- the answer the click must agree with.
+	rows := d.pickerRowsShown
+	if rows < 2 {
+		t.Fatalf("dir panel drew %d list rows at 80x24, want a real window", rows)
+	}
+	want := ""
+	if !d.picker.SelectVisibleRow(0, rows) {
+		t.Fatalf("SelectVisibleRow(0, %d) found no item", rows)
+	}
+	if sel, ok := d.picker.Selected(); ok {
+		want = sel.ID
+	}
+	// Put the cursor back where the render left it before clicking.
+	for i := 0; i < len(dirs); i++ {
+		d.picker.CursorNext()
+	}
+	_ = m.ViewAt(80, 24)
+	syncZones()
+
+	next, _ := m.Update(clickAt(zi.StartX, zi.StartY))
+	m = next.(Model)
+
+	if got := d.Value(); got != want {
+		t.Fatalf("Value() after clicking %s of a scrolled list = %q, want the row actually drawn there, %q", zoneID, got, want)
+	}
+}
+
 // TestMouseZones_ChipClickSelectsPlacement is the brief's own second
 // scenario: a click on chip:placement:tab-here selects it.
 // PlacementField starts on "New space" (index 0, plan.PlacementNewSpace,

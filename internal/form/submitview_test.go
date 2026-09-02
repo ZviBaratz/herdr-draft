@@ -463,6 +463,54 @@ func TestSubmitView_CleanReasonSitsAboveTheButtons(t *testing.T) {
 	}
 }
 
+// TestSubmitView_SecondRuleOnlyWhereThereIsSomethingToRule pins the
+// difference between this view's panel region and the form's. The form
+// always fills that region with the focused field's chooser, so a rule
+// above it always has content under it; the submit view has no chooser
+// at all, so a fixed rule under the step rows drew a divider over
+// sixteen blank lines on the progress screen and stood sixteen lines
+// above the reason it was supposed to introduce on the failure one.
+//
+// The rule now travels with the explanation, which is bottom-anchored to
+// the buttons it explains. Trailing blanks above a bottom-anchored
+// footer are not the defect and are not asserted against.
+func TestSubmitView_SecondRuleOnlyWhereThereIsSomethingToRule(t *testing.T) {
+	const w, h = 80, 24
+
+	running := newSubmitTestView()
+	running.SetSteps(sampleStepsRunning())
+	lines := strippedFrameLines(running, w, h)
+	// Line 1 is the rule under the header; nothing below the step rows
+	// may be one while the pipeline is still going.
+	for i, line := range lines[2:] {
+		if strings.Contains(line, "──") {
+			t.Errorf("progress screen draws a second rule at line %d with nothing under it:\n%s",
+				i+2, strings.Join(lines, "\n"))
+			break
+		}
+	}
+
+	failed := newSubmitTestView()
+	failed.SetSteps(sampleStepsFailed())
+	failed.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true})
+	lines = strippedFrameLines(failed, w, h)
+	reason := -1
+	for i, line := range lines {
+		if strings.Contains(line, "remove undoes everything") {
+			reason = i
+		}
+	}
+	if reason < 1 {
+		t.Fatalf("failure screen never rendered its explanation:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[reason-1], "──") {
+		t.Errorf("the line above the explanation = %q, want the second rule introducing it", lines[reason-1])
+	}
+	if reason != len(lines)-2 {
+		t.Errorf("the explanation is at line %d of %d, want it anchored to the buttons", reason, len(lines))
+	}
+}
+
 // --- v2 spec §12: the unsent-prompt row -----------------------------------
 
 // multiParagraphPrompt is the shape spec §10's own default seeding

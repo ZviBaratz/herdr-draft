@@ -48,7 +48,7 @@ const (
 	// anything -- v2 spec §6's table has no unset state for this field
 	// because production always populates it, but a zero-value field must
 	// still render something honest rather than an empty cell.
-	agentRowUnset = "—"
+	agentRowUnset = rowValueNone
 	// agentPanelMaxRows caps PanelRows: the chip row plus a full kind
 	// list, which spec §6 sizes at the known 23 kinds, is more than a
 	// panel should claim from the rest of the form.
@@ -364,4 +364,16 @@ func (f *AgentField) PanelRows() int {
 		return 2
 	}
 	return capRows(1+len(f.kinds), agentPanelMaxRows)
+}
+
+// FooterRungs implements form.go's footerHinter for the state
+// footer.go's per-ZONE table cannot see: with no kinds configured there
+// are no chips and no list, so the table's "←→ favorites · ↑↓ all kinds"
+// names two controls that are not on the screen. Same judgement, and the
+// same sentence, as field_worktree.go's non-git rung.
+func (f *AgentField) FooterRungs() []string {
+	if len(f.kinds) == 0 {
+		return []string{"nothing to set here"}
+	}
+	return nil
 }

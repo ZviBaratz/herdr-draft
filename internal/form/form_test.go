@@ -333,6 +333,63 @@ func TestModel_CtrlSSubmitsFromAnyZone(t *testing.T) {
 	}
 }
 
+// TestModel_EnterSubmitsFromTheTitleAndThePrompt pins v2 spec §8's
+// fast path end to end, through the real Sections rather than through
+// MapKey alone: a non-empty title and the prompt both CREATE on Enter,
+// and the prompt's newline keys still insert newlines instead.
+//
+// The prompt half is the change §8 makes ("↵ from the prompt submits
+// rather than advancing. Nothing used it for a newline; ⌃J, ⇧↵ and ⌥↵
+// keep that job") and the half the companion view plan's footer table
+// got wrong; the title half is unchanged and here to keep the pair
+// asserted together, since "open, type a title, Enter" and "type the
+// prompt, Enter" are one contract from the user's side.
+func TestModel_EnterSubmitsFromTheTitleAndThePrompt(t *testing.T) {
+	palette := theme.Default()
+	title := NewTitleField(palette)
+	title.SetTitle("fix login redirect loop", false)
+	prompt := NewPromptField(palette)
+
+	m := New(Setup{Palette: palette, Sections: []Section{title, prompt}, InitialFocusID: "title"})
+	m.Init()
+
+	_, cmd := m.Update(keyEnter)
+	if cmd == nil {
+		t.Fatalf("Enter on a non-empty title produced a nil cmd")
+	}
+	if _, ok := cmd().(SubmitMsg); !ok {
+		t.Fatalf("Enter on a non-empty title = %#v, want SubmitMsg{}", cmd())
+	}
+
+	if c := m.FocusByID("prompt"); c != nil {
+		c()
+	}
+	_, cmd = m.Update(keyEnter)
+	if cmd == nil {
+		t.Fatalf("Enter in the prompt produced a nil cmd")
+	}
+	if _, ok := cmd().(SubmitMsg); !ok {
+		t.Fatalf("Enter in the prompt = %#v, want SubmitMsg{}", cmd())
+	}
+	if got := prompt.Value(); got != "" {
+		t.Fatalf("prompt value after Enter = %q, want Enter to submit rather than type", got)
+	}
+
+	// ...and the three newline keys still are newline keys.
+	for _, k := range []tea.KeyPressMsg{keyCtrlJ, keyShiftEnter, keyAltEnter} {
+		before := prompt.Value()
+		_, cmd = m.Update(k)
+		if cmd != nil {
+			if _, ok := cmd().(SubmitMsg); ok {
+				t.Fatalf("%s in the prompt submitted; it must insert a newline", k.String())
+			}
+		}
+		if prompt.Value() == before {
+			t.Fatalf("%s in the prompt left the value at %q, want a newline inserted", k.String(), before)
+		}
+	}
+}
+
 // TestModel_EscCancels checks handleKey's ActionCancel wiring.
 func TestModel_EscCancels(t *testing.T) {
 	m := New(Setup{Palette: theme.Default(), Sections: []Section{newStub("a")}})
@@ -720,7 +777,7 @@ func TestDegradation_FooterAndFocusedRowSurvive(t *testing.T) {
 			t.Fatalf("ViewAt(%d, %d) produced %d rows, want exactly %d", size.w, size.h, len(lines), size.h)
 		}
 		last := ansi.Strip(lines[len(lines)-1])
-		if !strings.Contains(last, "Create") {
+		if !strings.Contains(last, "↵ create") {
 			t.Fatalf("at %dx%d the last row does not carry the Create button: %q", size.w, size.h, last)
 		}
 		if !strings.Contains(ansi.Strip(strings.Join(lines, "\n")), "field-0 value") {
@@ -788,7 +845,7 @@ func TestRowStack_FrameMatchesLayoutFrame(t *testing.T) {
 	if rule2 := 2 + f.Rows; !isRuleLine(lines[rule2]) {
 		t.Errorf("line %d is not rule 2: %q", rule2, lines[rule2])
 	}
-	if last := lines[h-1]; !strings.Contains(last, "Create") {
+	if last := lines[h-1]; !strings.Contains(last, "↵ create") {
 		t.Errorf("the last line is not the footer: %q", last)
 	}
 }
@@ -884,7 +941,7 @@ func TestRowStack_FocusedRowAndFooterSurviveEveryHeight(t *testing.T) {
 		if len(lines) != h {
 			t.Fatalf("ViewAt(%d, %d) produced %d lines, want %d", w, h, len(lines), h)
 		}
-		if !strings.Contains(lines[h-1], "Create") {
+		if !strings.Contains(lines[h-1], "↵ create") {
 			t.Fatalf("at h=%d the last line does not carry the Create button: %q", h, lines[h-1])
 		}
 		if h == 1 {
@@ -928,7 +985,7 @@ func TestRowStack_SmallPanelDoesNotMoveTheFooter(t *testing.T) {
 		if !isRuleLine(lines[rule2]) {
 			t.Fatalf("with %q focused, line %d is not rule 2: %q", s.id, rule2, lines[rule2])
 		}
-		if !strings.Contains(lines[h-1], "Create") {
+		if !strings.Contains(lines[h-1], "↵ create") {
 			t.Fatalf("with %q focused, the footer is not the last line: %q", s.id, lines[h-1])
 		}
 		// The region is blank-filled below whatever the field had to
@@ -1062,8 +1119,11 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 	if got := footer(); !strings.Contains(got, "⇥ do the thing") {
 		t.Errorf("footer with a footerHinter focused = %q, want it to carry the section's own rung", got)
 	}
-	if got := footer(); !strings.Contains(got, "Esc cancel") {
+	if got := footer(); !strings.Contains(got, "⌃R clear") {
 		t.Errorf("footer = %q, want the constant tail appended", got)
+	}
+	if got := footer(); !strings.Contains(got, "esc cancel") {
+		t.Errorf("footer = %q, want v2 spec §4's cancel button beside Create", got)
 	}
 
 	if cmd := m.FocusByID("placement"); cmd != nil {
@@ -1077,7 +1137,7 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 	// the width.
 	for _, width := range []int{120, 80, 64, 40, 24, 12} {
 		line := ansi.Strip(strings.Split(m.ViewAt(width, h), "\n")[h-1])
-		if !strings.Contains(line, "Create") {
+		if !strings.Contains(line, "↵ create") {
 			t.Errorf("at w=%d the footer lost the Create button: %q", width, line)
 		}
 	}
@@ -1095,14 +1155,14 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 // grammar; the footer simply never read it.
 func TestFooterRungs_PerZone(t *testing.T) {
 	want := map[ZoneKind]string{
-		ZoneIssue:     "↑↓ pick",
-		ZoneDir:       "↑↓ pick",
+		ZoneIssue:     "type to filter",
+		ZoneDir:       "⇥ complete",
 		ZonePrompt:    "⌃J newline",
 		ZoneWorktree:  "↑↓ part",
 		ZonePlacement: "←→ choose",
 		ZoneAgent:     "←→ favorites",
 		ZoneAccount:   "↑↓ pick",
-		ZoneCreate:    "↵ create",
+		ZoneCreate:    "⇧⇥ back",
 	}
 	for kind, substr := range want {
 		rungs := footerRungs(FocusZone{Kind: kind}, false)
@@ -1113,18 +1173,32 @@ func TestFooterRungs_PerZone(t *testing.T) {
 		if !strings.Contains(rungs[0], substr) {
 			t.Errorf("zone %v's widest rung = %q, want it to teach %q", kind, rungs[0], substr)
 		}
-		if !strings.Contains(rungs[0], "Esc") {
+		if !strings.Contains(rungs[0], "⌃R clear") {
 			t.Errorf("zone %v's widest rung = %q, want the constant tail appended", kind, rungs[0])
+		}
+		// The footer's own buttons say ↵ and esc (form.go's
+		// renderFooter). No rung may say them again: at 64 columns the
+		// pre-polish ladder plus the button spelled "create" three times
+		// on one line.
+		for _, dup := range []string{"↵", "esc cancel", "Esc"} {
+			if strings.Contains(rungs[0], dup) {
+				t.Errorf("zone %v's widest rung = %q, want it NOT to repeat the button's %q", kind, rungs[0], dup)
+			}
 		}
 	}
 
+	// The Title zone is the one exception, and only while EMPTY: Enter
+	// does not create there, so the rung has to correct the button.
 	filled := footerRungs(FocusZone{Kind: ZoneTitle, TitleEmpty: false}, false)[0]
-	if !strings.Contains(filled, "↵ create") {
-		t.Errorf("a non-empty title's rung = %q, want it to say Enter CREATES", filled)
+	if !strings.Contains(filled, "⌃S create now") {
+		t.Errorf("a non-empty title's rung = %q, want v2 spec §4's own mockup text", filled)
+	}
+	if strings.Contains(filled, "↵") {
+		t.Errorf("a non-empty title's rung = %q, want ↵ left to the button that carries it", filled)
 	}
 	empty := footerRungs(FocusZone{Kind: ZoneTitle, TitleEmpty: true}, false)[0]
-	if strings.Contains(empty, "↵ create") || !strings.Contains(empty, "↵ next") {
-		t.Errorf("an empty title's rung = %q, want it to say Enter ADVANCES", empty)
+	if strings.Contains(empty, "create now") || !strings.Contains(empty, "name it to create") {
+		t.Errorf("an empty title's rung = %q, want it to say there is nothing to create yet", empty)
 	}
 
 	// ⌃R's two states reach every zone through the same tail.
@@ -1134,18 +1208,27 @@ func TestFooterRungs_PerZone(t *testing.T) {
 }
 
 // TestFooterRungs_AZoneHintNeverLosesToTheConstantTail pins the ordering
-// property crossRungs exists for. fitFooter picks the WIDEST rung that
-// fits and has no notion of which half matters, so a bare constant tail
-// offered alongside the crossings can out-measure -- and silently replace
-// -- a narrower crossing that still teaches the focused field. At 64
-// columns with the title focused that is exactly what it did.
+// property crossRungs and fitFooter exist for: whatever the width, the
+// footer keeps teaching the FOCUSED FIELD and gives up the constants
+// instead (v2 spec §3 rule 4). Both halves of that have been wrong at
+// some point -- a bare constant tail out-measuring a crossing, and then
+// a narrower crossing out-measuring a wider lead standing alone -- which
+// is why the assertion runs down a ladder of widths rather than at one.
 func TestFooterRungs_AZoneHintNeverLosesToTheConstantTail(t *testing.T) {
 	rungs := footerRungs(FocusZone{Kind: ZoneTitle, TitleEmpty: false}, false)
 	for _, width := range []int{120, 80, 64, 53, 40, 30} {
 		got := fitFooter(rungs, width)
-		if !strings.Contains(got, "↵ create") {
+		if !strings.Contains(got, "for the prompt") {
 			t.Errorf("at width %d the footer = %q, want it to still teach the focused field", width, got)
 		}
+	}
+
+	// The tail is what goes first, and it goes before the lead is
+	// abbreviated: 37 cells is the space a 64-column popup leaves beside
+	// the two buttons, and it holds v2 spec §4's own title rung (32) but
+	// not that rung plus any tail.
+	if got := fitFooter(rungs, 37); got != "⌃S create now · ⇥ for the prompt" {
+		t.Errorf("at the 64-column popup's 37 cells the footer = %q, want the whole zone rung and no tail", got)
 	}
 }
 

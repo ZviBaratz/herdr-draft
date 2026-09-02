@@ -165,9 +165,26 @@ func TestMapKey_GrammarTable(t *testing.T) {
 			want: ActionSubmit,
 		},
 		{
-			name: "enter in the prompt advances rather than submitting or inserting a newline",
+			// v2 spec §8, which overrides the row this table carried
+			// from v1 ("enter in the prompt advances") and the companion
+			// view plan's own footer table: "↵ from the prompt submits
+			// rather than advancing. Nothing used it for a newline; ⌃J,
+			// ⇧↵ and ⌥↵ keep that job."
+			name: "enter in the prompt submits rather than advancing",
 			msg:  keyEnter,
 			zone: FocusZone{Kind: ZonePrompt},
+			want: ActionSubmit,
+		},
+		{
+			name: "enter in a plain zone still advances",
+			msg:  keyEnter,
+			zone: FocusZone{Kind: ZoneAccount},
+			want: ActionAdvance,
+		},
+		{
+			name: "enter on an EMPTY title still advances",
+			msg:  keyEnter,
+			zone: FocusZone{Kind: ZoneTitle, TitleEmpty: true},
 			want: ActionAdvance,
 		},
 		{

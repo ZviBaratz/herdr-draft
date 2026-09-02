@@ -153,7 +153,7 @@ var sectionMarkers = map[string]string{
 	"agent":     "agent",
 	"account":   "account",
 	"prompt":    "prompt",
-	"create":    "Create",
+	"create":    "↵ create",
 }
 
 // TestAssembledForm_FocusedSectionVisibleAt80x24 is the assertion whose
@@ -162,10 +162,12 @@ var sectionMarkers = map[string]string{
 // is the regression that mattered -- with Prompt focused, "Prompt:"
 // appeared nowhere in the rendered frame at all.
 //
-// The Create button and the footer are checked on the same renders, since
-// spec §6 field 9 ("never clipped") and the popup's own key ladder are the
-// two things a degradation ladder must never spend, whichever field
-// happens to hold focus.
+// Both footer buttons are checked on the same renders, since spec §6
+// field 9 ("never clipped") and v2 spec §4's `↵ create · esc cancel`
+// pair are what a degradation ladder must never spend, whichever field
+// happens to hold focus. The key ladder beside them is contextual by
+// design (v2 spec §3 rule 4) and has no fixed text to assert here --
+// internal/form's TestFooterRungs_PerZone pins that, per zone.
 func TestAssembledForm_FocusedSectionVisibleAt80x24(t *testing.T) {
 	for _, full := range []bool{true, false} {
 		name := "minimal-config"
@@ -196,11 +198,11 @@ func TestAssembledForm_FocusedSectionVisibleAt80x24(t *testing.T) {
 				if !strings.Contains(frame, marker) {
 					t.Errorf("with %q focused, the render at 80x24 does not contain %q:\n%s", id, marker, frame)
 				}
-				if !strings.Contains(frame, "Create") {
+				if !strings.Contains(frame, "↵ create") {
 					t.Errorf("with %q focused, the render at 80x24 lost the Create button:\n%s", id, frame)
 				}
-				if !strings.Contains(frame, "Esc cancel") {
-					t.Errorf("with %q focused, the render at 80x24 lost the footer key ladder:\n%s", id, frame)
+				if !strings.Contains(frame, "esc cancel") {
+					t.Errorf("with %q focused, the render at 80x24 lost the cancel button:\n%s", id, frame)
 				}
 			}
 		})
@@ -227,7 +229,7 @@ func TestAssembledForm_EverySectionVisibleDownToItsFloor(t *testing.T) {
 		for _, id := range ids {
 			m.form.FocusByID(id)
 			frame := ansi.Strip(m.form.ViewAt(80, h))
-			if !strings.Contains(frame, "Create") {
+			if !strings.Contains(frame, "↵ create") {
 				t.Errorf("at 80x%d with %q focused, the Create button was clipped", h, id)
 			}
 			if !strings.Contains(frame, sectionMarkers[id]) {
