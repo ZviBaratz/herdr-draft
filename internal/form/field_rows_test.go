@@ -703,6 +703,13 @@ func ansiColor(c theme.Color) string {
 	return rendered[:strings.Index(rendered, "x")]
 }
 
+// ansiBackground is ansiColor's other half, for asserting that a line was
+// (or was not) painted on a specific palette background.
+func ansiBackground(c theme.Color) string {
+	rendered := lipgloss.NewStyle().Background(c).Render("x")
+	return rendered[:strings.Index(rendered, "x")]
+}
+
 // --- elision --------------------------------------------------------------
 
 // TestKeepHeadKeepTail pins the two elision primitives directly: the

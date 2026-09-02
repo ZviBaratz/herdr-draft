@@ -652,6 +652,11 @@ func New(s Setup) Model {
 
 	m.dir = form.NewDirField(palette)
 	m.title = form.NewTitleField(palette)
+	// v3 spec §9's resting panel, from the WorkspaceList Bootstrap
+	// already made and already retains -- no new I/O, no new subprocess,
+	// no new state file. Pushed once at construction because that is when
+	// the data exists; it is never re-fetched (see Model.workspaces).
+	m.title.SetSessions(titleSessions(s.Workspaces, s.Ctx.WorkspaceID))
 	m.worktree = form.NewWorktreeField(palette)
 	m.placement = form.NewPlacementField(palette)
 	m.agent = form.NewAgentField(palette)
@@ -1041,6 +1046,36 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 		return m.form.FocusByID("account"), true
 	}
 	return nil, false
+}
+
+// titleSessions maps herdr's own workspace list down to the value type
+// internal/form's TitleField takes (v3 spec §9). The mapping is the
+// boundary CLAUDE.md draws -- "internal/form ... no knowledge of
+// herdr/git/Linear" -- so the herdrc types stop here.
+//
+// The INVOKING workspace is dropped. It is the one the popup is open in,
+// so it is on screen behind the form already, and it is the one workspace
+// a new session can never collide with in any way the user would be
+// surprised by. Listing it would spend a row of a fifteen-row panel
+// saying "you are here".
+//
+// A workspace's Worktree is optional -- herdr returns the key only for a
+// workspace it has repository context for (verified against live `herdr
+// workspace list` output, where a plain shell workspace has none) -- so
+// the repository column is empty for those rather than absent for all.
+func titleSessions(workspaces []herdrc.WorkspaceInfo, invokingID string) []form.Session {
+	out := make([]form.Session, 0, len(workspaces))
+	for _, w := range workspaces {
+		if w.WorkspaceID != "" && w.WorkspaceID == invokingID {
+			continue
+		}
+		s := form.Session{Label: w.Label, Status: w.AgentStatus, Panes: w.PaneCount}
+		if w.Worktree != nil {
+			s.Repo = w.Worktree.RepoName
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // accountPin returns the Input.AccountPin plan.Build should receive:

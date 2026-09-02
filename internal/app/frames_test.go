@@ -73,6 +73,28 @@ func frameIssues() []linear.Issue {
 	}
 }
 
+// frameWorkspaces is the session list v3 spec §9's resting panel draws,
+// and it is deliberately more than one workspace: the invoking one is
+// dropped by titleSessions (it is on screen behind the popup already), so
+// a single-workspace fixture renders an EMPTY panel and pins nothing
+// about the feature that exists to fill it.
+//
+// The four cover what varies: herdr's three agent-status words, a
+// workspace with no worktree context at all (herdr omits the key), one
+// whose label is the collision target the title fixtures type, and pane
+// counts on both sides of the singular/plural boundary.
+func frameWorkspaces() []herdrc.WorkspaceInfo {
+	return []herdrc.WorkspaceInfo{
+		{WorkspaceID: "ws-1", Label: "herdr-draft", AgentStatus: "working", PaneCount: 1,
+			Worktree: &herdrc.ContextWorktree{RepoName: "herdr-draft"}},
+		{WorkspaceID: "ws-2", Label: "report-studio", AgentStatus: "idle", PaneCount: 4,
+			Worktree: &herdrc.ContextWorktree{RepoName: "quantivly"}},
+		{WorkspaceID: "ws-3", Label: "qspace-tls", AgentStatus: "blocked", PaneCount: 1,
+			Worktree: &herdrc.ContextWorktree{RepoName: "quantivly"}},
+		{WorkspaceID: "ws-4", Label: "scratch", AgentStatus: "idle", PaneCount: 2},
+	}
+}
+
 // frameClauthStatus is the two-profile clauth fixture the full-config
 // frames render the Account field over (spec §6 field 7 renders the field
 // only at >= 2 profiles).
@@ -125,7 +147,7 @@ func newAssembledModel(t *testing.T, full bool) Model {
 			BranchPrefix: "zvi/",
 			Agents:       config.AgentsConfig{Favorites: []string{"claude", "codex"}},
 		},
-		Workspaces: []herdrc.WorkspaceInfo{{WorkspaceID: "ws-1", Label: "herdr-draft"}},
+		Workspaces: frameWorkspaces(),
 	}
 	if full {
 		setup.Linear = &fakeLinear{issues: frameIssues()}
@@ -276,6 +298,21 @@ const (
 	framePopupH = 30
 )
 
+// frameSizes is every pane size this form is pinned at: the shipped popup,
+// the two a small terminal clamps it to, and the oversized one whose only
+// job is the pads and the footer's reach (v3 spec §12).
+//
+// It exists so a state can be pinned across the whole DEGRADATION axis
+// with one loop instead of one call. §12 asks for exactly that on the
+// opening state, whose single-size coverage it names as the same trap that
+// let v2's opening-state defect through fifteen green commits.
+var frameSizes = []struct{ w, h int }{
+	{framePopupW, framePopupH},
+	{77, 22},
+	{57, 18},
+	{150, 44},
+}
+
 // filledFrameModel is the fully typed-in state the frames below render:
 // a title, a branch, a resolved base list and a prompt.
 //
@@ -353,15 +390,49 @@ func TestAssembledForm_Oversized(t *testing.T) {
 // same reason the frames below set them: they arrive from the app layer's
 // debounced async checks, which no test ever fires. What is deliberately
 // NOT set is anything the user would have had to type.
+//
+// It loops over SIZES, which v3 spec §12 requires and the single-size
+// version did not: "opening-state x degradation is a product of two axes
+// and one cell of it is covered". The same trap that let the worktree
+// defect through is set one axis over -- and it is not hypothetical, since
+// the opening state is now the state carrying v3 spec §9's session list,
+// whose rows are the first thing a short window gives up.
 func TestAssembledForm_OpeningState(t *testing.T) {
+	for _, sz := range frameSizes {
+		m := newAssembledModel(t, true)
+		m.worktree.SetOn(true)
+		m.worktree.SetHeadBranch("main")
+		m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
+		m.reactToChanges()
+		m.form.FocusByID("title")
+
+		assertAppFrame(t, fmt.Sprintf("assembled-opening-%dx%d", sz.w, sz.h), m, sz.w, sz.h)
+	}
+}
+
+// TestAssembledForm_TitleCollision is the half of v3 spec §9's panel that
+// is not just a list: a title matching an existing session's label marks
+// that session's row.
+//
+// The app already computed this fact -- async.go's workspaceLabelTaken,
+// off the same workspace list -- and only ever surfaced it as a verdict
+// AFTER the collision, on the title the user had already finished typing.
+// The mark shows it coming, and shows WHICH session it is with, which a
+// verdict never could. The comparison is workspaceLabelTaken's own, so
+// the two cannot disagree about what a collision is.
+func TestAssembledForm_TitleCollision(t *testing.T) {
 	m := newAssembledModel(t, true)
 	m.worktree.SetOn(true)
 	m.worktree.SetHeadBranch("main")
 	m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
-	m.reactToChanges()
 	m.form.FocusByID("title")
+	for _, r := range "qspace-tls" {
+		next, _ := m.Update(rn(r))
+		m = next.(Model)
+	}
+	m.reactToChanges()
 
-	assertAppFrame(t, fmt.Sprintf("assembled-opening-%dx%d", framePopupW, framePopupH), m, framePopupW, framePopupH)
+	assertAppFrame(t, "assembled-collision-101x30", m, framePopupW, framePopupH)
 }
 
 // TestAssembledForm_ClampedToASmallTerminal pins the two sizes a small

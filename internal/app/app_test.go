@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -2167,5 +2168,47 @@ func TestAccountPin_BrowsingDoesNotReachThePlan(t *testing.T) {
 	press(key(tea.KeyEnter, 0))
 	if got, want := m.PlanInput().AccountPin, "work"; got != want {
 		t.Errorf("AccountPin after committing the row the cursor rests on = %q, want %q", got, want)
+	}
+}
+
+// TestTitleSessions_DropsTheInvokingWorkspace pins the app-side half of
+// v3 spec §9: the mapping down to internal/form's own value type (the
+// package must have "no knowledge of herdr"), and the one workspace that
+// does not belong on the list.
+//
+// The invoking workspace is the one the popup is open in. It is on screen
+// behind the form already, and listing it would spend a row of a fifteen-
+// row panel saying "you are here".
+func TestTitleSessions_DropsTheInvokingWorkspace(t *testing.T) {
+	got := titleSessions([]herdrc.WorkspaceInfo{
+		{WorkspaceID: "ws-1", Label: "here", AgentStatus: "working", PaneCount: 1},
+		{WorkspaceID: "ws-2", Label: "elsewhere", AgentStatus: "idle", PaneCount: 3,
+			Worktree: &herdrc.ContextWorktree{RepoName: "quantivly"}},
+		{WorkspaceID: "ws-3", Label: "plain-shell", AgentStatus: "idle", PaneCount: 1},
+	}, "ws-1")
+
+	want := []form.Session{
+		{Label: "elsewhere", Status: "idle", Panes: 3, Repo: "quantivly"},
+		// herdr omits the worktree key entirely for a workspace it has no
+		// repository context for, so Repo is empty rather than the mapping
+		// panicking on a nil pointer.
+		{Label: "plain-shell", Status: "idle", Panes: 1},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("titleSessions() = %+v, want %+v", got, want)
+	}
+}
+
+// TestTitleSessions_KeepsEverythingWhenNothingIsInvoking covers the
+// headless and degraded paths: a plugin context with no workspace id
+// (internal/herdrc's Context makes every field optional) must not drop a
+// real workspace by matching "" against "".
+func TestTitleSessions_KeepsEverythingWhenNothingIsInvoking(t *testing.T) {
+	got := titleSessions([]herdrc.WorkspaceInfo{
+		{WorkspaceID: "", Label: "unidentified", PaneCount: 1},
+		{WorkspaceID: "ws-2", Label: "elsewhere", PaneCount: 1},
+	}, "")
+	if len(got) != 2 {
+		t.Errorf("titleSessions() kept %d of 2 workspaces with no invoking id: %+v", len(got), got)
 	}
 }

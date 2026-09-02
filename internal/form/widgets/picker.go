@@ -323,6 +323,9 @@ type Picker struct {
 	columns []PickerColumn
 	// metrics is the measurement cache, nil when it needs recomputing.
 	metrics *pickerMetrics
+	// cursorless marks this picker a list to be READ rather than chosen
+	// from -- see SetCursorless.
+	cursorless bool
 }
 
 // NewPicker returns an empty Picker rendered with palette.
@@ -401,6 +404,26 @@ func (p *Picker) indexOfIDOrFallback(id string, fallbackCursor int) int {
 	}
 	return clampCursor(fallbackCursor, len(p.filtered))
 }
+
+// SetCursorless marks this picker a list to be READ rather than chosen
+// from: no row is drawn as the cursor row and CursorRow answers -1, so
+// the panel's own gutter draws no `▸` either. Everything else -- the
+// measured columns, the marks, the badges, the scrollbar -- is unchanged,
+// which is the point: v3 spec §9's session list is "a list in a panel, so
+// it inherits §8 wholesale. It is not a new widget."
+//
+// It exists because the cursor row's three signals (fill, bold, gutter
+// glyph) all say "this is the one you have chosen", and on a list nothing
+// can act on that is a promise the form cannot keep. The author settled
+// this explicitly: the session list is informational, with no cursor, no
+// selection and no focus stop.
+//
+// The cursor itself is not removed, only unrendered. It still anchors
+// scrollOffset, so a cursorless list that outgrows its window shows its
+// FIRST rows and a scrollbar thumb parked at the top -- which is honest
+// (there are more below) rather than a control, and §8.5 already states
+// the bar is not draggable.
+func (p *Picker) SetCursorless(cursorless bool) { p.cursorless = cursorless }
 
 // SetColumns declares how this picker's cell columns are sized and
 // colored (v3 spec §8.1). Columns beyond the ones declared here fall back
@@ -813,7 +836,7 @@ func (p *Picker) CursorRow(height int) int {
 	if height < 1 {
 		height = 1
 	}
-	if p.cursor < 0 || p.cursor >= len(p.filtered) {
+	if p.cursorless || p.cursor < 0 || p.cursor >= len(p.filtered) {
 		return -1
 	}
 	row := p.cursor - scrollOffset(p.cursor, len(p.filtered), height)
@@ -988,7 +1011,7 @@ func (p *Picker) MarkedView(width, height int, zonePrefix string) string {
 			lines[row] = widthStyle(inner).Render("") + bar
 			continue
 		}
-		cursor := idx == p.cursor
+		cursor := idx == p.cursor && !p.cursorless
 		rendered := p.renderRow(p.filtered[idx], lay, inner, cursor)
 		zoneID := ""
 		if zonePrefix != "" {

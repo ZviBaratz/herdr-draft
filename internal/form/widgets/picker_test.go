@@ -1141,3 +1141,49 @@ func TestPicker_NoMatchRendersExactlyAsBefore(t *testing.T) {
 		}
 	}
 }
+
+// TestPicker_CursorlessDrawsNoCursorRow pins v3 spec §9's read-only list:
+// no row takes the cursor row's treatment and CursorRow answers -1, so
+// the panel's own gutter draws no ▸ either. Everything else -- columns,
+// marks, badges, the scrollbar -- is untouched, which is what makes the
+// session list "not a new widget".
+func TestPicker_CursorlessDrawsNoCursorRow(t *testing.T) {
+	items := []PickerItem{
+		{ID: "a", Cells: []string{"alpha"}},
+		{ID: "b", Cells: []string{"bravo"}},
+	}
+	withCursor := NewPicker(testPalette())
+	withCursor.SetItems(1, items)
+	cursorless := NewPicker(testPalette())
+	cursorless.SetCursorless(true)
+	cursorless.SetItems(1, items)
+
+	if got := withCursor.CursorRow(4); got != 0 {
+		t.Fatalf("CursorRow on a normal picker = %d, want 0 -- this test is about the difference", got)
+	}
+	if got := cursorless.CursorRow(4); got != -1 {
+		t.Errorf("CursorRow on a cursorless picker = %d, want -1 (the panel draws its ▸ from this)", got)
+	}
+
+	// The RAW renders differ (row 0 loses its fill and its bold) while the
+	// stripped text does not: suppressing the cursor must not move a cell.
+	rawWith, rawWithout := withCursor.MarkedView(20, 4, ""), cursorless.MarkedView(20, 4, "")
+	if rawWith == rawWithout {
+		t.Error("the cursorless render is byte-identical to the cursored one; nothing was suppressed")
+	}
+	if !strings.Contains(rawWith, ansiBg(testPalette().Surface)) {
+		t.Fatal("the cursored picker paints no Surface row at all; this test cannot detect its absence")
+	}
+	if strings.Contains(rawWithout, ansiBg(testPalette().Surface)) {
+		t.Error("a cursorless row is painted with the cursor row's Surface fill")
+	}
+	if got, want := ansi.Strip(rawWithout), ansi.Strip(rawWith); got != want {
+		t.Errorf("the cursorless text differs from the cursored one:\n got %q\nwant %q", got, want)
+	}
+}
+
+// ansiBg renders c's background SGR the way lipgloss emits it.
+func ansiBg(c theme.Color) string {
+	rendered := lipgloss.NewStyle().Background(c).Render("x")
+	return rendered[:strings.Index(rendered, "x")]
+}

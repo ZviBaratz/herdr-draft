@@ -521,7 +521,7 @@ func (f *AccountField) profileItem(p clauth.Profile) widgets.PickerItem {
 	marker := ""
 	tone := widgets.ToneWarning
 	if warning != "" {
-		marker = "!"
+		marker = markerWarning
 		if warning == accountWarnAuthFailed {
 			tone = widgets.ToneDanger
 		}

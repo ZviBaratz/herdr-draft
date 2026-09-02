@@ -125,6 +125,18 @@ func gaugeBar(fraction float64, width int) string {
 	return strings.Repeat(gaugeFilledBlock, filled) + strings.Repeat(gaugeEmptyBlock, width-filled)
 }
 
+// markerWarning is the glyph a field puts in widgets.PickerItem.Marker
+// when a row needs attention: an auth-failed or rate-limited clauth
+// profile (field_account.go), or a session whose label the title being
+// typed would collide with (field_title.go, v3 spec §9).
+//
+// PickerItem.Marker is deliberately the CALLER's glyph -- "a field knows
+// what it is warning about" -- so this constant is not the widget
+// imposing one. It exists because two fields independently chose the same
+// glyph for the same meaning, and one shared name is cheaper than
+// discovering later that they had drifted apart.
+const markerWarning = "!"
+
 // panelCursorGlyph is the marker v2 spec §4's mockups draw beside the
 // selected row of a focused panel's list. It lands in the panel's own
 // two-cell gutter -- the same column the row stack indents past -- which
