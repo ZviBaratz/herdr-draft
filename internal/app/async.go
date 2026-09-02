@@ -88,6 +88,14 @@ type dirResultMsg struct {
 	req       request
 	dirExists bool
 	isGitRepo bool
+	// memoryKey is the projects.json key for this directory (spec §10):
+	// the repository root when it is a repo, so a linked worktree and its
+	// origin share one memory, and the canonical absolute path otherwise.
+	// "" when the directory does not exist -- there is nothing to remember
+	// about a path that is not there. Resolved in the background alongside
+	// the validity check (projectMemoryKey), since it costs a `git
+	// rev-parse` and a symlink walk.
+	memoryKey string
 }
 
 // scheduleDirCheck bumps the directory-validity source's own request
@@ -120,8 +128,40 @@ func (m Model) runDirCheck(req request) tea.Cmd {
 	return func() tea.Msg {
 		exists := git.DirExists(path)
 		isRepo := exists && git.IsGitRepo(path)
-		return dirResultMsg{req: req, dirExists: exists, isGitRepo: isRepo}
+		return dirResultMsg{
+			req:       req,
+			dirExists: exists,
+			isGitRepo: isRepo,
+			memoryKey: projectMemoryKey(git, path, exists, isRepo),
+		}
 	}
+}
+
+// projectMemoryKey resolves spec §10's per-project memory key for path,
+// which must already be tilde-expanded: the ORIGIN repository root for a
+// repo (gitx.RepoRoot -- so every worktree of one repository shares a
+// single entry rather than accumulating one each), the canonical absolute
+// path otherwise.
+//
+// Both branches end in pathx.CanonicalKey, deliberately: one normalization
+// rule for both means a directory cannot acquire two keys by being reached
+// once as a repo and once not, or through differently-symlinked parents.
+//
+// A directory that does not exist gets no key. A repo whose root cannot be
+// resolved (git missing, an unreadable repository) falls back to the path
+// key rather than losing its memory entirely -- a slightly wrong key still
+// remembers something, and RepoRoot reports a plain non-repository as ("",
+// nil) rather than as a failure.
+func projectMemoryKey(git gitSource, path string, exists, isRepo bool) string {
+	if !exists {
+		return ""
+	}
+	if isRepo {
+		if root, err := git.RepoRoot(context.Background(), path); err == nil && root != "" {
+			return pathx.CanonicalKey(root)
+		}
+	}
+	return pathx.CanonicalKey(path)
 }
 
 func (m Model) handleDirDebounce(msg dirDebounceMsg) (Model, tea.Cmd) {
@@ -132,12 +172,17 @@ func (m Model) handleDirDebounce(msg dirDebounceMsg) (Model, tea.Cmd) {
 }
 
 // handleDirResult applies a directory-validity result: DirField's own
-// inline (invalid)/(direct) marker, WorktreeField's git-target gate, and --
-// the first time a git-repo target is actually observed -- the
-// config/state-derived worktree on/off default (see WorktreeField.SetOn's
-// own doc comment on why this can only be applied once the target is known
-// to be a usable git repo, and worktreeDefaultApplied's doc comment on why
-// it's a one-shot rather than reapplied on every later git-repo target).
+// inline (invalid)/(direct) marker, WorktreeField's git-target gate, and
+// spec §10's layered defaults re-resolved for the project this directory
+// belongs to (applyProjectDefaults, which also owns the worktree on/off
+// toggle -- see WorktreeField.SetOn's own doc comment on why that can only
+// be applied once the target is known to be a usable git repo).
+//
+// The defaults are re-applied on EVERY project change, not once per form
+// open: the top tier is per-project, so a new project genuinely has a new
+// answer. What keeps that from fighting the user is the touched rule
+// (Model.worktreeTouched and friends), which replaced the one-shot flag
+// this handler used to carry.
 func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	if msg.req.version != m.dirReqVersion {
 		return m, nil // a newer request landed while this one was in flight
@@ -158,11 +203,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	m.worktree.SetGitTarget(msg.isGitRepo)
 
 	worktreeOnBefore := m.worktree.On()
-	if msg.isGitRepo && !m.worktreeDefaultApplied {
-		m.worktreeDefaultApplied = true
-		m.worktree.SetOn(m.resolved.UseWorktree)
-	}
-	m.syncDerivedInertness()
+	m.applyProjectDefaults(msg.memoryKey, msg.isGitRepo)
 
 	var cmd tea.Cmd
 	if m.worktree.On() != worktreeOnBefore {
@@ -170,9 +211,9 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		// own branch-exists half depends on it (skipped entirely while
 		// worktree is off), so re-run the title-duplicate check now rather
 		// than waiting for the next title/branch/dir edit to happen to
-		// notice: syncDerivedInertness above already resynced
-		// lastWorktreeOn to the NEW value, so reactToChanges' own diff
-		// would otherwise never see this specific transition.
+		// notice: applyProjectDefaults' own syncDerivedInertness already
+		// resynced lastWorktreeOn to the NEW value, so reactToChanges' own
+		// diff would otherwise never see this specific transition.
 		cmd = m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), msg.req.key, m.worktree.On())
 	}
 	return m, cmd
@@ -724,10 +765,21 @@ type statePersistedMsg struct{}
 
 // persistStateCmd writes the choices this submit was made with back to the
 // plugin state dir (spec §12): the project directory into recents.json's
-// most-recently-used list, and the agent kind/placement/worktree toggle
-// into last-used.json, so the next form-open defaults to what the user
-// actually launched with last time. Called only on a fully successful
-// submit -- a failed one says nothing about what the user wants next.
+// most-recently-used list, the agent kind/placement/worktree toggle into
+// last-used.json, and the same three plus the base ref into projects.json
+// under THIS project's key (spec §10), so the next form-open defaults to
+// what the user actually launched with last time -- globally, and more
+// specifically here. Called only on a fully successful submit -- a failed
+// one says nothing about what the user wants next.
+//
+// last-used.json keeps being written exactly as before: it is now spec
+// §10's global fallback tier rather than the only memory, which is what
+// makes per-project memory a pure addition with no migration step and no
+// data loss for anyone upgrading.
+//
+// projects.json is skipped when no key resolved -- a submit fired inside
+// the debounce window after a project change, before the dir check
+// answered, has nowhere to record itself. The global tier still records it.
 //
 // The write happens in a Cmd rather than inline in the message handler,
 // matching every other I/O-performing source in this file, and its error
@@ -752,9 +804,20 @@ func (m Model) persistStateCmd() tea.Cmd {
 	useWorktree := m.submitInput.UseWorktree
 	st.LastWorktree = &useWorktree
 
+	projectKey := m.projectKey
+	projects := m.projects.Touched(projectKey, config.ProjectDefaults{
+		Kind:      m.submitInput.AgentKind,
+		Worktree:  &useWorktree,
+		Placement: defaults.PlacementValue(m.submitInput.Placement),
+		Base:      m.submitInput.BaseRef,
+	}, time.Now())
+
 	return func() tea.Msg {
 		if stateDir != "" {
 			_ = config.SaveState(stateDir, st)
+			if projectKey != "" {
+				_ = config.SaveProjects(stateDir, projects)
+			}
 		}
 		return statePersistedMsg{}
 	}
@@ -976,6 +1039,10 @@ func (gitxSource) DirExists(path string) bool {
 }
 
 func (gitxSource) IsGitRepo(dir string) bool { return gitx.IsGitRepo(dir) }
+
+func (gitxSource) RepoRoot(ctx context.Context, dir string) (string, error) {
+	return gitx.RepoRoot(ctx, dir)
+}
 
 func (gitxSource) ListSubdirs(dir string, limit int) []string {
 	return pathx.ListSubdirs(dir, limit)

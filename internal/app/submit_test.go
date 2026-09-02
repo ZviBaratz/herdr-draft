@@ -188,6 +188,7 @@ func newSubmitTestModel(t *testing.T, runner herdrc.Runner, s testSetup) Model {
 		Ctx:          s.Ctx,
 		Config:       cfg,
 		State:        s.State,
+		Projects:     s.Projects,
 		Palette:      theme.Default(),
 		StateDir:     t.TempDir(),
 		Workspaces:   s.Workspaces,

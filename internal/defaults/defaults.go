@@ -87,6 +87,14 @@ type Sources struct {
 	Config config.Config
 	// Global is last-used.json (TierGlobalMemory).
 	Global config.State
+	// Project is this project's projects.json entry (TierProjectMemory),
+	// meaningful only when HaveProject is true.
+	Project config.ProjectDefaults
+	// HaveProject distinguishes "no entry for this project" from an entry
+	// whose fields happen to be zero -- a ProjectDefaults zero value alone
+	// cannot express the difference, and reading one as a recorded choice
+	// would let an empty entry override real configuration.
+	HaveProject bool
 
 	// KnownAgentKinds, when non-empty, is the list of agent kinds the form
 	// can actually select. A tier naming a kind outside it supplies
@@ -185,6 +193,14 @@ func Resolve(s Sources) Resolved {
 	// No producer yet; the repo-config issue inserts its block here, which
 	// is the whole reason the tiers are applied as an ordered sequence of
 	// independent blocks rather than one nested expression per field.
+
+	// --- TierProjectMemory: projects.json[key] ---------------------------
+	if s.HaveProject {
+		r.setBool(FieldWorktree, &r.UseWorktree, s.Project.Worktree, TierProjectMemory)
+		r.setPlacement(&r.Placement, s.Project.Placement, TierProjectMemory)
+		r.setAgentKind(&r.AgentKind, s.Project.Kind, TierProjectMemory, s.KnownAgentKinds)
+		r.setString(FieldBaseRef, &r.BaseRef, s.Project.Base, TierProjectMemory)
+	}
 
 	return r
 }

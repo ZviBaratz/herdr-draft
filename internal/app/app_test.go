@@ -80,6 +80,12 @@ type fakeGit struct {
 	// is what an unreadable or empty real directory does too.
 	subdirs map[string][]string
 
+	// repoRoots answers RepoRoot, keyed by the directory queried -- see
+	// fakeGit.RepoRoot.
+	repoRoots     map[string]string
+	repoRootErr   error
+	repoRootCalls []string
+
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
@@ -138,6 +144,27 @@ func (g *fakeGit) IsGitRepo(dir string) bool {
 	g.isGitRepoCalls++
 	g.dirsSeen = append(g.dirsSeen, dir)
 	return g.isGitRepo
+}
+
+// RepoRoot stands in for gitx.RepoRoot: repoRoots maps a queried directory
+// to the ORIGIN repository root it belongs to, so a test can model a linked
+// worktree and its origin resolving to one root without a real `git
+// worktree add` (gitx's own tests do that against a real repository). A
+// directory with no entry answers with itself, which is what a plain
+// single-checkout repository does.
+func (g *fakeGit) RepoRoot(_ context.Context, dir string) (string, error) {
+	g.repoRootCalls = append(g.repoRootCalls, dir)
+	g.dirsSeen = append(g.dirsSeen, dir)
+	if g.repoRootErr != nil {
+		return "", g.repoRootErr
+	}
+	if root, ok := g.repoRoots[dir]; ok {
+		return root, nil
+	}
+	if !g.isGitRepo {
+		return "", nil
+	}
+	return dir, nil
 }
 func (g *fakeGit) ListBranches(_ context.Context, dir string, _ int) ([]string, error) {
 	g.listBranchesCalls++
@@ -206,6 +233,7 @@ type testSetup struct {
 	Ctx          herdrc.Context
 	Config       config.Config
 	State        config.State
+	Projects     config.Projects
 	Workspaces   []herdrc.WorkspaceInfo
 	ClauthStatus clauth.Status
 	LinearCache  []linear.Issue
@@ -243,6 +271,7 @@ func newTestModel(t *testing.T, s testSetup) Model {
 		Ctx:          s.Ctx,
 		Config:       cfg,
 		State:        s.State,
+		Projects:     s.Projects,
 		Palette:      theme.Default(),
 		StateDir:     t.TempDir(),
 		Workspaces:   s.Workspaces,
@@ -361,14 +390,19 @@ func TestDirResult_AppliesWorktreeDefaultOnceAndReChecksTitle(t *testing.T) {
 		t.Fatalf("re-triggered titleDebounceMsg.worktreeOn = false, want true (the state that just changed)")
 	}
 
-	// A SECOND git-repo result for a different path must NOT re-apply the
-	// default (worktreeDefaultApplied is one-shot) or produce another
-	// re-check cmd.
+	// A SECOND git-repo result for a different path resolves the same
+	// default (no per-project memory here), so the toggle does not move and
+	// there is nothing to re-check. Before spec §10's per-project memory
+	// this was enforced by a one-shot worktreeDefaultApplied flag; now it
+	// falls out of the value being unchanged, which is the behavior that
+	// actually mattered -- see
+	// TestDirResult_MemoryReAppliesAcrossASecondProjectChange for the case
+	// where a second project SHOULD move it.
 	req2 := request{version: m.dirReqVersion, key: "/other-repo"}
 	m2, cmd = m.handleDirResult(dirResultMsg{req: req2, dirExists: true, isGitRepo: true})
 	m = m2
 	if cmd != nil {
-		t.Fatalf("a second git-repo result produced a re-check cmd, want nil (default already applied once)")
+		t.Fatalf("a second git-repo result produced a re-check cmd, want nil (the toggle did not move)")
 	}
 }
 

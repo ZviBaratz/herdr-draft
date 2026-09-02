@@ -18,11 +18,6 @@ var knownKinds = []string{"claude", "codex", "gemini"}
 // (field, winning tier) pair: each case stacks every tier BELOW the winner
 // with a different value, so a case can only pass if the tier that is
 // supposed to win actually does.
-//
-// The project-memory tier is absent here by construction -- this is the
-// extraction's own table, carrying only the tiers that existed when the
-// chain was inline in app.New. The per-project cases live in
-// TestResolve_ProjectMemoryTier.
 func TestResolve_Precedence(t *testing.T) {
 	cases := []struct {
 		name string
@@ -32,6 +27,7 @@ func TestResolve_Precedence(t *testing.T) {
 		wantWorktree     bool
 		wantPlacement    plan.Placement
 		wantAgentKind    string
+		wantBaseRef      string
 		wantFrom         map[string]Tier
 	}{
 		{
@@ -201,6 +197,111 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldLinearBranchName: TierBuiltin,
 			},
 		},
+		{
+			name: "projects.json beats every tier below it",
+			src: Sources{
+				Config: config.Config{
+					BranchPrefix:     "zvi/",
+					DefaultWorktree:  false,
+					DefaultPlacement: "tab-here",
+					Agents:           config.AgentsConfig{Default: "codex"},
+				},
+				Global: config.State{
+					LastKind:      "gemini",
+					LastPlacement: "new-space",
+					LastWorktree:  boolp(false),
+				},
+				Project: config.ProjectDefaults{
+					Kind:      "claude",
+					Worktree:  boolp(true),
+					Placement: "split-here",
+					Base:      "develop",
+				},
+				HaveProject:     true,
+				KnownAgentKinds: knownKinds,
+			},
+
+			// branch_prefix has no per-project tier, so it stays config's.
+			wantBranchPrefix: "zvi/",
+			wantWorktree:     true,
+			wantPlacement:    plan.PlacementSplitHere,
+			wantAgentKind:    "claude",
+			wantBaseRef:      "develop",
+			wantFrom: map[string]Tier{
+				FieldBranchPrefix:     TierUserConfig,
+				FieldWorktree:         TierProjectMemory,
+				FieldPlacement:        TierProjectMemory,
+				FieldAgentKind:        TierProjectMemory,
+				FieldBaseRef:          TierProjectMemory,
+				FieldLinearBranchName: TierBuiltin,
+			},
+		},
+		{
+			name: "an entry with no value for a field leaves the tier below alone",
+			src: Sources{
+				Config: config.Config{DefaultWorktree: true, Agents: config.AgentsConfig{Default: "codex"}},
+				Global: config.State{LastPlacement: "tab-here"},
+				// A partial entry -- a hand-written one, or a future
+				// herdr-draft's -- must not zero out what it does not name.
+				Project:         config.ProjectDefaults{Base: "release"},
+				HaveProject:     true,
+				KnownAgentKinds: knownKinds,
+			},
+
+			wantWorktree:  true,
+			wantPlacement: plan.PlacementTabHere,
+			wantAgentKind: "codex",
+			wantBaseRef:   "release",
+			wantFrom: map[string]Tier{
+				FieldBranchPrefix:     TierBuiltin,
+				FieldWorktree:         TierUserConfig,
+				FieldPlacement:        TierGlobalMemory,
+				FieldAgentKind:        TierUserConfig,
+				FieldBaseRef:          TierProjectMemory,
+				FieldLinearBranchName: TierBuiltin,
+			},
+		},
+		{
+			name: "an entry present but not flagged supplies nothing",
+			src: Sources{
+				Config: config.Config{Agents: config.AgentsConfig{Default: "codex"}},
+				// HaveProject false: the caller found no entry, and the
+				// zero ProjectDefaults it passed anyway must be ignored
+				// rather than read as a recorded set of choices.
+				Project:         config.ProjectDefaults{Kind: "claude", Worktree: boolp(true)},
+				KnownAgentKinds: knownKinds,
+			},
+
+			wantWorktree:  false,
+			wantAgentKind: "codex",
+			wantFrom: map[string]Tier{
+				FieldBranchPrefix:     TierBuiltin,
+				FieldWorktree:         TierUserConfig,
+				FieldPlacement:        TierBuiltin,
+				FieldAgentKind:        TierUserConfig,
+				FieldBaseRef:          TierBuiltin,
+				FieldLinearBranchName: TierBuiltin,
+			},
+		},
+		{
+			name: "a remembered kind this binary no longer ships falls through",
+			src: Sources{
+				Config:          config.Config{Agents: config.AgentsConfig{Default: "codex"}},
+				Project:         config.ProjectDefaults{Kind: "retired-kind"},
+				HaveProject:     true,
+				KnownAgentKinds: knownKinds,
+			},
+
+			wantAgentKind: "codex",
+			wantFrom: map[string]Tier{
+				FieldBranchPrefix:     TierBuiltin,
+				FieldWorktree:         TierUserConfig,
+				FieldPlacement:        TierBuiltin,
+				FieldAgentKind:        TierUserConfig,
+				FieldBaseRef:          TierBuiltin,
+				FieldLinearBranchName: TierBuiltin,
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -217,6 +318,9 @@ func TestResolve_Precedence(t *testing.T) {
 			}
 			if got.AgentKind != c.wantAgentKind {
 				t.Errorf("AgentKind = %q, want %q", got.AgentKind, c.wantAgentKind)
+			}
+			if got.BaseRef != c.wantBaseRef {
+				t.Errorf("BaseRef = %q, want %q", got.BaseRef, c.wantBaseRef)
 			}
 			assertFrom(t, got.From, c.wantFrom)
 		})

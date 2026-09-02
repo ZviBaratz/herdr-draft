@@ -102,6 +102,11 @@ type clauthSource interface {
 type gitSource interface {
 	DirExists(path string) bool
 	IsGitRepo(dir string) bool
+	// RepoRoot resolves the ORIGIN repository root behind dir -- the key
+	// spec §10's per-project memory is stored under, so every worktree of
+	// one repository shares a single entry. ("", nil) for a plain
+	// directory; see gitx.RepoRoot.
+	RepoRoot(ctx context.Context, dir string) (string, error)
 	ListSubdirs(dir string, limit int) []string
 	ResolvePath(path string) string
 	ListBranches(ctx context.Context, dir string, limit int) ([]string, error)
@@ -141,11 +146,16 @@ type Env struct {
 // which is what makes it directly unit-testable with fakes (see
 // app_test.go).
 type Setup struct {
-	Deps         Deps
-	Ctx          herdrc.Context
-	Config       config.Config
-	State        config.State
-	Palette      theme.Palette
+	Deps    Deps
+	Ctx     herdrc.Context
+	Config  config.Config
+	State   config.State
+	Palette theme.Palette
+	// Projects is projects.json (spec §10's per-project memory), loaded
+	// once at startup. Its zero value means "no memory yet", which is what
+	// a first run, an unreadable file and an unknown schema version all
+	// look like -- see config.LoadProjects.
+	Projects     config.Projects
 	StateDir     string
 	Workspaces   []herdrc.WorkspaceInfo
 	ClauthStatus clauth.Status
@@ -197,9 +207,11 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		return Model{}, err
 	}
 
-	// LoadState never returns a non-nil error (spec §12: state is entirely
-	// loss-tolerant) -- the error return only exists for API symmetry.
+	// Neither loader ever returns a non-nil error (spec §12: state is
+	// entirely loss-tolerant) -- the error returns only exist for API
+	// symmetry.
 	state, _ := config.LoadState(env.StateDir)
+	projects, _ := config.LoadProjects(env.StateDir)
 
 	palette := theme.LoadHerdrPalette(cfg.Palette)
 
@@ -245,6 +257,7 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		Ctx:               ctx,
 		Config:            cfg,
 		State:             state,
+		Projects:          projects,
 		Palette:           palette,
 		StateDir:          env.StateDir,
 		Workspaces:        workspaces,
@@ -393,19 +406,76 @@ type Model struct {
 	fetchedRepos map[string]bool
 
 	// resolved is spec §10's layered default resolution -- every tier
-	// (config.toml, last-used.json, ...) collapsed into one value per
-	// field, plus the tier each came from. Computed once in New and kept,
-	// rather than re-derived at each use, so the form and the (future)
-	// headless command read the same answer from the same place. See
-	// internal/defaults.
+	// (config.toml, last-used.json, projects.json) collapsed into one value
+	// per field, plus the tier each came from. Recomputed by
+	// applyProjectDefaults whenever the project row changes, since the
+	// top tier is per-project. See internal/defaults.
 	resolved defaults.Resolved
 
-	// worktreeDefaultApplied gates resolved.UseWorktree's ONE-SHOT
-	// application: see handleDirResult's own doc comment for why it can
-	// only apply once the target is known to be a usable git repo, and only
-	// once ever (a later directory change must never fight the user's own
-	// toggle choice by re-forcing the configured default back).
-	worktreeDefaultApplied bool
+	// projects is projects.json, loaded once at Bootstrap: nothing but this
+	// process writes it, and it only writes on a successful submit, one
+	// message before quitting.
+	projects config.Projects
+
+	// projectKey is the projects.json key for the CURRENTLY selected
+	// project directory -- the repo root when it is a repo, its canonical
+	// path otherwise -- resolved off the update loop by the debounced dir
+	// check (see async.go's projectMemoryKey) and kept here so
+	// persistStateCmd knows where to record the submit. "" until the first
+	// dir check lands, and for a directory that does not exist.
+	projectKey string
+
+	// agentKinds is the ordered kind list AgentField was built with, kept
+	// because defaults.Resolve needs it to skip a remembered kind this
+	// binary does not ship (defaults.Sources.KnownAgentKinds) -- and
+	// applyProjectDefaults re-resolves long after New has returned.
+	agentKinds []string
+
+	// worktreeTouched/placementTouched/agentTouched implement spec §10's
+	// "per-project memory re-applies when the project row changes, unless
+	// the user has already touched that field" -- the same
+	// touched-versus-preselected rule the Linear seeding uses, expressed
+	// here rather than inside the fields because none of these three
+	// carries a touched flag of its own (WorktreeField has one only for its
+	// branch INPUT, not for the on/off chips).
+	//
+	// These REPLACE the old one-shot worktreeDefaultApplied flag rather
+	// than sitting beside it. Two mechanisms deciding whether a default may
+	// still be applied is how a field ends up honoring neither: the
+	// one-shot gate would have blocked the second project's remembered
+	// toggle outright, and removing it while keeping a second gate for the
+	// same question would have put the two back in competition.
+	worktreeTouched  bool
+	placementTouched bool
+	agentTouched     bool
+
+	// appliedWorktreeOn/appliedPlacement/appliedAgentKind are what the APP
+	// itself last put in those three fields (snapshotAppliedDefaults). The
+	// touched flags above are set by comparing the field's current value
+	// against these in reactToChanges: a value that moved without the app
+	// moving it was moved by the user.
+	//
+	// These are deliberately NOT lastWorktreeOn. That field belongs to
+	// syncDerivedInertness, which resyncs it on every call -- including
+	// calls this package might add later, and including the one inside
+	// applyProjectDefaults -- so its value tracks "the last time inertness
+	// was recomputed", not "the last value the app itself chose". A touched
+	// test built on it is correct only for as long as those two happen to
+	// coincide, and consulting it directly from a handler (where it always
+	// already equals the field) answers the same thing every time.
+	//
+	// The failure that matters is silent and late: any path that applies a
+	// default WITHOUT refreshing the snapshot makes the app's own
+	// application look like a user edit on the next reactToChanges pass, at
+	// which point per-project memory stops re-applying -- and not on the
+	// first project change, only from the second on.
+	// TestDirResult_MemoryReAppliesAcrossASecondProjectChange is the test
+	// that catches it; it was confirmed to fail when the
+	// snapshotAppliedDefaults call at the end of applyProjectDefaults was
+	// removed.
+	appliedWorktreeOn bool
+	appliedPlacement  plan.Placement
+	appliedAgentKind  string
 
 	// dirInvalid/titleDupBlocked mirror the last dir-validity/title-dup
 	// verdict each already pushed into DirField/TitleField (handleDirResult/
@@ -489,6 +559,7 @@ func New(s Setup) Model {
 		palette:      palette,
 		cfg:          s.Config,
 		state:        s.State,
+		projects:     s.Projects,
 		ctx:          s.Ctx,
 		stateDir:     s.StateDir,
 		deps:         s.Deps,
@@ -508,17 +579,22 @@ func New(s Setup) Model {
 	m.agent = form.NewAgentField(palette)
 	m.prompt = form.NewPromptField(palette)
 
-	// Spec §10's layered defaults, resolved ONCE here rather than as three
+	// Spec §10's layered defaults, resolved here rather than as three
 	// separate inline ladders (placement, agent kind, worktree toggle) each
 	// re-expressing "config.toml, then last-used.json" in its own idiom.
 	// The kind list is resolved first because the resolver needs it: a tier
 	// naming an agent kind this binary doesn't ship supplies nothing, so
 	// the next tier down applies (see defaults.Sources.KnownAgentKinds).
-	agentKinds := orderedAgentKinds(s.Config.Agents.Favorites)
+	//
+	// The per-project tier is deliberately absent here: which project the
+	// form is pointed at is not known until the first debounced dir check
+	// resolves its repository root, so applyProjectDefaults re-resolves
+	// with it (and on every later project change) once it is.
+	m.agentKinds = orderedAgentKinds(s.Config.Agents.Favorites)
 	m.resolved = defaults.Resolve(defaults.Sources{
 		Config:          s.Config,
 		Global:          s.State,
-		KnownAgentKinds: agentKinds,
+		KnownAgentKinds: m.agentKinds,
 	})
 
 	// [default_placement] (spec §12), resolved across config.toml and
@@ -580,7 +656,7 @@ func New(s Setup) Model {
 	// every remaining known kind, so a favorite is always a chip AND the
 	// full list stays reachable behind "more…" (AgentField's own doc: it
 	// derives its favorite chips from THIS list's leading entries).
-	m.agent.SetKinds(agentKinds)
+	m.agent.SetKinds(m.agentKinds)
 	// ... then the resolved kind: `[agents] default` (spec §12, which
 	// SetKinds' own "index 0 is the default" contract could only ever
 	// express as favorites[0]) overridden by the kind the user actually
@@ -622,6 +698,7 @@ func New(s Setup) Model {
 
 	m.form = form.New(form.Setup{Palette: palette, Sections: sections})
 	m.syncDerivedInertness()
+	m.snapshotAppliedDefaults()
 
 	m.initCmds = []tea.Cmd{m.scheduleDirCheck(m.lastDir), m.scheduleBaseCheck(m.lastDir)}
 	if m.issue != nil && s.Deps.Linear != nil {
@@ -955,6 +1032,7 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		Ctx:          m.ctx,
 		Config:       m.cfg,
 		State:        m.state,
+		Projects:     m.projects,
 		Palette:      m.palette,
 		StateDir:     m.stateDir,
 		Workspaces:   m.workspaces,
@@ -963,6 +1041,20 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 
 		LinearUnavailable: m.linearUnavailable,
 	})
+	// Spec §10: "⌃R⌃R clears back to the repository default" -- explicitly
+	// NOT back to what you last did in this project. New has already
+	// resolved without the per-project tier (it knows no project key yet),
+	// but the dir check fresh.Init() is about to schedule would resolve WITH
+	// it and put the memory straight back, undoing the clear.
+	//
+	// The suppression rides the touched flags rather than a second flag of
+	// its own, for the reason those flags replaced worktreeDefaultApplied:
+	// one mechanism decides whether a default may still be applied. A ⌃R⌃R
+	// is a deliberate statement about these three fields' values, which is
+	// exactly what "touched" means here.
+	fresh.worktreeTouched = true
+	fresh.placementTouched = true
+	fresh.agentTouched = true
 	next, sizeCmd := fresh.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	fresh = next.(Model)
 	return fresh, tea.Batch(fresh.Init(), sizeCmd)
@@ -978,6 +1070,17 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 // exposes no "section X's value changed" signal of its own.
 func (m *Model) reactToChanges() []tea.Cmd {
 	var cmds []tea.Cmd
+
+	// Touched-versus-preselected for the three fields per-project memory
+	// re-applies to (spec §10). This runs FIRST, before anything below can
+	// move a value itself: every one of these three getters is compared
+	// against what the app last put there (snapshotAppliedDefaults), so a
+	// value that moved without the app moving it moved because the user
+	// did. syncDerivedInertness at the bottom of this function can move
+	// Placement on its own (a worktree turning on snaps it back to New
+	// space), which is exactly why the snapshot is refreshed AFTER it
+	// rather than here.
+	m.noteUserEdits()
 
 	if typed := m.dir.Typed(); typed != m.lastDirTyped {
 		m.lastDirTyped = typed
@@ -1018,7 +1121,95 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	}
 
 	m.syncDerivedInertness()
+	m.snapshotAppliedDefaults()
 	return cmds
+}
+
+// noteUserEdits marks the worktree toggle, placement and agent kind as
+// touched when their current value differs from what the app itself last
+// put there -- spec §10's touched-versus-preselected rule, for the three
+// fields per-project memory re-applies to. None of them carries a touched
+// flag of its own (WorktreeField has one only for its branch input), and
+// the form deliberately exposes no "section X changed" signal, so this is
+// the same one-level-up diff reactToChanges already does for the other
+// getters.
+//
+// Once set, a flag is never cleared: only a ⌃R⌃R rebuild (which starts
+// from a fresh Model) resets the form's idea of what the user has decided.
+func (m *Model) noteUserEdits() {
+	if on := m.worktree.On(); on != m.appliedWorktreeOn {
+		m.worktreeTouched = true
+	}
+	if p := m.placement.Value(); p != m.appliedPlacement {
+		m.placementTouched = true
+	}
+	if k := m.agent.Value(); k != m.appliedAgentKind {
+		m.agentTouched = true
+	}
+}
+
+// snapshotAppliedDefaults records the three memory-fed fields' current
+// values as "what the app put there", so noteUserEdits' next pass only
+// reports a change the USER made.
+//
+// It is called at the end of every path that can move one of them without
+// user input -- New, reactToChanges and applyProjectDefaults -- always
+// AFTER syncDerivedInertness, which moves Placement itself when a worktree
+// turns on. Snapshotting before that call would leave the snapshot holding
+// a placement the field no longer shows, and the very next reactToChanges
+// would read the difference as a user edit and permanently stop per-project
+// memory from re-applying to it.
+func (m *Model) snapshotAppliedDefaults() {
+	m.appliedWorktreeOn = m.worktree.On()
+	m.appliedPlacement = m.placement.Value()
+	m.appliedAgentKind = m.agent.Value()
+}
+
+// applyProjectDefaults re-resolves spec §10's layered defaults for the
+// project the form now points at (key, from the debounced dir check) and
+// applies each resolved value to the field that shows it -- unless the
+// user has already touched that field, in which case their choice stands.
+// This is "per-project memory re-applies when the project row changes."
+//
+// isGitRepo gates the worktree toggle alone: WorktreeField.SetOn is
+// meaningless for a target that cannot host a worktree (the chip row is
+// inert), so a remembered `true` waits for a repository rather than being
+// spent on a plain directory.
+func (m *Model) applyProjectDefaults(key string, isGitRepo bool) {
+	m.projectKey = key
+	entry, have := m.projects.Get(key)
+	m.resolved = defaults.Resolve(defaults.Sources{
+		Config:          m.cfg,
+		Global:          m.state,
+		Project:         entry,
+		HaveProject:     have,
+		KnownAgentKinds: m.agentKinds,
+	})
+
+	// The worktree toggle goes first, and the inertness resync with it,
+	// because Placement's inert state follows it: PlacementField refuses to
+	// move its cursor while inert (a worktree ignores placement entirely),
+	// so a remembered placement applied while the PREVIOUS project's
+	// worktree=true was still in effect would silently do nothing and leave
+	// the field on New space.
+	if isGitRepo && !m.worktreeTouched {
+		m.worktree.SetOn(m.resolved.UseWorktree)
+	}
+	m.syncDerivedInertness()
+
+	if !m.placementTouched {
+		m.placement.SetValue(m.resolved.Placement)
+	}
+	if !m.agentTouched {
+		m.agent.SetKind(m.resolved.AgentKind)
+	}
+	// resolved.BaseRef is deliberately not applied: WorktreeField has no
+	// setter for its base picker's selection (see defaults.Resolved.BaseRef).
+
+	// Again, because the agent kind above drives AccountField's own inert
+	// condition (spec §6 field 7, "inert while the kind is not claude").
+	m.syncDerivedInertness()
+	m.snapshotAppliedDefaults()
 }
 
 // reactToTypedDir keeps DirField's candidate pool in step with what the
