@@ -109,24 +109,6 @@ const (
 	verticalPadding = 1
 )
 
-// innerWidth returns SUBMITVIEW's own content width for a popup w columns
-// wide: w minus the gutter and the right margin, floored at 1 so a
-// pathologically narrow window still asks for a renderable (if useless)
-// width rather than 0 or negative -- matching Picker/ChipRow/PromptArea's
-// own "width <= 0 degrades instead of panicking" contract (see
-// widgets/picker.go's widthStyle doc).
-//
-// The FORM measures itself with rowlayout.go's contentBox instead, which
-// also caps and centers. The two are deliberately NOT unified: doing so
-// would move submitview.go's two golden frames for no reason at all.
-func innerWidth(w int) int {
-	inner := w - gutterWidth - rightMargin
-	if inner < 1 {
-		return 1
-	}
-	return inner
-}
-
 // isBlankLine reports whether l carries no visible content -- whitespace
 // only, once every ANSI escape sequence is stripped out of it.
 //
