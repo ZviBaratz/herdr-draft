@@ -56,6 +56,44 @@ func ExpandTilde(path string) string {
 	return filepath.Join(home, path[2:])
 }
 
+// CanonicalKey normalizes a project directory into the stable identity
+// per-project memory is keyed on (spec §10): tilde-expanded, made
+// absolute, symlinks resolved, cleaned, with no trailing separator.
+//
+// Every step exists to keep ONE project from acquiring several
+// projects.json entries. "~/Projects/x", "/home/zvi/Projects/x/" and
+// "/home/zvi/Projects/x/." are the same project and must produce the same
+// key; so is a path reached through a symlinked parent (~/work ->
+// /mnt/data/work), which is why EvalSymlinks runs even though Resolve --
+// whose job is only to hand a subprocess something it can act on -- does
+// not bother.
+//
+// A path that cannot be resolved is returned expanded-and-cleaned rather
+// than dropped: a directory that does not exist yet (or one whose parent
+// is unreadable) still deserves a key, and a stable-but-unresolved key is
+// strictly better than none. Only an empty path returns "" -- filepath.Abs
+// would otherwise turn it into the process's working directory, silently
+// keying the memory on wherever the plugin happened to be launched from.
+func CanonicalKey(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	expanded := ExpandTilde(path)
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		// Same posture as Resolve: report what we have rather than
+		// substituting a path that might be wrong.
+		return filepath.Clean(expanded)
+	}
+	if resolved, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+		abs = resolved
+	}
+	// filepath.Clean already removes "." elements, collapses separators and
+	// strips a trailing separator (except from a bare root, which must keep
+	// it to stay a path at all).
+	return filepath.Clean(abs)
+}
+
 // readChunk is how many directory entries ListSubdirs pulls per ReadDir
 // call. It only bounds allocation per iteration, not the total scan.
 const readChunk = 512

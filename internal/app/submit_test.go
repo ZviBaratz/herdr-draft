@@ -949,7 +949,7 @@ func TestSubmit_PersistsStateAndFeedsItBackIntoTheNextFormOpen(t *testing.T) {
 	if got := next.placement.Value(); got != plan.PlacementTabHere {
 		t.Errorf("a fresh form's placement = %v, want the last-used tab-here", got)
 	}
-	if !next.worktreeDefaultOn {
+	if !next.resolved.UseWorktree {
 		t.Error("a fresh form's worktree default = false, want the last-used true")
 	}
 	// The recents' own destination: New feeds State.Recents into

@@ -209,3 +209,83 @@ func TestListSubdirsReturnsTheAlphabeticallyFirstLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestCanonicalKeyNormalizesTheSameProjectToOneKey is the property
+// per-project memory depends on: several ways of naming one directory must
+// produce ONE projects.json key, or the memory silently splits into
+// entries that never agree.
+func TestCanonicalKeyNormalizesTheSameProjectToOneKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "Projects", "herdr-draft")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", project, err)
+	}
+	// t.TempDir can itself sit behind a symlink (macOS /var -> /private/var),
+	// so the expected key is the RESOLVED form of the real directory, not
+	// the string t.TempDir handed back.
+	want, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", project, err)
+	}
+
+	for _, in := range []string{
+		project,
+		project + "/",
+		project + "/.",
+		filepath.Join(project, "sub", ".."),
+		"~/Projects/herdr-draft",
+		"~/Projects/herdr-draft/",
+	} {
+		if got := CanonicalKey(in); got != want {
+			t.Errorf("CanonicalKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestCanonicalKeyResolvesSymlinkedParents pins the case ExpandTilde and
+// Resolve deliberately do not handle: two paths reaching one directory
+// through different symlinks are one project.
+func TestCanonicalKeyResolvesSymlinkedParents(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real", "project")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", real, err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(filepath.Join(root, "real"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	viaReal := CanonicalKey(real)
+	viaLink := CanonicalKey(filepath.Join(link, "project"))
+	if viaReal != viaLink {
+		t.Errorf("CanonicalKey via the real path = %q, via the symlink = %q; want one key", viaReal, viaLink)
+	}
+}
+
+// TestCanonicalKeyKeepsAnUnresolvablePath pins the documented degradation:
+// a directory that does not exist yet still gets a stable key rather than
+// being dropped.
+func TestCanonicalKeyKeepsAnUnresolvablePath(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "does", "not", "exist")
+	got := CanonicalKey(missing + "/")
+	if !filepath.IsAbs(got) {
+		t.Errorf("CanonicalKey(%q) = %q, want an absolute path", missing, got)
+	}
+	if got != filepath.Clean(missing) {
+		t.Errorf("CanonicalKey(%q) = %q, want the cleaned path %q", missing, got, filepath.Clean(missing))
+	}
+}
+
+// TestCanonicalKeyOnEmptyIsEmpty pins the one input that must NOT become a
+// key: filepath.Abs would turn "" into the process's working directory,
+// keying the memory on wherever the plugin happened to be launched from.
+func TestCanonicalKeyOnEmptyIsEmpty(t *testing.T) {
+	for _, in := range []string{"", "   "} {
+		if got := CanonicalKey(in); got != "" {
+			t.Errorf("CanonicalKey(%q) = %q, want %q", in, got, "")
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -36,6 +37,68 @@ func runGit(ctx context.Context, repoDir string, args ...string) (string, error)
 		return "", fmt.Errorf("git %s (in %s): %w: %s", strings.Join(args, " "), repoDir, err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// RepoRoot returns the root of the repository containing dir -- the ORIGIN
+// repository's root, not a linked worktree's own checkout, so every
+// worktree of one repository shares a single per-project memory entry
+// (spec §10).
+//
+// The distinction is the whole point of this function. `rev-parse
+// --show-toplevel` names the CHECKOUT: inside ~/repo/.worktrees/feature it
+// answers ~/repo/.worktrees/feature, which would give every worktree of one
+// repository its own projects.json entry and defeat the feature for exactly
+// the users most likely to want it. `--git-common-dir` instead names the
+// SHARED .git directory (~/repo/.git from either place), whose parent is
+// the origin root.
+//
+// --git-common-dir has been able to return a relative path ("." inside a
+// main worktree's .git, or a relative path from the cwd) for most of its
+// life; `--path-format=absolute`, added in git 2.31, is what makes the
+// answer usable without knowing what it was relative to. On an older git
+// that flag is an error, so this falls back to --show-toplevel: the wrong
+// answer for a linked worktree, but a correct and stable one for the main
+// checkout, which is better than no memory at all.
+//
+// A dir that is not a git repository returns ("", nil) -- the caller keys
+// on the canonical path instead (pathx.CanonicalKey), which is not a
+// failure. A real failure (git missing, an unreadable repository) returns
+// an error.
+//
+// Known limitation, deliberately not handled: a repository whose git
+// directory lives outside the working tree (`git init --separate-git-dir`,
+// or a GIT_DIR pointing elsewhere) has no "parent of the common dir" that
+// names its checkout. Such a repository gets a key derived from the git
+// directory's parent instead -- still stable, still shared between that
+// repository's worktrees, just not equal to the checkout path.
+func RepoRoot(ctx context.Context, dir string) (string, error) {
+	if out, err := runGit(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil && out != "" {
+		return filepath.Dir(filepath.Clean(out)), nil
+	}
+	// Either git predates --path-format (< 2.31) or dir is not a
+	// repository at all -- repoRootFallback separates the two.
+	return repoRootFallback(ctx, dir)
+}
+
+// repoRootFallback is RepoRoot's git-older-than-2.31 path, split out so it
+// is directly testable: no supported way exists to make a modern git reject
+// --path-format, and an untested fallback is a fallback that will be broken
+// the day someone needs it.
+//
+// --show-toplevel is in every git this plugin could run against, and fails
+// only for a non-repository -- which is how a missing --path-format is told
+// apart from "dir is not a repo". Its answer is the CHECKOUT, so on an old
+// git a linked worktree keys separately from its origin; that is the known
+// cost of the fallback, and better than no memory at all.
+func repoRootFallback(ctx context.Context, dir string) (string, error) {
+	top, err := runGit(ctx, dir, "rev-parse", "--show-toplevel")
+	if err == nil {
+		return filepath.Clean(top), nil
+	}
+	if !IsGitRepo(dir) {
+		return "", nil
+	}
+	return "", fmt.Errorf("repo root: %w", err)
 }
 
 // ListBranches returns at most limit branch names in repoDir, newest by

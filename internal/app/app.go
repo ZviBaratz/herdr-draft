@@ -24,6 +24,7 @@ import (
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
+	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
@@ -391,14 +392,19 @@ type Model struct {
 	// again even if the user navigates away and back.
 	fetchedRepos map[string]bool
 
-	// worktreeDefaultOn/worktreeDefaultApplied implement spec §6 field 4's
-	// "default from config" (config.Config.DefaultWorktree, overridden by
-	// config.State.LastWorktree when set) as a ONE-SHOT application: see
-	// handleDirResult's own doc comment for why it can only apply once the
-	// target is known to be a usable git repo, and only once ever (a later
-	// directory change must never fight the user's own toggle choice by
-	// re-forcing the config default back).
-	worktreeDefaultOn      bool
+	// resolved is spec §10's layered default resolution -- every tier
+	// (config.toml, last-used.json, ...) collapsed into one value per
+	// field, plus the tier each came from. Computed once in New and kept,
+	// rather than re-derived at each use, so the form and the (future)
+	// headless command read the same answer from the same place. See
+	// internal/defaults.
+	resolved defaults.Resolved
+
+	// worktreeDefaultApplied gates resolved.UseWorktree's ONE-SHOT
+	// application: see handleDirResult's own doc comment for why it can
+	// only apply once the target is known to be a usable git repo, and only
+	// once ever (a later directory change must never fight the user's own
+	// toggle choice by re-forcing the configured default back).
 	worktreeDefaultApplied bool
 
 	// dirInvalid/titleDupBlocked mirror the last dir-validity/title-dup
@@ -502,30 +508,32 @@ func New(s Setup) Model {
 	m.agent = form.NewAgentField(palette)
 	m.prompt = form.NewPromptField(palette)
 
-	// [default_placement] (spec §12), when set to something other than
-	// "new-space" (PlacementField's own natural starting default -- no
-	// call needed for that case): the two folded-in Task 20 gaps this
-	// task's brief names ("[clauth] default and a non-default
-	// [default_placement] have no pre-selection path"). "off"/on-then-
-	// snapped-back-to-New's own interaction with worktree defaulting on
-	// is handled the same way it already was before this gap was closed
-	// -- see PlacementField.SetValue's own doc comment: applying this now
-	// is safe regardless of where worktreeDefaultOn will later land,
-	// since a worktree turning on always snaps Placement back to New
-	// space anyway (spec §12's own config.toml comment: "when worktree is
-	// off").
-	// config.toml's own value first, then -- when a previous successful
-	// submit recorded one (spec §12's last-used.json, written by
-	// persistStateCmd) -- the placement the user actually launched with
-	// last time, which overrides it. State.LastPlacement was written by
-	// nobody and read by nobody before the state layer was wired up
-	// (finding I2); this is its read side.
-	if p, ok := placementFromConfigValue(s.Config.DefaultPlacement); ok {
-		m.placement.SetValue(p)
-	}
-	if p, ok := placementFromConfigValue(s.State.LastPlacement); ok {
-		m.placement.SetValue(p)
-	}
+	// Spec §10's layered defaults, resolved ONCE here rather than as three
+	// separate inline ladders (placement, agent kind, worktree toggle) each
+	// re-expressing "config.toml, then last-used.json" in its own idiom.
+	// The kind list is resolved first because the resolver needs it: a tier
+	// naming an agent kind this binary doesn't ship supplies nothing, so
+	// the next tier down applies (see defaults.Sources.KnownAgentKinds).
+	agentKinds := orderedAgentKinds(s.Config.Agents.Favorites)
+	m.resolved = defaults.Resolve(defaults.Sources{
+		Config:          s.Config,
+		Global:          s.State,
+		KnownAgentKinds: agentKinds,
+	})
+
+	// [default_placement] (spec §12), resolved across config.toml and
+	// last-used.json: the two folded-in Task 20 gaps this task's brief
+	// names ("[clauth] default and a non-default [default_placement] have
+	// no pre-selection path"). "off"/on-then-snapped-back-to-New's own
+	// interaction with worktree defaulting on is handled the same way it
+	// already was before this gap was closed -- see PlacementField.SetValue's
+	// own doc comment: applying this now is safe regardless of where
+	// resolved.UseWorktree will later land, since a worktree turning on
+	// always snaps Placement back to New space anyway (spec §12's own
+	// config.toml comment: "when worktree is off"). SetValue is a no-op
+	// when the chip cursor already sits on the resolved value, which is
+	// what makes the unconditional call safe.
+	m.placement.SetValue(m.resolved.Placement)
 
 	// Linear (spec §6 field 1): rendered only when Linear is configured --
 	// decided entirely by whether Bootstrap resolved an API key at all
@@ -572,20 +580,14 @@ func New(s Setup) Model {
 	// every remaining known kind, so a favorite is always a chip AND the
 	// full list stays reachable behind "more…" (AgentField's own doc: it
 	// derives its favorite chips from THIS list's leading entries).
-	m.agent.SetKinds(orderedAgentKinds(s.Config.Agents.Favorites))
-	// ... then `[agents] default`, which spec §12 lists but nothing read
-	// until now: SetKinds' own "index 0 is the default" contract can only
-	// ever express favorites[0], so a config naming a default OUTSIDE the
-	// favorites row -- or a different one within it -- had no effect at
-	// all.
-	m.agent.SetKind(s.Config.Agents.Default)
-	// ... then the kind the user actually launched with last time, when a
-	// previous successful submit recorded one (spec §12's last-used.json).
-	// Last-used wins over the configured default, the same precedence
-	// worktreeDefaultOn applies just below for `default_worktree` vs
-	// State.LastWorktree. Either call is a no-op for an empty or unknown
-	// kind -- see AgentField.SetKind.
-	m.agent.SetKind(s.State.LastKind)
+	m.agent.SetKinds(agentKinds)
+	// ... then the resolved kind: `[agents] default` (spec §12, which
+	// SetKinds' own "index 0 is the default" contract could only ever
+	// express as favorites[0]) overridden by the kind the user actually
+	// launched with last time, when a previous successful submit recorded
+	// one (last-used.json). A no-op for an empty kind -- see
+	// AgentField.SetKind.
+	m.agent.SetKind(m.resolved.AgentKind)
 
 	// Project (spec §6 field 2): current space's repo root, then the
 	// current workspace cwd, then every open workspace's own worktree
@@ -601,11 +603,6 @@ func New(s Setup) Model {
 	// browsed rows around it are (see DirField.SetPathExpander): the app
 	// layer owns every path resolution, the form package none.
 	m.dir.SetPathExpander(s.Deps.Git.ResolvePath)
-
-	m.worktreeDefaultOn = s.Config.DefaultWorktree
-	if s.State.LastWorktree != nil {
-		m.worktreeDefaultOn = *s.State.LastWorktree
-	}
 
 	sections := make([]form.Section, 0, 9)
 	if m.issue != nil {
@@ -1001,7 +998,7 @@ func (m *Model) reactToChanges() []tea.Cmd {
 			// a branch" -- WorktreeField.SetBranch's own touched guard
 			// means this is a no-op the moment the user has edited Branch
 			// themselves.
-			m.worktree.SetBranch(gitx.BranchSlug(m.cfg.BranchPrefix, titleVal), true)
+			m.worktree.SetBranch(gitx.BranchSlug(m.resolved.BranchPrefix, titleVal), true)
 		}
 	}
 
@@ -1095,42 +1092,6 @@ func (m *Model) syncDerivedInertness() {
 	m.lastWorktreeOn = m.worktree.On()
 	if m.account != nil {
 		m.account.SetAgentIsClaude(m.agent.Value() == claudeKind)
-	}
-}
-
-// placementConfigValue is placementFromConfigValue's inverse: it names a
-// plan.Placement in spec §12's own config.toml vocabulary, for writing
-// into last-used.json (persistStateCmd, async.go). Round-tripping through
-// the SAME vocabulary the config file uses is what lets New apply
-// State.LastPlacement through placementFromConfigValue, with no second
-// serialization format for the same three values.
-func placementConfigValue(p plan.Placement) string {
-	switch p {
-	case plan.PlacementTabHere:
-		return "tab-here"
-	case plan.PlacementSplitHere:
-		return "split-here"
-	default:
-		return "new-space"
-	}
-}
-
-// placementFromConfigValue translates spec §12's config.toml
-// `default_placement` string ("new-space"/"tab-here"/"split-here") to
-// internal/plan's own Placement enum. ok is false for "" (config omitted
-// the key) and "new-space" (PlacementField's own natural starting
-// default already matches it, so New has nothing to apply) alike, and
-// for any unrecognized value (never override the field's default with a
-// guess at a typo'd config string) -- only "tab-here"/"split-here" (the
-// two placements PlacementField does NOT already start on) return true.
-func placementFromConfigValue(s string) (plan.Placement, bool) {
-	switch s {
-	case "tab-here":
-		return plan.PlacementTabHere, true
-	case "split-here":
-		return plan.PlacementSplitHere, true
-	default:
-		return plan.PlacementNewSpace, false
 	}
 }
 

@@ -323,3 +323,126 @@ func TestFetchPrune(t *testing.T) {
 		}
 	})
 }
+
+// TestRepoRoot_LinkedWorktreeSharesTheOriginRoot is the required test for
+// spec §10's per-project memory key: a linked worktree and its origin must
+// resolve to ONE root, or every worktree of a repository gets its own
+// projects.json entry and the feature does nothing for exactly the people
+// most likely to use it.
+//
+// It is also the test that fails if RepoRoot is ever reimplemented on
+// `rev-parse --show-toplevel`, which names the CHECKOUT.
+func TestRepoRoot_LinkedWorktreeSharesTheOriginRoot(t *testing.T) {
+	ctx := context.Background()
+	origin := mkRepo(t)
+
+	linked := filepath.Join(t.TempDir(), "feature")
+	gitRun(t, origin, "worktree", "add", "-q", "-b", "feature", linked)
+
+	originRoot, err := RepoRoot(ctx, origin)
+	if err != nil {
+		t.Fatalf("RepoRoot(origin): %v", err)
+	}
+	linkedRoot, err := RepoRoot(ctx, linked)
+	if err != nil {
+		t.Fatalf("RepoRoot(linked worktree): %v", err)
+	}
+
+	if originRoot != linkedRoot {
+		t.Errorf("RepoRoot(origin) = %q but RepoRoot(linked worktree) = %q; want one shared root",
+			originRoot, linkedRoot)
+	}
+	// Sanity: the shared answer really is the origin checkout, not the
+	// linked one. Compared through EvalSymlinks because t.TempDir can sit
+	// behind a symlink while git reports the resolved path.
+	wantOrigin, evalErr := filepath.EvalSymlinks(origin)
+	if evalErr != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", origin, evalErr)
+	}
+	gotOrigin, evalErr := filepath.EvalSymlinks(originRoot)
+	if evalErr != nil {
+		t.Fatalf("EvalSymlinks(%s): %v", originRoot, evalErr)
+	}
+	if gotOrigin != wantOrigin {
+		t.Errorf("RepoRoot = %q, want the origin checkout %q", gotOrigin, wantOrigin)
+	}
+	if linkedRoot == filepath.Clean(linked) {
+		t.Errorf("RepoRoot(linked worktree) = %q, the worktree's own checkout -- "+
+			"this is the --show-toplevel answer, not the --git-common-dir one", linkedRoot)
+	}
+}
+
+// TestRepoRoot_FromASubdirectory pins that the root is the REPOSITORY's,
+// not the directory asked about: the project field can hold any path
+// inside the repo and must still key on one entry.
+func TestRepoRoot_FromASubdirectory(t *testing.T) {
+	ctx := context.Background()
+	repo := mkRepo(t)
+	sub := filepath.Join(repo, "internal", "app")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", sub, err)
+	}
+
+	top, err := RepoRoot(ctx, repo)
+	if err != nil {
+		t.Fatalf("RepoRoot(repo): %v", err)
+	}
+	fromSub, err := RepoRoot(ctx, sub)
+	if err != nil {
+		t.Fatalf("RepoRoot(subdir): %v", err)
+	}
+	if top != fromSub {
+		t.Errorf("RepoRoot(repo) = %q, RepoRoot(subdir) = %q; want one root", top, fromSub)
+	}
+}
+
+// TestRepoRoot_NonRepositoryIsEmptyNotAnError pins the documented
+// degradation: a plain directory has no repository root, and the caller
+// keys on its canonical path instead. That is a normal outcome, not a
+// failure to report.
+func TestRepoRoot_NonRepositoryIsEmptyNotAnError(t *testing.T) {
+	root, err := RepoRoot(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("RepoRoot on a non-repository = error %v, want (\"\", nil)", err)
+	}
+	if root != "" {
+		t.Errorf("RepoRoot on a non-repository = %q, want %q", root, "")
+	}
+}
+
+// TestRepoRootFallback covers the git-older-than-2.31 path directly -- the
+// installed git always takes RepoRoot's --path-format branch, so the
+// fallback would otherwise ship untested and break silently on the one
+// setup that needs it.
+func TestRepoRootFallback(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("main checkout", func(t *testing.T) {
+		repo := mkRepo(t)
+		got, err := repoRootFallback(ctx, repo)
+		if err != nil {
+			t.Fatalf("repoRootFallback: %v", err)
+		}
+		want, err := filepath.EvalSymlinks(repo)
+		if err != nil {
+			t.Fatalf("EvalSymlinks(%s): %v", repo, err)
+		}
+		gotResolved, err := filepath.EvalSymlinks(got)
+		if err != nil {
+			t.Fatalf("EvalSymlinks(%s): %v", got, err)
+		}
+		if gotResolved != want {
+			t.Errorf("repoRootFallback = %q, want the checkout %q", gotResolved, want)
+		}
+	})
+
+	t.Run("non-repository", func(t *testing.T) {
+		got, err := repoRootFallback(ctx, t.TempDir())
+		if err != nil {
+			t.Fatalf("repoRootFallback on a non-repository = error %v, want (\"\", nil)", err)
+		}
+		if got != "" {
+			t.Errorf("repoRootFallback on a non-repository = %q, want %q", got, "")
+		}
+	})
+}

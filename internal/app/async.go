@@ -46,6 +46,7 @@ import (
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
+	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
@@ -159,7 +160,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	worktreeOnBefore := m.worktree.On()
 	if msg.isGitRepo && !m.worktreeDefaultApplied {
 		m.worktreeDefaultApplied = true
-		m.worktree.SetOn(m.worktreeDefaultOn)
+		m.worktree.SetOn(m.resolved.UseWorktree)
 	}
 	m.syncDerivedInertness()
 
@@ -747,7 +748,7 @@ func (m Model) persistStateCmd() tea.Cmd {
 		st.TouchRecent(dir)
 	}
 	st.LastKind = m.submitInput.AgentKind
-	st.LastPlacement = placementConfigValue(m.submitInput.Placement)
+	st.LastPlacement = defaults.PlacementValue(m.submitInput.Placement)
 	useWorktree := m.submitInput.UseWorktree
 	st.LastWorktree = &useWorktree
 
