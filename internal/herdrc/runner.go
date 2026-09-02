@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -235,6 +236,66 @@ func focusFlag(focus bool) string {
 	return "--no-focus"
 }
 
+// errRefused marks a refusal to execute -- an argv this file declines to
+// hand to the herdr binary at all -- so it can be told apart from an
+// execution that failed, which is what every other error here reports.
+// Unexported because no caller branches on it yet: in-package tests assert
+// it with errors.Is, and plan.Execute's own `%w` wrapping keeps it
+// reachable if one ever does.
+var errRefused = errors.New("refusing to run herdr")
+
+// appendFlag appends a `--flag value` pair to args, refusing a value the
+// herdr CLI would read as another flag instead of as the value.
+//
+// Every `--flag`/value pair CLIRunner builds goes through this one helper
+// rather than through a guard at each call site, so a subcommand wired up
+// later cannot reopen the hole by forgetting to check: plain
+// `args = append(args, "--base", v)` is the shape it replaces throughout
+// this file. (Flag values written as string literals -- AgentRead's
+// `--source detection --format text` -- are the sole exception: a constant
+// cannot begin with "-".)
+//
+// A "-"-leading value is refused rather than escaped because herdr offers
+// nothing to escape it with. The `--flag=value` form, which would make the
+// leading "-" unambiguous, is not accepted: `herdr tab list
+// --workspace=wG` answers `unknown option: --workspace=wG`. A `--`
+// end-of-flags terminator is no help either: every creation command here
+// appends --focus/--no-focus after these values, which such a terminator
+// would swallow. Refusal is what is left, and it is defensible on its own
+// terms: a ref, path or label
+// beginning with "-" is pathological. gitx.ValidateBranchPrefix rejects
+// the same shape one layer up, for the same reason -- this closes it for
+// every flag rather than for that one configured value.
+//
+// The refusal reads "refusing to run herdr: ..." where an execution that
+// failed reads "herdr <argv>: <exit status>: <stderr>", and it happens
+// while the argv is still being assembled -- before runJSON, runOK or
+// runText is reached, so nothing is executed.
+//
+// An empty value keeps this file's established meaning of "omit the flag
+// entirely" and is not an error: every optional field on the *Req structs
+// signals "unset" that way.
+//
+// Only flag *values* are covered. Positional arguments carry the same
+// parsing hazard but cannot take the same answer: PaneRun's argv is a
+// command line whose own flags are the point, and AgentPrompt's text is
+// free prose that may legitimately open with "-". Those need a herdr-side
+// `--` their subcommands honor, not a refusal here. (`agent start`'s name
+// positional is already safe by construction: plan.AgentName always
+// returns a [a-z]-initial slug.)
+func appendFlag(args []string, flag, value string) ([]string, error) {
+	if value == "" {
+		return args, nil
+	}
+	if strings.HasPrefix(value, "-") {
+		// Returns nil, not args: a caller that ignored the error would
+		// then run herdr with no arguments at all rather than silently
+		// with the flag dropped.
+		return nil, fmt.Errorf(`%w: %s value %q begins with "-", which the herdr CLI reads as another flag`, errRefused, flag, value)
+	}
+	return append(args, flag, value), nil
+}
+
 // WorkspaceList runs `herdr workspace list`.
 func (r *CLIRunner) WorkspaceList(ctx context.Context) ([]WorkspaceInfo, error) {
 	raw, err := r.runJSON(ctx, "workspace", "list")
@@ -254,17 +315,18 @@ func (r *CLIRunner) WorkspaceList(ctx context.Context) ([]WorkspaceInfo, error) 
 // WorktreeCreate runs `herdr worktree create`.
 func (r *CLIRunner) WorktreeCreate(ctx context.Context, req WorktreeCreateReq) (CreatedTopology, error) {
 	args := []string{"worktree", "create"}
-	if req.Cwd != "" {
-		args = append(args, "--cwd", req.Cwd)
+	var err error
+	if args, err = appendFlag(args, "--cwd", req.Cwd); err != nil {
+		return CreatedTopology{}, err
 	}
-	if req.Branch != "" {
-		args = append(args, "--branch", req.Branch)
+	if args, err = appendFlag(args, "--branch", req.Branch); err != nil {
+		return CreatedTopology{}, err
 	}
-	if req.Base != "" {
-		args = append(args, "--base", req.Base)
+	if args, err = appendFlag(args, "--base", req.Base); err != nil {
+		return CreatedTopology{}, err
 	}
-	if req.Label != "" {
-		args = append(args, "--label", req.Label)
+	if args, err = appendFlag(args, "--label", req.Label); err != nil {
+		return CreatedTopology{}, err
 	}
 	args = append(args, focusFlag(req.Focus))
 	if req.TrustRepository {
@@ -301,11 +363,12 @@ func (r *CLIRunner) WorktreeCreate(ctx context.Context, req WorktreeCreateReq) (
 // WorkspaceCreate runs `herdr workspace create`.
 func (r *CLIRunner) WorkspaceCreate(ctx context.Context, req WorkspaceCreateReq) (CreatedTopology, error) {
 	args := []string{"workspace", "create"}
-	if req.Cwd != "" {
-		args = append(args, "--cwd", req.Cwd)
+	var err error
+	if args, err = appendFlag(args, "--cwd", req.Cwd); err != nil {
+		return CreatedTopology{}, err
 	}
-	if req.Label != "" {
-		args = append(args, "--label", req.Label)
+	if args, err = appendFlag(args, "--label", req.Label); err != nil {
+		return CreatedTopology{}, err
 	}
 	args = append(args, focusFlag(req.Focus))
 
@@ -330,14 +393,15 @@ func (r *CLIRunner) WorkspaceCreate(ctx context.Context, req WorkspaceCreateReq)
 // TabCreate runs `herdr tab create`.
 func (r *CLIRunner) TabCreate(ctx context.Context, req TabCreateReq) (CreatedTopology, error) {
 	args := []string{"tab", "create"}
-	if req.Workspace != "" {
-		args = append(args, "--workspace", req.Workspace)
+	var err error
+	if args, err = appendFlag(args, "--workspace", req.Workspace); err != nil {
+		return CreatedTopology{}, err
 	}
-	if req.Cwd != "" {
-		args = append(args, "--cwd", req.Cwd)
+	if args, err = appendFlag(args, "--cwd", req.Cwd); err != nil {
+		return CreatedTopology{}, err
 	}
-	if req.Label != "" {
-		args = append(args, "--label", req.Label)
+	if args, err = appendFlag(args, "--label", req.Label); err != nil {
+		return CreatedTopology{}, err
 	}
 	args = append(args, focusFlag(req.Focus))
 
@@ -365,14 +429,15 @@ func (r *CLIRunner) TabCreate(ctx context.Context, req TabCreateReq) (CreatedTop
 // PaneSplit runs `herdr pane split`.
 func (r *CLIRunner) PaneSplit(ctx context.Context, req PaneSplitReq) (CreatedTopology, error) {
 	args := []string{"pane", "split"}
-	if req.PaneID != "" {
-		args = append(args, "--pane", req.PaneID)
+	var err error
+	if args, err = appendFlag(args, "--pane", req.PaneID); err != nil {
+		return CreatedTopology{}, err
 	}
-	if req.Direction != "" {
-		args = append(args, "--direction", req.Direction)
+	if args, err = appendFlag(args, "--direction", req.Direction); err != nil {
+		return CreatedTopology{}, err
 	}
-	if req.Cwd != "" {
-		args = append(args, "--cwd", req.Cwd)
+	if args, err = appendFlag(args, "--cwd", req.Cwd); err != nil {
+		return CreatedTopology{}, err
 	}
 	args = append(args, focusFlag(req.Focus))
 
@@ -398,22 +463,45 @@ func (r *CLIRunner) PaneSplit(ctx context.Context, req PaneSplitReq) (CreatedTop
 
 // AgentStart runs `herdr agent start` (spec §9 Path A).
 func (r *CLIRunner) AgentStart(ctx context.Context, req AgentStartReq) error {
-	args := []string{"agent", "start", req.Name, "--kind", req.Kind, "--pane", req.PaneID}
+	// --kind and --pane used to be emitted unconditionally; routing them
+	// through appendFlag gives them the same "an empty value omits the
+	// flag" rule every other flag here follows. Neither is ever empty in
+	// practice (plan.Build always sets a kind, plan.Execute always threads
+	// a pane id in), and omitting either is safe in a way omitting
+	// `worktree remove --workspace` is not: herdr requires both (`herdr
+	// agent start <NAME> --kind <KIND> --pane <ID>`), so a missing one is
+	// a parse error rather than a fallback to some default target.
+	args, err := appendFlag([]string{"agent", "start", req.Name}, "--kind", req.Kind)
+	if err != nil {
+		return err
+	}
+	if args, err = appendFlag(args, "--pane", req.PaneID); err != nil {
+		return err
+	}
 	if len(req.ExtraArgs) > 0 {
+		// ExtraArgs is a pass-through command line whose own flags are the
+		// whole point ("--resume"), which is why it goes after herdr's
+		// end-of-flags "--" and not through appendFlag.
 		args = append(args, "--")
 		args = append(args, req.ExtraArgs...)
 	}
-	_, err := r.runJSON(ctx, args...)
+	_, err = r.runJSON(ctx, args...)
 	return err
 }
 
 // AgentPrompt runs `herdr agent prompt --wait` (spec §9 step 3).
 func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 	args := []string{"agent", "prompt", req.Target, req.Text, "--wait"}
+	var err error
 	if req.WaitTimeout > 0 {
-		args = append(args, "--timeout", strconv.FormatInt(req.WaitTimeout.Milliseconds(), 10))
+		// The > 0 guard already rules out a "-"-leading duration; the flag
+		// still goes through appendFlag so the funnel has no exceptions to
+		// reason about.
+		if args, err = appendFlag(args, "--timeout", strconv.FormatInt(req.WaitTimeout.Milliseconds(), 10)); err != nil {
+			return err
+		}
 	}
-	_, err := r.runJSON(ctx, args...)
+	_, err = r.runJSON(ctx, args...)
 	return err
 }
 
@@ -503,8 +591,26 @@ func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, argv []string) e
 }
 
 // WorktreeRemove runs `herdr worktree remove --workspace <workspaceID>`.
+//
+// The empty workspace id is refused rather than passed on, because this is
+// the one flag here whose omission changes what herdr acts on instead of
+// making it fail: herdr's own parser treats --workspace as optional
+// (`herdr worktree remove [OPTIONS]`), and appendFlag omits a flag whose
+// value is empty. Without this guard, a caller holding no workspace id --
+// a Clean after a submit that failed before step 1 returned a topology --
+// would issue a bare `herdr worktree remove` against whatever default
+// target herdr picks. Passing the empty id through as an empty argv
+// element, which is what this did before appendFlag, left the rejection to
+// herdr; refusing locally is the same outcome without the round trip.
 func (r *CLIRunner) WorktreeRemove(ctx context.Context, workspaceID string) error {
-	_, err := r.runJSON(ctx, "worktree", "remove", "--workspace", workspaceID)
+	if workspaceID == "" {
+		return fmt.Errorf("%w worktree remove: no workspace id to remove", errRefused)
+	}
+	args, err := appendFlag([]string{"worktree", "remove"}, "--workspace", workspaceID)
+	if err != nil {
+		return err
+	}
+	_, err = r.runJSON(ctx, args...)
 	return err
 }
 

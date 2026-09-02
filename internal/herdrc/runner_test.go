@@ -2,6 +2,7 @@ package herdrc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -590,6 +591,316 @@ func TestCLIRunnerPaneRunNonZeroExit(t *testing.T) {
 	if !strings.Contains(err.Error(), "no such pane w1:p2") {
 		t.Errorf("error %q does not contain stderr content", err.Error())
 	}
+}
+
+// assertNeverExecuted fails unless the fake herdr was never run at all.
+// Every fake in this file creates its argv log on its first invocation and
+// only then, so the file's absence is direct evidence that no process was
+// spawned -- the property a refusal must have, and the one thing that
+// distinguishes it from an invocation that ran and failed.
+func assertNeverExecuted(t *testing.T, argvLog string) {
+	t.Helper()
+	_, err := os.Stat(argvLog)
+	if err == nil {
+		t.Fatalf("herdr was executed (argv %q); a refused flag value must never reach the CLI", readArgvLog(t, argvLog))
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stat argv log: %v", err)
+	}
+}
+
+// TestCLIRunnerRefusesFlagValueReadAsAnotherFlag covers every `--flag
+// value` pair CLIRunner builds from a variable, one row each: a value
+// beginning with "-" must be refused before anything is executed, because
+// herdr's parser would read it as another flag (and herdr has no
+// `--flag=value` form to disambiguate it with -- see appendFlag).
+//
+// Not in the table, for lack of a way to reach them: AgentPrompt's
+// --timeout (its `WaitTimeout > 0` guard already excludes every value that
+// could render with a leading "-") and AgentRead's --source/--format
+// (string literals). TestAppendFlag covers the shared funnel those go
+// through.
+func TestCLIRunnerRefusesFlagValueReadAsAnotherFlag(t *testing.T) {
+	tests := []struct {
+		name  string
+		flag  string
+		value string
+		run   func(r *CLIRunner, value string) error
+	}{
+		{
+			name: "worktree create --cwd", flag: "--cwd", value: "-/var/tmp/repo",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.WorktreeCreate(context.Background(), WorktreeCreateReq{Cwd: v, Branch: "probe/x"})
+				return err
+			},
+		},
+		{
+			name: "worktree create --branch", flag: "--branch", value: "--force",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.WorktreeCreate(context.Background(), WorktreeCreateReq{Cwd: "/var/tmp/repo", Branch: v})
+				return err
+			},
+		},
+		{
+			name: "worktree create --base", flag: "--base", value: "-main",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.WorktreeCreate(context.Background(), WorktreeCreateReq{Cwd: "/var/tmp/repo", Branch: "probe/x", Base: v})
+				return err
+			},
+		},
+		{
+			// The label is the session title, which can be seeded from a
+			// Linear issue title -- the one value in this table that can
+			// originate outside the machine.
+			name: "worktree create --label", flag: "--label", value: "--focus",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.WorktreeCreate(context.Background(), WorktreeCreateReq{Cwd: "/var/tmp/repo", Branch: "probe/x", Label: v})
+				return err
+			},
+		},
+		{
+			name: "workspace create --cwd", flag: "--cwd", value: "-/var/tmp/repo",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.WorkspaceCreate(context.Background(), WorkspaceCreateReq{Cwd: v})
+				return err
+			},
+		},
+		{
+			name: "workspace create --label", flag: "--label", value: "--focus",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.WorkspaceCreate(context.Background(), WorkspaceCreateReq{Cwd: "/var/tmp/repo", Label: v})
+				return err
+			},
+		},
+		{
+			name: "tab create --workspace", flag: "--workspace", value: "-w4",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.TabCreate(context.Background(), TabCreateReq{Workspace: v})
+				return err
+			},
+		},
+		{
+			name: "tab create --cwd", flag: "--cwd", value: "-/var/tmp/repo",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.TabCreate(context.Background(), TabCreateReq{Workspace: "w4", Cwd: v})
+				return err
+			},
+		},
+		{
+			name: "tab create --label", flag: "--label", value: "--focus",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.TabCreate(context.Background(), TabCreateReq{Workspace: "w4", Label: v})
+				return err
+			},
+		},
+		{
+			name: "pane split --pane", flag: "--pane", value: "-w4:p2",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.PaneSplit(context.Background(), PaneSplitReq{PaneID: v, Direction: "right"})
+				return err
+			},
+		},
+		{
+			name: "pane split --direction", flag: "--direction", value: "-right",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.PaneSplit(context.Background(), PaneSplitReq{PaneID: "w4:p2", Direction: v})
+				return err
+			},
+		},
+		{
+			name: "pane split --cwd", flag: "--cwd", value: "-/var/tmp/repo",
+			run: func(r *CLIRunner, v string) error {
+				_, err := r.PaneSplit(context.Background(), PaneSplitReq{PaneID: "w4:p2", Direction: "right", Cwd: v})
+				return err
+			},
+		},
+		{
+			name: "agent start --kind", flag: "--kind", value: "-claude",
+			run: func(r *CLIRunner, v string) error {
+				return r.AgentStart(context.Background(), AgentStartReq{Name: "probe", Kind: v, PaneID: "w1:p1"})
+			},
+		},
+		{
+			name: "agent start --pane", flag: "--pane", value: "-w1:p1",
+			run: func(r *CLIRunner, v string) error {
+				return r.AgentStart(context.Background(), AgentStartReq{Name: "probe", Kind: "claude", PaneID: v})
+			},
+		},
+		{
+			name: "worktree remove --workspace", flag: "--workspace", value: "-w3",
+			run: func(r *CLIRunner, v string) error {
+				return r.WorktreeRemove(context.Background(), v)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+			r := &CLIRunner{Bin: bin}
+
+			err := tt.run(r, tt.value)
+			if err == nil {
+				t.Fatalf("%s = nil, want a refusal for value %q", tt.name, tt.value)
+			}
+			if !errors.Is(err, errRefused) {
+				t.Errorf("error %q is not a refusal to run (errors.Is errRefused = false); it must be distinguishable from a herdr-side failure", err)
+			}
+			if !strings.Contains(err.Error(), tt.flag) {
+				t.Errorf("error %q does not name the flag %s", err, tt.flag)
+			}
+			if !strings.Contains(err.Error(), tt.value) {
+				t.Errorf("error %q does not name the offending value %s", err, tt.value)
+			}
+			assertNeverExecuted(t, argvLog)
+		})
+	}
+}
+
+// TestCLIRunnerWorktreeRemoveRefusesEmptyWorkspace guards the one place
+// where appendFlag's "an empty value omits the flag" rule would change what
+// herdr acts on rather than making it fail: `worktree remove`'s --workspace
+// is optional to herdr's own parser, so a bare `herdr worktree remove` is a
+// destructive command against a default target, not a usage error.
+func TestCLIRunnerWorktreeRemoveRefusesEmptyWorkspace(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.WorktreeRemove(context.Background(), "")
+	if err == nil {
+		t.Fatal("WorktreeRemove(\"\") = nil, want a refusal")
+	}
+	if !errors.Is(err, errRefused) {
+		t.Errorf("error %q is not a refusal to run (errors.Is errRefused = false)", err)
+	}
+	assertNeverExecuted(t, argvLog)
+}
+
+// TestCLIRunnerHyphenatedValuesAreUnaffected is the other half of the
+// refusal: only a value that *begins* with "-" is pathological. Branch
+// names, base refs and labels that merely contain hyphens are the normal
+// case and must reach herdr byte for byte.
+func TestCLIRunnerHyphenatedValuesAreUnaffected(t *testing.T) {
+	stdout := readFixture(t, filepath.Join("testdata", "live", "worktree_create.json"))
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	req := WorktreeCreateReq{
+		Cwd:    "/var/tmp/my-throwaway-repo",
+		Branch: "zvi/fix-login-redirect-loop",
+		Base:   "release/1.4-rc",
+		Label:  "fix-login-redirect-loop",
+		Focus:  true,
+	}
+	if _, err := r.WorktreeCreate(context.Background(), req); err != nil {
+		t.Fatalf("WorktreeCreate: %v", err)
+	}
+
+	wantArgv := "worktree create --cwd /var/tmp/my-throwaway-repo --branch zvi/fix-login-redirect-loop --base release/1.4-rc --label fix-login-redirect-loop --focus"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerEmptyFlagValueOmitsFlag pins the behavior appendFlag
+// inherited from the `if req.X != ""` guards it replaced: an unset optional
+// field drops its flag entirely rather than sending an empty argv element.
+func TestCLIRunnerEmptyFlagValueOmitsFlag(t *testing.T) {
+	t.Run("worktree create", func(t *testing.T) {
+		stdout := readFixture(t, filepath.Join("testdata", "live", "worktree_create.json"))
+		bin, argvLog := fakeHerdr(t, stdout)
+		r := &CLIRunner{Bin: bin}
+
+		req := WorktreeCreateReq{Cwd: "/var/tmp/repo", Branch: "probe/x", Base: "", Label: ""}
+		if _, err := r.WorktreeCreate(context.Background(), req); err != nil {
+			t.Fatalf("WorktreeCreate: %v", err)
+		}
+
+		wantArgv := "worktree create --cwd /var/tmp/repo --branch probe/x --no-focus"
+		if got := readArgvLog(t, argvLog); got != wantArgv {
+			t.Errorf("argv = %q, want %q", got, wantArgv)
+		}
+	})
+
+	t.Run("tab create", func(t *testing.T) {
+		stdout := readFixture(t, filepath.Join("testdata", "live", "tab_create.json"))
+		bin, argvLog := fakeHerdr(t, stdout)
+		r := &CLIRunner{Bin: bin}
+
+		if _, err := r.TabCreate(context.Background(), TabCreateReq{Cwd: "/tmp"}); err != nil {
+			t.Fatalf("TabCreate: %v", err)
+		}
+
+		wantArgv := "tab create --cwd /tmp --no-focus"
+		if got := readArgvLog(t, argvLog); got != wantArgv {
+			t.Errorf("argv = %q, want %q", got, wantArgv)
+		}
+	})
+}
+
+// TestAppendFlag exercises the funnel itself, including the two flags no
+// CLIRunner method can route a hostile value to (--timeout, --source).
+func TestAppendFlag(t *testing.T) {
+	base := []string{"worktree", "create"}
+
+	t.Run("ordinary value is appended", func(t *testing.T) {
+		got, err := appendFlag(base, "--branch", "zvi/fix-login-redirect-loop")
+		if err != nil {
+			t.Fatalf("appendFlag: %v", err)
+		}
+		want := "worktree create --branch zvi/fix-login-redirect-loop"
+		if joined := strings.Join(got, " "); joined != want {
+			t.Errorf("args = %q, want %q", joined, want)
+		}
+	})
+
+	t.Run("interior hyphens are fine", func(t *testing.T) {
+		for _, v := range []string{"fix-login-redirect-loop", "release/1.4-rc", "a-", "x-y"} {
+			if _, err := appendFlag(base, "--base", v); err != nil {
+				t.Errorf("appendFlag(%q) = %v, want nil", v, err)
+			}
+		}
+	})
+
+	t.Run("empty value omits the flag", func(t *testing.T) {
+		got, err := appendFlag(base, "--label", "")
+		if err != nil {
+			t.Fatalf("appendFlag: %v", err)
+		}
+		if joined := strings.Join(got, " "); joined != "worktree create" {
+			t.Errorf("args = %q, want the flag omitted", joined)
+		}
+	})
+
+	t.Run("leading hyphen is refused", func(t *testing.T) {
+		for _, v := range []string{"-", "--", "-x", "--force", "-rf"} {
+			got, err := appendFlag(base, "--label", v)
+			if err == nil {
+				t.Errorf("appendFlag(%q) = nil, want a refusal", v)
+				continue
+			}
+			if !errors.Is(err, errRefused) {
+				t.Errorf("appendFlag(%q) error %q is not a refusal to run", v, err)
+			}
+			if !strings.Contains(err.Error(), "--label") || !strings.Contains(err.Error(), v) {
+				t.Errorf("appendFlag(%q) error %q must name both the flag and the value", v, err)
+			}
+			if got != nil {
+				// A caller that ignored the error must not be handed a
+				// usable-looking argv with the flag quietly dropped.
+				t.Errorf("appendFlag(%q) args = %q, want nil", v, got)
+			}
+		}
+	})
+
+	t.Run("base args are not mutated", func(t *testing.T) {
+		if _, err := appendFlag(base, "--branch", "x"); err != nil {
+			t.Fatalf("appendFlag: %v", err)
+		}
+		if joined := strings.Join(base, " "); joined != "worktree create" {
+			t.Errorf("base args = %q, want them untouched", joined)
+		}
+	})
 }
 
 func TestCLIRunnerDefaultPollInterval(t *testing.T) {
