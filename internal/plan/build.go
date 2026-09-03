@@ -16,9 +16,13 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 )
 
-// Placement selects where a non-worktree creation attaches relative to the
-// invoking pane (spec §9). It is ignored when Input.UseWorktree is set --
-// worktree creation always opens a new workspace regardless of Placement.
+// Placement selects where a session's AGENT PANE attaches relative to the
+// invoking pane (spec §9, extended by placement spec §5.3): under a plain
+// (non-worktree) creation it is the only op; under a worktree it is a
+// second op appended after the worktree's own creation, which still always
+// happens and still always gets its own new workspace -- Placement now
+// decides where the AGENT runs, not whether the checkout gets a space of
+// its own.
 type Placement int
 
 const (
@@ -116,6 +120,15 @@ type Op struct {
 	RunArgv   []string                   // OpClauthLaunch: argv for Runner.PaneRun
 	Prompt    *herdrc.AgentPromptReq     // OpAgentPrompt
 	Timeout   time.Duration              // OpAwaitDetection
+
+	// CwdFromCheckout tells Execute to fill this op's Cwd from the SPACE
+	// op's CheckoutPath, which Build cannot know: only OpTabCreate and
+	// OpPaneSplit ever set it, and only as placement spec §5.3's
+	// build-time placement op appended after a worktree create. Build
+	// performs no I/O and never touches a Runner (CLAUDE.md), so it
+	// cannot resolve a checkout path itself -- it states the INTENT and
+	// Execute resolves it once the worktree op's own response is in hand.
+	CwdFromCheckout bool
 }
 
 // defaultSplitDirection is the direction Build requests for
@@ -141,8 +154,7 @@ func Build(in Input) ([]Op, error) {
 		return nil, fmt.Errorf("plan: build: account pinning is only supported for the %q agent kind, got %q", claudeAgentKind, in.AgentKind)
 	}
 
-	ops := []Op{topologyOp(in)}
-	ops = append(ops, launchOps(in)...)
+	ops := append(topologyOp(in), launchOps(in)...)
 	if in.Prompt != "" {
 		ops = append(ops, Op{
 			Kind:  OpAgentPrompt,
@@ -156,14 +168,22 @@ func Build(in Input) ([]Op, error) {
 	return ops, nil
 }
 
-// topologyOp returns the first op: the one that creates the
-// workspace/tab/pane the agent will run in. Worktree creation always wins
-// over Placement (spec §9): a worktree is always a new workspace,
-// regardless of where the form said to place it.
-func topologyOp(in Input) Op {
-	switch {
-	case in.UseWorktree:
-		return Op{
+// topologyOp returns the op or ops that establish where a session lives:
+// the SPACE (always first, and always what makes the checkout exist when
+// UseWorktree is set) and, when Placement asks for something other than
+// a worktree's own new workspace, a second op that places the AGENT'S
+// pane relative to the invoking pane instead (placement spec §5.1/§5.3).
+//
+// Before placement spec: worktree creation always won over Placement
+// outright, and a worktree was always a new workspace regardless of where
+// the form said to place it. That is superseded -- see the design doc's
+// §12 for the exact sentence and where it lived.
+func topologyOp(in Input) []Op {
+	if in.UseWorktree {
+		// Empty Cwd with CwdFromCheckout set: the checkout does not exist
+		// yet, so only Execute can fill it in.
+		placement, hasPlacement := placementOp(in, "", true)
+		worktree := Op{
 			Kind:  OpWorktreeCreate,
 			Label: "creating worktree",
 			Worktree: &herdrc.WorktreeCreateReq{
@@ -171,42 +191,74 @@ func topologyOp(in Input) Op {
 				Branch:          in.Branch,
 				Base:            in.BaseRef,
 				Label:           in.Title,
-				Focus:           true,
+				Focus:           !hasPlacement,
 				TrustRepository: in.TrustRepository,
 			},
 		}
-	case in.Placement == PlacementTabHere:
+		if !hasPlacement {
+			return []Op{worktree}
+		}
+		return []Op{worktree, placement}
+	}
+
+	if placement, ok := placementOp(in, in.ProjectDir, false); ok {
+		return []Op{placement}
+	}
+	return []Op{{
+		Kind:  OpWorkspaceCreate,
+		Label: "creating workspace",
+		Workspace: &herdrc.WorkspaceCreateReq{
+			Cwd:   in.ProjectDir,
+			Label: in.Title,
+			Focus: true,
+		},
+	}}
+}
+
+// placementOp returns the op that attaches the agent's pane relative to the
+// invoking pane -- (Op{}, false) for PlacementNewSpace, which asks for a
+// space of its own rather than a position beside anything.
+//
+// The two callers differ only in where the new pane's cwd comes from, which
+// is the whole reason this is one function rather than two: a plain creation
+// knows the directory outright (in.ProjectDir), while under a worktree only
+// Execute can know it -- the checkout does not exist until herdr makes it --
+// so the op carries an empty Cwd plus CwdFromCheckout and Execute fills it
+// from the space op's own CheckoutPath (placement spec §5.1/§5.3). Build
+// performs no I/O and never touches a Runner (CLAUDE.md); it states the
+// INTENT and Execute resolves it.
+//
+// Workspace/PaneID always name the INVOKING pane's own workspace/pane
+// (Input.Ctx), never a worktree's -- placing the agent somewhere other than
+// the worktree's own space is exactly what this op is for.
+func placementOp(in Input, cwd string, cwdFromCheckout bool) (Op, bool) {
+	switch in.Placement {
+	case PlacementTabHere:
 		return Op{
 			Kind:  OpTabCreate,
 			Label: "creating tab",
 			Tab: &herdrc.TabCreateReq{
 				Workspace: in.Ctx.WorkspaceID,
-				Cwd:       in.ProjectDir,
+				Cwd:       cwd,
 				Label:     in.Title,
 				Focus:     true,
 			},
-		}
-	case in.Placement == PlacementSplitHere:
+			CwdFromCheckout: cwdFromCheckout,
+		}, true
+	case PlacementSplitHere:
 		return Op{
 			Kind:  OpPaneSplit,
 			Label: "splitting pane",
 			Split: &herdrc.PaneSplitReq{
 				PaneID:    in.Ctx.FocusedPaneID,
 				Direction: defaultSplitDirection,
-				Cwd:       in.ProjectDir,
+				Cwd:       cwd,
 				Focus:     true,
 			},
-		}
-	default: // PlacementNewSpace
-		return Op{
-			Kind:  OpWorkspaceCreate,
-			Label: "creating workspace",
-			Workspace: &herdrc.WorkspaceCreateReq{
-				Cwd:   in.ProjectDir,
-				Label: in.Title,
-				Focus: true,
-			},
-		}
+			CwdFromCheckout: cwdFromCheckout,
+		}, true
+	default:
+		return Op{}, false
 	}
 }
 
