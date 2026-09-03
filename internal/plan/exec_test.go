@@ -131,6 +131,14 @@ func (m *mockRunner) PaneRun(ctx context.Context, paneID string, argv []string) 
 	return nil
 }
 
+func (m *mockRunner) PaneClose(ctx context.Context, paneID string) error {
+	m.record("PaneClose", paneID)
+	if m.shouldFail("PaneClose") {
+		return m.failErr
+	}
+	return nil
+}
+
 func (m *mockRunner) WorktreeRemove(ctx context.Context, workspaceID string) error {
 	m.record("WorktreeRemove", workspaceID)
 	if m.shouldFail("WorktreeRemove") {

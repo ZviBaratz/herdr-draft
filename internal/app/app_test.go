@@ -61,6 +61,7 @@ func (r *fakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) error  
 func (r *fakeRunner) AgentRead(context.Context, string) (string, error)           { return "", nil }
 func (r *fakeRunner) AwaitDetection(context.Context, string, time.Duration) error { return nil }
 func (r *fakeRunner) PaneRun(context.Context, string, []string) error             { return nil }
+func (r *fakeRunner) PaneClose(context.Context, string) error                     { return nil }
 func (r *fakeRunner) WorktreeRemove(context.Context, string) error                { return nil }
 func (r *fakeRunner) WorkspaceClose(context.Context, string) error                { return nil }
 

@@ -103,6 +103,14 @@ type Runner interface {
 	AgentRead(ctx context.Context, target string) (string, error)
 	AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error
 	PaneRun(ctx context.Context, paneID string, argv []string) error
+	// PaneClose runs `herdr pane close <pane_id>` -- placement spec §5.4:
+	// when Execute claimed a fresh pane for the agent in a workspace it did
+	// not create (a reuse correction, §5.2), Clean must close THAT pane
+	// before removing the space, so nothing is left running an agent in a
+	// directory about to be deleted. Never called when AgentPane ==
+	// Created.PaneID -- the common case, where there is nothing extra to
+	// close.
+	PaneClose(ctx context.Context, paneID string) error
 	WorktreeRemove(ctx context.Context, workspaceID string) error
 	WorkspaceClose(ctx context.Context, workspaceID string) error
 }
@@ -588,6 +596,22 @@ func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout t
 func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, argv []string) error {
 	args := append([]string{"pane", "run", paneID}, argv...)
 	return r.runOK(ctx, args...)
+}
+
+// PaneClose runs `herdr pane close <pane_id>`. herdr's own JSON success
+// envelope is {"type":"ok"} with nothing else to parse -- runJSON's raw
+// Result is discarded rather than unmarshalled into anything, matching
+// WorkspaceClose's own handling of the same shape.
+//
+// The empty-id guard mirrors WorktreeRemove's own reasoning: a caller
+// holding no pane id must not silently close whatever pane herdr would
+// pick by default.
+func (r *CLIRunner) PaneClose(ctx context.Context, paneID string) error {
+	if paneID == "" {
+		return fmt.Errorf("%w pane close: no pane id to close", errRefused)
+	}
+	_, err := r.runJSON(ctx, "pane", "close", paneID)
+	return err
 }
 
 // WorktreeRemove runs `herdr worktree remove --workspace <workspaceID>`.

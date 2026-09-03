@@ -455,6 +455,21 @@ func TestCLIRunnerAgentReadNonZeroExit(t *testing.T) {
 	}
 }
 
+func TestCLIRunnerPaneClose(t *testing.T) {
+	stdout := `{"id":"cli:pane:close","result":{"type":"ok"}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.PaneClose(context.Background(), "p3"); err != nil {
+		t.Fatalf("PaneClose: %v", err)
+	}
+
+	wantArgv := "pane close p3"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
 func TestCLIRunnerWorktreeRemove(t *testing.T) {
 	stdout := `{"id":"cli:worktree:remove","result":{"type":"worktree_removed","workspace_id":"w3","path":"/x","forced":false}}`
 	bin, argvLog := fakeHerdr(t, stdout)
@@ -755,6 +770,23 @@ func TestCLIRunnerRefusesFlagValueReadAsAnotherFlag(t *testing.T) {
 			assertNeverExecuted(t, argvLog)
 		})
 	}
+}
+
+// TestCLIRunnerPaneCloseRefusesEmptyPaneID mirrors
+// TestCLIRunnerWorktreeRemoveRefusesEmptyWorkspace: a caller holding no pane
+// id must not silently close whatever pane herdr would pick by default.
+func TestCLIRunnerPaneCloseRefusesEmptyPaneID(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.PaneClose(context.Background(), "")
+	if err == nil {
+		t.Fatal("PaneClose(\"\") = nil, want a refusal")
+	}
+	if !errors.Is(err, errRefused) {
+		t.Errorf("error %q is not a refusal to run (errors.Is errRefused = false)", err)
+	}
+	assertNeverExecuted(t, argvLog)
 }
 
 // TestCLIRunnerWorktreeRemoveRefusesEmptyWorkspace guards the one place

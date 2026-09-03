@@ -117,6 +117,10 @@ func (r *fakeRunner) PaneRun(_ context.Context, paneID string, argv []string) er
 	return r.record("PaneRun", append([]string{paneID}, argv...)...)
 }
 
+func (r *fakeRunner) PaneClose(_ context.Context, paneID string) error {
+	return r.record("PaneClose", paneID)
+}
+
 func (r *fakeRunner) WorktreeRemove(_ context.Context, workspaceID string) error {
 	return r.record("WorktreeRemove", workspaceID)
 }

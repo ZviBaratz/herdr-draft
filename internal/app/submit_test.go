@@ -139,6 +139,13 @@ func (r *submitFakeRunner) PaneRun(context.Context, string, []string) error {
 	return nil
 }
 
+func (r *submitFakeRunner) PaneClose(context.Context, string) error {
+	if r.shouldFail("PaneClose") {
+		return r.failErr
+	}
+	return nil
+}
+
 func (r *submitFakeRunner) WorktreeRemove(context.Context, string) error {
 	if r.shouldFail("WorktreeRemove") {
 		return r.failErr
