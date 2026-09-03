@@ -31,11 +31,24 @@ explain a non-obvious constraint rather than restating the code.
 ```bash
 just build   # go build -o bin/herdr-draft ./cmd/herdr-draft
 just test    # go test ./...
-just check   # gofmt -l . (must be empty) && go vet ./... && go test ./...
+just unused  # staticcheck -checks U1000 -tests=false ./...
+just check   # gofmt -l . (empty) && go vet ./... && just unused && go test ./...
 ```
 
 Single package/test: `go test ./internal/plan/...` or
 `go test ./internal/app/ -run TestHandleSubmit`.
+
+`just unused` needs **staticcheck**, the one dev-tool dependency outside
+`go.mod`: `go install honnef.co/go/tools/cmd/staticcheck@2026.2.1`, or run
+it without installing via `go run` (the recipe's own error message carries
+both spellings). It is a real gate, not advice — `just check` fails on a
+hit — because `go vet` does not detect unused unexported code **at all**,
+and that blind spot is the one this project keeps falling into: it is how
+the whole v1 drop-lines cascade survived the compose path's deletion, and
+how half of #25's filter-count work sat in a green tree defined and called
+by nothing. `-tests=false` is the load-bearing flag; without it a symbol
+kept alive only by the test that exists to call it counts as used, which is
+the exact shape both defects had.
 
 Manual release smoke (Path A/B × worktree on/off, plus the headless `create`,
 the repo config and per-project memory) is in `docs/manual-smoke.md` — not
@@ -193,6 +206,22 @@ Layering, outermost to innermost:
   focused, so it sits on `ActiveRowBG`, not `PanelBG` — and on the default
   theme those two happen to be byte-identical to `Surface`, which is how a
   flat-`Surface` input fill would have shipped invisible a second time.
+- **A test-only symbol is kept by a `//lint:ignore`, not by hope.**
+  `just unused` runs with `-tests=false`, so anything only a test calls
+  reads as dead. Two symbols are kept that way on purpose and each carries
+  a `//lint:ignore U1000 <reason>` as the last line of its doc comment
+  (`rowlayout.go`'s `frame.lines`, which states the `lines() == h`
+  invariant the tests assert, and `rowvalues.go`'s `rowEllipsis`, the
+  form-side name the row tests and the neighbouring prose read in). That
+  directive is the *only* accepted suppression — there is no allow-list
+  file — because the reason has to sit where the next sweep will read it.
+  Two things follow. Reach for it only when the symbol is genuinely a
+  statement rather than a leftover: #16 collapsed the duplicated
+  `footerRungsFor` body instead of annotating it, precisely because a
+  duplicated body can drift and an alias or an invariant cannot. And
+  staticcheck does **not** report a directive that has stopped matching
+  anything, so a suppression left on a symbol that later gains a real
+  caller, or on one that should have gone, rots silently.
 - **`go test ./... -update` FAILS.** The `-update` flag is registered
   per-binary, in `internal/form/form_test.go` and `internal/app/frames_test.go`
   only, so a bare `./...` run errors on every other package. Regenerate per

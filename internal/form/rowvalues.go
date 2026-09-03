@@ -45,6 +45,22 @@ const unavailableReasonSep = "  "
 // can live without, while a one-line VALUE cell that loses an end
 // unmarked is not incomplete but MISREAD -- "~/Projects/herdr-dra" and
 // "zvi/fix-login-redir" both read as real values.
+//
+// KEPT DELIBERATELY with no production call site (#16 item 3): production
+// elides through keepHead/keepTail, which pass the marker down to
+// widgets, so nothing here spells it out any more. It stays for the same
+// reason keepHead and keepTail stayed as one-line delegators once their
+// bodies moved to widgets -- the form's own prose and its own tests read
+// in the form's names, and the two doc comments directly below this one
+// call the marker rowEllipsis. Deleting the const would reword those two
+// comments and nine test references to say exactly what they already say.
+//
+// It is also the shape of unused symbol the gate has least reason to
+// want: an alias for a const in a package this one already imports
+// cannot DRIFT from what it aliases, which is the risk that made #16's
+// footer-ladder duplicate worth collapsing rather than annotating.
+//
+//lint:ignore U1000 test-and-prose-only by design, see above
 const rowEllipsis = widgets.Ellipsis
 
 // keepHead clips s to exactly width cells KEEPING ITS HEAD, marking the

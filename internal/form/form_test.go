@@ -93,7 +93,13 @@ func (s *stubSection) Label() string { return s.label }
 // outside.
 func (s *stubSection) Row(w int) string { return fitLine(s.value, w) }
 
-func (s *stubSection) Panel(w, h int) string { return sectionLines(h, w, s.panelLines...) }
+// Panel calls fitBlock directly. It used to go through a layout.go
+// helper, sectionLines, whose only caller was this line -- a v1
+// compose-path survivor that #16 item 3 removed rather than leave a
+// production file holding a function only a stub used.
+func (s *stubSection) Panel(w, h int) string {
+	return fitBlock(strings.Join(s.panelLines, "\n"), h, w)
+}
 
 func (s *stubSection) PanelRows() int { return len(s.panelLines) }
 

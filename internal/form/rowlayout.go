@@ -196,6 +196,23 @@ type frame struct {
 
 // lines is the frame's total height: the invariant every layoutFrame
 // result satisfies is lines() == h.
+//
+// KEPT DELIBERATELY with no production caller (#16 item 3). It exists to
+// STATE that invariant in one executable place, and rowlayout_test.go's
+// TestLayoutFrame_ComponentsSumToTheHeight is what asserts it over every
+// (h, n) the form can be asked for; a reader who wants to know what "its
+// components always sum to exactly the height layoutFrame was asked for"
+// means in code reads this function. A component added to frame and
+// forgotten here does not go quiet, either: layoutFrame's own sum stops
+// matching h and that test fails, and TestLayoutFrame_IsMonotone's
+// field-count assertion separately forces whoever adds the field to walk
+// back through this file. Being unreachable from production is the point --
+// production trusts the invariant rather than re-deriving it -- so the
+// directive below is what keeps the unused-code gate (justfile's `unused`)
+// from listing the one function that writes the contract down, on a list
+// whose whole purpose is that someone acts on it.
+//
+//lint:ignore U1000 test-only by design: it states the lines() == h invariant, see above
 func (f frame) lines() int {
 	n := f.Rows + f.Region + f.PadTop + f.PadBottom
 	for _, present := range []bool{f.Header, f.Rule1, f.Rule2, f.Rule3, f.Footer} {

@@ -37,6 +37,9 @@ import (
 // in preference order. fitFooter takes the first crossing that fits the
 // space renderFooter left it beside the footer's action buttons.
 //
+// Reached through footerRungsFor, which is what renderFooter calls: this
+// is the branch for a focused section with no lead of its own.
+//
 // The cross product, rather than one flat list, is what lets the two
 // halves degrade independently -- and, ordered as crossRungs orders it,
 // what makes the CONSTANT half degrade first: a narrow window keeps
@@ -52,14 +55,26 @@ func footerRungs(zone FocusZone, armed bool) []string {
 // its picker currently has anything to pick -- and anything else falls
 // back to the table. An empty FooterRungs() slice means "nothing to add,
 // use the table", not "no hints at all".
+//
+// The fallback DELEGATES to footerRungs rather than repeating its
+// crossing (#16 item 2). Until then the two were independent
+// implementations of the same cross product, and the test suite pinned
+// the wrong one of them: the five call sites in form_test.go all
+// exercise footerRungs, while renderFooter only ever calls this
+// function, so the copy production ran was unpinned and free to drift
+// away from the copy the tests asserted. Delegating puts those five
+// assertions back on the production path, and that path is the common
+// one even for the four sections that DO implement footerHinter: each of
+// them returns nil unless it has something the zone table cannot know
+// (IssueField only when the field is unavailable, and so on), so the
+// override branch is the exception on every row, not the rule.
 func footerRungsFor(s Section, zone FocusZone, armed bool) []string {
-	lead := zoneRungs(zone)
 	if h, ok := s.(footerHinter); ok {
 		if own := h.FooterRungs(); len(own) > 0 {
-			lead = own
+			return crossRungs(own, tailRungs(armed))
 		}
 	}
-	return crossRungs(lead, tailRungs(armed))
+	return footerRungs(zone, armed)
 }
 
 // zoneRungs is the per-zone lead of v2's footer, widest first: what THIS

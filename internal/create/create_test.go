@@ -749,6 +749,28 @@ func TestIssueWithoutLinear(t *testing.T) {
 
 // --- usage ----------------------------------------------------------------
 
+// flagNames is every flag this command accepts, in the order the usage
+// text lists them.
+//
+// It lives here rather than beside createUsage in flags.go (#16 item 3):
+// it has never had a production reader, and its old doc comment named a
+// usage_test.go that does not exist, which is what a list nobody outside
+// one test consults looks like after a while. In a _test.go file it is
+// what the rest of this package's helpers are -- newHarness, writeConfig
+// -- a test's own data, held where the assertion that needs it is.
+//
+// Note what it does NOT protect: the list is a third hand-maintained
+// copy beside parseArgs' registrations and createUsage's prose, so a flag
+// added to the first two and not to this one still passes. Deriving it
+// from parseArgs' own flag.FlagSet would close that, and would mean
+// splitting the FlagSet construction out of parseArgs for a test's
+// benefit; left undone deliberately, not overlooked.
+var flagNames = []string{
+	"project", "title", "prompt", "branch", "base",
+	"worktree", "no-worktree", "placement", "agent", "account",
+	"issue", "json", "on-failure",
+}
+
 // TestUsageListsEveryFlag keeps the hand-written usage block honest: a
 // flag added to parseArgs and forgotten here is a flag nobody can
 // discover.

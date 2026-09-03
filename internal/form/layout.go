@@ -52,12 +52,6 @@ func fitBlock(block string, h, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// sectionLines assembles a block from an ordered list of already-rendered
-// rows, most important first, truncated or padded to exactly h lines.
-func sectionLines(h, width int, rows ...string) string {
-	return fitBlock(strings.Join(rows, "\n"), h, width)
-}
-
 // dimText returns a plain dim-foreground style from palette, the base for
 // this package's own hint/placeholder text (mirroring
 // widgets.Picker/ChipRow's own DimText usage).

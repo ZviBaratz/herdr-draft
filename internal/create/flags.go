@@ -60,16 +60,6 @@ type request struct {
 	set map[string]bool
 }
 
-// flagNames is every flag this command accepts, in the order the usage
-// text lists them. It exists so usage_test.go can assert the two stay in
-// step -- a hand-written usage block is worth its clarity only if it
-// cannot silently omit a flag.
-var flagNames = []string{
-	"project", "title", "prompt", "branch", "base",
-	"worktree", "no-worktree", "placement", "agent", "account",
-	"issue", "json", "on-failure",
-}
-
 // createUsage is `herdr-draft create --help`. Hand-written rather than
 // flag.PrintDefaults': the --worktree/--no-worktree pair is one decision
 // with two spellings, and the default column is a lie for every flag whose
