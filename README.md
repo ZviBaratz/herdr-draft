@@ -67,9 +67,12 @@ about the implementation language — the plugin drives herdr exclusively
 through the public CLI (`$HERDR_BIN_PATH`, itself reaching the herdr server
 over the socket at `$HERDR_SOCKET_PATH`).
 
-Two design documents: `docs/specs/2026-08-31-herdr-draft-design.md` is the
-original, and `docs/specs/2026-09-02-herdr-draft-v2-design.md` supersedes its
-§6 (the form) and §7 (skin and mouse) with the dialog described here. The
+Three design documents: `docs/specs/2026-08-31-herdr-draft-design.md` is the
+original; `docs/specs/2026-09-02-herdr-draft-v2-design.md` supersedes its
+§6 (the form) and §7 (skin and mouse); and
+`docs/specs/2026-09-02-herdr-draft-v3-design.md` supersedes v2's §4, §7 and
+§9 with the dialog described here. Each one's own header itemises what it
+replaced. The
 form's UI code is ported and adapted from
 [Atrium](https://github.com/ZviBaratz/atrium), the author's previous TUI —
 see [License & provenance](#license--provenance).
@@ -89,19 +92,33 @@ fixed whatever has focus and whatever the window height is.
 | `worktree` | `on · <branch> ← <base>`, `on · from <base>` before a title exists to derive a branch from, or `off` | `not a git repository` |
 | `placement` | `new space` / `tab here` / `split here` | `worktree opens as its own space` |
 | `agent` | `claude` | — |
-| `account` | `personal · max · ok`, or `active · max · 12%` | `account pinning only applies to claude` |
+| `account` | `personal · Max 20x · 5h 12% · 7d 40%`, or `active · …` when nothing is pinned | `account pinning only applies to claude` |
 
 `issue` is absent unless Linear is configured, and `account` unless clauth is
 configured with at least two profiles — both static, startup-time checks
 (see [Configuration](#configuration)). With neither, the form is six rows.
 That is the shape most people will see.
 
+**The popup is a fixed 104×32 cells.** That is a manifest value, not a
+proportion of your terminal, and it is a visible change from the old
+percentage-sized popup: on a large terminal the dialog is now a card rather
+than a wall. herdr clamps it down to the terminal and never up, so an 80×24
+terminal gets a full-screen popup rather than an overflow.
+
 **One panel**, under the second rule, belonging to the focused row and to no
 other: the candidate list for `issue`, `project`, `agent` and `account`; the
-textarea for `prompt`; the verdict line (`branch will be …`) for `title`; a
-three-part `off · on` / `branch` / `base` editor for `worktree`. Branch and
-base are not rows of their own — they are parts of the worktree row's panel,
-so a form with a worktree is the same height as one without.
+textarea for `prompt`; the verdict line (`branch will be …`) plus the
+sessions that were open when the form opened, for `title`; a three-part
+`off · on` / `branch` / `base` editor for `worktree`. Branch and base are not
+rows of their own — they are parts of the worktree row's panel, so a form
+with a worktree is the same height as one without.
+
+Every candidate list is a table: aligned columns, a right-flush status word,
+a scrollbar in the last column while the list outgrows the window, a live
+`3/24 issues` count, and the run your filter matched drawn in the accent
+colour. The `title` panel's session list is the one exception to "candidate"
+— it is informational, has no cursor, and marks the row a colliding title
+would collide with.
 
 **The footer** teaches the focused row on the left and carries the actions on
 the right. Create is a real focus stop, the ring's last, reached by `⇥` past

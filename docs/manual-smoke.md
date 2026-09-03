@@ -158,8 +158,10 @@ alternate-screen program, this one included.)
 **The popup is a fixed 104×32 cells** (v3 spec §6.1), which after herdr's
 own chrome hands the form **101×30**. herdr clamps that down to the
 terminal and never up, so an 80×24 terminal gives **77×22** and a 60×20 one
-**57×18** — those three are the sizes the golden frames pin, and the only
-ones a user can produce. If the popup does not look 104 cells wide, herdr is
+**57×18** — those three are the sizes a user can produce, and the golden
+frames pin all three plus one deliberately oversized **150×44** whose only
+job is the margins and the footer's full-width reach. If the popup does not
+look 104 cells wide, herdr is
 still holding the old manifest in memory: `herdr plugin list --plugin draft
 --json` to check, then `herdr plugin disable draft && herdr plugin enable
 draft`.
@@ -167,6 +169,7 @@ draft`.
 At the shipped 101×30, fully configured (blank panel rows elided):
 
 ```
+
  new session                                                                      herdr-draft · main
  ───────────────────────────────────────────────────────────────────────────────────────────────────
    issue      none
@@ -176,12 +179,19 @@ At the shipped 101×30, fully configured (blank panel rows elided):
    worktree   on · zvi/fix-login-redirect-loop ← main
    placement  worktree opens as its own space
    agent      claude
-   account    active · max · 12%
+   account    active · Max 20x · 5h 12% · 7d 40%
  ───────────────────────────────────────────────────────────────────────────────────────────────────
    Work on ENG-101: Fix login redirect loop
 
+ ───────────────────────────────────────────────────────────────────────────────────────────────────
  ⌃J newline · ⇥ move · ⌃R clear                                              ↵ create    esc cancel
+
 ```
+
+The blank first and last lines are the card's margins (v3 spec §7.1), and the
+rule above the footer is rule 3 closing it. Both are real output, not
+formatting here: at 101×30 the frame is
+`1 / header / rule / 8 rows / rule / 15 / rule / footer / 1`.
 
 - **Eight rows, one line each**, in this order: `issue`, `title`, `prompt`,
   `project`, `worktree`, `placement`, `agent`, `account`. Branch and base are
@@ -195,7 +205,13 @@ At the shipped 101×30, fully configured (blank panel rows elided):
   paint alone and it was invisible.
 - **The panel below the second rule is the only chooser** — candidate lists,
   the prompt editor, verdicts, notes. It belongs to the focused row and to no
-  other.
+  other. It is capped at fifteen rows (`panelCapRows`, v3 spec §7.2) and
+  everything past that becomes the margin above and below the card.
+- **A focused text input is filled** (v3 spec §8.7): the title, issue filter,
+  project filter, branch editor and prompt draw on their own background, one
+  step off whatever they sit on. An input that looks exactly like the space
+  around it is the defect that fill exists to remove, so check it on a light
+  theme too — the fill is derived per theme, not a fixed colour.
 - **Create is on the footer**, right-aligned (`↵ create`, `esc cancel`),
   not a row in the stack. It is still the ring's last focus stop: `⇥` past
   `account` lands on it — the button looks the same there (it is filled with
@@ -247,12 +263,34 @@ popup path.
    opening stack: `title untitled`, `prompt —`, and — this is the state that
    shipped broken once — `worktree  on · from main`, with no invented branch
    name in it.
+
+   The panel below is **not empty**: it carries the sessions that were open
+   when the form opened (v3 spec §9), one row each, with a count on the
+   heading. It is informational — no `▸`, no selection, and `↑↓` do nothing
+   there. The workspace you opened the popup from is deliberately absent.
+   An empty region here means either a herdr holding one workspace (correct)
+   or a regression (not).
 2. `⇧⇥` to **issue**. Leave it on `none`, or pick a real issue if Linear is
    configured and you want to smoke that path too. A chosen issue seeds the
    title, the branch and the prompt; confirm the `title`, `prompt` and
    `worktree` rows all change to match it.
+
+   With Linear configured this is the panel that exercises three of v3's
+   devices at once, and a real queue is the only place they meet: the list
+   is a **table** (identifiers in their own column, titles aligned, status
+   right-flushed, v3 spec §8.1); the last column of each row is a
+   **scrollbar** whenever the list outgrows the window (§8.5) — walk `↑↓`
+   and watch the thumb move rather than the track; and the status line
+   right-flushes a **count**, `50 issues` at rest and `4/50 issues` once you
+   type. Type a few letters and the **matched run is accented** in each row
+   (§8.4). It accents the match WINDOW, not the individual characters, so a
+   fuzzy query lights up a contiguous stretch — that is correct, not a bug.
 3. `⇥` back to **title**. Type a short distinctive title (e.g.
-   `smoke a wt`). The panel reads `branch will be <branch_prefix><slug>`.
+   `smoke a wt`). The panel reads `branch will be <branch_prefix><slug>`,
+   and the session list is still under it. Now type the exact label of one
+   of the sessions in that list: the row is marked `!` on the keystroke,
+   ahead of the `label in use` verdict a debounce later. Backspace one
+   character and the mark clears.
 4. `⇥` to **prompt**. Optionally type one; `⌃J` for a newline. The row shows
    the first line plus a dim ` +N more`.
 5. `⇥` to **project**. Type the throwaway repo path; `⇥` completes. Confirm
@@ -267,8 +305,20 @@ popup path.
    `turn the worktree off to choose`. It cannot be changed; that is correct.
 8. `⇥` to **agent**. Leave the default favorite (`claude` unless your config
    changes it). `←→` walks the favorites, `↑↓` the full kind list.
-9. `⇥` to **account**. Leave it on `active` — **do not pin a profile**. This
-   is what makes it Path A even when clauth is configured.
+9. `⇥` to **account**. Walk the list with `↑↓` if you like, but **do not
+   press `↵`** — browsing is not pinning (v3 spec §10.3), and leaving the
+   pin unset is what makes this Path A even when clauth is configured. The
+   `✓` stays on the `active` row throughout; if it follows your cursor, that
+   is the defect #29 fixed coming back, and it is not cosmetic — `Pin()`
+   feeds `plan.Input.AccountPin` and the session really would launch under
+   whatever row you stopped on.
+
+   While you are here, confirm the panel answers the three questions it
+   exists for: a gauge and a percentage for BOTH windows, `●` on whichever
+   profile clauth reports as live, and a relative reset (`in 2h11m`, or
+   `in 4d14h` for a weekly window). A profile at or past 95% reads
+   `rate limited`; at 100% only, it is the pre-v3 threshold and a
+   regression.
 10. `⌃S` to submit (or `⇥` to the create button and `↵`).
 
 **Expected:** the screen replaces the row stack with the progress stack —
@@ -368,10 +418,16 @@ be run.
 **Steps:** Cell 1's walk through step 8 (agent must be `claude` — Path B is
 claude-only), then:
 
-9. **account**: `↑↓` to a specific profile, not `active`. This is what makes
-   it Path B. Confirm the row picks up the profile's own state word —
-   `<name> · <plan> · ok`, with a rate-limited profile's percentage in the
-   warning color and an expired one reading `sign in again` in red.
+9. **account**: `↑↓` to a specific profile, then **`↵` to pin it** — the
+   cursor alone does nothing (v3 spec §10.3), which is the whole of #29.
+   Confirm the `✓` moves onto that row and stays there when you `↑↓` away
+   again. This is what makes it Path B.
+
+   The stack row then reads `<name> · <plan> · 5h N% · 7d N%`. Note what it
+   does NOT say: `ok`. v3 spec §10.1 drops the auth status from the resting
+   row entirely — "`ok` is the state that needs no words" — so it appears
+   only when it is not ok, as `sign in again` in red. A rate-limited
+   profile's percentage is in the warning color.
 10. Submit.
 
 **Expected:** the agent step reads `claude   under clauth <the profile you

@@ -859,10 +859,17 @@ func footerRow(f frame, h int) int {
 }
 
 // TestRowStack_FrameMatchesLayoutFrame pins composeRows against
-// rowlayout.go: the render is exactly h lines, the two rules land where
+// rowlayout.go: the render is exactly h lines, the three rules land where
 // layoutFrame says, and no blank chrome row creeps in between the header
-// and the stack (v2 spec §9 has six components and none of them is a
-// spacer).
+// and the stack.
+//
+// "No blank row" is now a claim about the MIDDLE of the frame only. v3
+// spec §7.1 put a blank margin at each end, so the assertions below are
+// anchored to firstStackRow/footerRow rather than to line 0 and line h-1,
+// and the margins are separately asserted to be blank. What v2 spec §9
+// forbade -- a reserved spacer a short window pays for out of the panel --
+// is still forbidden and is pinned by
+// TestLayoutFrame_PadsOnlyOnceTheRegionIsFull, not here.
 func TestRowStack_FrameMatchesLayoutFrame(t *testing.T) {
 	m, stubs := buildRowForm(theme.Default(), "a", "b", "c", "d")
 	const w, h = 80, 24

@@ -12,14 +12,19 @@ account — and drives herdr exclusively through its public CLI
 (`$HERDR_BIN_PATH`), never the raw socket API. The same binary also carries
 a headless `create` verb that produces the same session without the popup.
 
-Two design documents, and the citation convention distinguishes them.
+Three design documents, and the citation convention distinguishes them.
 `docs/specs/2026-08-31-herdr-draft-design.md` is v1 and is what a bare
 "spec §N" in a code comment means. `docs/specs/2026-09-02-herdr-draft-v2-design.md`
 supersedes v1's §6 (the form) and §7 (skin & mouse) and is cited as
-"v2 spec §N"; every other v1 section stays authoritative. Most non-trivial
-doc comments cite a spec section, a "fix round" finding, or a
-live-checkpoint discovery — read them; they usually explain a non-obvious
-constraint rather than restating the code.
+"v2 spec §N". `docs/specs/2026-09-02-herdr-draft-v3-design.md` supersedes
+v2's §4 (the screen), §7 (skin, palette, mouse), §9 (degradation) and §6's
+`account` row, and is cited as "v3 spec §N"; its §13 itemises every
+superseded sentence, so a reader who lands on a v2 citation can find out in
+one place whether it still holds. Everything each document did not replace
+stays authoritative, which is why plenty of live code still cites v2 §7 and
+v2 §9 correctly. Most non-trivial doc comments cite a spec section, a "fix
+round" finding, or a live-checkpoint discovery — read them; they usually
+explain a non-obvious constraint rather than restating the code.
 
 ## Commands
 
@@ -176,3 +181,20 @@ Layering, outermost to innermost:
   is right. Build it and run it (`docs/manual-smoke.md`'s Route B runs the
   real form in an ordinary pane, no popup needed), and when a change moves
   a state no frame pins, add the frame.
+- **Frames record bytes, not perceptibility**, which is the same lesson one
+  layer down and the one v3 exists for: v2 drew its rules and its focused-row
+  fill at a contrast ratio of **1.07:1**, correctly, at the right width, and
+  invisibly. A green fixture says nothing about whether a colour can be seen.
+  Anything that marks a region — a rule, a fill, an input background — needs
+  a **measured** floor against the ground it is actually drawn on, over all
+  eighteen builtins, in `internal/theme/contrast_test.go` beside
+  `ActiveRowContrastFloor` and `InputFillContrastFloor`. Note "the ground it
+  is actually drawn on": an input is only rendered while its field is
+  focused, so it sits on `ActiveRowBG`, not `PanelBG` — and on the default
+  theme those two happen to be byte-identical to `Surface`, which is how a
+  flat-`Surface` input fill would have shipped invisible a second time.
+- **`go test ./... -update` FAILS.** The `-update` flag is registered
+  per-binary, in `internal/form/form_test.go` and `internal/app/frames_test.go`
+  only, so a bare `./...` run errors on every other package. Regenerate per
+  package: `go test ./internal/form/ -update` then
+  `go test ./internal/app/ -update`.

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
@@ -136,7 +137,14 @@ func frameClauthStatus() clauth.Status {
 // preconditions fail and neither field is constructed at all.
 func newAssembledModel(t *testing.T, full bool) Model {
 	t.Helper()
+	return resolveDirCheck(t, newTestModel(t, frameSetup(full)))
+}
 
+// frameSetup is newAssembledModel's own input, split out so a frame that
+// needs one thing different (a longer issue queue, say) can vary it
+// without restating the other six fields and drifting from every frame
+// beside it.
+func frameSetup(full bool) testSetup {
 	setup := testSetup{
 		Ctx: herdrc.Context{
 			WorkspaceID:   "ws-1",
@@ -155,14 +163,16 @@ func newAssembledModel(t *testing.T, full bool) Model {
 		setup.Clauth = &fakeClauth{status: frameClauthStatus()}
 		setup.ClauthStatus = frameClauthStatus()
 	}
+	return setup
+}
 
-	m := newTestModel(t, setup)
-
-	// Resolve the directory check the real form-open would: without it
-	// WorktreeField stays inert on its deliberately conservative "not a
-	// git repo until told otherwise" default (SetGitTarget's own doc
-	// comment), which is not the state a user opening this popup in a
-	// repo sees.
+// resolveDirCheck answers the directory check the real form-open would:
+// without it WorktreeField stays inert on its deliberately conservative
+// "not a git repo until told otherwise" default (SetGitTarget's own doc
+// comment), which is not the state a user opening this popup in a repo
+// sees.
+func resolveDirCheck(t *testing.T, m Model) Model {
+	t.Helper()
 	next, _ := m.handleDirResult(dirResultMsg{
 		req:       request{version: m.dirReqVersion, key: m.dir.Value()},
 		dirExists: true,
@@ -433,6 +443,64 @@ func TestAssembledForm_TitleCollision(t *testing.T) {
 	m.reactToChanges()
 
 	assertAppFrame(t, "assembled-collision-101x30", m, framePopupW, framePopupH)
+}
+
+// scrollingIssues is a queue longer than v3 spec §7.2's panelCapRows, so
+// the issue panel is CLIPPED by the cap rather than by its own
+// issuePanelMaxRows -- which is the whole point of the cap and the state
+// §12 asks for by name. Twenty is enough to put the thumb clear of both
+// ends of the track once the cursor is walked down.
+func scrollingIssues() []linear.Issue {
+	out := make([]linear.Issue, 20)
+	for i := range out {
+		out[i] = linear.Issue{
+			Identifier: fmt.Sprintf("ENG-%d", 200+i),
+			Title:      fmt.Sprintf("queued work item %d", i),
+			StateName:  "Todo",
+		}
+	}
+	return out
+}
+
+// TestAssembledForm_CappedPanelScrolls is §12's second uncovered state: a
+// panel whose content outgrows the capped region, on the ASSEMBLED form.
+//
+// internal/form's own issue-scroll fixture cannot stand in for it. That
+// one renders a synthetic single-section form, where the region is
+// whatever height the test asks for; here the region is exactly
+// panelCapRows because eight stack rows and six chrome lines are also on
+// screen, which is the only arithmetic that ships. It is also the one
+// frame that shows the scrollbar and the eight row-stack rows at once.
+func TestAssembledForm_CappedPanelScrolls(t *testing.T) {
+	setup := frameSetup(true)
+	setup.Linear = &fakeLinear{issues: scrollingIssues()}
+	setup.LinearCache = scrollingIssues()
+	m := resolveDirCheck(t, newTestModel(t, setup))
+	m.form.FocusByID("issue")
+	for i := 0; i < 12; i++ {
+		next, _ := m.Update(key(tea.KeyDown, 0))
+		m = next.(Model)
+	}
+
+	assertAppFrame(t, "assembled-scroll-101x30", m, framePopupW, framePopupH)
+}
+
+// TestAssembledForm_LadderBoundaries pins the two rungs of v3 spec §7.1
+// that a height table can state but no frame showed: rule 3 appearing
+// (h=15 vs 16) and the pads appearing (h=29 vs 30).
+//
+// rowlayout_test.go already asserts both as arithmetic. These exist
+// because the arithmetic being right is not the same claim as the FRAME
+// being right -- §7.3's own worked table says everything at h <= 15 is
+// byte-identical to v2, and nothing until now could have caught it if it
+// were not. Each pair is one row apart, so a diff between the two files
+// is exactly the rung.
+func TestAssembledForm_LadderBoundaries(t *testing.T) {
+	for _, h := range []int{15, 16, 29, 30} {
+		m := filledFrameModel(t, true, true)
+		m.form.FocusByID("title")
+		assertAppFrame(t, fmt.Sprintf("assembled-ladder-%dx%d", framePopupW, h), m, framePopupW, h)
+	}
 }
 
 // TestAssembledForm_ClampedToASmallTerminal pins the two sizes a small

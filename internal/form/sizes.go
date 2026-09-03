@@ -91,10 +91,15 @@ import (
 // §5.4 puts rowvalues.go's focus bar back in it because the fill turned
 // out to be invisible (see focusBarGlyph for the whole reversal). There is
 // no VERTICAL constant left here. v1 kept a verticalPadding = 1 for the blank row
-// submitview.go reserved above and below its content; v2's frame has no
-// padding rows at all (v2 spec §9's six components, none of them a
-// spacer), so it went with the cascade that used to drop it again on a
-// short terminal.
+// submitview.go reserved above and below its content, and it went with the
+// cascade that used to drop it again on a short terminal.
+//
+// v3 spec §7.1 gave the frame two blank rows again (PadTop/PadBottom), and
+// they are deliberately NOT a constant here, which is the whole difference:
+// v1's spacer was RESERVED, so a short window paid for it out of the panel,
+// where these are only ever rows a window has spare once the region has
+// reached panelCapRows. layoutFrame computes them; nothing configures them.
+// See frame's own doc comment in rowlayout.go.
 const (
 	// gutterWidth is the marker column plus its separating space: a panel
 	// picker's own cursor glyph, or a stack row's focus bar, and one

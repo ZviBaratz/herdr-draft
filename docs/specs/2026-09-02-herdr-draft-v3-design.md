@@ -741,11 +741,44 @@ memory.** `Bootstrap` calls `runner.WorkspaceList` once at open
 ```
    branch will be fix-login-redirect-loop
 
-   sessions that already exist
-   herdr-draft        idle      2 panes   zvi/v3-palette
-   report-studio      working   4 panes
-   qspace-tls         blocked   1 pane    do/init-tls
+   sessions open when this form did                          3 sessions
+   report-studio      idle      4 panes   quantivly
+ ! qspace-tls         blocked   1 pane    quantivly
+   scratch            idle      2 panes
 ```
+
+**The mockup above is corrected from the one this section shipped with.**
+Three changes, all forced by what the data and the author actually said:
+
+- **There is no branch column.** `herdr workspace list` returns a `worktree`
+  object of `{repo_key, repo_name, repo_root, checkout_path,
+  is_linked_worktree}` and no branch name anywhere — checked against live
+  output. A linked worktree's `checkout_path` basename is derived from the
+  branch but slash-mangled (`zvi-clear-stty-size` for
+  `zvi/clear-stty-size`), so drawing it as a branch would be a small lie,
+  and this section forbids the one thing that would get the real name. The
+  column is the **repository**, which is the honest answer and the more
+  useful one here: what a reader about to create a session needs from this
+  list is whether one is already open on the project they are pointing at.
+- **The heading names WHEN the list was read**, which is what this
+  section's own staleness constraint requires. "sessions that already
+  exist" states something the panel cannot know.
+- **A colliding title marks the row it would collide with** (`!`), and the
+  count is right-flushed onto the heading, this panel having no status line
+  to put it on. The app already computes the collision (`async.go`'s
+  `workspaceLabelTaken`, off exactly this data) and only ever surfaced it as
+  a verdict *after* the fact; the mark shows it coming, and shows which
+  session it is with.
+
+The invoking workspace is dropped — it is on screen behind the popup
+already — which is why a herdr holding one workspace renders no list at
+all.
+
+**The list is informational: no cursor, no selection, no focus stop.**
+Chosen by the author against the alternative. `widgets.Picker` gains
+`SetCursorless` for it: the cursor row's three signals all say "this is the
+one you have chosen", and on a list nothing can act on that is a promise
+the form cannot keep.
 
 No new I/O, no new subprocess, no new state file, nothing new collected about
 the user. It also makes an existing check visible: the app already computes
@@ -851,6 +884,15 @@ a non-builtin tier.
 deliberately isolated — no dependants — so it can be dropped without
 disturbing anything else.
 
+> **DECLINED, 2026-09-03.** Offered a second time at the end of the program,
+> with the alternative rendered side by side, and not chosen. #31 is closed;
+> nothing else in v3 moves. The row stack's right half stays empty, which is
+> what v2 §3 rule 1 asked for in the first place — *rows stay quiet* — and
+> the argument above ("empty painted background at any real width") is the
+> weaker one now that §5.4's fill makes a row a visible band rather than a
+> naked line of text. `defaults.Resolved.From` keeps recording provenance,
+> and `create --json` keeps printing it; only this surface is dropped.
+
 ## 12. Testing
 
 Everything in v2 §14 still applies. v3 adds and changes:
@@ -878,6 +920,14 @@ Everything in v2 §14 still applies. v3 adds and changes:
   `PanelRows() == 1` — the exact screen §7 is judged by, and it does not
   exist); a capped panel with the picker scrolling; the rule-3 boundary at
   h=15 vs h=16; and the pad boundary at h=29 vs h=30.
+
+  All four exist now, as `assembled-opening-*` (four sizes),
+  `assembled-scroll-101x30` and `assembled-ladder-101x{15,16,29,30}`. The
+  first of them stopped being "a small panel in a large region" on the way:
+  §9 filled that region, so what it pins is the resting screen with its
+  session list. The boundary pairs are each a one-line diff, which is the
+  point — h=16 adds rule 3, h=30 adds the bottom pad, and nothing else
+  moves.
 - **`TestAssembledForm_OpeningState` must loop over sizes.** The v2 defect
   shipped through fifteen green commits because every fixture had a title
   typed; the same trap is set one axis over, with the opening state pinned at
