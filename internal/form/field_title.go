@@ -53,10 +53,6 @@ const (
 	// that anyway (v3 spec §7.2), so a larger number would only make
 	// PanelRows lie about a height it can never be given.
 	titleSessionsMaxRows = panelCapRows
-	// titleNoSessions is what the heading's line says instead of a count
-	// when herdr reported no other workspaces at all. The list below it is
-	// empty, so the line has to carry the whole fact.
-	titleNoSessions = "no other sessions open"
 )
 
 // Session is one row of v3 spec §9's list: a herdr workspace that existed
@@ -342,6 +338,10 @@ func (f *TitleField) sessionsHeading(w int) string {
 // yet. With no sessions at all it is the whole panel, exactly as before
 // v3 spec §9.
 func (f *TitleField) PanelRows() int {
+	// No other sessions open is the whole panel gone, not a heading over
+	// nothing: with one workspace (the one this popup is in, which the app
+	// drops) there is no landscape to show, and a line saying so would be
+	// chrome explaining its own absence.
 	if len(f.sessions) == 0 {
 		return 1
 	}
