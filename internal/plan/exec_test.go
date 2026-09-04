@@ -33,6 +33,26 @@ type mockRunner struct {
 	// dialog present, matching the pre-existing test scenarios' implicit
 	// assumption that the pane is a normal ready state).
 	readText string
+
+	// workspacesBeforeCreate, when non-nil, is what WorkspaceList returns --
+	// the "what already exists" snapshot Execute's reuse check takes
+	// immediately before a worktree create (placement spec §5.2/§3).
+	workspacesBeforeCreate []herdrc.WorkspaceInfo
+
+	// tabTopo, when non-nil, is what TabCreate returns instead of the
+	// shared topo -- so a test can tell a pane that came from the reuse
+	// CLAIM (placement spec §5.2) apart from the one WorktreeCreate handed
+	// back. With every *Create method answering the same topo, "the agent
+	// went to the claimed pane" and "the agent went to the stranger's pane"
+	// are the same assertion and neither can fail.
+	tabTopo *herdrc.CreatedTopology
+
+	// splitTopo, when non-nil, is what PaneSplit returns instead of the
+	// shared topo -- the same trick tabTopo plays, and for the same reason:
+	// with every *Create answering one topo, "Created still holds the
+	// WORKTREE's checkout" and "Created holds the SPLIT's checkout" are the
+	// same assertion, so the §9 clobber regression cannot be pinned at all.
+	splitTopo *herdrc.CreatedTopology
 }
 
 var _ herdrc.Runner = (*mockRunner)(nil)
@@ -56,7 +76,7 @@ func (m *mockRunner) WorkspaceList(ctx context.Context) ([]herdrc.WorkspaceInfo,
 	if m.shouldFail("WorkspaceList") {
 		return nil, m.failErr
 	}
-	return nil, nil
+	return m.workspacesBeforeCreate, nil
 }
 
 func (m *mockRunner) WorktreeCreate(ctx context.Context, req herdrc.WorktreeCreateReq) (herdrc.CreatedTopology, error) {
@@ -80,13 +100,19 @@ func (m *mockRunner) TabCreate(ctx context.Context, req herdrc.TabCreateReq) (he
 	if m.shouldFail("TabCreate") {
 		return herdrc.CreatedTopology{}, m.failErr
 	}
+	if m.tabTopo != nil {
+		return *m.tabTopo, nil
+	}
 	return m.topo, nil
 }
 
 func (m *mockRunner) PaneSplit(ctx context.Context, req herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
-	m.record("PaneSplit", req.PaneID, req.Direction)
+	m.record("PaneSplit", req.PaneID, req.Direction, req.Cwd)
 	if m.shouldFail("PaneSplit") {
 		return herdrc.CreatedTopology{}, m.failErr
+	}
+	if m.splitTopo != nil {
+		return *m.splitTopo, nil
 	}
 	return m.topo, nil
 }
@@ -250,6 +276,7 @@ func TestExecuteHappyPathThreadsPaneID(t *testing.T) {
 	}
 
 	wantCalls := []string{
+		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
 		"AgentRead(pane-1)",
@@ -257,6 +284,260 @@ func TestExecuteHappyPathThreadsPaneID(t *testing.T) {
 	}
 	if !reflect.DeepEqual(m.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", m.calls, wantCalls)
+	}
+}
+
+// --- placement spec §5.1/§5.2/§5.3: the space vs. the agent's pane --------
+
+func TestExecute_WorktreeNotReused(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		workspacesBeforeCreate: []herdrc.WorkspaceInfo{{WorkspaceID: "w1"}, {WorkspaceID: "w2"}},
+		topo:                   herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "t1", PaneID: "pane-1", CheckoutPath: "/tmp/wt"},
+	}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1", result.FailedIndex)
+	}
+	if result.SpaceReused {
+		t.Error("SpaceReused = true, want false -- w9 was not in the before-list")
+	}
+	if result.AgentPane != "pane-1" {
+		t.Errorf("AgentPane = %q, want %q", result.AgentPane, "pane-1")
+	}
+	if result.Created == nil || result.Created.PaneID != "pane-1" {
+		t.Fatalf("Created = %+v, want PaneID pane-1", result.Created)
+	}
+	want := []string{
+		"WorkspaceList()",
+		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
+	}
+	if !reflect.DeepEqual(m.calls, want) {
+		t.Fatalf("calls = %v, want %v", m.calls, want)
+	}
+}
+
+func TestExecute_WorktreeReusedClaimsAFreshTab(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// w9 is already in the before-list: the create returned a workspace
+	// that was open before Execute ever ran. tabTopo is set to a DIFFERENT
+	// pane than topo's, so the claim call (TabCreate) is distinguishable
+	// from a bug that simply trusted WorktreeCreate's own response --
+	// with a single shared topo, "went to the claimed pane" and "went to
+	// the stranger's pane" would be the same assertion and neither could
+	// fail (fix round 1's finding).
+	m := &mockRunner{
+		workspacesBeforeCreate: []herdrc.WorkspaceInfo{{WorkspaceID: "w9", Label: "somebody-else"}},
+		topo:                   herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "t1", PaneID: "stranger-pane", CheckoutPath: "/tmp/wt"},
+		tabTopo:                &herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "t2", PaneID: "claimed-pane", CheckoutPath: "/tmp/wt"},
+	}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1", result.FailedIndex)
+	}
+	if !result.SpaceReused {
+		t.Fatal("SpaceReused = false, want true")
+	}
+	if result.SpaceLabel != "somebody-else" {
+		t.Errorf("SpaceLabel = %q, want %q", result.SpaceLabel, "somebody-else")
+	}
+	if result.Created == nil || result.Created.WorkspaceID != "w9" {
+		t.Fatalf("Created = %+v, want the reused workspace w9 -- CleanCheck/Clean still need to act on the real space", result.Created)
+	}
+	if result.AgentPane == "stranger-pane" {
+		t.Fatal("AgentPane == the pane WorktreeCreate returned -- the whole point of the correction is to NOT trust it")
+	}
+	if result.AgentPane != "claimed-pane" {
+		t.Errorf("AgentPane = %q, want %q (the claimed tab's own pane)", result.AgentPane, "claimed-pane")
+	}
+	want := []string{
+		"WorkspaceList()",
+		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"TabCreate(w9,/tmp/wt)",
+		"AgentStart(" + AgentName(in.Title) + ",claimed-pane)",
+	}
+	if !reflect.DeepEqual(m.calls, want) {
+		t.Fatalf("calls = %v, want %v", m.calls, want)
+	}
+}
+
+func TestExecute_WorktreeReusedWithAPlacementOpClaimsNoTab(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Placement = PlacementTabHere
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		workspacesBeforeCreate: []herdrc.WorkspaceInfo{{WorkspaceID: "w9", Label: "somebody-else"}},
+		topo:                   herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "t1", PaneID: "stranger-pane", CheckoutPath: "/tmp/wt"},
+	}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1", result.FailedIndex)
+	}
+	if !result.SpaceReused {
+		t.Fatal("SpaceReused = false, want true -- the space fact does not depend on where the agent ends up")
+	}
+	// No extra TabCreate into w9: the placement op (index 1) is the
+	// agent-pane op, and it is the one that decides where the agent runs.
+	for _, c := range m.calls {
+		if strings.HasPrefix(c, "TabCreate(w9,") {
+			t.Fatalf("an extra TabCreate claimed a pane in the reused workspace, want none: %v", m.calls)
+		}
+	}
+	want := []string{
+		"WorkspaceList()",
+		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"TabCreate(" + in.Ctx.WorkspaceID + ",/tmp/wt)", // the PLACEMENT op, Cwd filled from CheckoutPath
+		"AgentStart(" + AgentName(in.Title) + "," + m.topo.PaneID + ")",
+	}
+	if !reflect.DeepEqual(m.calls, want) {
+		t.Fatalf("calls = %v, want %v", m.calls, want)
+	}
+	if result.AgentPane != m.topo.PaneID {
+		t.Errorf("AgentPane = %q, want %q (the placement op's own pane)", result.AgentPane, m.topo.PaneID)
+	}
+}
+
+func TestExecute_WorkspaceListFailureFailsTheStepBeforeAnythingIsCreated(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	failErr := errors.New("herdr unreachable")
+	m := &mockRunner{failAt: "WorkspaceList", failErr: failErr, failCount: 1}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != 0 {
+		t.Fatalf("FailedIndex = %d, want 0", result.FailedIndex)
+	}
+	if result.Created != nil {
+		t.Fatalf("Created = %+v, want nil -- nothing was created", result.Created)
+	}
+	for _, c := range m.calls {
+		if strings.HasPrefix(c, "WorktreeCreate") {
+			t.Fatal("WorktreeCreate was called despite the pre-check failing -- fail-closed means nothing runs after a failed WorkspaceList")
+		}
+	}
+}
+
+// TestExecute_CheckoutPathSurvivesAPlacementOp is design §9's mandated
+// clobber-regression test: "Created.CheckoutPath is still the worktree's
+// after OpPaneSplit has produced a topology. This is the regression test
+// for the clobber §5.4 describes, and it is the one that would fail
+// against a naive `created = topo` on every topology op." splitTopo is
+// what makes this test able to fail at all: with every *Create sharing
+// one topo, "Created still holds the WORKTREE's checkout" and "Created
+// holds the SPLIT's checkout" would be the same assertion (fix round 2's
+// finding -- the same defect class TestExecute_WorktreeReusedClaimsAFreshTab
+// had before tabTopo).
+func TestExecute_CheckoutPathSurvivesAPlacementOp(t *testing.T) {
+	// PlacementSplitHere, not reused -- the other placement op shape.
+	in := validInput()
+	in.UseWorktree = true
+	in.Placement = PlacementSplitHere
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "wH", TabID: "tH", PaneID: "worktree-pane", CheckoutPath: "/checkout/x"},
+		splitTopo: &herdrc.CreatedTopology{WorkspaceID: "wG", TabID: "tG", PaneID: "split-pane", CheckoutPath: ""},
+	}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1", result.FailedIndex)
+	}
+	if result.Created == nil {
+		t.Fatal("Created = nil")
+	}
+	// The SPACE is the worktree op's topology, not the split's.
+	if result.Created.CheckoutPath != "/checkout/x" {
+		t.Errorf("Created.CheckoutPath = %q, want %q -- the placement op clobbered the space, which is exactly what disables CleanCheck's commits-beyond-base half", result.Created.CheckoutPath, "/checkout/x")
+	}
+	if result.Created.WorkspaceID != "wH" {
+		t.Errorf("Created.WorkspaceID = %q, want %q (the worktree's own space)", result.Created.WorkspaceID, "wH")
+	}
+	// The AGENT PANE is the split's, not the worktree's.
+	if result.AgentPane != "split-pane" {
+		t.Errorf("AgentPane = %q, want %q (the placement op's own pane)", result.AgentPane, "split-pane")
+	}
+	// And the cwd threading itself, which is a DIFFERENT mechanism from the
+	// clobber above and worth keeping pinned separately.
+	want := "PaneSplit(" + in.Ctx.FocusedPaneID + ",right,/checkout/x)"
+	if !containsCall(m.calls, want) {
+		t.Fatalf("calls = %v, want it to contain %q", m.calls, want)
+	}
+}
+
+// TestExecute_ReuseClaimFailureStillReportsTheSpaceItCreated is fix round
+// 1's regression for a gap Q2 of the task-3 report raised: §5.2's
+// fail-closed reasoning ("failing before WorktreeCreate runs means nothing
+// is half-built") only covers the WorkspaceList pre-check, which runs
+// BEFORE anything mutates herdr's state. The reuse claim's TabCreate runs
+// AFTER WorktreeCreate has already succeeded -- a checkout exists on disk
+// and herdr holds a workspace for it -- so a claim failure must still
+// report that space, or handleSubmitDone reads Created == nil as "nothing
+// to clean" about something that very much exists, and the worktree is
+// orphaned with no keep-or-clean gate ever offered.
+func TestExecute_ReuseClaimFailureStillReportsTheSpaceItCreated(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Reuse detected, so Execute makes the claim call -- and the claim
+	// fails. worktree create has ALREADY succeeded by then: a checkout
+	// exists on disk and herdr holds a workspace for it.
+	m := &mockRunner{
+		workspacesBeforeCreate: []herdrc.WorkspaceInfo{{WorkspaceID: "w9", Label: "somebody-else"}},
+		topo:                   herdrc.CreatedTopology{WorkspaceID: "w9", PaneID: "stranger-pane", CheckoutPath: "/tmp/wt"},
+		failAt:                 "TabCreate",
+		failErr:                errors.New("herdr said no"),
+		failCount:              1,
+	}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != 0 {
+		t.Fatalf("FailedIndex = %d, want 0", result.FailedIndex)
+	}
+	if result.Created == nil {
+		t.Fatal("Created = nil, but worktree create succeeded -- the keep-or-clean gate would never be offered and the checkout would be orphaned")
+	}
+	if result.Created.CheckoutPath != "/tmp/wt" {
+		t.Errorf("Created.CheckoutPath = %q, want %q", result.Created.CheckoutPath, "/tmp/wt")
+	}
+	if !result.SpaceReused || result.SpaceLabel != "somebody-else" {
+		t.Errorf("SpaceReused/SpaceLabel = %v/%q, want true/%q -- CleanCheck must still refuse to remove a workspace the user owns", result.SpaceReused, result.SpaceLabel, "somebody-else")
+	}
+	if result.AgentPane != "" {
+		t.Errorf("AgentPane = %q, want empty -- no pane was ever claimed, so Clean must have nothing to close", result.AgentPane)
 	}
 }
 
@@ -286,6 +567,7 @@ func TestExecuteFailureAtAgentStart(t *testing.T) {
 	}
 
 	wantCalls := []string{
+		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
 	}
@@ -422,6 +704,7 @@ func TestExecuteClauthLaunchThreadsPaneID(t *testing.T) {
 	}
 
 	wantCalls := []string{
+		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
 		"PaneRun(pane-1,clauth,start,work,--,--model,opus)",
 		"AwaitDetection(pane-1," + in.DetectionTimeout.String() + ")",

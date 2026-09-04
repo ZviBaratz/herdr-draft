@@ -310,7 +310,7 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 		t.Fatalf("ExecResult.FailedIndex = %d, want -1 (success): %+v", done.result.FailedIndex, done.result)
 	}
 
-	wantCalls := []string{"WorktreeCreate", "PaneRun", "AwaitDetection", "AgentRead", "AgentPrompt"}
+	wantCalls := []string{"WorkspaceList", "WorktreeCreate", "PaneRun", "AwaitDetection", "AgentRead", "AgentPrompt"}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("runner.calls = %v, want %v", runner.calls, wantCalls)
 	}

@@ -51,16 +51,29 @@ type Progress struct {
 	Err          error
 }
 
-// ExecResult is Execute's outcome. Created is the step-1 topology and is
-// nil until the topology op succeeds. FailedIndex is the index of the
-// first op that failed, or -1 on success. PromptText is only populated
-// when the OpAgentPrompt op fails, so the caller can surface the prompt
-// text that was never sent back to the user for manual paste (spec §9
-// step 3).
+// ExecResult is Execute's outcome. Created is the SPACE -- the step-1
+// topology Clean acts on -- and is nil until that op succeeds; its PaneID
+// is no longer necessarily where the agent runs (placement spec §5.1).
+// AgentPane is the pane the launch ops actually targeted: equal to
+// Created.PaneID unless a placement op (§5.3) or a reuse correction (§5.2)
+// moved it. FailedIndex is the index of the first op that failed, or -1
+// on success. PromptText is only populated when the OpAgentPrompt op
+// fails, so the caller can surface the prompt text that was never sent
+// back to the user for manual paste (spec §9 step 3).
 type ExecResult struct {
 	Created     *herdrc.CreatedTopology
+	AgentPane   string
 	FailedIndex int
 	PromptText  string
+
+	// SpaceReused reports that the worktree op's own workspace was
+	// already open BEFORE Execute ran, rather than freshly created
+	// (placement spec §5.2/§3) -- an exact fact, from a before/after
+	// workspace-id set comparison, not an inference. SpaceLabel is that
+	// workspace's own Label, for CleanCheck's refusal message (§5.4):
+	// Clean must never remove a space the user, not herdr-draft, opened.
+	SpaceReused bool
+	SpaceLabel  string
 }
 
 // busyRetryInterval, busyRetryBudget, and busyRetryNow implement the busy
@@ -220,6 +233,40 @@ func promptIfReady(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptR
 	return r.AgentPrompt(ctx, req)
 }
 
+// isTopologyKind reports whether kind is one of the four ops that can
+// produce a herdrc.CreatedTopology (i.e. carries gotTopo=true in Execute's
+// loop below) -- OpAgentStart and everything after it never do.
+func isTopologyKind(kind OpKind) bool {
+	switch kind {
+	case OpWorktreeCreate, OpWorkspaceCreate, OpTabCreate, OpPaneSplit:
+		return true
+	default:
+		return false
+	}
+}
+
+// topologyIndices returns the index of the FIRST topology-producing op in
+// ops (always 0 by Build's own construction -- topologyOp is always
+// first) and the LAST one (placement spec §5.1's "space" and "agent
+// pane": identical, at the same index, whenever Build appended no
+// placement op after a worktree create; two different indices when it
+// did). ops with no topology-producing op at all (which Build never
+// actually returns, but Execute must not panic against a hand-built one)
+// answers (-1, -1).
+func topologyIndices(ops []Op) (space, agentPane int) {
+	space, agentPane = -1, -1
+	for i, op := range ops {
+		if !isTopologyKind(op.Kind) {
+			continue
+		}
+		if space == -1 {
+			space = i
+		}
+		agentPane = i
+	}
+	return space, agentPane
+}
+
 // Execute runs ops in order against r. It threads each op's step-1 output
 // (the topology op's workspace/tab/pane ids) into every later op that
 // needs it -- OpAgentStart's Agent.PaneID, OpClauthLaunch's PaneRun target
@@ -232,9 +279,12 @@ func promptIfReady(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptR
 // dereferencing nil.
 func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Progress)) ExecResult {
 	result := ExecResult{FailedIndex: -1}
+	spaceIdx, agentPaneIdx := topologyIndices(ops)
 
 	var created herdrc.CreatedTopology
 	haveCreated := false
+	var agentPane string
+	haveAgentPane := false
 	total := len(ops)
 
 	for i, op := range ops {
@@ -243,16 +293,88 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 		var topo herdrc.CreatedTopology
 		gotTopo := false
 		var promptText string
+		var reused bool
+		var reusedLabel string
+		var claimedPane string
 
 		runErr := retryBusy(ctx, func() error {
+			// Reset per ATTEMPT, not per op: retryBusy may re-run this closure,
+			// and state a first attempt reached must not leak into a second one
+			// that fails earlier -- a stale reused=true would give CleanCheck a
+			// false SpaceReused and make it refuse to clean a space nobody else
+			// owned. Unreachable today, since retryBusy only retries
+			// agent_pane_busy and none of the three calls in OpWorktreeCreate
+			// can return it, which is exactly why it is worth three lines rather
+			// than a reader's trust.
+			gotTopo, reused, claimedPane = false, false, ""
+			reusedLabel = ""
+
 			var err error
 			switch op.Kind {
 			case OpWorktreeCreate:
 				if op.Worktree == nil {
 					return malformedOpError(op.Kind)
 				}
+				// The reuse check runs UNCONDITIONALLY for every worktree
+				// create, whether or not this op is the agent-pane op:
+				// SpaceReused/SpaceLabel feed CleanCheck's refusal (§5.4)
+				// regardless of where the agent ends up. The list call
+				// goes BEFORE the create and its failure fails the step --
+				// fail closed, before anything is half-built (§5.2).
+				//
+				// The before/after id-SET comparison is exact, not a
+				// heuristic (design §3, §11 item 7): herdr allocates
+				// workspace ids from a monotonic counter and documents
+				// them as stable, never recycled (herdr:src/workspace.rs
+				// ~line 179, "Stable public workspace identity, independent
+				// of display order" -- cited here per the design's own
+				// recommendation, so the next reader finds the guarantee
+				// this relies on rather than re-deriving it). The only
+				// false reading is a THIRD PARTY opening a workspace in
+				// the sub-second window between this list call and the
+				// create, and then that same create reusing it -- two
+				// coincidences, and the failure is benign (one extra tab
+				// in a workspace herdr had just made).
+				before, listErr := r.WorkspaceList(ctx)
+				if listErr != nil {
+					return fmt.Errorf("checking which workspaces already exist: %w", listErr)
+				}
+				existed := make(map[string]bool, len(before))
+				labelOf := make(map[string]string, len(before))
+				for _, w := range before {
+					existed[w.WorkspaceID] = true
+					labelOf[w.WorkspaceID] = w.Label
+				}
+
 				topo, err = r.WorktreeCreate(ctx, *op.Worktree)
-				gotTopo = err == nil
+				if err != nil {
+					return err
+				}
+				gotTopo = true
+
+				if existed[topo.WorkspaceID] {
+					reused = true
+					reusedLabel = labelOf[topo.WorkspaceID]
+					if i == agentPaneIdx {
+						// The correction: a fresh TAB, not a split -- a
+						// split changes the geometry of a tab the user
+						// owns, where a tab only adds one entry to their
+						// tab bar (§5.2). Fires only here: if a placement
+						// op follows, IT decides where the agent runs, and
+						// a claim in the reused workspace would be litter.
+						claim, claimErr := r.TabCreate(ctx, herdrc.TabCreateReq{
+							Workspace: topo.WorkspaceID,
+							Cwd:       topo.CheckoutPath,
+							Label:     op.Worktree.Label,
+							Focus:     true,
+						})
+						if claimErr != nil {
+							return claimErr
+						}
+						claimedPane = claim.PaneID
+					}
+				}
+				return nil
 			case OpWorkspaceCreate:
 				if op.Workspace == nil {
 					return malformedOpError(op.Kind)
@@ -263,33 +385,41 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 				if op.Tab == nil {
 					return malformedOpError(op.Kind)
 				}
-				topo, err = r.TabCreate(ctx, *op.Tab)
+				req := *op.Tab
+				if op.CwdFromCheckout && haveCreated {
+					req.Cwd = created.CheckoutPath
+				}
+				topo, err = r.TabCreate(ctx, req)
 				gotTopo = err == nil
 			case OpPaneSplit:
 				if op.Split == nil {
 					return malformedOpError(op.Kind)
 				}
-				topo, err = r.PaneSplit(ctx, *op.Split)
+				req := *op.Split
+				if op.CwdFromCheckout && haveCreated {
+					req.Cwd = created.CheckoutPath
+				}
+				topo, err = r.PaneSplit(ctx, req)
 				gotTopo = err == nil
 			case OpAgentStart:
 				if op.Agent == nil {
 					return malformedOpError(op.Kind)
 				}
 				req := *op.Agent
-				if req.PaneID == "" && haveCreated {
-					req.PaneID = created.PaneID
+				if req.PaneID == "" && haveAgentPane {
+					req.PaneID = agentPane
 				}
 				err = startAgentWithDedupe(ctx, r, req)
 			case OpClauthLaunch:
 				paneID := ""
-				if haveCreated {
-					paneID = created.PaneID
+				if haveAgentPane {
+					paneID = agentPane
 				}
 				err = r.PaneRun(ctx, paneID, op.RunArgv)
 			case OpAwaitDetection:
 				paneID := ""
-				if haveCreated {
-					paneID = created.PaneID
+				if haveAgentPane {
+					paneID = agentPane
 				}
 				err = r.AwaitDetection(ctx, paneID, op.Timeout)
 			case OpAgentPrompt:
@@ -297,8 +427,8 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 					return malformedOpError(op.Kind)
 				}
 				req := *op.Prompt
-				if req.Target == "" && haveCreated {
-					req.Target = created.PaneID
+				if req.Target == "" && haveAgentPane {
+					req.Target = agentPane
 				}
 				promptText = req.Text
 				err = promptIfReady(ctx, r, req)
@@ -309,6 +439,22 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 		})
 
 		if runErr != nil {
+			// A step that failed AFTER its own space op already succeeded
+			// still leaves a space behind to account for: §5.2's reuse
+			// correction runs INSIDE the worktree step, so `worktree create`
+			// can have mutated real herdr state -- a checkout on disk, a
+			// workspace holding it -- before the claim that follows it
+			// failed. Recording the space here is what gets the
+			// keep-or-clean gate offered at all: handleSubmitDone treats
+			// Created == nil as "nothing to clean", which is the right
+			// answer for §5.2's fail-closed list call (nothing was built
+			// yet) and the wrong one for this case.
+			if gotTopo && i == spaceIdx {
+				c := topo
+				result.Created = &c
+				result.SpaceReused = reused
+				result.SpaceLabel = reusedLabel
+			}
 			wrapped := fmt.Errorf("plan: execute: %s: %w", op.Label, runErr)
 			emitProgress(onProgress, i, total, op.Label, StepFailed, wrapped)
 			result.FailedIndex = i
@@ -319,10 +465,25 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 		}
 
 		if gotTopo {
-			created = topo
-			haveCreated = true
-			c := topo
-			result.Created = &c
+			if i == spaceIdx {
+				created = topo
+				haveCreated = true
+				c := topo
+				result.Created = &c
+				if reused {
+					result.SpaceReused = true
+					result.SpaceLabel = reusedLabel
+				}
+			}
+			if i == agentPaneIdx {
+				if reused {
+					agentPane = claimedPane
+				} else {
+					agentPane = topo.PaneID
+				}
+				haveAgentPane = true
+				result.AgentPane = agentPane
+			}
 		}
 		emitProgress(onProgress, i, total, op.Label, StepDone, nil)
 	}
