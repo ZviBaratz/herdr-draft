@@ -586,13 +586,17 @@ type Model struct {
 	// reviewer-measured: a permanently elevated goroutine count), or let
 	// the user bypass an intentional keep/clean choice silently.
 	submitDeadEnd bool
-	// submitInput/submitCreated/submitCleanDecision are the running
+	// submitInput/submitResult/submitCleanDecision are the running
 	// submit attempt's own state, threaded across the several async Cmds
 	// spec §9's staged pipeline needs (plan.Execute's own streamed
 	// progress, then plan.CleanCheck, then -- on a CleanMsg -- plan.Clean)
 	// -- see async.go's runSubmitCmd/runCleanCheckCmd/runCleanCmd.
+	// submitResult carries plan.ExecResult (placement spec §5.1/§5.4)
+	// rather than a bare herdrc.CreatedTopology, because a reused space's
+	// Clean/CleanCheck now need SpaceReused/SpaceLabel/AgentPane too, not
+	// just the space's own workspace id.
 	submitInput         plan.Input
-	submitCreated       herdrc.CreatedTopology
+	submitResult        plan.ExecResult
 	submitCleanDecision plan.CleanDecision
 	// submitSteps is the full, one-per-op working row list startSubmit
 	// seeds at StepPending (submitSteps, async.go) and

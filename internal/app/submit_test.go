@@ -471,6 +471,43 @@ func TestSubmit_FailedStepShowsFailureWithCleanCheckReasonThreaded(t *testing.T)
 	}
 }
 
+// TestHandleCleanCheckResult_RefusesAReusedSpace pins placement spec
+// §5.4 at the app layer: a submit whose space was reused must reach
+// SubmitView with the refusal, not the ordinary keep/clean choice, and
+// handleCleanRequested must never call plan.Clean for it even if
+// something upstream tried.
+func TestHandleCleanCheckResult_RefusesAReusedSpace(t *testing.T) {
+	m := newTestModel(t, testSetup{})
+	created := herdrc.CreatedTopology{WorkspaceID: "w9", CheckoutPath: "/tmp/wt"}
+	result := plan.ExecResult{
+		Created: &created, FailedIndex: 2,
+		SpaceReused: true, SpaceLabel: "somebody-else",
+	}
+
+	next, _ := m.handleCleanCheckResult(cleanCheckMsg{
+		result:   result,
+		decision: plan.CleanCheck(context.Background(), m.submitInput, result),
+	})
+	m = next
+
+	if m.submitCleanDecision.Allowed {
+		t.Fatal("submitCleanDecision.Allowed = true, want false for a reused space")
+	}
+	if !strings.Contains(m.submitCleanDecision.Reason, "somebody-else") {
+		t.Errorf("Reason = %q, want it to name the reused workspace", m.submitCleanDecision.Reason)
+	}
+
+	// A CleanMsg must still be refused even if something upstream sent one
+	// anyway -- handleCleanRequested's own re-check, unchanged in shape,
+	// now guarding a real refusal instead of a hypothetical one.
+	m.submitResult = result
+	next2, cmd := m.handleCleanRequested()
+	if cmd != nil {
+		t.Fatal("handleCleanRequested issued a Clean command for a refused space, want nil")
+	}
+	_ = next2
+}
+
 // TestSubmit_CleanMsgOnDeniedCheckDoesNothing pins the brief's own fifth
 // scenario: CleanMsg must not call plan.Clean at all when the app's own
 // recorded CleanDecision denies it -- even though SubmitView's own k/c
@@ -484,7 +521,8 @@ func TestSubmit_CleanMsgOnDeniedCheckDoesNothing(t *testing.T) {
 	m.submitting = true
 	m.submitCleanDecision = plan.CleanDecision{Allowed: false, Reason: "uncommitted changes"}
 	m.submitInput = plan.Input{UseWorktree: true, BaseRef: "main"}
-	m.submitCreated = herdrc.CreatedTopology{WorkspaceID: "ws-1", CheckoutPath: "/does/not/matter"}
+	created := herdrc.CreatedTopology{WorkspaceID: "ws-1", CheckoutPath: "/does/not/matter"}
+	m.submitResult = plan.ExecResult{Created: &created, AgentPane: created.PaneID}
 
 	next, cmd := m.Update(form.CleanMsg{})
 	if cmd != nil {
@@ -516,8 +554,11 @@ func TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd(t *testing.T) {
 		wantQuit bool
 	}{
 		{
-			name:  "waiting on CleanCheck",
-			setup: func(m *Model) { m.submitCreated = herdrc.CreatedTopology{WorkspaceID: "ws-1"} },
+			name: "waiting on CleanCheck",
+			setup: func(m *Model) {
+				created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
+				m.submitResult = plan.ExecResult{Created: &created, AgentPane: created.PaneID}
+			},
 		},
 		{
 			name: "keep-or-clean, clean allowed",
@@ -712,7 +753,7 @@ func TestUpdateSubmitting_EscDuringActiveStreamingDoesNotQuit(t *testing.T) {
 // TestSubmit_CleanAllowedCallsPlanCleanAndQuits covers the ALLOWED half of
 // handleCleanRequested (the denied half is TestSubmit_CleanMsgOnDeniedCheckDoesNothing
 // above): a CleanMsg with an allowing decision must actually call
-// plan.Clean against the recorded submitInput/submitCreated, then quit
+// plan.Clean against the recorded submitInput/submitResult, then quit
 // once it completes.
 func TestSubmit_CleanAllowedCallsPlanCleanAndQuits(t *testing.T) {
 	runner := &submitFakeRunner{}
@@ -720,7 +761,8 @@ func TestSubmit_CleanAllowedCallsPlanCleanAndQuits(t *testing.T) {
 	m.submitting = true
 	m.submitCleanDecision = plan.CleanDecision{Allowed: true}
 	m.submitInput = plan.Input{UseWorktree: false}
-	m.submitCreated = herdrc.CreatedTopology{WorkspaceID: "ws-1"}
+	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
+	m.submitResult = plan.ExecResult{Created: &created, AgentPane: created.PaneID}
 
 	next, cmd := m.Update(form.CleanMsg{})
 	m = next.(Model)
@@ -759,7 +801,8 @@ func TestSubmit_CleanFailureSurfacesErrorAndStaysInPrompt(t *testing.T) {
 	m.submitting = true
 	m.submitCleanDecision = plan.CleanDecision{Allowed: true}
 	m.submitInput = plan.Input{UseWorktree: false}
-	m.submitCreated = herdrc.CreatedTopology{WorkspaceID: "ws-1"}
+	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
+	m.submitResult = plan.ExecResult{Created: &created, AgentPane: created.PaneID}
 	m.submitView = form.NewSubmitView(m.palette)
 	m.submitView.SetFailure(plan.ExecResult{FailedIndex: 0}, m.submitCleanDecision)
 

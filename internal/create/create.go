@@ -294,12 +294,11 @@ func applyOnFailure(ctx context.Context, deps Deps, rep *report) {
 	if rep.onFailure != onFailureClean {
 		return
 	}
-	created := *rep.result.Created
-	if decision := plan.CleanCheck(ctx, rep.input, created); !decision.Allowed {
+	if decision := plan.CleanCheck(ctx, rep.input, rep.result); !decision.Allowed {
 		rep.cleanRefused = decision.Reason
 		return
 	}
-	if err := plan.Clean(ctx, deps.Runner, rep.input, created); err != nil {
+	if err := plan.Clean(ctx, deps.Runner, rep.input, rep.result); err != nil {
 		rep.cleanRefused = err.Error()
 		return
 	}

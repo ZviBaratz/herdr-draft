@@ -28,10 +28,16 @@ import (
 type fakeRunner struct {
 	calls []string
 
-	topo     herdrc.CreatedTopology
-	listErr  error
-	failAt   string
-	readText string
+	topo    herdrc.CreatedTopology
+	listErr error
+	// workspaces is what WorkspaceList reports as already open -- nil
+	// (the zero value) for every test that does not care, so a
+	// WorktreeCreate that returns r.topo's own WorkspaceID is never read
+	// as a reuse unless a test deliberately puts that id in here first
+	// (placement spec §5.2's before/after comparison, exec.go).
+	workspaces []herdrc.WorkspaceInfo
+	failAt     string
+	readText   string
 }
 
 var _ herdrc.Runner = (*fakeRunner)(nil)
@@ -61,7 +67,7 @@ func (r *fakeRunner) called(name string) bool {
 
 func (r *fakeRunner) WorkspaceList(context.Context) ([]herdrc.WorkspaceInfo, error) {
 	_ = r.record("WorkspaceList")
-	return nil, r.listErr
+	return r.workspaces, r.listErr
 }
 
 func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreateReq) (herdrc.CreatedTopology, error) {
@@ -285,6 +291,56 @@ func TestExitOne_TopologyItselfFails(t *testing.T) {
 	}
 	if !strings.Contains(h.stderr.String(), "nothing was created") {
 		t.Errorf("stderr = %q, want it to say nothing was created", h.stderr)
+	}
+}
+
+// TestExitOne_OnFailureCleanRefusesAReusedSpace reaches placement spec
+// §5.4's reuse refusal from the headless verb -- previously unreachable
+// from the command line, since nothing in this package's tests exercised
+// SpaceReused before this task. It also exercises Task 3's own extension
+// (exec.go's TestExecute_ReuseClaimFailureStillReportsTheSpaceItCreated,
+// mirrored here at this package's level): a step failing AFTER its own
+// worktree op already succeeded -- here, the reuse claim's TabCreate --
+// still reports the space in ExecResult.Created rather than leaving it
+// nil, so applyOnFailure runs at all where it previously would not have.
+//
+// The fixture is built so the refusal can ONLY come from CleanCheck's
+// SpaceReused branch, never from gitx.Disposable failing on the fake,
+// nonexistent checkout path: WorktreeCreate's own return value (r.topo's
+// WorkspaceID) is seeded into WorkspaceList's before-list, so Execute's
+// before/after comparison (exec.go) reads it as reused and CleanCheck's
+// SpaceReused check short-circuits before ever calling gitx.Disposable
+// (exec.go's CleanCheck orders the two checks -- SpaceReused first,
+// unconditionally). A git-error refusal would say "could not determine
+// whether the worktree is safe to remove"; this one names the reused
+// workspace by label instead, which is what the assertions below check
+// for -- not merely that SOME refusal happened.
+func TestExitOne_OnFailureCleanRefusesAReusedSpace(t *testing.T) {
+	h := newHarness(t)
+	// r.topo (newFakeRunner's default) carries WorkspaceID "wS1" --
+	// seeding that same id into the before-list is what makes Execute's
+	// reuse comparison fire for WorktreeCreate's own return value.
+	h.runner.workspaces = []herdrc.WorkspaceInfo{{WorkspaceID: "wS1", Label: "somebody-else"}}
+	// The worktree op is both the space op and the agent-pane op here (no
+	// separate placement -- "a worktree needs nothing", per
+	// TestLazyContext_OnlyTheHerePlacementsNeedIt above), so the reuse
+	// claim's TabCreate runs inside this same step and its failure is
+	// what Task 3 taught Execute to still report the space for.
+	h.runner.failAt = "TabCreate"
+
+	code := h.run("--title", "t", "--worktree", "--on-failure", "clean")
+	if code != ExitFailed {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+	}
+	if h.runner.called("WorktreeRemove") {
+		t.Errorf("a reused space was removed: %v", h.runner.calls)
+	}
+	stderr := h.stderr.String()
+	if !strings.Contains(stderr, "somebody-else") {
+		t.Errorf("stderr = %q, want the reused workspace's own label named in the refusal", stderr)
+	}
+	if !strings.Contains(stderr, "was already open") {
+		t.Errorf("stderr = %q, want CleanCheck's SpaceReused wording, not a git-error refusal", stderr)
 	}
 }
 

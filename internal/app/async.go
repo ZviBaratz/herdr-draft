@@ -977,9 +977,9 @@ func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.submitCreated = *msg.result.Created
+	m.submitResult = msg.result
 	return m, tea.Batch(
-		runCleanCheckCmd(m.submitInput, *msg.result.Created, msg.result),
+		runCleanCheckCmd(m.submitInput, msg.result),
 		// A prompt that never reached the agent is the one piece of the
 		// user's own work this failure can destroy -- save it before the
 		// popup can close (finding I6). A no-op when there is none.
@@ -1117,9 +1117,9 @@ type cleanCheckMsg struct {
 // real git I/O for a worktree space (gitx.Disposable), so it is never
 // called directly from a message handler in this package, matching every
 // other I/O-performing source in this file.
-func runCleanCheckCmd(in plan.Input, created herdrc.CreatedTopology, result plan.ExecResult) tea.Cmd {
+func runCleanCheckCmd(in plan.Input, result plan.ExecResult) tea.Cmd {
 	return func() tea.Msg {
-		decision := plan.CleanCheck(context.Background(), in, created)
+		decision := plan.CleanCheck(context.Background(), in, result)
 		return cleanCheckMsg{result: result, decision: decision}
 	}
 }
@@ -1146,15 +1146,15 @@ func (m Model) handleCleanRequested() (Model, tea.Cmd) {
 	if !m.submitCleanDecision.Allowed {
 		return m, nil
 	}
-	return m, runCleanCmd(m.deps.Runner, m.submitInput, m.submitCreated)
+	return m, runCleanCmd(m.deps.Runner, m.submitInput, m.submitResult)
 }
 
 // cleanDoneMsg reports plan.Clean's own outcome.
 type cleanDoneMsg struct{ err error }
 
-func runCleanCmd(r herdrc.Runner, in plan.Input, created herdrc.CreatedTopology) tea.Cmd {
+func runCleanCmd(r herdrc.Runner, in plan.Input, result plan.ExecResult) tea.Cmd {
 	return func() tea.Msg {
-		err := plan.Clean(context.Background(), r, in, created)
+		err := plan.Clean(context.Background(), r, in, result)
 		return cleanDoneMsg{err: err}
 	}
 }
