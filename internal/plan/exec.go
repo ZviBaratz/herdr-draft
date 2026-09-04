@@ -501,18 +501,45 @@ type CleanDecision struct {
 }
 
 // CleanCheck reports whether Clean is safe to run for the space Execute
-// created (spec §9's keep-or-clean gate). Worktree spaces defer to
-// gitx.Disposable -- which refuses when the checkout has uncommitted
-// changes or commits ahead of in.BaseRef -- using created.CheckoutPath,
-// the field herdrc.CreatedTopology carries precisely for this. Any error
-// from Disposable itself (e.g. an invalid BaseRef) is surfaced as a
-// denied decision with the error folded into Reason, never as a silent
-// "allowed". Non-worktree spaces (a plain workspace/tab/pane) have no
-// on-disk checkout to lose -- only pane content herdr-draft itself
-// created -- so they are always allowed.
-func CleanCheck(ctx context.Context, in Input, created herdrc.CreatedTopology) CleanDecision {
+// created (spec §9's keep-or-clean gate). A REUSED space (placement spec
+// §5.2's SpaceReused) is refused OUTRIGHT and before anything else: it is
+// a workspace the user, not herdr-draft, opened, and "clean" closing it --
+// every tab, every pane -- is not a clean, whatever the checkout inside
+// it looks like. Only once that is ruled out does a worktree space defer
+// to gitx.Disposable, exactly as before. Non-worktree spaces (a plain
+// workspace/tab/pane) have no on-disk checkout to lose and no reuse
+// hazard either (only OpWorktreeCreate can silently reuse something) --
+// only pane content herdr-draft itself created -- so they are always
+// allowed.
+func CleanCheck(ctx context.Context, in Input, result ExecResult) CleanDecision {
+	if result.SpaceReused {
+		checkout := ""
+		if result.Created != nil {
+			checkout = result.Created.CheckoutPath
+		}
+		// The instruction is `git worktree remove`, not `herdr worktree
+		// remove`: the latter is exactly the command that would close the
+		// reused workspace (design §8.2 -- herdr stamps worktree tracking
+		// onto a reused space same as a created one). Design §11 item 4
+		// asks for the exact command in the reason string, not just the
+		// path, since it is longer than any reason this gate currently
+		// shows and worth the width.
+		return CleanDecision{
+			Allowed: false,
+			Reason: fmt.Sprintf(
+				"this session joined %q, a workspace that was already open -- removing the worktree would close it and everything in it. "+
+					"The checkout at %s is left in place; remove it yourself with `git worktree remove %s` from the origin repository if you no longer want it.",
+				result.SpaceLabel, checkout, checkout,
+			),
+		}
+	}
 	if !in.UseWorktree {
 		return CleanDecision{Allowed: true}
+	}
+
+	var checkout string
+	if result.Created != nil {
+		checkout = result.Created.CheckoutPath
 	}
 
 	base, err := resolveBaseRef(ctx, in)
@@ -523,7 +550,7 @@ func CleanCheck(ctx context.Context, in Input, created herdrc.CreatedTopology) C
 		}
 	}
 
-	ok, reason, err := gitx.Disposable(ctx, created.CheckoutPath, base)
+	ok, reason, err := gitx.Disposable(ctx, checkout, base)
 	if err != nil {
 		return CleanDecision{
 			Allowed: false,
@@ -572,13 +599,31 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 }
 
 // Clean removes the space Execute created for in, once CleanCheck has
-// allowed it (spec §9's "clean" choice). It removes ONLY what herdr-draft
-// itself created: live probing (Task 2b) found that `herdr worktree
-// create`, run from a repo with no workspace already open, also opens an
-// implicit origin-repo workspace as a side effect. Clean deliberately does
-// not touch that implicit workspace -- closing it is out of scope for v1
-// and risks destroying state the user, not herdr-draft, created.
-func Clean(ctx context.Context, r herdrc.Runner, in Input, created herdrc.CreatedTopology) error {
+// allowed it (spec §9's "clean" choice; placement spec §5.4 -- CleanCheck
+// never allows a reused space, so Clean itself does not need to re-check
+// that here). It removes ONLY what herdr-draft itself created: live
+// probing (Task 2b) found that `herdr worktree create`, run from a repo
+// with no workspace already open, also opens an implicit origin-repo
+// workspace as a side effect. Clean deliberately does not touch that
+// implicit workspace -- closing it is out of scope for v1 and risks
+// destroying state the user, not herdr-draft, created.
+//
+// When Execute claimed a pane for the agent that differs from the space's
+// own (a reuse correction, or a placement op moving the agent elsewhere --
+// placement spec §5.1/§5.2/§5.3), that claimed pane is closed FIRST, so
+// nothing is left running an agent in a directory about to be deleted.
+func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) error {
+	if result.Created == nil {
+		return fmt.Errorf("plan: clean: nothing was created")
+	}
+	created := *result.Created
+
+	if result.AgentPane != "" && result.AgentPane != created.PaneID {
+		if err := r.PaneClose(ctx, result.AgentPane); err != nil {
+			return fmt.Errorf("plan: clean: close agent pane: %w", err)
+		}
+	}
+
 	if in.UseWorktree {
 		if err := r.WorktreeRemove(ctx, created.WorkspaceID); err != nil {
 			return fmt.Errorf("plan: clean: remove worktree: %w", err)

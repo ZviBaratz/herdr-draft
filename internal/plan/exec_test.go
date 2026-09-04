@@ -923,8 +923,9 @@ func TestCleanWorktreeCallsWorktreeRemove(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
+	result := ExecResult{Created: &created, AgentPane: created.PaneID}
 
-	if err := Clean(context.Background(), m, in, created); err != nil {
+	if err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
 	want := []string{"WorktreeRemove(ws-1)"}
@@ -938,8 +939,9 @@ func TestCleanNonWorktreeCallsWorkspaceClose(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = false
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-2"}
+	result := ExecResult{Created: &created, AgentPane: created.PaneID}
 
-	if err := Clean(context.Background(), m, in, created); err != nil {
+	if err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
 	want := []string{"WorkspaceClose(ws-2)"}
@@ -953,8 +955,9 @@ func TestCleanPropagatesRunnerError(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
+	result := ExecResult{Created: &created, AgentPane: created.PaneID}
 
-	err := Clean(context.Background(), m, in, created)
+	err := Clean(context.Background(), m, in, result)
 	if !errors.Is(err, m.failErr) {
 		t.Fatalf("Clean error = %v, want it to wrap %v", err, m.failErr)
 	}
@@ -964,7 +967,7 @@ func TestCleanCheckAlwaysAllowsNonWorktree(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = false
 
-	decision := CleanCheck(context.Background(), in, herdrc.CreatedTopology{})
+	decision := CleanCheck(context.Background(), in, ExecResult{Created: &herdrc.CreatedTopology{}})
 	if !decision.Allowed {
 		t.Fatalf("expected a non-worktree space to always be allowed, reason: %q", decision.Reason)
 	}
@@ -977,8 +980,9 @@ func TestCleanCheckAllowsCleanWorktree(t *testing.T) {
 	in.UseWorktree = true
 	in.BaseRef = "main"
 	created := herdrc.CreatedTopology{CheckoutPath: repo}
+	result := ExecResult{Created: &created, AgentPane: created.PaneID}
 
-	decision := CleanCheck(context.Background(), in, created)
+	decision := CleanCheck(context.Background(), in, result)
 	if !decision.Allowed {
 		t.Fatalf("expected a pristine worktree to be allowed, reason: %q", decision.Reason)
 	}
@@ -994,8 +998,9 @@ func TestCleanCheckDeniesDirtyWorktree(t *testing.T) {
 	in.UseWorktree = true
 	in.BaseRef = "main"
 	created := herdrc.CreatedTopology{CheckoutPath: repo}
+	result := ExecResult{Created: &created, AgentPane: created.PaneID}
 
-	decision := CleanCheck(context.Background(), in, created)
+	decision := CleanCheck(context.Background(), in, result)
 	if decision.Allowed {
 		t.Fatal("expected a dirty worktree to be denied")
 	}
@@ -1014,13 +1019,92 @@ func TestCleanCheckDeniesOnDisposableError(t *testing.T) {
 	in.UseWorktree = true
 	in.BaseRef = "this-ref-does-not-exist"
 	created := herdrc.CreatedTopology{CheckoutPath: repo}
+	result := ExecResult{Created: &created, AgentPane: created.PaneID}
 
-	decision := CleanCheck(context.Background(), in, created)
+	decision := CleanCheck(context.Background(), in, result)
 	if decision.Allowed {
 		t.Fatal("expected a Disposable error (invalid base ref) to deny cleanup, not silently allow it")
 	}
 	if strings.TrimSpace(decision.Reason) == "" {
 		t.Fatal("expected a human-readable Reason describing the error")
+	}
+}
+
+func TestCleanCheckRefusesAReusedSpace(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	created := herdrc.CreatedTopology{WorkspaceID: "w9", CheckoutPath: "/tmp/wt"}
+	result := ExecResult{Created: &created, AgentPane: "claimed-pane", SpaceReused: true, SpaceLabel: "somebody-else"}
+
+	decision := CleanCheck(context.Background(), in, result)
+	if decision.Allowed {
+		t.Fatal("CleanCheck allowed cleaning a reused space, want refused")
+	}
+	if !strings.Contains(decision.Reason, "somebody-else") {
+		t.Errorf("Reason = %q, want it to name the reused workspace's label", decision.Reason)
+	}
+	if !strings.Contains(decision.Reason, "/tmp/wt") {
+		t.Errorf("Reason = %q, want it to name the checkout path so the user can act manually", decision.Reason)
+	}
+	if !strings.Contains(decision.Reason, "git worktree remove /tmp/wt") {
+		t.Errorf("Reason = %q, want the exact recovery command (design §11 item 4) -- `herdr worktree remove` would close the very workspace this refusal is protecting", decision.Reason)
+	}
+}
+
+func TestCleanCheckRefusesAReusedSpaceEvenWhenTheWorktreeItselfIsPristine(t *testing.T) {
+	// SpaceReused must short-circuit BEFORE gitx.Disposable ever runs --
+	// a pristine checkout is irrelevant, the workspace it sits in is not
+	// herdr-draft's to remove regardless.
+	repo := mkRepo(t)
+	in := validInput()
+	in.UseWorktree = true
+	in.BaseRef = "main"
+	created := herdrc.CreatedTopology{WorkspaceID: "w9", CheckoutPath: repo}
+	result := ExecResult{Created: &created, SpaceReused: true, SpaceLabel: "somebody-else"}
+
+	decision := CleanCheck(context.Background(), in, result)
+	if decision.Allowed {
+		t.Fatal("a reused space must never be allowed, however clean the checkout looks")
+	}
+}
+
+// TestClean_ClosesTheClaimedPaneBeforeRemovingTheWorktree gives created a
+// real, different PaneID ("worktree-pane") rather than leaving it at its
+// zero value: with PaneID == "" an implementation keying off AgentPane !=
+// "" alone (or almost anything else) would also make this assertion pass,
+// which is exactly the "same assertion for two different mechanisms" shape
+// this plan has been bitten by three times already (see mockRunner's
+// tabTopo/splitTopo doc comments). Genuinely populated and genuinely
+// different is what makes the inequality mean something.
+func TestClean_ClosesTheClaimedPaneBeforeRemovingTheWorktree(t *testing.T) {
+	m := &mockRunner{}
+	in := validInput()
+	in.UseWorktree = true
+	created := herdrc.CreatedTopology{WorkspaceID: "w9", PaneID: "worktree-pane"}
+	result := ExecResult{Created: &created, AgentPane: "claimed-pane"} // != created.PaneID ("worktree-pane")
+
+	if err := Clean(context.Background(), m, in, result); err != nil {
+		t.Fatalf("Clean: %v", err)
+	}
+	want := []string{"PaneClose(claimed-pane)", "WorktreeRemove(w9)"}
+	if !reflect.DeepEqual(m.calls, want) {
+		t.Fatalf("calls = %v, want %v (pane closed BEFORE the space is removed)", m.calls, want)
+	}
+}
+
+func TestClean_NoPaneCloseWhenAgentPaneMatchesTheSpace(t *testing.T) {
+	m := &mockRunner{}
+	in := validInput()
+	in.UseWorktree = true
+	created := herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "p1"}
+	result := ExecResult{Created: &created, AgentPane: "p1"} // == created.PaneID
+
+	if err := Clean(context.Background(), m, in, result); err != nil {
+		t.Fatalf("Clean: %v", err)
+	}
+	want := []string{"WorktreeRemove(ws-1)"}
+	if !reflect.DeepEqual(m.calls, want) {
+		t.Fatalf("calls = %v, want %v -- the common case must not call PaneClose at all", m.calls, want)
 	}
 }
 
@@ -1164,14 +1248,15 @@ func TestCleanCheckDeniesCommitsBeyondTheDefaultHeadBase(t *testing.T) {
 	in.BaseRef = "" // WorktreeField.Base()'s own "" == HEAD sentinel
 	in.ProjectDir = repo
 	created := herdrc.CreatedTopology{CheckoutPath: wt}
+	result := ExecResult{Created: &created, AgentPane: created.PaneID}
 
-	if decision := CleanCheck(context.Background(), in, created); !decision.Allowed {
+	if decision := CleanCheck(context.Background(), in, result); !decision.Allowed {
 		t.Fatalf("a pristine worktree at the default HEAD base was denied: %q", decision.Reason)
 	}
 
 	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "real work")
 
-	decision := CleanCheck(context.Background(), in, created)
+	decision := CleanCheck(context.Background(), in, result)
 	if decision.Allowed {
 		t.Fatal("a worktree with a commit beyond its base was allowed to be destroyed")
 	}
