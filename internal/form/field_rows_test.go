@@ -495,12 +495,18 @@ func TestPlacementField_RowAndPanelVocabulary(t *testing.T) {
 		}
 	}
 
+	// placement spec §6.1: the field stopped going inert under a worktree.
+	// The loop above left the cursor on the last entry in want, "split
+	// here" -- SetWorktreeOn(true) must change neither the row (still the
+	// chip's own label) nor the selection, only the panel's explanation
+	// (which switches to placementWorktreeHint's worktree-on wording for
+	// the SAME chip).
 	f.SetWorktreeOn(true)
-	if got := rowText(f.Row(60)); got != placementInertHint {
-		t.Errorf("Row while a worktree is on = %q, want %q", got, placementInertHint)
+	if got := rowText(f.Row(60)); got != "split here" {
+		t.Errorf("Row while a worktree is on = %q, want %q (unchanged -- the row states only the chip label)", got, "split here")
 	}
-	if got := panelLineAt(f.Panel(60, 2), 1); got != "" {
-		t.Errorf("Panel explanation while inert = %q, want nothing -- the row already carries the reason", got)
+	if got, want := panelLineAt(f.Panel(60, 2), 1), placementWorktreeHint("split-here"); got != want {
+		t.Errorf("Panel explanation while a worktree is on = %q, want %q", got, want)
 	}
 }
 

@@ -65,14 +65,12 @@ func TestPlacementField_ArrowsCycleChipsAndValue(t *testing.T) {
 	}
 }
 
-// TestPlacementField_WorktreeOnGoesInert pins the brief's own literal
-// requirement: SetWorktreeOn(true) makes the field present-but-inert (per
-// form.go's Section doc comment, Enabled() == false) with the exact
-// explanatory hint text, and forces Value() back to PlacementNewSpace
-// (plan/build.go: "worktree creation always opens a new workspace
-// regardless of Placement") even if the user had previously chosen a
-// different chip.
-func TestPlacementField_WorktreeOnGoesInert(t *testing.T) {
+// TestPlacementField_LiveUnderWorktree pins placement spec §6.1: the
+// field stays a real focus stop and keeps whatever the user picked when
+// the worktree toggle turns on -- the opposite of the field's own
+// pre-placement-spec behavior, which snapped the selection back to New
+// space and refused all input.
+func TestPlacementField_LiveUnderWorktree(t *testing.T) {
 	f := NewPlacementField(theme.Default())
 	f.Update(key(tea.KeyRight, 0)) // select "Tab here"
 	if got := f.Value(); got != plan.PlacementTabHere {
@@ -81,37 +79,168 @@ func TestPlacementField_WorktreeOnGoesInert(t *testing.T) {
 
 	f.SetWorktreeOn(true)
 
-	if f.Enabled() {
-		t.Errorf("Enabled() = true after SetWorktreeOn(true), want false (present-but-inert)")
+	if !f.Enabled() {
+		t.Error("Enabled() = false after SetWorktreeOn(true), want true -- placement now applies under a worktree too")
 	}
-	if got := f.Value(); got != plan.PlacementNewSpace {
-		t.Errorf("Value() after SetWorktreeOn(true) = %v, want %v (forced back to new space)", got, plan.PlacementNewSpace)
+	if got := f.Value(); got != plan.PlacementTabHere {
+		t.Errorf("Value() after SetWorktreeOn(true) = %v, want %v (the selection must survive)", got, plan.PlacementTabHere)
 	}
 
-	// The ROW states the consequence and the PANEL says how to get the
-	// choice back -- two different sentences on purpose (see
-	// placementInertPanelHint).
-	if got := ansi.Strip(f.Row(60)); !strings.Contains(got, placementInertHint) {
-		t.Errorf("Row(60) = %q, want it to contain %q", got, placementInertHint)
-	}
-	panel := ansi.Strip(f.Panel(60, f.PanelRows()))
-	if !strings.Contains(panel, placementInertPanelHint) {
-		t.Errorf("Panel(60) = %q, want it to contain %q", panel, placementInertPanelHint)
+	// The chips must still respond to input.
+	f.Update(key(tea.KeyRight, 0))
+	if got := f.Value(); got != plan.PlacementSplitHere {
+		t.Errorf("Value() after one more Right = %v, want %v", got, plan.PlacementSplitHere)
 	}
 }
 
-func TestPlacementField_WorktreeOffReenables(t *testing.T) {
+// TestPlacementField_RowUnderWorktreeNamesTheChipNotTheReason pins the
+// row half of §6.1's hint table: with the worktree on, the row still
+// shows the chip's OWN label (e.g. "tab here"), never the old inert
+// sentence, because there is no inert state left to explain.
+func TestPlacementField_RowUnderWorktreeNamesTheChipNotTheReason(t *testing.T) {
 	f := NewPlacementField(theme.Default())
 	f.SetWorktreeOn(true)
-	f.SetWorktreeOn(false)
+	f.Update(key(tea.KeyRight, 0)) // "tab here"
 
-	if !f.Enabled() {
-		t.Errorf("Enabled() = false after SetWorktreeOn(false), want true")
+	if got := ansi.Strip(f.Row(60)); !strings.Contains(got, "tab here") {
+		t.Errorf("Row(60) = %q, want it to contain %q", got, "tab here")
 	}
-	// Chips must be navigable again (inert no longer refuses Next/Prev).
-	f.Update(key(tea.KeyRight, 0))
-	if got := f.Value(); got != plan.PlacementTabHere {
-		t.Errorf("Value() after re-enabling and one Right = %v, want %v", got, plan.PlacementTabHere)
+	if got := ansi.Strip(f.Row(60)); strings.Contains(got, "worktree opens as its own space") {
+		t.Errorf("Row(60) = %q, still shows the old inert sentence", got)
+	}
+}
+
+// TestPlacementField_PanelDisclosesTheWorktreesOwnSpace pins §6.1's
+// panel-only disclosure: for the two NON-default chips under a worktree,
+// the panel adds "the worktree also keeps a space of its own" beneath the
+// chip's ordinary hint. "new space" gets no disclosure -- there is
+// nothing extra to disclose when the chip's own consequence already IS a
+// new space.
+func TestPlacementField_PanelDisclosesTheWorktreesOwnSpace(t *testing.T) {
+	const disclosure = "the worktree also keeps a space of its own"
+
+	f := NewPlacementField(theme.Default())
+	f.SetWorktreeOn(true)
+
+	if strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), disclosure) {
+		t.Error("the default chip (new space) under worktree shows the disclosure, want none")
+	}
+
+	f.Update(key(tea.KeyRight, 0)) // tab here
+	if !strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), disclosure) {
+		t.Error("tab here under worktree does not disclose the worktree's own space")
+	}
+
+	f.Update(key(tea.KeyRight, 0)) // split here
+	if !strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), disclosure) {
+		t.Error("split here under worktree does not disclose the worktree's own space")
+	}
+
+	f.SetWorktreeOn(false)
+	if strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), disclosure) {
+		t.Error("worktree off still shows the disclosure")
+	}
+}
+
+// TestPlacementField_PanelRowsMatchesPanelAcrossCombinations is the
+// dispatch's own required X5 coverage: field_rows_test.go's
+// TestFieldPanelRows_NeverReservesRowsItCannotFill iterates rowFields'
+// DEFAULT construction only (worktree off, "new" chip selected), so it
+// never exercises either branch PanelRows() gained in this task -- the
+// worktree-disclosure line, and the chip that turns it off. This test
+// drives every combination that conditional can take -- worktree on and
+// off, crossed with all three chips, crossed with provenance set and
+// unset.
+//
+// It asserts TWO things per combination, not one, because the shared
+// invariant's own shape (len(strings.Split(s.Panel(80, want), "\n")) ==
+// want, want := s.PanelRows()) turned out on inspection to be close to a
+// tautology for THIS kind of bug: every field's Panel ends in
+// panelBlock(w, h, lines...), whose own doc comment says it "pads with
+// blank gutter rows and drops any overflow from the bottom" -- so
+// Panel(80, PanelRows()) always comes back at exactly PanelRows() lines
+// REGARDLESS of whether PanelRows() over-reserves (panelBlock pads the
+// difference with a blank row) or under-reserves down to truncation
+// (panelBlock silently drops the excess), as long as PanelRows() >= 1.
+// The only thing that shape can actually catch is PanelRows() dropping
+// below 1. Kept below anyway, since the dispatch asked for this exact
+// shape and it is still a real (if narrow) floor check -- but paired with
+// a direct arithmetic assertion against the value PanelRows() and Panel's
+// own worktree/chip conditionals are BOTH supposed to agree on, which is
+// the actual thing this task's one new arithmetic can get wrong.
+func TestPlacementField_PanelRowsMatchesPanelAcrossCombinations(t *testing.T) {
+	chipMoves := []struct {
+		id    string
+		right int // number of Right presses from the fresh "new" selection
+	}{
+		{"new", 0},
+		{"tab-here", 1},
+		{"split-here", 2},
+	}
+
+	for _, worktreeOn := range []bool{false, true} {
+		for _, chip := range chipMoves {
+			for _, provenance := range []string{"", ".herdr-draft.toml"} {
+				f := NewPlacementField(theme.Default())
+				f.SetWorktreeOn(worktreeOn)
+				for i := 0; i < chip.right; i++ {
+					f.Update(key(tea.KeyRight, 0))
+				}
+				f.SetProvenance(provenance)
+
+				if got := f.Value(); placementChipID(got) != chip.id {
+					t.Fatalf("setup: worktreeOn=%v chip=%q: Value() resolved to chip %q, want %q",
+						worktreeOn, chip.id, placementChipID(got), chip.id)
+				}
+
+				// The direct arithmetic check: computed independently of
+				// both PlacementField.PanelRows() and Panel(), from the
+				// same rule placement spec §6.1 states -- 2 base rows,
+				// +1 under worktree for a non-"new" chip, +1 more when a
+				// config file chose the value.
+				wantRows := 2
+				if worktreeOn && chip.id != "new" {
+					wantRows++
+				}
+				if provenance != "" {
+					wantRows++
+				}
+				if got := f.PanelRows(); got != wantRows {
+					t.Errorf("worktreeOn=%v chip=%q provenance=%q: PanelRows() = %d, want %d",
+						worktreeOn, chip.id, provenance, got, wantRows)
+				}
+
+				// The shape-matching floor check the dispatch asked for
+				// (see doc comment above for why it has limited power on
+				// its own): Panel(80, PanelRows()) must not panic or
+				// disagree with a degenerate (<1) PanelRows().
+				want := f.PanelRows()
+				if got := len(strings.Split(f.Panel(80, want), "\n")); got != want {
+					t.Errorf("worktreeOn=%v chip=%q provenance=%q: PanelRows()=%d but Panel(80, %d) produced %d lines",
+						worktreeOn, chip.id, provenance, want, want, got)
+				}
+			}
+		}
+	}
+}
+
+// TestPlacementField_FooterHasNoWorktreeOverride pins the removal of the
+// "nothing to set here" rung -- there is no longer an inert state for it
+// to describe.
+//
+// The brief's own literal version of this test called f.FooterRungs()
+// and asserted it returned nil, which does not compile once the method
+// is gone (dispatch's own flagged trap). The real behavior to pin is
+// that PlacementField stops satisfying form.go's footerHinter interface
+// at all, which is asserted structurally at footer.go's own call site
+// (`s.(footerHinter)`, no separate registration step) -- so a section
+// that never implements the method falls through to the zone table
+// exactly the same way a section that lost the method does.
+func TestPlacementField_FooterHasNoWorktreeOverride(t *testing.T) {
+	f := NewPlacementField(theme.Default())
+	f.SetWorktreeOn(true)
+	if _, ok := any(f).(footerHinter); ok {
+		t.Error("PlacementField still satisfies footerHinter, want it to fall through to footer.go's own per-zone table")
 	}
 }
 

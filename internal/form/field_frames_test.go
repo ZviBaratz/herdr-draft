@@ -222,12 +222,14 @@ func TestFrames_WorktreeNonGit(t *testing.T) {
 	assertFrame(t, "worktree-nongit-80x24", buildWorktreeNonGitForm(theme.Default()), 80, 24)
 }
 
-// buildPlacementPanelForm sets PlacementField inert (worktree on), the
-// state where the row states the reason and the panel's chips are
-// replaced by their own placeholder.
+// buildPlacementPanelForm focuses PlacementField with the worktree on --
+// placement spec §6.1's live-under-worktree state, where the chips stay
+// interactive and the panel discloses the worktree's own space for the
+// two non-default chips.
 func buildPlacementPanelForm(palette theme.Palette) Model {
 	f := NewPlacementField(palette)
 	f.SetWorktreeOn(true)
+	f.Update(key(tea.KeyRight, 0)) // "tab here" -- the disclosure line only shows for a non-default chip
 	return fieldFrame(palette, f)
 }
 
