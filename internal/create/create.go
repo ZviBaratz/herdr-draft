@@ -286,8 +286,11 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 //
 // `clean` goes through plan.CleanCheck first, exactly as the form's own
 // keep-or-clean gate does, so a worktree carrying uncommitted work or
-// commits of its own is refused with the reason rather than removed. There
-// is no way to override that refusal from the command line, which is the
+// commits of its own is refused with the reason rather than removed --
+// and so is a run that reused an already-open workspace instead of
+// creating its own: CleanCheck refuses that case by name too, rather
+// than closing a workspace the user, not this command, owns. There is no
+// way to override that refusal from the command line, which is the
 // point: a non-interactive caller is the one least able to notice what it
 // would be destroying.
 func applyOnFailure(ctx context.Context, deps Deps, rep *report) {

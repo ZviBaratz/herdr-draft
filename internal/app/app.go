@@ -687,15 +687,13 @@ func New(s Setup) Model {
 	// [default_placement] (spec §12), resolved across config.toml and
 	// last-used.json: the two folded-in Task 20 gaps this task's brief
 	// names ("[clauth] default and a non-default [default_placement] have
-	// no pre-selection path"). "off"/on-then-snapped-back-to-New's own
-	// interaction with worktree defaulting on is handled the same way it
-	// already was before this gap was closed -- see PlacementField.SetValue's
-	// own doc comment: applying this now is safe regardless of where
-	// resolved.UseWorktree will later land, since a worktree turning on
-	// always snaps Placement back to New space anyway (spec §12's own
-	// config.toml comment: "when worktree is off"). SetValue is a no-op
-	// when the chip cursor already sits on the resolved value, which is
-	// what makes the unconditional call safe.
+	// no pre-selection path"). Applying it here, before resolved.UseWorktree
+	// is known to have landed on or off, needs no care about that ordering
+	// any more (placement spec §6.1): Placement and the worktree toggle do
+	// not interact at all now, so there is no "snap back to New space" for
+	// a later worktree state to undo. SetValue is also a no-op when the
+	// chip cursor already sits on the resolved value, which is what makes
+	// the unconditional call safe on its own terms too.
 	m.placement.SetValue(m.resolved.Placement)
 
 	// Linear (spec §6 field 1): rendered only when Linear is configured --
@@ -1284,10 +1282,12 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	// move a value itself: every one of these three getters is compared
 	// against what the app last put there (snapshotAppliedDefaults), so a
 	// value that moved without the app moving it moved because the user
-	// did. syncDerivedInertness at the bottom of this function can move
-	// Placement on its own (a worktree turning on snaps it back to New
-	// space), which is exactly why the snapshot is refreshed AFTER it
-	// rather than here.
+	// did. syncDerivedInertness at the bottom of this function used to be
+	// able to move Placement on its own, back before a worktree turning on
+	// snapped it to New space (placement spec §6.1 removed that snap along
+	// with the inertness it protected); the snapshot still refreshes AFTER
+	// it rather than here, since nothing is gained by moving a snapshot
+	// call for a dependency that went away.
 	m.noteUserEdits()
 
 	if typed := m.dir.Typed(); typed != m.lastDirTyped {
@@ -1390,11 +1390,15 @@ func (m *Model) noteUserEdits() {
 //
 // It is called at the end of every path that can move one of them without
 // user input -- New, reactToChanges and applyProjectDefaults -- always
-// AFTER syncDerivedInertness, which moves Placement itself when a worktree
-// turns on. Snapshotting before that call would leave the snapshot holding
-// a placement the field no longer shows, and the very next reactToChanges
-// would read the difference as a user edit and permanently stop per-project
-// memory from re-applying to it.
+// AFTER syncDerivedInertness. That ordering used to matter for Placement
+// itself: syncDerivedInertness moved it when a worktree turned on, and
+// snapshotting before that call would have left the snapshot holding a
+// placement the field no longer showed, reading as a user edit on the very
+// next reactToChanges and permanently stopping per-project memory from
+// re-applying to it. Placement spec §6.1 removed that move -- worktree
+// state no longer changes what Placement holds -- but the ordering costs
+// nothing to keep and stays, in case a future dynamic field reintroduces
+// the same shape of dependency.
 func (m *Model) snapshotAppliedDefaults() {
 	m.appliedWorktreeOn = m.worktree.On()
 	m.appliedPlacement = m.placement.Value()
@@ -1427,12 +1431,22 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 		KnownAgentKinds: m.agentKinds,
 	})
 
-	// The worktree toggle goes first, and the inertness resync with it,
-	// because Placement's inert state follows it: PlacementField refuses to
-	// move its cursor while inert (a worktree ignores placement entirely),
-	// so a remembered placement applied while the PREVIOUS project's
-	// worktree=true was still in effect would silently do nothing and leave
-	// the field on New space.
+	// The worktree toggle goes first, and syncDerivedInertness runs right
+	// after it -- but this specific pairing is not load-bearing for
+	// anything it touches. PlacementField does not need it (placement
+	// spec §6.1: its chips accept input regardless of worktree state).
+	// AccountField's inert condition follows the agent KIND -- which this
+	// first call reads STALE, since SetKind runs below it -- so Account's
+	// correctness comes from the SECOND syncDerivedInertness call at the
+	// bottom of this function (see its own comment), not this one. Nor
+	// does lastWorktreeOn need this pairing: reactToChanges gates its
+	// debounced title-duplicate check on `worktreeOn != m.lastWorktreeOn`,
+	// but the second call resyncs it to the identical final value anyway,
+	// since nothing between the two calls changes m.worktree.On(). The
+	// pair is provably equivalent to the second call alone -- confirmed by
+	// removing this one and re-running the full suite: still green. Left
+	// in place regardless, since reordering or deleting working code for
+	// a constraint that went away gains nothing.
 	if isGitRepo && !m.worktreeTouched {
 		m.worktree.SetOn(m.resolved.UseWorktree)
 	}
@@ -1618,15 +1632,18 @@ func (m *Model) supplyDirCandidates(candidates []string) {
 	m.dir.SetCandidates(m.dirCandVersion, candidates)
 }
 
-// syncDerivedInertness re-applies PlacementField's/AccountField's own
-// DYNAMIC inert conditions (spec §6 fields 5 and 7 -- "inert while X",
-// checked continuously, unlike the STATIC preconditions that gate whether
-// a field is constructed at all) from WorktreeField's/AgentField's current
-// state. Cheap and synchronous (no I/O), so it is safe to call
-// unconditionally on every reactToChanges pass and from the async
-// dirResultMsg handler (which moves WorktreeField.On() outside of
-// reactToChanges' own diff, via SetOn -- see handleDirResult), rather than
-// needing its own diff-gating.
+// syncDerivedInertness re-applies AccountField's own DYNAMIC inert
+// condition (spec §6 field 7 -- "inert while X", checked continuously,
+// unlike the STATIC preconditions that gate whether a field is
+// constructed at all) from AgentField's current state, and tells
+// PlacementField whether a worktree is on so its ROW WORDING can follow
+// (placement spec §6.1) -- Placement itself is never inert any more,
+// since plan.Build now honors it under a worktree too. Cheap and
+// synchronous (no I/O), so it is safe to call unconditionally on every
+// reactToChanges pass and from the async dirResultMsg handler (which
+// moves WorktreeField.On() outside of reactToChanges' own diff, via
+// SetOn -- see handleDirResult), rather than needing its own
+// diff-gating.
 func (m *Model) syncDerivedInertness() {
 	m.placement.SetWorktreeOn(m.worktree.On())
 	m.lastWorktreeOn = m.worktree.On()

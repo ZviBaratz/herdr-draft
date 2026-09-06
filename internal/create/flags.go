@@ -79,7 +79,8 @@ flags:
   --base REF         worktree base ref (default: HEAD)
   --worktree         create a git worktree
   --no-worktree      do not create a worktree
-  --placement WHERE  new-space | tab-here | split-here (ignored with a worktree)
+  --placement WHERE  new-space | tab-here | split-here; where the agent's
+                     pane lands (a worktree still gets its own new space too)
   --agent KIND       agent kind to start, e.g. claude
   --account NAME     clauth account to pin (claude only)
   --issue ID         seed title, branch and prompt from a Linear issue

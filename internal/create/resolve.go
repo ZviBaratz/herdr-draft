@@ -302,8 +302,9 @@ func projectMemoryKey(projectDir, repoRoot string) string {
 // Every field follows the same rule: an explicitly given flag wins;
 // otherwise the resolver's answer applies, in the same shape the form
 // would have applied it (a worktree only where one is possible, a
-// placement snapped to New space when a worktree wins, an agent kind
-// falling through to the first favorite).
+// placement carried through unchanged either way -- placement spec §6.1
+// means a worktree no longer overrides it -- an agent kind falling
+// through to the first favorite).
 func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, issue *linear.Issue, prompt explicitPrompt, hctx herdrc.Context, deps Deps) (plan.Input, map[string]string, error) {
 	prov := provenanceOf(res)
 

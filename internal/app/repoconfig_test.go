@@ -152,11 +152,13 @@ func TestRepoConfig_ReachesTheFormThroughTheDirCheck(t *testing.T) {
 	}, map[string]config.RepoConfig{
 		"/repo-a": {
 			BranchPrefix: "team/",
-			// Off, so PlacementField stays live: a worktree makes it inert
-			// and snaps it back to New space (spec §6 field 5), which
-			// would hide the placement assertion below behind an unrelated
-			// rule. That it beats last-used.json's true is the worktree
-			// half of this case.
+			// Off, asserted below in its own right as the worktree half of
+			// this case (that it beats last-used.json's true). Placement
+			// no longer needs the worktree off to stay assertable --
+			// placement spec §6.1 made PlacementField live under a
+			// worktree too -- so unlike before, this value is incidental
+			// to the placement assertion below rather than load-bearing
+			// for it.
 			DefaultWorktree:  ptrBool(false),
 			DefaultPlacement: "split-here",
 			DefaultBase:      "trunk",
