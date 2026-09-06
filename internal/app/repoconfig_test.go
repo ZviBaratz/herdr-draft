@@ -205,8 +205,10 @@ func TestRepoConfig_SitsBetweenProjectMemoryAndLastUsed(t *testing.T) {
 			"/repo-a": {Placement: "tab-here"},
 		}),
 	}, map[string]config.RepoConfig{
-		// Worktree off for the reason the case above records: PlacementField
-		// is inert while a worktree is on, and this case is about placement.
+		// Worktree off for the reason the case above records: this value is
+		// incidental to the placement assertion below (placement spec §6.1
+		// keeps PlacementField live under a worktree too), not load-bearing
+		// for it.
 		"/repo-a": {DefaultWorktree: ptrBool(false), DefaultPlacement: "split-here"},
 	})
 

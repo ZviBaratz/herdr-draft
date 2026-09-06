@@ -127,7 +127,8 @@ type Resolved struct {
 	// can only apply it once the project directory is known to be a git
 	// repository (form.WorktreeField.SetOn's own precondition).
 	UseWorktree bool
-	// Placement is the default placement for a non-worktree creation.
+	// Placement is the default for where the agent's pane lands -- worktree
+	// or not (placement spec §6.1: a worktree no longer forces a new space).
 	Placement plan.Placement
 	// AgentKind is the default agent kind. "" means "no tier supplied one",
 	// which leaves the form on its own first favorite.

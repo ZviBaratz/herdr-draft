@@ -323,10 +323,11 @@ func TestExitOne_OnFailureCleanRefusesAReusedSpace(t *testing.T) {
 	// reuse comparison fire for WorktreeCreate's own return value.
 	h.runner.workspaces = []herdrc.WorkspaceInfo{{WorkspaceID: "wS1", Label: "somebody-else"}}
 	// The worktree op is both the space op and the agent-pane op here (no
-	// separate placement -- "a worktree needs nothing", per
-	// TestLazyContext_OnlyTheHerePlacementsNeedIt above), so the reuse
-	// claim's TabCreate runs inside this same step and its failure is
-	// what Task 3 taught Execute to still report the space for.
+	// separate placement -- "a worktree with tab-here still needs the
+	// workspace id", per TestLazyContext_OnlyTheHerePlacementsNeedIt
+	// above), so the reuse claim's TabCreate runs inside this same step
+	// and its failure is what Task 3 taught Execute to still report the
+	// space for.
 	h.runner.failAt = "TabCreate"
 
 	code := h.run("--title", "t", "--worktree", "--on-failure", "clean")

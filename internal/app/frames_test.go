@@ -327,10 +327,12 @@ var frameSizes = []struct{ w, h int }{
 // a title, a branch, a resolved base list and a prompt.
 //
 // The reaction path runs for real rather than being hand-simulated: it is
-// what syncs Placement's inert state, the header's context line AND the
-// title panel's resting note, so the frame shows what a running form
-// shows rather than a hand-assembled subset of it. The Cmds it schedules
-// are debounces nothing in these tests ever fires.
+// what tells Placement whether a worktree is on (placement spec §6.1: this
+// changes what its three chips mean, not whether they take input), the
+// header's context line AND the title panel's resting note, so the frame
+// shows what a running form shows rather than a hand-assembled subset of
+// it. The Cmds it schedules are debounces nothing in these tests ever
+// fires.
 func filledFrameModel(t *testing.T, full, worktree bool) Model {
 	t.Helper()
 	m := newAssembledModel(t, full)
@@ -352,10 +354,12 @@ func filledFrameModel(t *testing.T, full, worktree bool) Model {
 //
 // The two configurations deliberately differ in more than which fields
 // exist: the full one has the worktree toggle ON (Branch and Base live,
-// Placement inert -- "a worktree is always its own space", spec §6 field
-// 5), the minimal one has it off (Branch and Base carry their distinct
-// inert placeholders, Placement live). Between them the two frames cover
-// every field's live AND inert rendering under a real budget allocation.
+// Placement showing its worktree-on chip wording -- placement spec §6.1
+// keeps the field live and reachable either way), the minimal one has it
+// off (Branch and Base carry their distinct inert placeholders, Placement
+// showing its worktree-off wording). Between them the two frames cover
+// Branch and Base's live AND inert rendering under a real budget
+// allocation.
 func TestAssembledForm_Frames(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

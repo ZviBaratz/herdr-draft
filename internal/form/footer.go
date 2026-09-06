@@ -64,7 +64,7 @@ func footerRungs(zone FocusZone, armed bool) []string {
 // function, so the copy production ran was unpinned and free to drift
 // away from the copy the tests asserted. Delegating puts those five
 // assertions back on the production path, and that path is the common
-// one even for the four sections that DO implement footerHinter: each of
+// one even for the three sections that DO implement footerHinter: each of
 // them returns nil unless it has something the zone table cannot know
 // (IssueField only when the field is unavailable, and so on), so the
 // override branch is the exception on every row, not the rule.

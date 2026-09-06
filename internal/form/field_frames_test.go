@@ -26,10 +26,12 @@ import (
 // has, focused on that field so its panel renders.
 //
 // InitialFocusID names the field explicitly rather than relying on the
-// ring's first-enabled walk, because two of the fixtures below are
-// deliberately INERT (a non-git worktree, an inert placement) and the
-// walk would skip straight past them to the always-enabled Create
-// section -- pinning the panel of the wrong section entirely.
+// ring's first-enabled walk, because one of the fixtures below is
+// deliberately INERT (a non-git worktree) and the walk would skip
+// straight past it to the always-enabled Create section -- pinning the
+// panel of the wrong section entirely. (Placement stopped being one of
+// these: placement spec §6.1 keeps it live and reachable even under a
+// worktree.)
 func fieldFrame(palette theme.Palette, s Section) Model {
 	m := New(Setup{
 		Palette:        palette,

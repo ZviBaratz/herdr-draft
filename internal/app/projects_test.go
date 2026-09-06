@@ -153,8 +153,8 @@ func TestDirResult_NoMemoryLeavesTheGlobalTiers(t *testing.T) {
 func TestDirResult_MemoryReAppliesAcrossASecondProjectChange(t *testing.T) {
 	m := memoryModel(t, "/repo-a", memoryFor(map[string]config.ProjectDefaults{
 		"/repo-a": {Kind: "codex", Worktree: ptrBool(false), Placement: "tab-here"},
-		"/repo-b": {Kind: "gemini", Worktree: ptrBool(true), Placement: "tab-here"},
-		"/repo-c": {Kind: "claude", Worktree: ptrBool(false), Placement: "split-here"},
+		"/repo-b": {Kind: "gemini", Worktree: ptrBool(true), Placement: "split-here"},
+		"/repo-c": {Kind: "claude", Worktree: ptrBool(false), Placement: "tab-here"},
 	}), nil)
 
 	assertMemory := func(where, kind string, worktreeOn bool, placement plan.Placement) {
@@ -183,12 +183,12 @@ func TestDirResult_MemoryReAppliesAcrossASecondProjectChange(t *testing.T) {
 	assertMemory("the first project", "codex", false, plan.PlacementTabHere)
 
 	m = switchProject(t, m, "", "/repo-b")
-	assertMemory("the second project", "gemini", true, plan.PlacementTabHere)
+	assertMemory("the second project", "gemini", true, plan.PlacementSplitHere)
 
 	// The one that matters: a SECOND change, after the app has already
 	// applied memory twice and syncDerivedInertness has run in between.
 	m = switchProject(t, m, "/repo-b", "/repo-c")
-	assertMemory("the third project", "claude", false, plan.PlacementSplitHere)
+	assertMemory("the third project", "claude", false, plan.PlacementTabHere)
 }
 
 // TestDirResult_UserEditsSurviveAProjectChange is the touched half of spec

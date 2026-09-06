@@ -117,27 +117,25 @@ func TestPlacementField_RowUnderWorktreeNamesTheChipNotTheReason(t *testing.T) {
 // nothing extra to disclose when the chip's own consequence already IS a
 // new space.
 func TestPlacementField_PanelDisclosesTheWorktreesOwnSpace(t *testing.T) {
-	const disclosure = "the worktree also keeps a space of its own"
-
 	f := NewPlacementField(theme.Default())
 	f.SetWorktreeOn(true)
 
-	if strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), disclosure) {
+	if strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), placementWorktreeDisclosure) {
 		t.Error("the default chip (new space) under worktree shows the disclosure, want none")
 	}
 
 	f.Update(key(tea.KeyRight, 0)) // tab here
-	if !strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), disclosure) {
+	if !strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), placementWorktreeDisclosure) {
 		t.Error("tab here under worktree does not disclose the worktree's own space")
 	}
 
 	f.Update(key(tea.KeyRight, 0)) // split here
-	if !strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), disclosure) {
+	if !strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), placementWorktreeDisclosure) {
 		t.Error("split here under worktree does not disclose the worktree's own space")
 	}
 
 	f.SetWorktreeOn(false)
-	if strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), disclosure) {
+	if strings.Contains(ansi.Strip(f.Panel(80, f.PanelRows())), placementWorktreeDisclosure) {
 		t.Error("worktree off still shows the disclosure")
 	}
 }
