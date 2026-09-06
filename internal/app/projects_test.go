@@ -153,7 +153,7 @@ func TestDirResult_NoMemoryLeavesTheGlobalTiers(t *testing.T) {
 func TestDirResult_MemoryReAppliesAcrossASecondProjectChange(t *testing.T) {
 	m := memoryModel(t, "/repo-a", memoryFor(map[string]config.ProjectDefaults{
 		"/repo-a": {Kind: "codex", Worktree: ptrBool(false), Placement: "tab-here"},
-		"/repo-b": {Kind: "gemini", Worktree: ptrBool(true), Placement: "new-space"},
+		"/repo-b": {Kind: "gemini", Worktree: ptrBool(true), Placement: "tab-here"},
 		"/repo-c": {Kind: "claude", Worktree: ptrBool(false), Placement: "split-here"},
 	}), nil)
 
@@ -165,13 +165,13 @@ func TestDirResult_MemoryReAppliesAcrossASecondProjectChange(t *testing.T) {
 		if got := m.worktree.On(); got != worktreeOn {
 			t.Errorf("at %s: worktree on = %v, want %v", where, got, worktreeOn)
 		}
-		// Placement is only meaningful with the worktree off: turning one on
-		// makes the field inert and snaps it back to New space (spec §6
-		// field 5), which is what the form actually does with a worktree.
-		if !worktreeOn {
-			if got := m.placement.Value(); got != placement {
-				t.Errorf("at %s: placement = %v, want %v", where, got, placement)
-			}
+		// Placement is meaningful in both worktree states (placement spec
+		// §6.1: a worktree no longer overrides it), so memory has to
+		// round-trip it whether the remembered worktree toggle is on or
+		// off -- unconditionally, unlike the worktree-off-only check this
+		// replaced.
+		if got := m.placement.Value(); got != placement {
+			t.Errorf("at %s: placement = %v, want %v", where, got, placement)
 		}
 		if m.worktreeTouched || m.placementTouched || m.agentTouched {
 			t.Errorf("at %s: a field was marked touched by the app's own application "+
@@ -183,7 +183,7 @@ func TestDirResult_MemoryReAppliesAcrossASecondProjectChange(t *testing.T) {
 	assertMemory("the first project", "codex", false, plan.PlacementTabHere)
 
 	m = switchProject(t, m, "", "/repo-b")
-	assertMemory("the second project", "gemini", true, plan.PlacementNewSpace)
+	assertMemory("the second project", "gemini", true, plan.PlacementTabHere)
 
 	// The one that matters: a SECOND change, after the app has already
 	// applied memory twice and syncDerivedInertness has run in between.
