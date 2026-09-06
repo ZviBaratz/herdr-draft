@@ -86,13 +86,15 @@ prompt_wait_ms = 22000
 				`":{"kind":"codex","worktree":true,"placement":"tab-here","base":"main","seen":"2026-09-01T00:00:00Z"}}}`,
 			repo: config.RepoConfig{BranchPrefix: "team/"},
 			args: []string{"--title", title},
-			// projects.json wins the toggle, the kind and the base;
-			// .herdr-draft.toml wins the prefix over config.toml; and the
-			// worktree overrides the tab-here placement every tier agrees
-			// on, because a worktree is always a new space.
+			// projects.json wins the toggle, the kind, the base AND the
+			// placement; .herdr-draft.toml wins the prefix over
+			// config.toml. Before placement spec, a worktree forced
+			// PlacementNewSpace here regardless of what every tier
+			// remembered -- it no longer does, and tab-here is now a real
+			// placement under a worktree (placement spec §5.3/§6.3).
 			want: plan.Input{
 				Branch: "team/fix-login-redirect-loop", BaseRef: "main",
-				UseWorktree: true, Placement: plan.PlacementNewSpace,
+				UseWorktree: true, Placement: plan.PlacementTabHere,
 				AgentKind: "codex", ExtraArgs: []string{"--full-auto"},
 				DetectionTimeout: 11 * time.Second, PromptTimeout: 22 * time.Second,
 			},

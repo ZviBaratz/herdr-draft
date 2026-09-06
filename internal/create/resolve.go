@@ -355,23 +355,6 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		placement = p
 		prov[defaults.FieldPlacement] = provenanceFlag
 	}
-	if useWorktree && placement != plan.PlacementNewSpace {
-		// PlacementField goes inert and snaps back to New space the moment
-		// a worktree turns on, because plan.Build ignores Placement
-		// entirely for a worktree. Matching that here is what keeps the two
-		// paths producing the same plan.Input.
-		//
-		// Only an EXPLICIT --placement is worth a line about it: a flag
-		// quietly dropped is worse than one refused, but a REMEMBERED
-		// placement being overridden by a worktree is the form's normal
-		// resting behavior and nothing the caller asked for.
-		if req.set["placement"] {
-			fmt.Fprintf(deps.stderr(), "herdr-draft create: --placement %s ignored: a worktree always opens a new space\n",
-				defaults.PlacementValue(placement))
-		}
-		placement = plan.PlacementNewSpace
-		prov[defaults.FieldPlacement] = provenanceWorktree
-	}
 
 	kind, err := agentKind(req, res, kinds, prov)
 	if err != nil {
@@ -548,11 +531,9 @@ func herdrContext(env Env) (herdrc.Context, error) {
 }
 
 // requireContext is spec §13's lazy context requirement: only tab-here and
-// split-here need to know where "here" is, and a worktree needs neither
-// because it always opens a new space (plan.Build's topologyOp checks
-// UseWorktree before Placement). The message names the missing variable
-// exactly, because "missing context" tells a script author nothing they
-// can act on.
+// split-here need to know where "here" is. The message names the missing
+// variable exactly, because "missing context" tells a script author
+// nothing they can act on.
 //
 // tab-here asks for both the workspace and the tab id even though `herdr
 // tab create --workspace` consumes only the first: herdr exports the three
@@ -560,9 +541,6 @@ func herdrContext(env Env) (herdrc.Context, error) {
 // other is not a pane, and guessing a workspace for "here" is precisely
 // what this check exists to prevent.
 func requireContext(hctx herdrc.Context, in plan.Input) error {
-	if in.UseWorktree {
-		return nil
-	}
 	switch in.Placement {
 	case plan.PlacementTabHere:
 		if hctx.WorkspaceID == "" {
@@ -579,13 +557,9 @@ func requireContext(hctx herdrc.Context, in plan.Input) error {
 	return nil
 }
 
-// provenanceFlag and provenanceWorktree are the two provenance values
-// spec §10's tier names cannot express: a value the caller gave outright,
-// and the one value the plan itself decides (a worktree's placement).
-const (
-	provenanceFlag     = "flag"
-	provenanceWorktree = "worktree"
-)
+// provenanceFlag is the one provenance value spec §10's tier names cannot
+// express: a value the caller gave outright on the command line.
+const provenanceFlag = "flag"
 
 // provenanceOf turns the resolver's own tier attribution into the string
 // map --json prints (spec §10: "the resolver reports which tier supplied

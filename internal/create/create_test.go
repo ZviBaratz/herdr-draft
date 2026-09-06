@@ -13,6 +13,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
 // --- test doubles ---------------------------------------------------------
@@ -443,9 +444,11 @@ func TestExitThree_HerdrUnreachable(t *testing.T) {
 // --- lazy context (spec §13) ----------------------------------------------
 
 // TestLazyContext_OnlyTheHerePlacementsNeedIt is the requirement in one
-// table: a new space and a worktree create fine with no herdr environment
-// at all, while tab-here and split-here refuse and name the exact variable
-// they are missing.
+// table: only tab-here and split-here need the herdr environment, and that
+// holds regardless of UseWorktree (placement spec §6.3) -- a new space
+// creates fine with no herdr environment at all, whether or not a worktree
+// is involved, while tab-here and split-here refuse and name the exact
+// variable they are missing, worktree or not.
 func TestLazyContext_OnlyTheHerePlacementsNeedIt(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -460,9 +463,10 @@ func TestLazyContext_OnlyTheHerePlacementsNeedIt(t *testing.T) {
 			wantCode: ExitOK,
 		},
 		{
-			name:     "a worktree needs nothing",
-			args:     []string{"--title", "t", "--worktree"},
-			wantCode: ExitOK,
+			name:     "a worktree with tab-here still needs the workspace id",
+			args:     []string{"--title", "t", "--worktree", "--placement", "tab-here"},
+			wantCode: ExitUsage,
+			wantErr:  "HERDR_WORKSPACE_ID is not set",
 		},
 		{
 			name:     "tab-here without the workspace id",
@@ -523,6 +527,34 @@ func TestLazyContext_TabHereUsesTheWorkspaceItWasGiven(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(h.runner.calls, " "), "TabCreate(wS9,") {
 		t.Errorf("calls = %v, want a tab created in wS9", h.runner.calls)
+	}
+}
+
+// TestRequireContext_WorktreeStillNeedsContextForAPlacement is placement
+// spec §6.3 at the unit level: requireContext used to return nil outright
+// for any UseWorktree input, before even looking at Placement. A worktree
+// with tab-here now demands the same HERDR_WORKSPACE_ID a non-worktree
+// tab-here already does, because Placement decides where the agent's pane
+// goes regardless of whether a worktree was also created.
+func TestRequireContext_WorktreeStillNeedsContextForAPlacement(t *testing.T) {
+	in := plan.Input{UseWorktree: true, Placement: plan.PlacementTabHere}
+	err := requireContext(herdrc.Context{}, in) // no WorkspaceID/TabID/FocusedPaneID
+	if err == nil {
+		t.Fatal("requireContext returned nil for worktree+tab-here with no pane context, want an error naming the missing variable")
+	}
+	if !strings.Contains(err.Error(), "HERDR_WORKSPACE_ID") {
+		t.Errorf("error = %q, want it to name HERDR_WORKSPACE_ID", err)
+	}
+}
+
+// TestRequireContext_WorktreeNewSpaceStillNeedsNoContext is the other half:
+// a worktree opening its own new space needs no invoking-pane context,
+// exactly as a non-worktree new space does -- UseWorktree never mattered to
+// this decision, Placement always did.
+func TestRequireContext_WorktreeNewSpaceStillNeedsNoContext(t *testing.T) {
+	in := plan.Input{UseWorktree: true, Placement: plan.PlacementNewSpace}
+	if err := requireContext(herdrc.Context{}, in); err != nil {
+		t.Errorf("requireContext = %v, want nil -- a worktree's own new space needs no invoking-pane context", err)
 	}
 }
 
