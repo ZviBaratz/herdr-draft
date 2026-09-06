@@ -96,7 +96,7 @@ exit codes:
 
 tab-here and split-here need herdr's own pane environment
 (HERDR_WORKSPACE_ID / HERDR_TAB_ID / HERDR_PANE_ID), which herdr sets for
-every pane. A new space or a worktree needs none of it.
+every pane, worktree or not. Only a new space needs none of it.
 `
 
 // parseArgs parses the arguments following the `create` verb. Its output

@@ -419,11 +419,13 @@ func (m Model) FocusedID() string {
 // requirement) needs a way to see the FULL list, including a
 // present-but-inert section. Tab-driven navigation alone can't answer
 // this: focus.go's ring skips disabled sections entirely (nextEnabled),
+// pinned by TestModel_PlacementIsReachableRegardlessOfWorktree against
+// the exact state PlacementField was in before placement spec §6.3 --
 // so a section that's inert in whatever state a test put the form into
-// (e.g. Placement, always inert while Worktree is on) would silently and
-// misleadingly drop out of a Tab-walk, even though it's still really
-// there, in its real construction position. Returns nil for a zero-value
-// Model (nil ring).
+// (e.g. AccountField, still inert whenever the selected agent kind
+// isn't claude, spec §6 field 7) would silently and misleadingly drop
+// out of a Tab-walk, even though it's still really there, in its real
+// construction position. Returns nil for a zero-value Model (nil ring).
 func (m Model) SectionIDs() []string {
 	if m.ring == nil {
 		return nil

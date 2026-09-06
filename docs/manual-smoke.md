@@ -6,9 +6,11 @@ version(s) you intend to support, before publishing. It exercises the real
 popup, the real herdr CLI, and (for Path B) a real clauth profile — nothing
 here is mocked.
 
-Seven cells: the original four (Path A/B × worktree on/off), plus three that
+Nine cells: the original four (Path A/B × worktree on/off), plus three that
 cover what v2 added — the headless `create`, the repo-level
-`.herdr-draft.toml`, and per-project memory.
+`.herdr-draft.toml`, and per-project memory — plus two that cover what the
+placement spec added: placement honored under a worktree, and the reuse
+path.
 
 ---
 
@@ -574,11 +576,30 @@ fields the user has not touched.
 **Expected:** TWO new containers, not one — the worktree's own new
 workspace (an idle shell, no agent) and a new TAB in the workspace you
 were ALREADY in, with the agent running there instead. `herdr[S]
-workspace list` should show one more workspace than before submit;
+workspace list` should show one more workspace for the worktree itself,
+**plus** one more still for the origin repo if it was not already open
+when you started this cell: `worktree create` opens it too, as
+`ensure_source_parent_membership`'s side effect (design doc §2.7;
+`plan.Clean`'s doc comment records the same thing, and deliberately
+leaves that workspace alone). Against the fresh throwaway repo this
+cell's own setup calls for, that means **two** new workspaces, not one —
+reading it as one would mistake this cell's own setup for a failure.
 `herdr[S] tab list --workspace <your original workspace>` should show one
 more tab than before, and that tab's pane is running the agent. This is
 placement spec §5.3's disclosed cost — the idle shell in the worktree's
 own workspace is not a bug.
+
+Expect step 3 (starting the agent) to fail with `agent_not_ready` the
+first time you run this cell against a given machine: the worktree
+checkout is a path Claude Code has never seen, so its first-run trust
+prompt blocks it, and herdr's own `agent start` refuses outright rather
+than herdr-draft sending a prompt into it — the same class of blocking
+dialog `internal/plan/dialog.go` exists to catch, just refused one layer
+higher up here. That failure does not invalidate the cell: confirm
+instead that the two containers above exist, that the agent's pane is in
+the invoking workspace rather than the worktree's, and that its cwd is
+the worktree checkout; `--on-failure keep`'s report naming the SPACE
+(not an agent pane) is the same evidence read a different way.
 
 ### Cell 9 — the reuse path
 
