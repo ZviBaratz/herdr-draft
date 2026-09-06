@@ -177,7 +177,7 @@ At the shipped 101×30, fully configured (blank panel rows elided):
  ▌ prompt     Work on ENG-101: Fix login redirect loop
    project    ~/Projects/herdr-draft
    worktree   on · zvi/fix-login-redirect-loop ← main
-   placement  worktree opens as its own space
+   placement  new space
    agent      claude
    account    active · Max 20x · 5h 12% · 7d 40%
  ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -300,9 +300,15 @@ popup path.
    on the chips. Confirm **on**, a seeded branch, and a base list carrying
    `HEAD (<branch>)` first. While the base list is on screen the `base` part
    line is empty: the list is what says which base is selected.
-7. `⇥` to **placement**. With the worktree on it reads
-   `worktree opens as its own space` and its panel says
-   `turn the worktree off to choose`. It cannot be changed; that is correct.
+7. `⇥` to **placement**. It is now LIVE even with the worktree on
+   (placement spec §6.1) — `←→` through all three chips. Confirm each
+   chip's row label changes (`new space` / `tab here` / `split here`) and
+   that the panel's hint follows it (`the worktree opens as its own
+   space` / `the agent opens a tab here, on the worktree's checkout` /
+   `the agent splits this pane, onto the worktree's checkout`), with `the
+   worktree also keeps a space of its own` appearing under the panel's
+   hint for the two non-default chips only. Leave it on whichever chip you
+   want to actually submit with — this is no longer a read-only row.
 8. `⇥` to **agent**. Leave the default favorite (`claude` unless your config
    changes it). `←→` walks the favorites, `↑↓` the full kind list.
 9. `⇥` to **account**. Walk the list with `↑↓` if you like, but **do not
@@ -554,6 +560,48 @@ repo-config tier, and this one came from your own history.
 Then touch a field before switching projects and confirm memory does **not**
 overwrite it: per-project defaults re-apply on a project change only for
 fields the user has not touched.
+
+## What the placement spec added
+
+### Cell 8 — worktree on, placement tab here
+
+**Setup:** fresh throwaway repo, worktree on (the default), placement
+`tab here`.
+
+**Steps:** same walk as Cell 1 through step 6 (worktree on), then step 7
+(placement) left on `tab here`, then submit.
+
+**Expected:** TWO new containers, not one — the worktree's own new
+workspace (an idle shell, no agent) and a new TAB in the workspace you
+were ALREADY in, with the agent running there instead. `herdr[S]
+workspace list` should show one more workspace than before submit;
+`herdr[S] tab list --workspace <your original workspace>` should show one
+more tab than before, and that tab's pane is running the agent. This is
+placement spec §5.3's disclosed cost — the idle shell in the worktree's
+own workspace is not a bug.
+
+### Cell 9 — the reuse path
+
+**Setup:** a throwaway repo with a session already created once via Cell
+1 or Cell 8, so a worktree checkout for some branch already exists AND
+a pane is still sitting in it (do not close the earlier session's
+workspace).
+
+**Steps:** create a SECOND session against the SAME title/branch as the
+first — same throwaway repo, same typed title, worktree on, any
+placement.
+
+**Expected:** the second create must NOT land the agent in the first
+session's own pane. Confirm a NEW pane was created for the second
+agent — if the second agent appears to be running in the exact pane the
+FIRST session's shell was sitting in, that is the reuse defect placement
+spec §5.2 exists to prevent, and it is a real regression, not a rendering
+quirk. If the submit later fails and offers keep/clean, confirm "clean"
+is DISABLED with a reason naming the reused workspace, if (and only if)
+this scenario actually triggered reuse -- check `herdr[S] workspace list`
+first to confirm whether it did, since reuse depends on herdr's own
+`open_workspace_idx_for_checkout` match rules (design doc §2.1), which
+this manual step cannot force with certainty every time.
 
 ## After the matrix
 

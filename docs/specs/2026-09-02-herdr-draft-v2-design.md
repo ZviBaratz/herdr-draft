@@ -303,6 +303,12 @@ so one `⇧⇥` reaches it. This order is declared in exactly one place,
 | `agent` | `claude` | — | — |
 | `account` | `personal · max · ok`, or `active · max · 12%` | — | `account pinning only applies to claude` |
 
+> **SUPERSEDED by placement spec §6.1.** The `placement` row's Inert cell
+> above no longer applies: the row is never inert, worktree on or off, and
+> the sentence it once held only survives as the worktree-on hint for the
+> `new space` chip specifically, not as a fixed outcome the whole row is
+> stuck showing. See that document's §6.1 and §12.
+
 > **SUPERSEDED by v3 spec §10.** The `account` row above is wrong in three
 > ways. It shows `ok` — an auth status — *instead of* utilization whenever a
 > profile is pinned, which is backwards: `ok` is the state that needs no

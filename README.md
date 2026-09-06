@@ -10,7 +10,7 @@ new session                                                  herdr-draft · main
   prompt     Work on ENG-101: Fix login redirect loop
   project    ~/Projects/herdr-draft
   worktree   on · zvi/fix-login-redirect-loop ← main
-  placement  worktree opens as its own space
+  placement  new space
   agent      claude
   account    active · max · 12%
 ───────────────────────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ new session                                                  herdr-draft · main
   prompt     —
   project    ~/Projects/herdr-draft
   worktree   on · from main
-  placement  worktree opens as its own space
+  placement  new space
   agent      claude
   account    active · max · 12%
 ───────────────────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ fixed whatever has focus and whatever the window height is.
 | `prompt` | the first line, plus a dim ` +N more` | — |
 | `project` | the path, `~`-shortened | `invalid` / `not a repository` |
 | `worktree` | `on · <branch> ← <base>`, `on · from <base>` before a title exists to derive a branch from, or `off` | `not a git repository` |
-| `placement` | `new space` / `tab here` / `split here` | `worktree opens as its own space` |
+| `placement` | `new space` / `tab here` / `split here` | — |
 | `agent` | `claude` | — |
 | `account` | `personal · Max 20x · 5h 12% · 7d 40%`, or `active · …` when nothing is pinned | `account pinning only applies to claude` |
 
@@ -264,8 +264,10 @@ ones you passed). It never prompts. Exit codes:
 
 `--placement tab-here` and `split-here` need to know where "here" is, and
 read `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID`, which herdr
-sets in every pane's shell. A new space, and any worktree, need none of
-them. A missing one is named exactly.
+sets in every pane's shell — regardless of `--worktree`, since placement
+now decides where the AGENT'S pane lands even when the worktree gets its
+own new space alongside it. Only `new-space` needs none of them. A missing
+one is named exactly.
 
 **Export the plugin directories.** herdr sets those three pane variables
 but not `HERDR_PLUGIN_CONFIG_DIR` / `HERDR_PLUGIN_STATE_DIR`, which it
@@ -315,10 +317,12 @@ herdr plugin config-dir draft
   it never stops herdr-draft from opening.
 - `default_worktree` (default: `true`) — whether the worktree row starts on
   or off for a git target.
-- `default_placement` (default: `"new-space"`) — where a non-worktree
-  session lands: `new-space`, `tab-here`, or `split-here`. Only relevant
-  when the worktree is off; a worktree is always its own linked-worktree
-  space, which is why the placement row goes inert beside one.
+- `default_placement` (default: `"new-space"`) — where the agent's own pane
+  lands: `new-space`, `tab-here`, or `split-here`. This applies whether or
+  not the worktree row is on: a worktree always gets its own new space for
+  the checkout regardless, and placement separately decides where the
+  agent runs, which can be that same new space or a tab/split on the
+  invoking pane instead.
 
 Both are *defaults*, and a later tier can override them — see
 [Where defaults come from](#where-defaults-come-from).

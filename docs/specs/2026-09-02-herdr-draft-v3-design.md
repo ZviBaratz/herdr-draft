@@ -105,6 +105,14 @@ Supersedes v2 §4. At the shipped size — a 104×32 popup, so 101×30 of termin
 └───────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Correction, placement spec (2026-09-03).** The `placement` row's
+> `worktree opens as its own space` / `implied by worktree` cells above are
+> from BEFORE `docs/specs/2026-09-03-placement-and-pane-ownership-design.md`,
+> which supersedes them: the row is no longer inert under a worktree, and
+> the provenance cell no longer applies (the plan no longer decides
+> placement for the user). See that document's §6.1 and §12 for what
+> replaced them.
+
 The outer box is herdr's, not ours. `▌` is the focused row's accent edge (§5);
 the fill across the rest of that row cannot be drawn in plain text.
 
@@ -876,6 +884,14 @@ decided" goal v2 set itself and then buried in a panel.
   agent      claude                                       config.toml
   placement  worktree opens as its own space              implied by worktree
 ```
+
+> **Correction, placement spec (2026-09-03).** The `placement` row's
+> `worktree opens as its own space` / `implied by worktree` cells above are
+> from BEFORE `docs/specs/2026-09-03-placement-and-pane-ownership-design.md`,
+> which supersedes them: the row is no longer inert under a worktree, and
+> the provenance cell no longer applies (the plan no longer decides
+> placement for the user). See that document's §6.1 and §12 for what
+> replaced them.
 
 Rendered only above a width threshold, and only for rows whose value came from
 a non-builtin tier.

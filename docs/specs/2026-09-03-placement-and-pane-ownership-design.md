@@ -1093,7 +1093,7 @@ open, then create the same session again.
 
 In: `internal/plan` (`build.go`, `exec.go`), `internal/herdrc` (one new
 `Runner` method), `internal/form/field_placement.go`, `internal/app`
-(`syncDerivedInertness`, the submit/clean wiring, `submitCreated`'s type),
+(`syncDerivedInertness`, the submit/clean wiring, `submitResult`'s type),
 `internal/create` (two deletions), tests and frames.
 
 Out: `internal/defaults` (no new key, no new tier, no reordering),
