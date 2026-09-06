@@ -523,3 +523,29 @@ func TestAssembledForm_ClampedToASmallTerminal(t *testing.T) {
 		assertAppFrame(t, fmt.Sprintf("assembled-full-%dx%d", size.w, size.h), m, size.w, size.h)
 	}
 }
+
+// TestAssembledForm_PlacementUnderWorktree pins placement spec §6.1's
+// opening-state change directly: worktree on (config.Load's own default),
+// placement focused, each of the three chips in turn. Before placement
+// spec, all three of these frames were the SAME inert placeholder --
+// after it, each is genuinely different, which is exactly the state that
+// slipped through fifteen green commits the first time a change moved
+// the opening state and nothing pinned it (CLAUDE.md).
+func TestAssembledForm_PlacementUnderWorktree(t *testing.T) {
+	for _, chip := range []struct {
+		name  string
+		right int // how many tea.KeyRight presses select this chip
+	}{
+		{"new-space", 0},
+		{"tab-here", 1},
+		{"split-here", 2},
+	} {
+		m := filledFrameModel(t, true, true) // full config, worktree on
+		m.form.FocusByID("placement")
+		for i := 0; i < chip.right; i++ {
+			next, _ := m.Update(key(tea.KeyRight, 0))
+			m = next.(Model)
+		}
+		assertAppFrame(t, "assembled-placement-worktree-"+chip.name+"-101x30", m, framePopupW, framePopupH)
+	}
+}

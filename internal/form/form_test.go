@@ -212,6 +212,58 @@ func TestModel_FocusRingSkipsDisabledAndWraps(t *testing.T) {
 	}
 }
 
+// TestModel_PlacementIsReachableRegardlessOfWorktree pins placement spec
+// §9's fourth frame requirement at the mechanism it actually names, not a
+// rendering of it: nextEnabled (focus.go) gates every ring stop on
+// Section.Enabled(), so a disabled section is not merely drawn as inert --
+// Tab cannot land on it at all, the same skip TestModel_FocusRingSkipsDisabledAndWraps
+// pins above with a stub. Before placement spec, PlacementField.Enabled()
+// returned !worktreeOn, so under a worktree the REAL PlacementField was
+// exactly that kind of disabled section: unreachable by Tab, not just
+// inert-looking. A golden frame cannot pin this -- it records what a
+// state looks like once focus is already there, not whether the ring's
+// own key-driven walk can reach it -- so this drives the real Tab path
+// (keyTab) against a real form.Model holding the real PlacementField,
+// per fix round 1's ruling on task 9.
+//
+// Both worktree states are asserted, in one table, because "reachable
+// with worktree on" alone is not a discriminating claim: PlacementField
+// was always reachable with the worktree off (Enabled() was already true
+// there before this change), so a test of the ON case alone would also
+// pass for a PlacementField that was never touched by this feature at
+// all. Asserting both rows is what pins that reachability no longer
+// DEPENDS on the toggle -- which is placement spec §6.1's actual claim --
+// rather than merely that one particular value of it works.
+func TestModel_PlacementIsReachableRegardlessOfWorktree(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		worktreeOn bool
+	}{
+		{"worktree off", false},
+		{"worktree on", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := newStub("before")
+			placement := NewPlacementField(theme.Default())
+			placement.SetWorktreeOn(tc.worktreeOn)
+
+			m := New(Setup{Palette: theme.Default(), Sections: []Section{before, placement}})
+			if cmd := m.Init(); cmd != nil {
+				t.Fatalf("Init() returned a non-nil cmd: %v", cmd)
+			}
+			if got := m.FocusedID(); got != "before" {
+				t.Fatalf("initial focus = %q, want %q", got, "before")
+			}
+
+			next, _ := m.Update(keyTab)
+			m = next.(Model)
+			if got := m.FocusedID(); got != "placement" {
+				t.Errorf("worktreeOn=%v: focus after one Tab from %q = %q, want %q -- placement must be a real ring stop whether or not a worktree is on (before placement spec, Enabled() was !worktreeOn, so the worktree-on row here would have landed on \"create\" instead, skipping placement entirely)", tc.worktreeOn, "before", got, "placement")
+			}
+		})
+	}
+}
+
 // TestModel_FocusedID pins FocusedID (added in Task 20 for the app layer's
 // own "clauth: load ... on account focus" reaction, see its own doc
 // comment): it must track the ring's own current section across Tab moves,
