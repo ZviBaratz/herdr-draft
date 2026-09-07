@@ -1,6 +1,7 @@
 package form
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -231,20 +232,339 @@ func TestFieldPanel_IsAlwaysExactlyHLines(t *testing.T) {
 	}
 }
 
+// --- PanelRows: the rows each field books, state by state ----------------
+
+// panelRowsCase is one field in one state, paired with the number of
+// panel rows that state is worth under the field's OWN rule.
+//
+// build constructs the field rather than the table carrying one already
+// built, so a case that needs several setters (or a typed filter) reads
+// as the sequence that produces the state, and no two cases can share a
+// field and leak state into each other.
+type panelRowsCase struct {
+	name  string
+	build func() Section
+	want  int
+}
+
+// panelRowsCases enumerates every branch the eight fields' PanelRows()
+// implementations have, with each want spelled out as ARITHMETIC OVER
+// THE FIXTURE from that field's own documented rule -- never read back
+// off the field, and never through Panel.
+//
+// That independence is the whole substance of #33. The assertion this
+// table feeds used to compare PanelRows() against the line count of
+// Panel(80, PanelRows()), and every Panel ends in panelBlock
+// (rowvalues.go), which pads a short block and truncates a long one to
+// exactly the height it is handed -- so the comparison held however
+// wrong PanelRows() was, in a test named for the opposite.
+//
+// A per-state ROW COUNT is the only thing available to compare against.
+// Counting a Panel's real content was the other candidate fix and does
+// not work: seven of the eight fields size their content FROM the height
+// they are handed -- panelPickerLines fills to h, PromptField.Panel calls
+// area.SetRows(h), IssueField.Panel pads to h-1, and TitleField,
+// DirField and WorktreeField each take h minus their own fixed lines --
+// so an accessor that skipped only panelBlock's padding would be the
+// same tautology one layer down. PlacementField alone has an
+// h-independent content count, which is why the precedent this table
+// generalises (field_placement_test.go) could be written for that field
+// and not for the rest.
+//
+// Restating eight small formulas here duplicates arithmetic,
+// deliberately. The duplication is what makes a disagreement fail, and
+// it fails LOUDLY: changing a PanelRows() without changing its rows here
+// is a red test, not a green one.
+func panelRowsCases(p theme.Palette) []panelRowsCase {
+	// chipsRight advances a chip row n places from its fresh selection,
+	// through the same key path a user would (SetValue would work for
+	// placement, but not every chip row has one).
+	chipsRight := func(s Section, n int) Section {
+		for i := 0; i < n; i++ {
+			s.Update(key(tea.KeyRight, 0))
+		}
+		return s
+	}
+	// countedNames is n distinct one-word items, for the cases whose only
+	// job is to overflow a cap.
+	countedNames := func(prefix string, n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = prefix + strconv.Itoa(i)
+		}
+		return out
+	}
+	// textLines is a prompt value of exactly n lines.
+	textLines := func(n int) string {
+		return strings.TrimSuffix(strings.Repeat("x\n", n), "\n")
+	}
+
+	return []panelRowsCase{
+		// issue: one row per offered issue -- the `none` sentinel
+		// included, since it is a row you can pick -- plus the status
+		// line, capped at issuePanelMaxRows. An inert field draws no
+		// list at all, so it wants the status line alone.
+		{"issue/offered", func() Section {
+			f := NewIssueField(p)
+			f.SetIssues(1, sampleIssues())
+			return f
+		}, len(sampleIssues()) + 1 + 1},
+		{"issue/filtered", func() Section {
+			f := NewIssueField(p)
+			f.SetIssues(1, sampleIssues())
+			// Focus first: the filter is a bubbles textinput, which
+			// ignores every keypress until it has focus, so an unfocused
+			// field would silently stay unfiltered and this case would
+			// duplicate issue/offered.
+			f.Focus()
+			// "dark" keeps ENG-2 ("Add dark mode") and nothing else --
+			// not even the `none` row, which is filtered like any other.
+			for _, r := range "dark" {
+				f.Update(rn(r))
+			}
+			return f
+		}, 1 + 1},
+		{"issue/unavailable", func() Section {
+			f := NewIssueField(p)
+			f.SetUnavailable("no API key")
+			return f
+		}, 1},
+		{"issue/over-the-cap", func() Section {
+			f := NewIssueField(p)
+			issues := make([]linear.Issue, 0, issuePanelMaxRows+5)
+			for _, id := range countedNames("ENG-", issuePanelMaxRows+5) {
+				issues = append(issues, linear.Issue{Identifier: id, Title: "a queued issue"})
+			}
+			f.SetIssues(1, issues)
+			return f
+		}, issuePanelMaxRows},
+
+		// title: the verdict line alone until the app pushes a session
+		// list in, then a blank, the heading, and one row per session,
+		// the list capped at titleSessionsMaxRows.
+		{"title/no-sessions", func() Section { return NewTitleField(p) }, 1},
+		{"title/sessions", func() Section {
+			f := NewTitleField(p)
+			f.SetSessions(sampleSessions())
+			return f
+		}, 3 + len(sampleSessions())},
+		{"title/over-the-cap", func() Section {
+			f := NewTitleField(p)
+			sessions := make([]Session, 0, titleSessionsMaxRows+3)
+			for _, label := range countedNames("ws-", titleSessionsMaxRows+3) {
+				sessions = append(sessions, Session{Label: label, Status: "idle", Panes: 1})
+			}
+			f.SetSessions(sessions)
+			return f
+		}, 3 + titleSessionsMaxRows},
+
+		// prompt: one row per line of text plus one to type the next line
+		// into, floored at promptPanelMinRows and capped at
+		// promptPanelMaxRows.
+		{"prompt/empty", func() Section { return NewPromptField(p) }, promptPanelMinRows},
+		{"prompt/under-the-floor", func() Section {
+			f := NewPromptField(p)
+			f.SetValue(textLines(3), false)
+			return f
+		}, promptPanelMinRows},
+		{"prompt/growing", func() Section {
+			f := NewPromptField(p)
+			f.SetValue(textLines(8), false)
+			return f
+		}, 8 + 1},
+		{"prompt/over-the-cap", func() Section {
+			f := NewPromptField(p)
+			f.SetValue(textLines(promptPanelMaxRows+5), false)
+			return f
+		}, promptPanelMaxRows},
+
+		// dir: one row per candidate, one per repo-config note, plus the
+		// status line, capped at dirPanelMaxRows.
+		{"dir/candidates", func() Section {
+			d := NewDirField(p)
+			d.SetCandidates(1, []string{"/home/zvi/Projects/herdr-draft", "/home/zvi/Projects/herdr"})
+			return d
+		}, 2 + 1},
+		{"dir/candidates-and-notes", func() Section {
+			d := NewDirField(p)
+			d.SetCandidates(1, []string{"/home/zvi/Projects/herdr-draft", "/home/zvi/Projects/herdr"})
+			d.SetNotes([]string{"ignoring agents.extra_args", "ignoring clauth"})
+			return d
+		}, 2 + 2 + 1},
+		{"dir/over-the-cap", func() Section {
+			d := NewDirField(p)
+			d.SetCandidates(1, countedNames("/home/zvi/p", dirPanelMaxRows+5))
+			return d
+		}, dirPanelMaxRows},
+
+		// placement: the chip row and its explanation, plus the
+		// disclosure line a worktree adds for the two non-default chips,
+		// plus the provenance line when a config file chose the value
+		// (placement spec §6.1). field_placement_test.go's own matrix
+		// crosses all three axes; these five are the branches, so the
+		// coverage guard below has something to find.
+		{"placement/off", func() Section { return NewPlacementField(p) }, 2},
+		{"placement/off-with-provenance", func() Section {
+			f := NewPlacementField(p)
+			f.SetProvenance(".herdr-draft.toml")
+			return f
+		}, 2 + 1},
+		{"placement/on-default-chip", func() Section {
+			f := NewPlacementField(p)
+			f.SetWorktreeOn(true)
+			return f
+		}, 2},
+		{"placement/on-other-chip", func() Section {
+			f := NewPlacementField(p)
+			f.SetWorktreeOn(true)
+			return chipsRight(f, 1) // tab here
+		}, 2 + 1},
+		{"placement/on-other-chip-with-provenance", func() Section {
+			f := NewPlacementField(p)
+			f.SetWorktreeOn(true)
+			chipsRight(f, 1)
+			f.SetProvenance(".herdr-draft.toml")
+			return f
+		}, 2 + 1 + 1},
+
+		// agent: the favorites chip row plus one line per known kind,
+		// capped at agentPanelMaxRows. With no kinds at all it still
+		// wants two, so agentPanelEmpty has somewhere to land.
+		{"agent/no-kinds", func() Section { return NewAgentField(p) }, 2},
+		{"agent/kinds", func() Section {
+			f := NewAgentField(p)
+			f.SetKinds([]string{"claude", "codex", "aider", "goose"})
+			return f
+		}, 1 + 4},
+		{"agent/over-the-cap", func() Section {
+			f := NewAgentField(p)
+			f.SetKinds(countedNames("kind", agentPanelMaxRows+5))
+			return f
+		}, agentPanelMaxRows},
+
+		// account: the `active` row, one row per profile, and the status
+		// line, capped at accountPanelMaxRows. PanelRows does not branch
+		// on the agent kind -- an inert account panel still books its
+		// rows, because the row above it is what says it is inert.
+		{"account/no-profiles", func() Section {
+			f := NewAccountField(p)
+			f.SetAgentIsClaude(true)
+			return f
+		}, 2},
+		{"account/profiles", func() Section {
+			f := NewAccountField(p)
+			f.SetAgentIsClaude(true)
+			f.SetProfiles(sampleStatus(), sampleNow())
+			return f
+		}, 2 + len(sampleStatus().Profiles)},
+		{"account/over-the-cap", func() Section {
+			f := NewAccountField(p)
+			f.SetAgentIsClaude(true)
+			status := clauth.Status{Schema: 1, ActiveProfile: "p0"}
+			for _, name := range countedNames("p", accountPanelMaxRows+5) {
+				status.Profiles = append(status.Profiles, clauth.Profile{Name: name, Tier: "Team", AuthStatus: "ok"})
+			}
+			f.SetProfiles(status, sampleNow())
+			return f
+		}, accountPanelMaxRows},
+
+		// worktree: the three parts, the provenance line when a config
+		// file supplied a value, and -- only while a worktree is
+		// actually on -- one row per base candidate, the HEAD sentinel
+		// included, capped at worktreePanelMaxRows. An off or non-git
+		// field reserves no list rows: there is no list to show.
+		{"worktree/non-git", func() Section { return NewWorktreeField(p) }, worktreePanelParts},
+		{"worktree/off", func() Section {
+			w := NewWorktreeField(p)
+			w.SetGitTarget(true)
+			w.SetBaseItems(1, []string{"main", "release/1.4"})
+			return w
+		}, worktreePanelParts},
+		{"worktree/off-with-provenance", func() Section {
+			w := NewWorktreeField(p)
+			w.SetGitTarget(true)
+			w.SetProvenance(".herdr-draft.toml")
+			return w
+		}, worktreePanelParts + 1},
+		{"worktree/on", func() Section {
+			w := NewWorktreeField(p)
+			w.SetGitTarget(true)
+			w.SetOn(true)
+			w.SetBaseItems(1, []string{"main", "release/1.4"})
+			return w
+		}, worktreePanelParts + 1 + 2},
+		{"worktree/on-with-provenance", func() Section {
+			w := NewWorktreeField(p)
+			w.SetGitTarget(true)
+			w.SetOn(true)
+			w.SetBaseItems(1, []string{"main", "release/1.4"})
+			w.SetProvenance(".herdr-draft.toml")
+			return w
+		}, worktreePanelParts + 1 + 1 + 2},
+		{"worktree/over-the-cap", func() Section {
+			w := NewWorktreeField(p)
+			w.SetGitTarget(true)
+			w.SetOn(true)
+			w.SetBaseItems(1, countedNames("release/", worktreePanelMaxRows+5))
+			return w
+		}, worktreePanelMaxRows},
+	}
+}
+
 // TestFieldPanelRows_NeverReservesRowsItCannotFill pins the other half of
 // the panel contract: PanelRows is "the greatest number of rows this
-// field can put to GOOD USE" -- at least one, never absurd, and (since
-// the form hands Panel min(PanelRows(), Region)) always a height Panel
-// itself honors.
+// field can put to GOOD USE" -- at least one, and exactly the number the
+// field's own rule says its current state is worth (panelRowsCases).
+//
+// #33: the second assertion used to be a shape check,
+// len(split(Panel(80, PanelRows()))) == PanelRows(), which cannot fail --
+// panelBlock pads and truncates to the height it is handed. It is gone
+// rather than repaired, because Panel's line count is already pinned
+// where that contract belongs, by TestFieldPanel_IsAlwaysExactlyHLines
+// above, over three widths crossed with seven heights. The floor check
+// below it was always real and stays: 0 is a meaningful answer from
+// Section.PanelRows ("no panel at all", which the Create section gives)
+// and a meaningless one from a field with a chooser in it.
+//
+// An EQUALITY, because both directions of a wrong count are defects and
+// the name only warns about one. Over-reporting is the named one, and it
+// is visible rather than merely wasteful: the extra row is padded in by
+// the FIELD, so it lands wherever that field's own composition puts it
+// -- injecting it into IssueField.PanelRows() opens a blank line between
+// the last issue and the status line panelStatusLine pins last, which
+// moved three committed frames. Under-reporting is the direction no
+// frame is likely to hold, and it loses content rather than adding
+// blanks: the form hands Panel min(PanelRows(), Region) (form.go's
+// renderPanelRegion), so a field asking for too little is rendered at
+// too little and drops what the region had room for -- worktree's
+// provenance line below worktreePanelParts, placement's disclosure --
+// truncated from the bottom by the very panelBlock call that used to
+// hide all of this.
 func TestFieldPanelRows_NeverReservesRowsItCannotFill(t *testing.T) {
-	for _, s := range append(rowFields(theme.Default()), repoConfigFields(theme.Default())...) {
-		want := s.PanelRows()
-		if want < 1 {
-			t.Errorf("%s.PanelRows() = %d, want at least 1 (0 means 'no panel at all', which none of these fields is)", s.ID(), want)
+	palette := theme.Default()
+	covered := map[string]bool{}
+
+	for _, c := range panelRowsCases(palette) {
+		s := c.build()
+		covered[s.ID()] = true
+
+		got := s.PanelRows()
+		if got < 1 {
+			t.Errorf("%s: %s.PanelRows() = %d, want at least 1 (0 means 'no panel at all', which none of these fields is)", c.name, s.ID(), got)
 			continue
 		}
-		if got := len(strings.Split(s.Panel(80, want), "\n")); got != want {
-			t.Errorf("%s.Panel(80, PanelRows()=%d) produced %d lines", s.ID(), want, got)
+		if got != c.want {
+			t.Errorf("%s: %s.PanelRows() = %d, want %d", c.name, s.ID(), got, c.want)
+		}
+	}
+
+	// Every row field must state the rows it books, or this test is back
+	// to covering eight fields in name and none in fact -- which is the
+	// state #33 found it in. A ninth field cannot be added without an
+	// entry above.
+	for _, s := range append(rowFields(palette), repoConfigFields(palette)...) {
+		if !covered[s.ID()] {
+			t.Errorf("no panelRowsCases entry for the %q field: every row field states the rows its PanelRows() books, per state", s.ID())
 		}
 	}
 }
