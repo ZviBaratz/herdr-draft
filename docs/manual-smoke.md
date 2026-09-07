@@ -122,6 +122,15 @@ export HERDR_PLUGIN_CONTEXT_JSON="$(printf \
 ./bin/herdr-draft
 ```
 
+Or `just smoke <repo>`, which is exactly the block above with the guards a
+release pass wants: it refuses outside a herdr pane, refuses without a built
+binary, refuses a path that is not a git repo, and `cd`s into the repo before
+building the context JSON — that last one matters, because `workspace_cwd`
+and `focused_pane_cwd` are what the project row resolves from, so running the
+block from *this* repo opens the form on this tree rather than the throwaway.
+The repo argument is required rather than defaulted, for the fresh-repo
+reason in "Before you start".
+
 The context JSON's shape is `internal/herdrc/context.go`'s `Context`; every
 field on it is optional, so the five above are enough to open the form with a
 real invoking workspace and pane. Everything the form *reads* — Linear,
