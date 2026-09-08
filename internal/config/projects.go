@@ -121,6 +121,9 @@ func (p *Projects) evict() {
 // LoadState's own loss-tolerance (spec §12). The error return exists for
 // symmetry with the rest of this package's loaders and is always nil.
 func LoadProjects(stateDir string) (Projects, error) {
+	if stateDir == "" {
+		return Projects{}, nil
+	}
 	b, err := os.ReadFile(filepath.Join(stateDir, projectsFileName))
 	if err != nil {
 		return Projects{}, nil
@@ -148,6 +151,11 @@ func LoadProjects(stateDir string) (Projects, error) {
 // Unlike LoadProjects, a write failure is a real error -- there is no
 // loss-tolerant fallback for a save the caller explicitly asked for.
 func SaveProjects(stateDir string, p Projects) error {
+	// See SaveState: an empty state directory means there is nowhere to
+	// write, not "write here".
+	if stateDir == "" {
+		return nil
+	}
 	p.Version = projectsSchemaVersion
 	if p.Entries == nil {
 		p.Entries = map[string]ProjectDefaults{}

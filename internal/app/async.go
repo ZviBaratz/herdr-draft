@@ -1042,11 +1042,14 @@ func (m Model) persistStateCmd() tea.Cmd {
 	}, time.Now())
 
 	return func() tea.Msg {
-		if stateDir != "" {
-			_ = config.SaveState(stateDir, st)
-			if projectKey != "" {
-				_ = config.SaveProjects(stateDir, projects)
-			}
+		// No stateDir guard here any more: both savers refuse an empty
+		// directory themselves. Three call sites with two of them
+		// remembering to check is exactly how linear.SaveCache came to
+		// write into the user's repository, so the check lives in one
+		// place now.
+		_ = config.SaveState(stateDir, st)
+		if projectKey != "" {
+			_ = config.SaveProjects(stateDir, projects)
 		}
 		return statePersistedMsg{}
 	}
