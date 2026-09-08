@@ -682,20 +682,60 @@ herdr-draft keeps a small amount of loss-tolerant state in
 
 ## Testing
 
+The gate is `just check`, and it is **four** steps:
+
 ```bash
-go test ./...        # unit + golden-frame tests, no I/O
-gofmt -l .            # formatting check
+test -z "$(gofmt -l .)"   # formatting
 go vet ./...
+just unused               # staticcheck -checks U1000 -tests=false ./...
+go test ./...             # unit + golden-frame tests, no I/O
 ```
 
-`just check` runs all three. The golden frames under `internal/*/testdata/`
-are the most exact description of the shipped screens there is — read one
-before trusting a description of the UI, this file's included.
+It runs on every push and pull request
+([`.github/workflows/check.yml`](.github/workflows/check.yml)), on Linux and
+macOS.
+
+**`just unused` is a real gate, not advice.** `go vet` does not detect
+unused unexported code *at all*, and that blind spot has shipped two
+defects here: a whole cascade of drop-line handling survived the deletion
+of the only path that called it, and half of a filter-count feature sat in
+a green tree defined and called by nothing. `-tests=false` is the
+load-bearing flag — without it, a symbol kept alive only by the test that
+exists to call it counts as used, which is the exact shape both defects
+had. A symbol that is deliberately test-only carries a
+`//lint:ignore U1000 <reason>` at its declaration instead.
+
+staticcheck is the one dev tool not carried in `go.mod`. Its version is
+pinned in the justfile as `staticcheck_version`, which the workflow reads
+too, so run `just unused` with it missing and the error names the exact
+install line — `go install honnef.co/go/tools/cmd/staticcheck@<pinned>`, or
+the `go run` spelling if you would rather not install it. It is not a
+`go.mod` tool directive on purpose: that would drag this module's own `go`
+line up to whatever the linter needs, and herdr builds the plugin with
+`go build` on the *user's* machine, so a dev tool must not narrow who can
+install.
+
+The golden frames under `internal/*/testdata/` are the most exact
+description of the shipped screens there is — read one before trusting a
+description of the UI, this file's included. They also prove only the
+states someone thought to fixture: this project shipped a defect in the
+form's *opening* state through fifteen green commits.
+
+Regenerating them is **per package**, not repo-wide:
+
+```bash
+go test ./internal/form/ -update
+go test ./internal/app/ -update
+```
+
+`go test ./... -update` fails. The flag is registered per test binary, in
+those two packages only, so a repo-wide run errors on every other package.
 
 Manual release smoke (Path A/B × worktree on/off, plus the headless
 `create`, the repo config and per-project memory) is documented separately
-in [`docs/manual-smoke.md`](docs/manual-smoke.md) — not part of CI. Read its
-warning before running `herdr-draft create` in a real session.
+in [`docs/manual-smoke.md`](docs/manual-smoke.md) — deliberately not part
+of CI, since every scenario creates real herdr sessions. Read its warning
+before running `herdr-draft create` in a real session.
 
 ## License & provenance
 
