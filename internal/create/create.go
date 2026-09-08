@@ -95,7 +95,16 @@ type Env struct {
 // pluginID is this plugin's own id (herdr-plugin.toml's `id`), the value
 // $HERDR_PLUGIN_ID carries when the surrounding plugin environment is
 // ours.
-const pluginID = "draft"
+//
+// It is VENDOR-QUALIFIED because herdr plugin ids share one global
+// namespace: the id names the install directory, the config dir, the
+// state dir and the `--plugin` argument, so an unqualified generic word
+// is a claim on a name any other author could want. Keep it byte-identical
+// to herdr-plugin.toml's `id` -- usablePluginEnv compares $HERDR_PLUGIN_ID
+// against this, so a drift between the two would make the command treat
+// its OWN plugin environment as another plugin's and silently resolve
+// from built-in defaults instead.
+const pluginID = "zvibaratz.draft"
 
 // GitSource is the git/filesystem access this command needs: whether the
 // project directory exists, whether it is a repository, and which
