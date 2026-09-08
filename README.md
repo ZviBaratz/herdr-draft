@@ -737,6 +737,16 @@ in [`docs/manual-smoke.md`](docs/manual-smoke.md) — deliberately not part
 of CI, since every scenario creates real herdr sessions. Read its warning
 before running `herdr-draft create` in a real session.
 
+## Contributing & security
+
+Patches are welcome — [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the gate,
+the golden-frame workflow, the spec-citation convention, and the features
+that were explicitly declined. herdr does not sandbox plugin code, so
+[`SECURITY.md`](SECURITY.md) states this plugin's actual surface (the
+command it runs for you, the credential it handles, and the trust boundary
+around a repository-committed `.herdr-draft.toml`) and how to report
+something privately.
+
 ## License & provenance
 
 herdr-draft is MIT licensed (see `LICENSE`). It ports and adapts UI code
