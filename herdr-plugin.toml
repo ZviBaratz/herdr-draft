@@ -1,4 +1,4 @@
-id = "draft"
+id = "zvibaratz.draft"
 name = "herdr-draft"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
@@ -19,4 +19,4 @@ command = ["./bin/herdr-draft"]
 id = "open"
 title = "New session"
 contexts = ["global"]
-command = ["sh", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin draft --entrypoint open"]
+command = ["sh", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin zvibaratz.draft --entrypoint open"]

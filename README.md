@@ -224,7 +224,7 @@ id `draft`, action id `open`, from `herdr-plugin.toml`). You can also
 invoke it directly from a shell:
 
 ```bash
-herdr plugin pane open --plugin draft --entrypoint open
+herdr plugin pane open --plugin zvibaratz.draft --entrypoint open
 ```
 
 ## Headless `create`
@@ -279,12 +279,12 @@ built-in defaults instead of your own configuration, and says so. In your
 shell rc:
 
 ```bash
-export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir draft)"
-export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/draft"
+export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir zvibaratz.draft)"
+export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/zvibaratz.draft"
 ```
 
 herdr has a CLI for the config directory but not for the state one, whose
-layout is `<herdr state dir>/plugins/draft` (`herdr:src/plugin_paths.rs`);
+layout is `<herdr state dir>/plugins/zvibaratz.draft` (`herdr:src/plugin_paths.rs`);
 on Windows the base is `%LOCALAPPDATA%\herdr` instead. Point both at the
 same directories the popup gets and the two paths share one memory.
 
@@ -304,7 +304,7 @@ newer config file.
 Get the config directory for your herdr install with:
 
 ```bash
-herdr plugin config-dir draft
+herdr plugin config-dir zvibaratz.draft
 ```
 
 ### Top level

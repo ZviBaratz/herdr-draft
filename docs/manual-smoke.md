@@ -114,8 +114,8 @@ runs against the same real data, in an ordinary pane you can address:
 
 ```bash
 export HERDR_BIN_PATH="$(command -v herdr)"
-export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir draft)"
-export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/draft"
+export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir zvibaratz.draft)"
+export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/zvibaratz.draft"
 export HERDR_PLUGIN_CONTEXT_JSON="$(printf \
   '{"workspace_id":"%s","workspace_cwd":"%s","tab_id":"%s","focused_pane_id":"%s","focused_pane_cwd":"%s"}' \
   "$HERDR_WORKSPACE_ID" "$PWD" "$HERDR_TAB_ID" "$HERDR_PANE_ID" "$PWD")"
@@ -148,7 +148,7 @@ and nothing to read from. Drive it through the **outer host pane** — the
 pane the popup is drawn over:
 
 ```bash
-herdr[S] plugin pane open --plugin draft --entrypoint open
+herdr[S] plugin pane open --plugin zvibaratz.draft --entrypoint open
 herdr[S] pane send-text <outer-pane-id> "<text>"
 herdr[S] pane send-keys <outer-pane-id> <key>
 herdr[S] pane read --source visible <outer-pane-id>
@@ -173,7 +173,7 @@ terminal and never up, so an 80×24 terminal gives **77×22** and a 60×20 one
 frames pin all three plus one deliberately oversized **150×44** whose only
 job is the margins and the footer's full-width reach. If the popup does not
 look 104 cells wide, herdr is
-still holding the old manifest in memory: `herdr plugin list --plugin draft
+still holding the old manifest in memory: `herdr plugin list --plugin zvibaratz.draft
 --json` to check, then `herdr plugin disable draft && herdr plugin enable
 draft`.
 
