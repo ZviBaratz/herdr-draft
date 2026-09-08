@@ -6,8 +6,32 @@ package herdrc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 )
+
+// PluginID is this plugin's own id, as declared by herdr-plugin.toml's
+// `id`. It lives here, in the package that decodes herdr's invocation
+// context, because that is what it names: what herdr calls us.
+//
+// One copy on purpose. It is the install directory, the config dir, the
+// state dir and the `--plugin` argument all at once, so every place that
+// prints a command a user should run needs it, and a second copy would be
+// a second thing to forget. TestPluginIDMatchesManifest holds it to the
+// manifest.
+const PluginID = "zvibaratz.draft"
+
+// ErrContextUnset reports that $HERDR_PLUGIN_CONTEXT_JSON was empty rather
+// than malformed. The two are worth telling apart: malformed means herdr
+// sent something this binary could not read, which is a bug somewhere;
+// EMPTY almost always means the program was started by a person, from a
+// shell, without herdr involved at all.
+//
+// That case used to surface as `parse plugin context: unexpected end of
+// JSON input` -- technically accurate, and the first thing a curious
+// person saw after installing the plugin.
+var ErrContextUnset = errors.New("$HERDR_PLUGIN_CONTEXT_JSON is not set")
 
 // ContextWorktree mirrors herdr's WorkspaceWorktreeInfo
 // (/home/zvi/Projects/herdr/src/api/schema/workspaces.rs, ~line 76): the
@@ -43,7 +67,14 @@ type Context struct {
 // but that this Context does not model (e.g. tab_label, selected_text,
 // invocation_source) are simply ignored by the decoder; every field this
 // Context does model tolerates absence by falling back to its zero value.
+// An empty payload returns ErrContextUnset rather than a JSON error -- see
+// that variable for why the distinction is worth making. Note that "{}"
+// parses fine and is a legitimate context: every field is optional, so
+// absence of DATA is not absence of a CONTEXT.
 func ParseContext(raw string) (Context, error) {
+	if strings.TrimSpace(raw) == "" {
+		return Context{}, ErrContextUnset
+	}
 	var ctx Context
 	if err := json.Unmarshal([]byte(raw), &ctx); err != nil {
 		return Context{}, fmt.Errorf("parse plugin context: %w", err)

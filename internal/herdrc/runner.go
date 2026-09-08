@@ -191,7 +191,7 @@ func (r *CLIRunner) runJSON(ctx context.Context, args ...string) (json.RawMessag
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("herdr %s: %w: %s", verb, err, strings.TrimSpace(stderr.String()))
+		return nil, cmdError(verb, err, stderr.String())
 	}
 
 	var envelope struct {
@@ -222,7 +222,7 @@ func (r *CLIRunner) runOK(ctx context.Context, args ...string) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("herdr %s: %w: %s", verb, err, strings.TrimSpace(stderr.String()))
+		return cmdError(verb, err, stderr.String())
 	}
 	return nil
 }
@@ -243,9 +243,30 @@ func (r *CLIRunner) runText(ctx context.Context, args ...string) (string, error)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("herdr %s: %w: %s", verb, err, strings.TrimSpace(stderr.String()))
+		return "", cmdError(verb, err, stderr.String())
 	}
 	return stdout.String(), nil
+}
+
+// cmdError formats a failed `herdr <verb>` uniformly for all three run
+// helpers: the subcommand invoked, the process error, and herdr's own
+// stderr -- but only when there IS stderr.
+//
+// The conditional is the point. All three helpers used to append `: %s`
+// unconditionally, so a subcommand that failed silently (a bare non-zero
+// exit, which is exactly what an unreachable server can produce) produced
+// a message ending in a dangling colon-space:
+//
+//	herdr unreachable: herdr workspace list: exit status 1:
+//
+// That trailing separator reads as truncation -- as though the actual
+// reason were there and got lost -- which is the opposite of what it
+// means. There is no reason; herdr said nothing.
+func cmdError(verb string, err error, stderr string) error {
+	if s := strings.TrimSpace(stderr); s != "" {
+		return fmt.Errorf("herdr %s: %w: %s", verb, err, s)
+	}
+	return fmt.Errorf("herdr %s: %w", verb, err)
 }
 
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement
