@@ -608,3 +608,28 @@ func TestAssembledForm_LinearRefreshFailed(t *testing.T) {
 		})
 	}
 }
+
+// TestAssembledForm_ClauthUnreadable pins the state that had no rendering
+// at all before: clauth installed, and unreadable.
+//
+// It used to produce no account row, which is byte-identical to what a
+// user with no clauth installed sees — so a crashed clauth, unparseable
+// JSON, a missing binary and a single-profile setup were one indistinct
+// outcome, with the error discarded at the point of failure.
+//
+// The frame is worth having rather than just the unit assertions because
+// the row is INERT: it renders and is skipped by the focus ring, which
+// means it occupies a stack row while never being focusable, and that
+// interaction with the fixed row order is exactly what a byte-exact frame
+// checks and a `strings.Contains` does not.
+func TestAssembledForm_ClauthUnreadable(t *testing.T) {
+	setup := frameSetup(true)
+	setup.ClauthStatus = clauth.Status{}
+	setup.ClauthUnavailable = "exit status 1: could not read ~/.clauth/state"
+
+	m := resolveDirCheck(t, newTestModel(t, setup))
+	m.form.FocusByID("agent")
+	m.reactToChanges()
+
+	assertAppFrame(t, "assembled-clauth-unreadable-101x30", m, framePopupW, framePopupH)
+}

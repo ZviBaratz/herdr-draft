@@ -200,6 +200,10 @@ type AccountField struct {
 	// browsing and nothing more.
 	pinned string
 
+	// unavailable, when non-empty, is SetUnavailable's own reason: clauth
+	// is installed but could not be read. See that setter.
+	unavailable string
+
 	// pickerRowsShown is how many profile rows the last Panel render
 	// drew. widgets.Picker.SelectAt needs the SAME height MarkedView was
 	// called with to map a click back to an item, and v2's panel height
@@ -288,10 +292,26 @@ const accountResetMinCells = 6
 // ID identifies this Section for form.go's zoneFor.
 func (f *AccountField) ID() string { return "account" }
 
+// SetUnavailable marks the field present-but-inert, showing reason instead
+// of a profile list -- the same shape IssueField.SetUnavailable has, for
+// the same reason spec §13 gives: a configured-but-BROKEN integration is a
+// different state from an absent one, and must degrade "with a reason"
+// rather than vanish.
+//
+// The distinction is sharper here than for Linear, because this row is
+// already conditional on clauth being present with >= 2 profiles. A
+// clauth that is not installed at all keeps producing NO ROW, which is
+// correct and documented; this state is only reached when clauth is
+// installed and answered with something unusable -- it crashed, or its
+// JSON did not parse. Before this, all four of "not installed", "one
+// profile", "crashed" and "unparseable" rendered identically: nothing at
+// all, with the error discarded at the point of failure.
+func (f *AccountField) SetUnavailable(reason string) { f.unavailable = reason }
+
 // Enabled reports the dynamic half of spec §6 field 7's precondition:
 // present-but-inert (form.go's Section doc comment) whenever the
 // currently selected agent kind is not claude -- see SetAgentIsClaude.
-func (f *AccountField) Enabled() bool { return f.agentIsClaude }
+func (f *AccountField) Enabled() bool { return f.agentIsClaude && f.unavailable == "" }
 
 // Focus gives the field input focus. widgets.Picker has no Focus/Blur of
 // its own (see its package doc); focused is tracked only for
@@ -738,6 +758,14 @@ func (f *AccountField) Row(w int) string {
 		w = 1
 	}
 	text := lipgloss.NewStyle().Foreground(f.palette.Text)
+	// Ahead of the agent check: a clauth that cannot be read is worth
+	// saying regardless of which agent is selected, and "this row is for
+	// claude" would be a misleading thing to show for a row that is inert
+	// for an entirely different reason.
+	if f.unavailable != "" {
+		reason := issueUnavailableLabel + unavailableReasonSep + f.unavailable
+		return fitLine(dimHint(f.palette).Render(keepHead(reason, w)), w)
+	}
 	if !f.agentIsClaude {
 		return fitLine(dimHint(f.palette).Render(keepHead(accountInertPlaceholder, w)), w)
 	}
@@ -852,9 +880,12 @@ func (f *AccountField) Panel(w, h int) string {
 	}
 	lines := make([]string, 0, h)
 	f.pickerRowsShown = 0
-	if h > 1 {
+	if f.unavailable == "" && h > 1 {
 		f.pickerRowsShown = h - 1
 		lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
+	}
+	for len(lines) < h-1 {
+		lines = append(lines, panelText("", w))
 	}
 	lines = append(lines, panelStatusLine(f.panelStatus(panelInner(w)), f.filterCount(), w, f.palette))
 	return panelBlock(w, h, lines...)
@@ -869,6 +900,11 @@ func (f *AccountField) Panel(w, h int) string {
 // It counts PROFILES, not picker rows: the `active` sentinel is a choice,
 // not an account, so three profiles must not read `4 profiles`.
 func (f *AccountField) filterCount() string {
+	// An inert field draws no list at all, so a count beside the reason
+	// would be describing rows that are not on screen.
+	if f.unavailable != "" {
+		return ""
+	}
 	return filterCount(len(f.profiles), len(f.profiles), accountCountOne, accountCountMany)
 }
 
@@ -891,6 +927,8 @@ func (f *AccountField) filterCount() string {
 // saying what the `active` row means.
 func (f *AccountField) panelStatus(inner int) string {
 	switch {
+	case f.unavailable != "":
+		return dimHint(f.palette).Render(f.unavailable)
 	case f.verdictKey == f.Pin() && f.verdictText != "":
 		return lipgloss.NewStyle().Foreground(f.palette.Danger).Render(f.verdictText)
 	case f.degraded:
@@ -921,5 +959,10 @@ func (f *AccountField) panelLegend(inner int) string {
 // PanelRows is the "active" row, one row per profile, and the status
 // line, capped at accountPanelMaxRows.
 func (f *AccountField) PanelRows() int {
+	// An inert field wants only the status line, which is all Panel draws
+	// for it -- the same accounting IssueField.PanelRows does.
+	if f.unavailable != "" {
+		return 1
+	}
 	return capRows(2+len(f.profiles), accountPanelMaxRows)
 }

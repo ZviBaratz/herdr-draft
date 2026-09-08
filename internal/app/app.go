@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -210,6 +211,16 @@ type Setup struct {
 	// this reason (spec §13, "degrade ... with a reason"), the second
 	// renders no field at all. See Bootstrap.
 	LinearUnavailable string
+	// ClauthUnavailable is non-empty when clauth is INSTALLED but could
+	// not be read -- it exited non-zero, or its --json output did not
+	// parse. Distinct from clauth being absent, which is the common case
+	// and renders no account row at all (see Bootstrap, which uses
+	// exec.ErrNotFound to tell them apart), and distinct from having fewer
+	// than two profiles, which is the documented static precondition.
+	//
+	// When set, the account row renders present-but-inert carrying this
+	// reason, exactly as LinearUnavailable does for the issue row.
+	ClauthUnavailable string
 }
 
 // Bootstrap performs spec §9's pre-open refusal plus every other piece of
@@ -286,10 +297,31 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 	if cfg.Clauth.Enabled != nil {
 		clauthEnabled = *cfg.Clauth.Enabled
 	}
+	// clauth's error used to be dropped here, which made four different
+	// situations render identically -- as nothing at all, with no text
+	// anywhere saying why. "clauth is not installed", "clauth has one
+	// profile", "clauth crashed" and "clauth returned unparseable JSON"
+	// all produced an absent account row.
+	//
+	// The first two SHOULD produce an absent row: that rule is deliberate
+	// and documented (README's Troubleshooting: "a static, by-design
+	// check, not a bug"), and most people who install this plugin have
+	// never heard of clauth. Announcing a missing optional dependency to
+	// them would be noise.
+	//
+	// The other two are a broken integration, which spec §13 says must
+	// degrade "to inert with a reason". exec.ErrNotFound is what separates
+	// them: it means the binary is not there, everything else means it was
+	// there and did not work.
 	var clauthStatus clauth.Status
+	var clauthUnavailable string
 	if clauthEnabled && clauthSrc != nil {
-		if st, serr := clauthSrc.Status(bg); serr == nil {
+		st, serr := clauthSrc.Status(bg)
+		switch {
+		case serr == nil:
 			clauthStatus = st
+		case !errors.Is(serr, exec.ErrNotFound):
+			clauthUnavailable = clauthUnavailableReason(serr)
 		}
 	}
 
@@ -306,6 +338,7 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		ClauthStatus:      clauthStatus,
 		LinearCache:       linearCache,
 		LinearUnavailable: linearUnavailable,
+		ClauthUnavailable: clauthUnavailable,
 		HomeDir:           pathx.Home(),
 	}), nil
 }
@@ -386,6 +419,21 @@ const readmeURL = "https://github.com/ZviBaratz/herdr-draft#readme"
 // repeating it costs cells the actual cause needs.
 func linearUnavailableReason(err error) string {
 	return strings.TrimPrefix(err.Error(), "resolve linear api key: ")
+}
+
+// clauthUnavailableReason turns a clauth load failure into the short line
+// AccountField.SetUnavailable renders on its row. It drops the package's
+// own "clauth status --json: " / "parse clauth status: " prefixes for the
+// reason linearUnavailableReason drops its own -- the row is labeled
+// `account` and the reason is competing for the same cells -- and
+// flattens, because a failing clauth's stderr can be multi-line and this
+// is a single row.
+func clauthUnavailableReason(err error) string {
+	msg := err.Error()
+	for _, prefix := range []string{"clauth status --json: ", "parse clauth status: ", "clauth status: "} {
+		msg = strings.TrimPrefix(msg, prefix)
+	}
+	return strings.Join(strings.Fields(msg), " ")
 }
 
 // linearRefreshReason turns an AssignedIssues error into the single line
@@ -814,7 +862,15 @@ func New(s Setup) Model {
 	// (reloadClauthCmd/handleClauthResult are also defensively guarded on
 	// their own -- see async.go -- but this is the gate that matters: with
 	// it, m.account is simply never non-nil when Deps.Clauth is nil).
-	if s.Deps.Clauth != nil && len(s.ClauthStatus.Profiles) >= 2 {
+	// A broken clauth gets a row even though it has no profiles to offer,
+	// which is the whole point: without one there is nowhere to say that
+	// clauth is installed and unreadable, and the user sees exactly what
+	// they would see if they had never installed it. The row disappears
+	// again as soon as clauth works.
+	if s.ClauthUnavailable != "" {
+		m.account = form.NewAccountField(palette)
+		m.account.SetUnavailable(s.ClauthUnavailable)
+	} else if s.Deps.Clauth != nil && len(s.ClauthStatus.Profiles) >= 2 {
 		m.account = form.NewAccountField(palette)
 		// The clock rides along with the status: the panel's reset times
 		// are relative (v3 spec §10.2) and internal/form has no clock of
