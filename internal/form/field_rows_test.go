@@ -565,6 +565,74 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 	}
 }
 
+// TestFieldPanelCeilings_AreTheNumbersThatWereChosen pins the nine
+// bounds panelRowsCases' expectations are written in terms of.
+//
+// It exists because those expectations are SYMBOLIC -- issue/over-the-cap
+// wants issuePanelMaxRows, not 24 -- which is the right shape for the
+// cases (their job is "the cap is applied here, in this state", and a
+// literal in each would scatter one deliberate retune across seven
+// unrelated places) and leaves exactly one thing unpinned: the constant's
+// own VALUE. Both sides read the same symbol, so raising
+// issuePanelMaxRows from 24 to 30 kept the whole tree green. Five of
+// these nine were unpinned by any assertion in the package; the other
+// four already failed something, by accident rather than design.
+//
+// Splitting the two claims is what makes each one honest. The cases say
+// the cap is applied; this table says which number it is. A retune then
+// shows up in review as one line saying the issue panel's ceiling went
+// from 24 to 50, which is the sentence a reviewer wants to read, in the
+// one place whose whole purpose is to be edited deliberately.
+//
+// The `why` column is each constant's OWN stated reason, quoted from its
+// doc comment rather than restated -- if the two ever disagree, the doc
+// comment is right and this table is stale.
+func TestFieldPanelCeilings_AreTheNumbersThatWereChosen(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		got  int
+		want int
+		why  string
+	}{
+		{"issuePanelMaxRows", issuePanelMaxRows, 24,
+			"spec §10 fetches up to 50 issues, far more than a panel should claim from the rest of the form"},
+		{"agentPanelMaxRows", agentPanelMaxRows, 10,
+			"spec §6 sizes the full kind list at the known 23 kinds"},
+		{"accountPanelMaxRows", accountPanelMaxRows, 8,
+			"a clauth profile set is small"},
+		{"dirPanelMaxRows", dirPanelMaxRows, 12,
+			"a project list can be long"},
+		{"promptPanelMinRows", promptPanelMinRows, 6,
+			"enough rows to be worth focusing even for a one-line prompt"},
+		{"promptPanelMaxRows", promptPanelMaxRows, 20,
+			"a very tall window must not hand a 40-row textarea to a field most sessions leave empty"},
+		{"titleSessionsMaxRows", titleSessionsMaxRows, 15,
+			"panelCapRows: the region cannot show more than that anyway (v3 spec §7.2), so a larger number would make PanelRows lie about a height it can never be given"},
+		{"worktreePanelParts", worktreePanelParts, 3,
+			"the chips, the branch and the base selection, one line each"},
+		{"worktreePanelMaxRows", worktreePanelMaxRows, 10,
+			"a repository can have hundreds of branches; three parts plus a usable window onto the list"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %d, want %d -- %s.\nIf this change is deliberate, edit the literal here and say why in the commit; a retune is meant to be visible in review, which is the whole point of this table.",
+				c.name, c.got, c.want, c.why)
+		}
+	}
+
+	// titleSessionsMaxRows is an ALIAS, so pin the coupling as well as
+	// the value. Replacing `= panelCapRows` with a literal 15 is
+	// undetectable here and harmless today -- the two numbers agree --
+	// and this assertion is deliberately not trying to catch it. What it
+	// catches is the moment that stops being harmless: panelCapRows
+	// moving while title does not follow, which is when the lost coupling
+	// becomes a PanelRows() that lies about a height the region can never
+	// give (v3 spec §7.2).
+	if titleSessionsMaxRows != panelCapRows {
+		t.Errorf("titleSessionsMaxRows = %d but panelCapRows = %d; the alias is what makes PanelRows honest about a height the region can actually give (v3 spec §7.2)",
+			titleSessionsMaxRows, panelCapRows)
+	}
+}
+
 // TestFieldPanelRows_NeverReservesRowsItCannotFill pins the other half of
 // the panel contract: PanelRows is "the greatest number of rows this
 // field can put to GOOD USE" -- at least one, and exactly the number the
@@ -621,8 +689,17 @@ func TestFieldPanelRows_NeverReservesRowsItCannotFill(t *testing.T) {
 
 	// Every row field must state the rows it books, or this test is back
 	// to covering eight fields in name and none in fact -- which is the
-	// state #33 found it in. A ninth field cannot be added without an
-	// entry above.
+	// state #33 found it in.
+	//
+	// Note what this reaches: the two FIXTURES, which are hand-maintained
+	// and which nothing derives from the real form. A ninth field added
+	// to internal/app's own sections slice and left out of rowFields
+	// would escape this guard entirely -- it is caught instead by
+	// internal/app's TestNew_SectionOrder, which pins the real ID
+	// sequence. So the two together are what make a ninth field
+	// impossible to add silently, and neither is sufficient alone. That
+	// test's failure message names this table, so the chain reads in the
+	// direction someone hitting it travels.
 	for _, s := range append(rowFields(palette), repoConfigFields(palette)...) {
 		if !covered[s.ID()] {
 			t.Errorf("no panelRowsCases entry for the %q field: every row field states the rows its PanelRows() books, per state", s.ID())
