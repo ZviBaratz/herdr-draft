@@ -1,3 +1,14 @@
+// PaintLine's body arrived here from internal/form's sizes.go, which
+// NOTICE had attributed to atrium (github.com/ZviBaratz/atrium)
+// ui/overlay/textInput_render.go, © Zvi Baratz, relicensed by the author.
+// NOTICE lists THIS file for that now: the attribution followed the code
+// rather than staying on the delegator left behind.
+//
+// Whether this function is a port or an independent re-implementation of
+// the same guard is arguable from its own doc comment below -- it
+// describes re-implementing a special case lipgloss applies, which is not
+// the same as copying atrium's lines. The conservative answer to an
+// arguable case is to keep the credit, so it is kept.
 package widgets
 
 import (

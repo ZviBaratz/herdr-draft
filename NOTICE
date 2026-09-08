@@ -17,13 +17,27 @@ derived from atrium:
   internal/form/field_dir.go        <- ui/overlay/directoryPicker.go
   internal/form/focus.go            <- ui/overlay/textInput_focus.go
   internal/form/keys.go             <- ui/overlay/textInput_keys.go
-  internal/form/sizes.go            <- ui/overlay/textInput_size.go,
-                                        ui/overlay/textInput_render.go
   internal/form/widgets/chiprow.go  <- ui/overlay/chiprow.go
+  internal/form/widgets/paint.go    <- ui/overlay/textInput_render.go
   internal/form/widgets/picker.go   <- ui/overlay/picker.go
   internal/gitx/repo.go             <- app/app_branchsearch.go (pattern)
   internal/pathx/pathx.go           <- ui/overlay/directoryPicker.go
                                         (listSubdirs, expandPath)
+
+internal/form/sizes.go was listed here until 2026-09-08, against both
+ui/overlay/textInput_size.go and ui/overlay/textInput_render.go. Neither
+half held any longer. The size half -- atrium's shared height budget and
+its drop-lines degradation cascade -- was deleted with the v1 compose path
+and nothing derived from it survives anywhere. The render half is PaintLine,
+whose body moved to internal/form/widgets/paint.go, leaving sizes.go with a
+one-line delegator, two layout constants the file's own header calls this
+form's own, and boldSpan. So the entry named a file that no longer carried
+the code while the file that did carry it went unlisted.
+
+The attribution moved with the code rather than being dropped: whether
+PaintLine is a port or an independent re-implementation of the same guard is
+genuinely arguable from its own doc comments, and the conservative answer to
+an arguable case is to keep the credit and put it where the code is.
 
 atrium's ui/overlay/textInput.go and ui/overlay/branchPicker.go are not on
 the clean list (each carries surviving third-party lines from other atrium
