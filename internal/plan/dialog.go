@@ -16,15 +16,21 @@
 // surfaced anywhere -- `agent prompt --wait` itself reports success. This
 // is a candidate herdr issue (its own detection manifest not
 // distinguishing this screen from a normal ready state), not something
-// herdr-draft can fix from its own side -- see task-19-report.md's fix
-// section. What this file adds is a defensive guard on herdr-draft's own
-// side: exec.go reads the pane before ever sending a prompt (Runner.
+// herdr-draft can fix from its own side: herdr's detection manifests are
+// versioned, so they can in principle learn to recognize this exact
+// screen -- or the general shape of a Y/N confirmation dialog -- as a
+// state distinct from ready-for-input, which would let this guard be
+// relaxed or removed later without herdr-draft losing the protection.
+// Until then, what this file adds is a defensive guard on herdr-draft's
+// own side: exec.go reads the pane before ever sending a prompt (Runner.
 // AgentRead) and refuses to send if the screen looks like a dialog,
 // rather than trusting "herdr says detected" to mean "safe to type into".
 //
 // Keep this signature list SMALL and EXPLICIT: every entry is verbatim
-// text observed live from Claude Code's actual trust-dialog screen
-// (task-19-report.md's Step 1/Step 2 transcripts), not a broad heuristic
+// text observed live from Claude Code's actual trust-dialog screen during
+// the v1 close-out live checkpoint (2026-09-01, herdr 0.8.2) -- that
+// screen is preserved verbatim in dialog_test.go's own fixture, which is
+// the surviving record of it -- not a broad heuristic
 // that risks false-positiving on ordinary chat output and blocking a
 // legitimate prompt. A heuristic here is acceptable -- silently destroying
 // an agent, the alternative, is not.

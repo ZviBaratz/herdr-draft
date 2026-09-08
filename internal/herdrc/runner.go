@@ -160,15 +160,29 @@ type paneRef struct {
 // output.
 //
 // Only use this for a subcommand that actually prints a JSON envelope on
-// success -- herdr's own CLI has two distinct success-reporting shapes
+// success -- herdr's own CLI has three distinct success-reporting shapes
 // (herdr:src/cli.rs): `print_response(&send_request(...))`, which every
-// method runJSON is used for goes through, and `send_ok_request(...)`,
-// which reports success by exit code ALONE and prints nothing at all on
-// stdout (`pane run`'s contract -- see runOK's own doc comment, and
-// task-19-report.md's live checkpoint, which found this the hard way:
-// PaneRun used to route through runJSON and therefore failed every single
-// real invocation with "parse response: unexpected end of JSON input",
-// even though the underlying `pane run` had already succeeded).
+// method runJSON is used for goes through; `send_ok_request(...)`, which
+// reports success by exit code ALONE and prints nothing at all on stdout
+// (`pane run`'s contract -- see runOK); and `print_read_response(...)`,
+// which prints a bare text payload with no envelope (`agent read`'s
+// contract -- see runText).
+//
+// The v1 close-out live checkpoint found this the hard way: PaneRun used
+// to route through runJSON and therefore failed every single real
+// invocation with "parse response: unexpected end of JSON input", even
+// though the underlying `pane run` had already succeeded -- and its unit
+// test passed throughout, because that test's fake printed a JSON stdout
+// fixture `pane run` never actually produces. Every other Runner-wrapped
+// subcommand was then read directly in herdr's own source
+// (`workspace_list`/`workspace_create`/`workspace_close`/`tab_create`/
+// `worktree_create`/`worktree_remove`/`pane_split` in src/cli/runtime.rs,
+// `agent_start`/`agent_get`/`agent_prompt` in src/cli/agent.rs) and every
+// one of them prints an envelope: `pane run` is the only silent one. So
+// check which shape a NEW subcommand uses before wiring it up, and give
+// its fake the same shape the real CLI has -- a fake with the wrong
+// stdout contract is exactly why a PaneRun that failed against every real
+// invocation still passed its own unit test.
 func (r *CLIRunner) runJSON(ctx context.Context, args ...string) (json.RawMessage, error) {
 	verb := strings.Join(args, " ")
 

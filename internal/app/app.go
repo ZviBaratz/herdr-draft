@@ -756,10 +756,13 @@ func New(s Setup) Model {
 	// Project (spec §6 field 2): current space's repo root, then the
 	// current workspace cwd, then every open workspace's own worktree
 	// root, then recents -- DirField.SetCandidates selects candidates[0]
-	// as the initial selection (widgets.Picker's own same-version
-	// preserve-by-ID/fallback-to-index-0 behavior on a picker with no
-	// prior selection -- see task-20-report.md for the full trace), so
-	// ordering IS the default.
+	// as the initial selection, so ordering IS the default. The mechanism
+	// is widgets/picker.go's SetItems: this first call reaches a picker
+	// that has neither a prior version nor a prior selection, so both the
+	// isNewVersion branch and the no-selection fallback land the cursor on
+	// index 0. (Later same-version refreshes instead re-anchor by item ID,
+	// which is what keeps a user's pick from jumping under them -- see
+	// DirField.pickerVersion's own doc comment.)
 	m.projectCandidates = buildDirCandidates(s.Ctx, s.Workspaces, s.State.Recents)
 	m.supplyDirCandidates(m.projectCandidates)
 	m.lastDir = m.dir.Value()
@@ -1200,10 +1203,15 @@ func (m Model) startSubmit(ops []plan.Op, in plan.Input) (Model, tea.Cmd) {
 }
 
 // handleClearRequested implements form.ClearRequestedMsg (spec §6's ⌃R⌃R
-// double-tap, Task 20's own documented no-op gap -- see
-// task-20-report.md's Concerns #2, and this task's own brief: "reset the
-// fields to their startup/seeded state (config defaults + context-derived
-// values), not to empty zero values"): rebuilds the form from scratch via
+// double-tap). Task 20 left this a deliberate, documented no-op and said
+// why: form.go's own doc makes rebuilding to defaults the app layer's
+// job, but doing it CORRECTLY means safely re-applying every
+// already-fetched async result -- candidates, issues, clauth profiles --
+// onto FRESH field instances, which is real work that task's own
+// responsibility list did not name. This method is that deferred work,
+// held to the brief's wording for it: "reset the fields to their
+// startup/seeded state (config defaults + context-derived values), not to
+// empty zero values". It rebuilds the form from scratch via
 // New, reusing every already-fetched async result this Model currently
 // holds (workspaces, clauthStatus, linearIssues) exactly as Bootstrap's
 // own first call to New would have, rather than resetting to New's own
@@ -1781,8 +1789,10 @@ func defaultProjectDir(ctx herdrc.Context) string {
 // field 2): current context cwd/repo root, then open herdr workspace
 // cwds/repo roots (only worktree-backed workspaces carry a resolvable cwd
 // at all -- herdrc.WorkspaceInfo has no plain Cwd field for a non-worktree
-// workspace, a real data-shape limitation, not an oversight; see
-// task-20-report.md), then recents (state dir). DirField.SetCandidates
+// workspace, a real data-shape limitation designed around rather than an
+// oversight: a plain, non-worktree open workspace therefore contributes
+// nothing here beyond whatever the current context's own cwd already
+// supplies), then recents (state dir). DirField.SetCandidates
 // applies its own dedupePaths, so duplicates across these three sources
 // (e.g. the current workspace appearing both as defaultProjectDir and in
 // Workspaces) collapse to their first occurrence, preserving order.

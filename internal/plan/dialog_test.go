@@ -3,8 +3,12 @@ package plan
 import "testing"
 
 func TestBlockingDialogSignatureMatchesTrustDialog(t *testing.T) {
-	// Verbatim (trimmed) from task-19-report.md's live transcript of
-	// Claude Code's real first-run "Accessing workspace" screen.
+	// Verbatim (trimmed) from the v1 close-out live checkpoint's capture
+	// (2026-09-01, herdr 0.8.2) of Claude Code's real first-run
+	// "Accessing workspace" screen. This fixture IS the surviving record
+	// of that screen: dialog.go's two signatures were read off it, so
+	// replacing this text with something never observed live would throw
+	// away the only evidence those two strings are real.
 	screen := "❯ claude\n\n" +
 		"─────────────────────────────\n" +
 		" Accessing workspace:\n\n" +
