@@ -140,32 +140,40 @@ func TestPlacementField_PanelDisclosesTheWorktreesOwnSpace(t *testing.T) {
 	}
 }
 
-// TestPlacementField_PanelRowsMatchesPanelAcrossCombinations is the
-// dispatch's own required X5 coverage: field_rows_test.go's
-// TestFieldPanelRows_NeverReservesRowsItCannotFill iterates rowFields'
-// DEFAULT construction only (worktree off, "new" chip selected), so it
-// never exercises either branch PanelRows() gained in this task -- the
-// worktree-disclosure line, and the chip that turns it off. This test
-// drives every combination that conditional can take -- worktree on and
-// off, crossed with all three chips, crossed with provenance set and
-// unset.
+// TestPlacementField_PanelRowsMatchesPanelAcrossCombinations crosses all
+// three axes this field's PanelRows() branches on -- worktree on and off,
+// times all three chips, times provenance set and unset -- and asserts
+// the row count each combination is worth under placement spec §6.1's own
+// rule: 2 base rows, +1 under a worktree for a non-default chip, +1 when
+// a config file chose the value.
 //
-// It asserts TWO things per combination, not one, because the shared
-// invariant's own shape (len(strings.Split(s.Panel(80, want), "\n")) ==
-// want, want := s.PanelRows()) turned out on inspection to be close to a
-// tautology for THIS kind of bug: every field's Panel ends in
-// panelBlock(w, h, lines...), whose own doc comment says it "pads with
-// blank gutter rows and drops any overflow from the bottom" -- so
-// Panel(80, PanelRows()) always comes back at exactly PanelRows() lines
-// REGARDLESS of whether PanelRows() over-reserves (panelBlock pads the
-// difference with a blank row) or under-reserves down to truncation
-// (panelBlock silently drops the excess), as long as PanelRows() >= 1.
-// The only thing that shape can actually catch is PanelRows() dropping
-// below 1. Kept below anyway, since the dispatch asked for this exact
-// shape and it is still a real (if narrow) floor check -- but paired with
-// a direct arithmetic assertion against the value PanelRows() and Panel's
-// own worktree/chip conditionals are BOTH supposed to agree on, which is
-// the actual thing this task's one new arithmetic can get wrong.
+// field_rows_test.go's panelRowsCases carries this field's BRANCHES, one
+// case per side of the conjunction. Three things are left for this test,
+// and an earlier version of this comment named a fourth that was simply
+// false -- that only this test moves the chip by real keypresses, when
+// panelRowsCases' own chipsRight helper sends the identical
+// key(tea.KeyRight, 0) through Update. Corrected here rather than
+// quietly, because an unsupported rationale in a comment is the shape of
+// defect that lets a future reader delete real coverage believing it is
+// duplicated.
+//
+// What it actually adds: the full PRODUCT, where the table has one case
+// per branch -- interactions like (worktree on, split here, provenance)
+// that no single branch case reaches; the only exercise of the THIRD
+// chip anywhere in either test's row arithmetic, since the table needs
+// just one non-default chip and uses tab-here; and the
+// placementChipID(f.Value()) setup assertion below, which pins that
+// Value() agrees with the chip the keypresses actually landed on -- a
+// fact the table takes on trust.
+//
+// It was written when the shared invariant could not fail. That is fixed
+// (#33): the shared test now compares PanelRows() against an expectation
+// derived independently of Panel, over every field, and the shape check
+// this test used to keep a copy of -- len(split(Panel(80, want))) == want
+// -- is gone from both, because panelBlock pads and truncates to the
+// height it is handed and the comparison therefore held whatever
+// PanelRows() returned. Panel's line count is pinned properly by
+// field_rows_test.go's TestFieldPanel_IsAlwaysExactlyHLines.
 func TestPlacementField_PanelRowsMatchesPanelAcrossCombinations(t *testing.T) {
 	chipMoves := []struct {
 		id    string
@@ -206,16 +214,6 @@ func TestPlacementField_PanelRowsMatchesPanelAcrossCombinations(t *testing.T) {
 				if got := f.PanelRows(); got != wantRows {
 					t.Errorf("worktreeOn=%v chip=%q provenance=%q: PanelRows() = %d, want %d",
 						worktreeOn, chip.id, provenance, got, wantRows)
-				}
-
-				// The shape-matching floor check the dispatch asked for
-				// (see doc comment above for why it has limited power on
-				// its own): Panel(80, PanelRows()) must not panic or
-				// disagree with a degenerate (<1) PanelRows().
-				want := f.PanelRows()
-				if got := len(strings.Split(f.Panel(80, want), "\n")); got != want {
-					t.Errorf("worktreeOn=%v chip=%q provenance=%q: PanelRows()=%d but Panel(80, %d) produced %d lines",
-						worktreeOn, chip.id, provenance, want, want, got)
 				}
 			}
 		}

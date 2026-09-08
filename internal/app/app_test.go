@@ -930,7 +930,8 @@ func TestNew_SectionOrder(t *testing.T) {
 	})
 	want := []string{"issue", "title", "prompt", "dir", "worktree", "placement", "agent", "account", "create"}
 	if got := full.form.SectionIDs(); !equalStrings(got, want) {
-		t.Errorf("SectionIDs() for the widest configuration = %v, want %v", got, want)
+		t.Errorf("SectionIDs() for the widest configuration = %v, want %v.\nA field ADDED here also needs an entry in internal/form's panelRowsCases (field_rows_test.go), which states the panel rows each field books: that table's own coverage guard iterates the form package's hand-maintained fixtures, so it cannot see a section added only in this layer.",
+			got, want)
 	}
 
 	// Linear unconfigured and fewer than two clauth profiles: those two
