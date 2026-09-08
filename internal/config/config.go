@@ -189,6 +189,23 @@ func Load(configDir string) (Config, error) {
 	cfg := defaults()
 	defaultPrefix := cfg.BranchPrefix
 
+	// An empty configDir means THERE IS NO CONFIG DIRECTORY -- never the
+	// caller's working directory. filepath.Join("", "config.toml") is
+	// "config.toml", a relative path, so without this the plugin would
+	// read whatever config.toml happens to sit in the directory it was
+	// started from: some other project's, parsed as this plugin's, with a
+	// parse failure in it refusing to open at all.
+	//
+	// herdr exports HERDR_PLUGIN_CONFIG_DIR only to a launched PLUGIN, so
+	// an unset one is the normal case for anything else -- `just smoke`,
+	// the headless verb outside a plugin pane, and a curious person
+	// running the binary by hand. This is also the defaults-only entry
+	// point this function used to lack, which internal/create had to fake
+	// with an empty temporary directory.
+	if configDir == "" {
+		return cfg, nil
+	}
+
 	path := filepath.Join(configDir, configFileName)
 	b, err := os.ReadFile(path)
 	if err != nil {

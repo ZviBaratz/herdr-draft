@@ -16,6 +16,18 @@ const cacheFileName = "linear-cache.json"
 // assignedIssues result, so the form can render instantly at open before an
 // async refresh completes (spec §10).
 func SaveCache(stateDir string, issues []Issue) error {
+	// An empty stateDir means there is no state directory to write to.
+	// Without this, filepath.Join("", "linear-cache.json") is a RELATIVE
+	// path and this function drops a linear-cache.json into the user's
+	// current working directory -- their repository, for anyone running
+	// the binary by hand or through `just smoke`, where herdr has not
+	// exported HERDR_PLUGIN_STATE_DIR. config.SaveState and
+	// config.SaveProjects guard the same way; this one did not, and the
+	// difference was invisible because its one caller discards the error.
+	if stateDir == "" {
+		return nil
+	}
+
 	b, err := json.Marshal(issues)
 	if err != nil {
 		return fmt.Errorf("save linear cache: encode issues: %w", err)
@@ -34,6 +46,15 @@ func SaveCache(stateDir string, issues []Issue) error {
 // that error and falling back to an empty/no-cache state is the caller's
 // (app-layer) responsibility, not this package's.
 func LoadCache(stateDir string) ([]Issue, time.Time, error) {
+	// No state directory means no cache. Reported as an error, like every
+	// other "there is nothing to load" outcome here, so the caller's
+	// existing discard-and-carry-on path handles it unchanged -- but
+	// without stat-ing a relative linear-cache.json in the working
+	// directory first.
+	if stateDir == "" {
+		return nil, time.Time{}, fmt.Errorf("load linear cache: no state directory")
+	}
+
 	path := filepath.Join(stateDir, cacheFileName)
 
 	info, err := os.Stat(path)

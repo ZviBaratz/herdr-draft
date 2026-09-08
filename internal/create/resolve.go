@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -208,33 +207,25 @@ func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, proje
 // this plugin's, and a parse failure in it would refuse the create
 // outright.
 //
-// An empty temporary directory is the input that yields exactly
-// config.Load's own defaults: it has no defaults-only entry point, and its
-// argument is a directory rather than a file path.
+// config.Load handles the empty case itself, returning its own defaults,
+// so this is a pass-through kept for the doc comment above it. It used to
+// fake that outcome with an empty temporary directory, because Load had no
+// defaults-only entry point and would otherwise have joined "" into a
+// relative "config.toml"; the guard now lives in Load, where every caller
+// gets it -- including internal/app's Bootstrap, which never had one.
 func loadUserConfig(configDir string) (config.Config, error) {
-	if configDir != "" {
-		return config.Load(configDir)
-	}
-	empty, err := os.MkdirTemp("", "herdr-draft-no-config-")
-	if err != nil {
-		return config.Config{}, fmt.Errorf("no HERDR_PLUGIN_CONFIG_DIR, and no temporary directory to fall back on: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(empty) }()
-	return config.Load(empty)
+	return config.Load(configDir)
 }
 
 // loadMemory reads last-used.json and projects.json, or answers with
 // empties when there is no state directory -- see loadUserConfig for why
-// that is the normal case, and note that the same relative-path hazard
-// applies: config.LoadState("") would read (and, but for remember()'s own
-// guard, later write) state files in the caller's working directory.
+// that is the normal case. Both loaders now refuse an empty directory
+// themselves rather than joining it into a relative path, so this no
+// longer needs a guard of its own.
 //
 // Neither loader ever returns a non-nil error (spec §12: state is
 // loss-tolerant); their error returns exist for API symmetry.
 func loadMemory(stateDir string) (config.State, config.Projects) {
-	if stateDir == "" {
-		return config.State{}, config.Projects{}
-	}
 	state, _ := config.LoadState(stateDir)
 	projects, _ := config.LoadProjects(stateDir)
 	return state, projects

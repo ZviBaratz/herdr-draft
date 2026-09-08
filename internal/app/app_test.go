@@ -2214,3 +2214,49 @@ func TestTitleSessions_KeepsEverythingWhenNothingIsInvoking(t *testing.T) {
 		t.Errorf("titleSessions() kept %d of 2 workspaces with no invoking id: %+v", len(got), got)
 	}
 }
+
+// TestBootstrap_UnsetPluginDirsIgnoreTheWorkingDirectory is the popup-path
+// half of the guard the headless path had documented for itself all along.
+//
+// herdr exports $HERDR_PLUGIN_CONFIG_DIR and $HERDR_PLUGIN_STATE_DIR only
+// to a launched PLUGIN, so an Env with both empty is not a strange case:
+// it is `just smoke`, and it is anyone running the binary by hand to see
+// what it does. Bootstrap passed them straight to config.Load /
+// LoadState / LoadProjects / linear.LoadCache, each of which joined "" into
+// a RELATIVE filename -- so the plugin read config.toml, recents.json,
+// last-used.json and projects.json out of whatever repository the person
+// happened to be standing in.
+//
+// The decoy config.toml here is the sharp end of it: unparseable TOML in
+// the working directory used to make Bootstrap REFUSE TO OPEN, blaming a
+// file that has nothing to do with this plugin.
+func TestBootstrap_UnsetPluginDirsIgnoreTheWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for name, body := range map[string]string{
+		"config.toml":   "this is not toml = = =",
+		"recents.json":  `["/decoy"]`,
+		"projects.json": `{"version":1,"entries":{"/decoy":{"kind":"codex"}}}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write decoy %s: %v", name, err)
+		}
+	}
+
+	env := Env{ContextJSON: validContextJSON()} // ConfigDir and StateDir both ""
+	runner := &fakeRunner{workspaces: []herdrc.WorkspaceInfo{{WorkspaceID: "w1", Label: "main"}}}
+
+	m, err := Bootstrap(env, runner, nil, newFakeGit(), noSleep)
+	if err != nil {
+		t.Fatalf("Bootstrap with unset plugin dirs = %v, want it to open on built-in defaults", err)
+	}
+	if got := m.cfg.BranchPrefix; got == "" {
+		t.Error("cfg.BranchPrefix is empty, want the built-in default")
+	}
+	if len(m.state.Recents) != 0 {
+		t.Errorf("state.Recents = %v, want none -- it read the working directory", m.state.Recents)
+	}
+	if len(m.projects.Entries) != 0 {
+		t.Errorf("projects.Entries = %v, want none -- it read the working directory", m.projects.Entries)
+	}
+}

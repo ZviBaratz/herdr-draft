@@ -74,6 +74,12 @@ func (s *State) TouchRecent(path string) {
 func LoadState(stateDir string) (State, error) {
 	var st State
 
+	// No state directory means no state -- see Load's own note on why an
+	// empty directory must never resolve to the working directory.
+	if stateDir == "" {
+		return st, nil
+	}
+
 	if recents, ok := loadRecents(filepath.Join(stateDir, recentsFileName)); ok {
 		st.Recents = recents
 	}
@@ -129,6 +135,17 @@ func loadLastUsed(path string) (lastUsedOnDisk, bool) {
 // exactly why it is worth avoiding: the user would lose their whole
 // recents list to a crash mid-write with no error anywhere to explain it.
 func SaveState(stateDir string, st State) error {
+	// Writing is where an empty directory does real damage rather than
+	// merely reading the wrong file: it would drop recents.json and
+	// last-used.json into whatever repository the user was standing in.
+	// Skipping is the loss-tolerant answer spec §12 already prescribes for
+	// state, and it belongs here rather than at each call site -- one
+	// caller forgetting the check is exactly how linear.SaveCache came to
+	// differ from its two neighbours.
+	if stateDir == "" {
+		return nil
+	}
+
 	recents := st.Recents
 	if recents == nil {
 		recents = []string{}
