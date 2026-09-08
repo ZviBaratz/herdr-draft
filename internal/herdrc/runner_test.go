@@ -370,7 +370,8 @@ func TestCLIRunnerPaneSplit(t *testing.T) {
 func TestCLIRunnerWorkspaceList(t *testing.T) {
 	// No live fixture was captured for `workspace list`; this canned
 	// response is hand-built from the confirmed WorkspaceInfo schema
-	// (/home/zvi/Projects/herdr/src/api/schema/workspaces.rs:59), not
+	// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/api/schema/workspaces.rs#L59),
+	// not
 	// live-captured.
 	stdout := `{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[` +
 		`{"workspace_id":"w1","number":1,"label":"main","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w1:t1","agent_status":"idle"},` +

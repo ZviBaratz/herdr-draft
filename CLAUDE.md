@@ -173,6 +173,15 @@ Layering, outermost to innermost:
   `plan.Execute` always calls `Runner.AgentRead` (`--source detection`) and
   checks it against `internal/plan/dialog.go`'s known signatures *before*
   sending a queued prompt — never send on "detected" alone.
+- **Citations into herdr's source name a pinned commit, never a local
+  path.** Two spellings, both anchored to
+  `b1ff4582e9688f52ffb943cfa8bee4871ae122e4`: the `herdr:src/cli.rs`
+  shorthand for a passing reference, and a full
+  `https://github.com/herdrdev/herdr/blob/b1ff4582/...#L123` URL where a
+  reader will actually want to go look. Eleven comments used to cite
+  `/home/zvi/Projects/herdr/...`, a tree nobody else has — the claims were
+  correct and unverifiable at the same time, which is the worst of both.
+  A citation that only resolves on one laptop is not a citation.
 - **`plan.Build` stays pure.** It performs no I/O and never touches a
   `herdrc.Runner`; anything Build needs to decide (is this a git repo, what
   is the invoking pane id) must already be resolved by the caller
