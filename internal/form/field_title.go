@@ -232,12 +232,17 @@ func (f *TitleField) Touched() bool { return f.touched }
 // and clears touched, so a subsequent seed can apply again.
 //
 // Added in Task 20 (the app layer) alongside WorktreeField.SetBranch and
-// PromptField.SetValue -- IssueChosenMsg's own doc comment already
+// PromptField.SetValue. IssueChosenMsg's own doc comment already
 // documents the app layer calling "TitleField/WorktreeField/PromptField's
-// own setters", but Title had no programmatic setter at all until this one;
-// see task-20-report.md for the full write-up of this gap and why the fix
-// mirrors SetBranch's existing, already-reviewed discipline rather than
-// inventing a new one.
+// own setters", but Title had no programmatic setter at all until this
+// one -- it exposed only Value() and Touched(), so an issue's title had
+// no way in. That was one of four such gaps between the plan and the
+// fields as actually built (the others: PromptField.SetValue overwrote
+// unconditionally, with no seeded/touched concept at all; WorktreeField
+// could not apply config's DefaultWorktree; form.Model could not report
+// its focused section). This setter deliberately mirrors SetBranch 1:1
+// rather than inventing a second seeding discipline, so there is one rule
+// to learn for all three seeded fields, not three.
 func (f *TitleField) SetTitle(v string, seeded bool) {
 	if seeded && f.touched {
 		return

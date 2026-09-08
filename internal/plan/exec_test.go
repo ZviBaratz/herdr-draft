@@ -817,7 +817,7 @@ func TestExecutePromptSentWhenPaneIsReady(t *testing.T) {
 }
 
 // TestExecuteAgentPromptSkippedWhenDialogDetected is promptIfReady's core
-// defect-fix scenario (task 19's live checkpoint, task-19-report.md):
+// defect-fix scenario (the v1 close-out live checkpoint, 2026-09-01):
 // AgentRead's text contains a known blocking-dialog signature (Claude
 // Code's real first-run trust-confirmation screen, verbatim from the live
 // transcript), so AgentPrompt must never be called at all -- the agent is

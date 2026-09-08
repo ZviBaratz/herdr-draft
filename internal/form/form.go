@@ -175,9 +175,12 @@ type Section interface {
 // this task's own context) already requires them to make full sense of
 // Tab/Enter/⌃J in the Title/picker/Prompt zones, and Tasks 17-18's
 // concrete Title/Picker/Prompt Sections are expected to implement them
-// once they land. Flagged in task-16-report.md as a disclosed, additive
-// extension of the brief's Section-interface story, not a silent
-// redesign of Section itself.
+// once they land. These three were disclosed when Section was first built
+// as an ADDITIVE extension, not a silent redesign: Section's own
+// mandatory methods were left exactly as briefed, and the alternative --
+// folding Value/Complete/InsertNewline into Section itself -- was
+// rejected because it would force every future simple section (chip rows,
+// static content) to implement methods it has nothing to say about.
 type (
 	// titleValuer lets a Title-zone Section report whether it is
 	// currently empty -- FocusZone.TitleEmpty, consulted by MapKey only

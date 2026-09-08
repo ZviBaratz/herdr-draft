@@ -532,8 +532,7 @@ integer `1`.
       full real Path B run afterward showed `launching claude via
       clauth… ✓` and `waiting for agent detection… ✓` in the popup, with
       `herdr pane list` confirming `agent: "claude"`,
-      `tokens.clauth: "quantivly-2"` on the launched pane — see
-      task-19-report.md's fix section for the full transcript.
+      `tokens.clauth: "quantivly-2"` on the launched pane.
 - [x] Exact JSON field names in creation responses (`workspace_id`, pane ids)
       across `worktree create` / `workspace create` / `tab create` /
       `pane split`. **Live-probed 2026-08-31 (task 2b):** captured verbatim
