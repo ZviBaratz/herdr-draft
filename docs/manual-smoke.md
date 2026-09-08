@@ -60,6 +60,36 @@ path.
 - For Path B, pick a real clauth profile you're willing to spend a launch on:
   `clauth status --json`, then choose (e.g. the lowest-utilization one).
 
+### Claude Code's trust prompt is a precondition, not a surprise
+
+On 0.9.0 this shapes half the matrix, so read it once here rather than
+rediscovering it per cell.
+
+Claude Code asks "Is this a project you created or one you trust?" the first
+time it runs in any directory, and **herdr 0.9.0 detects that screen** and
+reports the agent `blocked`. So any cell that expects a *clean* run has to be
+pointed at a directory Claude Code has already been trusted in. Otherwise
+`agent start` refuses (Path A) or the detection wait stops (Path B), which is
+correct behaviour and not a defect — see #90 and #94.
+
+Two things make this less obvious than it sounds:
+
+- **Trust is per clauth account, not per directory.** `clauth start <profile>`
+  runs Claude Code against that profile's own isolated config dir
+  (`~/.local/state/claude-account-dirs/<profile>`), which carries its own
+  trust list. Pre-trusting by running plain `claude` does nothing for a Path B
+  cell. Pre-trust under the profile the cell will actually use:
+
+  ```bash
+  herdr[S] pane run <pane> clauth start <profile> --
+  # answer the dialog, then /exit
+  ```
+
+- **A worktree cell cannot be pre-trusted at all.** The checkout does not
+  exist until the create makes it, so there is no directory to trust in
+  advance. Cells 1, 3 and 8 will stop on the trust prompt **every time**, on
+  every machine. That is their expected result, not a failure; each says so.
+
 ### Somewhere isolated to run
 
 The disposable-session route this document used to prescribe does not work as
@@ -72,9 +102,45 @@ see configuration if you want to enable it.
 ```
 
 herdr blocks it whenever `HERDR_ENV` marks the shell as herdr-managed
-(`herdr:src/main.rs`'s `should_block_nested`). Two ways forward. Route B is
+(`herdr:src/main.rs`'s `should_block_nested`). Three ways forward. Route B is
 usually the faster one, and it is the only one that gives the form under test
 a pane id of its own.
+
+**Route A0 — a headless disposable server, no config change.** The block above
+is on the **TUI**. `herdr server` returns from
+[`main.rs`](https://github.com/herdrdev/herdr/blob/b1ff4582/src/main.rs#L588)
+into `server::headless::run_server()` *before* `exit_if_nested_disabled` is
+ever reached, so a headless session starts from inside a herdr pane with
+nothing enabled and nothing edited:
+
+```bash
+env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH -u HERDR_ENV \
+    -u HERDR_WORKSPACE_ID -u HERDR_TAB_ID -u HERDR_PANE_ID \
+    HERDR_SESSION=probe-$(date +%s) herdr server &
+```
+
+It daemonises and returns 0. Drive it exactly as Route A does, with
+`HERDR_SESSION` pinned on every call. For `herdr-draft create`, point
+`HERDR_BIN_PATH` at a one-line wrapper carrying that prefix —
+`internal/herdrc`'s `CLIRunner` execs `$HERDR_BIN_PATH` directly and there is
+no way to inject a flag:
+
+```sh
+#!/bin/sh
+exec env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH -u HERDR_ENV \
+  -u HERDR_WORKSPACE_ID -u HERDR_TAB_ID -u HERDR_PANE_ID \
+  HERDR_SESSION=<your-session-name> herdr "$@"
+```
+
+Prefer this to Route A. It costs nothing, touches no configuration you would
+then have to remember to undo, and it runs the **real form** — `pane run` the
+Route B block below into one of its panes, then `pane send-keys` and
+`pane read --source visible` to drive and read it. The one thing it cannot do
+is the popup: `plugin pane open` spawns the plugin process, but the popup gets
+no entry in `pane list` at all, because it is composited by an attached TUI
+client and a headless server has none. That is the precise reason Cell 1
+needs a human, and it is worth knowing before you go looking for a pane id
+that does not exist.
 
 **Route A — enable nesting, then use a disposable session.** In herdr's own
 `config.toml`:
@@ -448,12 +514,36 @@ claude-only), then:
 10. Submit.
 
 **Expected:** the agent step reads `claude   under clauth <the profile you
-picked>`, followed by a `detection  waiting for the agent` step, then the
-prompt row as in Cell 1 (including the same first-run-dialog caveat).
-`herdr[S] pane list` on the launched pane should show `agent: "claude"` and
-`tokens.clauth: "<the profile you picked>"`.
-`herdr[S] pane process-info --pane <pane-id>` should show **both** `clauth`
-(parent) and `claude` (child).
+picked>`, followed by a `detection  waiting for the agent` step.
+
+**The detection step is expected to FAIL here, and that is the pass
+condition** — a worktree checkout is new, so it cannot have been pre-trusted
+(see "Claude Code's trust prompt is a precondition"). What the step must say
+is the instruction, not a timeout and not a raw error code:
+
+```
+claude started; answer the dialog in the pane, then keep this session
+-- it is showing "Quick safety check": ...
+```
+
+Then check the three things this cell exists for, all of which hold with the
+agent still sitting on its dialog:
+
+- **The agent is alive.** `herdr[S] agent get <pane-id>` reports
+  `agent_status: "blocked"`, not a dead pane. Until #94 this cell destroyed
+  the agent — the prompt was typed into the dialog and its Enter answered
+  "No, exit" — so a pane back at a shell prompt is a regression of that fix
+  and the single most important thing on this page to notice.
+- **The prompt survived.** The failure screen names the file it was saved
+  to (or `--json` carries `prompt_sent: false` and `unsent_prompt`).
+- **The launch really went through clauth.** `herdr[S] pane list` shows
+  `agent: "claude"` and `tokens.clauth: "<the profile you picked>"`, and
+  `herdr[S] pane process-info --pane <pane-id>` shows **both** `clauth`
+  (parent) and `claude` (child).
+
+Finally, answer the dialog in the pane (`↓`, `↵`) and confirm the advice the
+message gave is true: `agent get` should move to `idle` and the session should
+be usable. A cell that ends here with a working session has passed.
 
 **Teardown:** same as Cell 1.
 
@@ -598,9 +688,11 @@ more tab than before, and that tab's pane is running the agent. This is
 placement spec §5.3's disclosed cost — the idle shell in the worktree's
 own workspace is not a bug.
 
-Expect step 3 (starting the agent) to fail with `agent_not_ready` the
-first time you run this cell against a given machine: the worktree
-checkout is a path Claude Code has never seen, so its first-run trust
+Expect step 3 (starting the agent) to fail with `agent_not_ready` **every
+time you run this cell**, on every machine — not just the first. The
+worktree checkout is created by the run itself, so it is always a path
+Claude Code has never seen and there is nothing to pre-trust in advance
+(see "Claude Code's trust prompt is a precondition"). Its first-run trust
 prompt blocks it, and herdr's own `agent start` refuses outright rather
 than herdr-draft sending a prompt into it — the same class of blocking
 dialog `internal/plan/dialog.go` exists to catch, just refused one layer
@@ -669,7 +761,38 @@ this manual step cannot force with certainty every time.
   is capped at 50 entries and evicts least-recently-seen, so throwaway paths
   age out on their own.
 - If you enabled `[experimental] allow_nested` for Route A, decide whether to
-  leave it on.
+  leave it on. Route A0 needs no such decision, which is most of why it is
+  the one to prefer.
+- Check for an orphaned plugin process: `pgrep -f herdr-draft`. A
+  `plugin pane open` in a headless session (Route A0) spawns the binary with
+  no client to attach it to, so it outlives the session that started it and
+  has to be killed by hand.
 - Record the herdr and clauth versions tested, which cells passed as
   expected, and anything that deviated from "Expected" above (including which
-  known-limitation caveats you actually hit) alongside the release.
+  known-limitation caveats you actually hit) — in **Recorded runs** below, and
+  alongside the release.
+
+## Recorded runs
+
+### herdr 0.9.0 — 2026-09-08 (partial)
+
+herdr 0.9.0, clauth profile `quantivly-2`, plugin at `0bef09e`. Run via
+Route A0 (headless disposable sessions) plus Route B for the form.
+
+| Cell | Result |
+|---|---|
+| 1 — Path A, worktree on | **not run** (popup; needs an attached TUI) |
+| 2 — Path A, worktree off | **not run** |
+| 3 — Path B, worktree on | **pass**, after #94 — the blocked-detection path above. Reproduced the pre-fix failure first, then confirmed the agent survives and the dialog answers cleanly |
+| 4 — Path B, worktree off | **pass** — all four steps, prompt delivered and answered in the pane, `tokens.clauth` and `process-info` both as expected |
+| 5 — headless `create` | **pass** — all six inert probes, the no-config warning, and a live create returning `ok: true` with its provenance map |
+| 6 — forbidden repo-config key | **pass except one line** — value applied, both forbidden keys rejected with reasons, `branch_prefix` falling back to the user's own. The `from .herdr-draft.toml` provenance line does not render: **#93** |
+| 7 — per-project defaults | **not run** |
+| 8 — placement tab here | **not run** |
+| 9 — the reuse path | **not run** |
+
+Two defects came out of this pass, both live-only — the suite was green
+throughout. #94 (Path B killed the agent it launched) is fixed; #93 (a
+missing provenance line) is open. The opening-state and Cell 6 checks were
+driven through the real form in a pane, which is what Route A0 makes
+possible; only the popup itself still needs a person.
