@@ -233,6 +233,79 @@ func promptIfReady(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptR
 	return r.AgentPrompt(ctx, req)
 }
 
+// withPaneTail appends what the pane is actually showing to a detection
+// failure, or returns err unchanged when there is nothing useful to add.
+//
+// A detection timeout used to report only that it had waited:
+//
+//	waiting for agent detection ... failed: await detection for pane w9:p1:
+//	timed out after 30.001s
+//
+// while the pane held the answer for the whole thirty seconds. The case
+// that prompted this was an extra_args value containing shell glob
+// characters -- herdr's `pane run` TYPES a command into the pane's
+// interactive shell rather than exec'ing an argv vector, so zsh expanded
+// it and refused:
+//
+//	❯ clauth start personal -- --model claude-opus-5[1m] --effort xhigh
+//	zsh: no matches found: claude-opus-5[1m]
+//
+// The agent never started, and `pane run` still reported success, because
+// its exit code reflects the TYPING and not the command (runOK's contract).
+// So the launch step cannot tell that anything went wrong -- but this step
+// waits thirty seconds next to a pane that is displaying the reason, and
+// then says nothing about it.
+//
+// Deliberately best-effort and last: the timeout is the failure, and this
+// only enriches it. A read that fails, or returns nothing, leaves the
+// original error exactly as it was rather than replacing a real diagnosis
+// with a complaint about not being able to fetch one.
+func withPaneTail(ctx context.Context, r herdrc.Runner, paneID string, err error) error {
+	if paneID == "" {
+		return err
+	}
+	screen, readErr := r.AgentRead(ctx, paneID)
+	if readErr != nil {
+		return err
+	}
+	tail := lastNonBlankLines(screen, paneTailLines)
+	if tail == "" {
+		return err
+	}
+	return fmt.Errorf("%w; the pane shows: %s", err, tail)
+}
+
+// paneTailLines is how much of the pane a detection failure quotes. Three
+// is enough for a shell rejection (the echoed command, the error, the new
+// prompt) and small enough that the failure screen stays readable -- this
+// text reaches a UI that surfaces it to the user, not a log.
+const paneTailLines = 3
+
+// lastNonBlankLines returns the last n non-blank lines of s joined by " | ",
+// trimmed, or "" when there are none.
+//
+// Joined rather than kept multi-line because the caller's error string ends
+// up on a failure screen that budgets its rows; a screen dump with embedded
+// newlines would push that layout past the height it was asked for, which
+// is the same hazard the Linear and clauth reasons flatten for.
+func lastNonBlankLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	var kept []string
+	for i := len(lines) - 1; i >= 0 && len(kept) < n; i-- {
+		if t := strings.TrimSpace(lines[i]); t != "" {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	// kept was gathered bottom-up; put it back in reading order.
+	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
+		kept[i], kept[j] = kept[j], kept[i]
+	}
+	return strings.Join(kept, " | ")
+}
+
 // isTopologyKind reports whether kind is one of the four ops that can
 // produce a herdrc.CreatedTopology (i.e. carries gotTopo=true in Execute's
 // loop below) -- OpAgentStart and everything after it never do.
@@ -422,6 +495,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 					paneID = agentPane
 				}
 				err = r.AwaitDetection(ctx, paneID, op.Timeout)
+				if err != nil {
+					err = withPaneTail(ctx, r, paneID, err)
+				}
 			case OpAgentPrompt:
 				if op.Prompt == nil {
 					return malformedOpError(op.Kind)
