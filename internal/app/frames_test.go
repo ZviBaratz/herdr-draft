@@ -692,7 +692,7 @@ func TestAssembledSubmit_BlockedStartFrame(t *testing.T) {
 		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
 		failAt: "AgentStart",
 		failErr: errors.New("herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
-			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"}}`),
+			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`),
 		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
 	}

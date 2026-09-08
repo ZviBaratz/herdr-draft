@@ -1402,15 +1402,20 @@ func TestExecuteDetectionTimeoutSurvivesAnUnreadablePane(t *testing.T) {
 
 // notReadyErr is the failure `herdr agent start` produces on 0.9.0 when its
 // readiness poll finds the agent blocked, as herdrc.CLIRunner surfaces it:
-// the subcommand named, then herdr's own JSON error envelope from stderr
-// (cmdError's `herdr %s: %w: %s`). Verbatim from the live 0.9.0 session
-// that filed #90 -- the error code has to arrive inside a string for
-// isAgentNotReadyError's substring match to be the right test, and a
-// hand-written `errors.New("agent_not_ready")` would pass that match while
-// proving nothing about the shape the real CLI hands over.
+// the subcommand named, then herdr's own JSON error envelope, which
+// print_response (herdr:src/cli.rs:738) writes to stderr before exiting 1
+// and cmdError folds into the message (`herdr %s: %w: %s`).
+//
+// Verbatim, character for character, from a live 0.9.0 run against a fresh
+// worktree on 2026-09-08 -- including the `"id"` member that trails the
+// error object, which #90's own transcript had trimmed. The exactness is
+// the point: isAgentNotReadyError matches this by SUBSTRING, because herdr
+// error codes reach Go inside an error string rather than as a typed value,
+// so a convenient `errors.New("agent_not_ready")` would satisfy the match
+// while proving nothing about the shape the real CLI hands over.
 func notReadyErr(agentName string) error {
-	return fmt.Errorf("herdr agent start %s --kind claude: exit status 1: "+
-		`{"error":{"code":"agent_not_ready","message":"agent %s is blocked during startup and is not ready for prompts"}}`,
+	return fmt.Errorf("herdr agent start %s --kind claude --pane w2:p1: exit status 1: "+
+		`{"error":{"code":"agent_not_ready","message":"agent %s is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`,
 		agentName, agentName)
 }
 

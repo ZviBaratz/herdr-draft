@@ -667,7 +667,7 @@ func TestBlockedStartIsExplainedHeadlessly(t *testing.T) {
 	h := newHarness(t)
 	h.runner.failAt = "AgentStart"
 	h.runner.failErr = errors.New("herdr agent start t --kind claude: exit status 1: " +
-		`{"error":{"code":"agent_not_ready","message":"agent t is blocked during startup and is not ready for prompts"}}`)
+		`{"error":{"code":"agent_not_ready","message":"agent t is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`)
 	h.runner.readText = "Quick safety check: Is this a project you created or one you trust?\n" +
 		"❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel"
 
