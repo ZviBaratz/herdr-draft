@@ -1,0 +1,59 @@
+# check runs this repository's whole gate, which is `just check` and not a
+# reimplementation of it. That matters more here than it usually does: the
+# gate is four steps, and the third (`just unused`) is the one a workflow
+# author is most likely to leave out, because `go vet` looks like it
+# already covers linting. It does not -- vet cannot detect unused
+# unexported code at all, and that blind spot has shipped two defects in
+# this repo. Calling the recipe means CI cannot quietly disagree with what
+# a contributor runs locally.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only: this workflow builds and tests, and has no business doing
+# anything else with the token.
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      # Report both platforms. A macOS-only failure is exactly the kind of
+      # thing worth seeing in full rather than having cancelled by a
+      # simultaneous Linux failure -- the binary has never been compiled
+      # anywhere but one Linux laptop.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Third-party actions are pinned by commit SHA, not by tag: a tag is
+      # mutable and this workflow runs on every push.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The Go version comes from go.mod so CI cannot test a version
+          # the module does not claim to support.
+          go-version-file: go.mod
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Install pinned staticcheck
+        # The version is read from the justfile, which is its single source
+        # of truth, so CI and a contributor's laptop cannot drift. Note
+        # this may pull a newer Go toolchain than go.mod's: staticcheck
+        # needs 1.26, which is exactly why it is NOT a go.mod tool
+        # directive -- see the justfile's own comment.
+        run: go install honnef.co/go/tools/cmd/staticcheck@"$(just --evaluate staticcheck_version)"
+
+      - name: just check
+        run: just check

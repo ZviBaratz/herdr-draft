@@ -1,3 +1,17 @@
+# staticcheck_version is the ONE machine-readable pin for this repo's only
+# dev-tool dependency outside go.mod. Both the `unused` recipe below and
+# .github/workflows/check.yml read it from here -- CI with
+# `just --evaluate staticcheck_version` -- so the version cannot drift
+# between what a contributor runs and what the gate runs.
+#
+# It deliberately does NOT live in go.mod as a `tool` directive, which is
+# otherwise the modern way to pin one. staticcheck 2026.2.1 requires Go
+# 1.26, so `go get -tool` rewrites this module's own `go` line 1.25 -> 1.26
+# -- and herdr runs [[build]]'s `go build` on the USER's machine at install
+# time, so that would raise the floor for everyone installing the plugin to
+# pin a linter they never run. A dev tool must not narrow who can install.
+staticcheck_version := "2026.2.1"
+
 test:
     go test ./...
 
@@ -14,11 +28,32 @@ test:
 #
 # staticcheck is a dev-tool dependency, not a module one: it is not in
 # go.mod and nothing else in the repo installs it, hence the guard. The
-# U1000 baseline was set clean against staticcheck 2026.2.1; a newer
+# U1000 baseline was set clean against the pinned version above; a newer
 # release refining `unused` may report symbols this tree does not, which
 # is a finding to read rather than a break to work around.
 unused:
-    @command -v staticcheck >/dev/null 2>&1 || (echo "just unused needs staticcheck: go install honnef.co/go/tools/cmd/staticcheck@2026.2.1  (or run it without installing: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 -checks U1000 -tests=false ./...)" >&2; exit 1)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v staticcheck >/dev/null 2>&1; then
+        echo "just unused needs staticcheck {{staticcheck_version}}:" >&2
+        echo "    go install honnef.co/go/tools/cmd/staticcheck@{{staticcheck_version}}" >&2
+        echo "or run it without installing:" >&2
+        echo "    go run honnef.co/go/tools/cmd/staticcheck@{{staticcheck_version}} -checks U1000 -tests=false ./..." >&2
+        exit 1
+    fi
+    # A mismatch is reported, not enforced. The U1000 baseline was set
+    # clean against the pinned version; a newer release refining `unused`
+    # may report symbols this tree does not, and the comment above says
+    # that is a finding to read rather than a break to work around. Failing
+    # here would turn every upgrade into a blocked checkout.
+    have="$(staticcheck -version 2>/dev/null | grep -oE '[0-9]{4}\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+    if [[ -n "$have" && "$have" != "{{staticcheck_version}}" ]]; then
+        echo "note: staticcheck $have installed, {{staticcheck_version}} pinned -- findings may differ from CI's" >&2
+    fi
+    # Echoed because a shebang recipe runs as one script, so just no
+    # longer prints the line the way it did for the plain recipe -- and
+    # `just check`'s value is partly that you can see the four gates go by.
+    echo "staticcheck -checks U1000 -tests=false ./..."
     staticcheck -checks U1000 -tests=false ./...
 
 check:
