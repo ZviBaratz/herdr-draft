@@ -163,11 +163,22 @@ Layering, outermost to innermost:
   `herdrc.Runner`; anything Build needs to decide (is this a git repo, what
   is the invoking pane id) must already be resolved by the caller
   (`internal/app`) and passed in via `plan.Input`.
-- **`--trust-repository` is deliberately unwired**, not just unimplemented:
-  herdr's minimum supported version (0.8.2, `min_herdr_version` in
-  `herdr-plugin.toml`) predates the flag and would fail worktree creation
-  outright if it were passed. Don't add a config key for it until
-  `min_herdr_version` is bumped past the herdr release that carries it.
+- **`[worktree] trust_repository` is `config.toml`-only, and that is a
+  trust boundary rather than an omission.** The key adds
+  `--trust-repository` to `herdr worktree create` (herdr 0.9.0, #3044),
+  which waives git's ownership check for one request. It resolves through
+  `internal/defaults` like everything else but with a chain that stops at
+  `TierUserConfig`: `.herdr-draft.toml` is refused because a repository
+  arriving via `git clone` must never assert its own trustworthiness (it is
+  on `repo.go`'s deny-list, and the allow-list being flat means the table
+  form is rejected structurally, not by anyone remembering to), and the two
+  memory tiers are refused because they remember what the user *chose in
+  the form* and no row offers this. There is deliberately no
+  `--trust-repository` flag on `create` either: every flag there has a form
+  row behind it, and `equivalence_test.go` is what would break first.
+  (Until 2026-09-08 this convention said the opposite — leave the key
+  unwired, because the 0.8.2 floor predated the flag. herdr 0.9.0 and the
+  floor bump retired that.)
 - **`Row(w)` takes no height parameter, by design.** A section renders its
   row from its own state and the value column's width, and must not consult
   the window height in any way — that is precisely what makes "row i is

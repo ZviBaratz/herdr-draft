@@ -693,6 +693,11 @@ screens.
 - `plan.Build` stays pure.
 - `--trust-repository` stays unwired. herdr 0.8.2 rejects the flag outright;
   the removal condition in v1 §9 is unchanged.
+  *(Resolved 2026-09-08: herdr 0.9.0 shipped the flag, `min_herdr_version`
+  moved to 0.9.0, and v1 §9's removal condition — a release carrying the
+  commit, plus a floor bump in the same change — was met. The key is live as
+  `[worktree] trust_repository`, `config.toml`-only. This bullet records the
+  v2-era constraint and is kept as written.)*
 - `internal/plan/dialog.go` stays. Claude Code's first-run trust dialog is
   still undetected on herdr master, and `agent prompt`'s `agent_blocked` gate
   reads cached state rather than the screen, so the guard is load-bearing.

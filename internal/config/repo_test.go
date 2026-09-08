@@ -405,3 +405,42 @@ func TestLookupAllowedPanicsForAnUnlistedKey(t *testing.T) {
 	}()
 	_, _ = lookupAllowed(map[string]any{"prompt_template": "x"}, "prompt_template")
 }
+
+// TestLoadRepoConfig_ForbidsWorktreeTrustRepository is the trust-boundary
+// case with the sharpest teeth in the whole list. `[worktree]
+// trust_repository` adds `--trust-repository` to `herdr worktree create`,
+// which is git's "this repository is safe to run code from" check being
+// waived. A file that arrives with `git clone` asserting its own
+// trustworthiness is the exact shape spec §11 exists to refuse: it is not a
+// preference the user could have picked in the form -- there is no row for
+// it -- and the answer to "should I trust this repository?" can never come
+// from the repository.
+//
+// The table form is what makes this structurally safe rather than merely
+// remembered: repoAllowedKeys is flat by construction, so ANY table header
+// is rejected without needing an entry here at all. This test pins the
+// note, which is the part a future contributor would otherwise lose.
+func TestLoadRepoConfig_ForbidsWorktreeTrustRepository(t *testing.T) {
+	assertForbidden(t, "[worktree]\ntrust_repository = true\n", "worktree")
+}
+
+// TestLoadRepoConfig_ForbiddenWorktreeDoesNotShadowDefaultWorktree guards
+// the collision the two names invite. `default_worktree` is ALLOWED and
+// top-level; `worktree` is a FORBIDDEN table. deniedFor matches a table
+// prefix, so a sloppy prefix test ("does the key start with worktree?")
+// would start silently rejecting the allowed key -- turning a permitted
+// team default into a mystery. Package init already refuses the reverse
+// mistake; this covers the read path.
+func TestLoadRepoConfig_ForbiddenWorktreeDoesNotShadowDefaultWorktree(t *testing.T) {
+	rc := LoadRepoConfig(writeRepoConfig(t, "default_worktree = false\n"))
+
+	if rc.DefaultWorktree == nil {
+		t.Fatal("DefaultWorktree = nil, want *false: the allowed key must survive beside the forbidden table")
+	}
+	if *rc.DefaultWorktree {
+		t.Error("DefaultWorktree = *true, want *false")
+	}
+	if len(rc.Notes) != 0 {
+		t.Errorf("Notes = %q, want none for a file setting only an allowed key", rc.Notes)
+	}
+}

@@ -991,3 +991,8 @@ Offered to the author and declined; do not build them:
 Unchanged from v2 and still true: `--trust-repository` stays unwired (herdr
 0.8.2 rejects the flag), and `internal/plan/dialog.go` stays (Claude Code's
 first-run trust prompt is still undetected).
+
+*(Half of that expired on 2026-09-08. `--trust-repository` is now wired:
+herdr 0.9.0 shipped the flag and the floor moved with it, so the key exists
+as `[worktree] trust_repository`. `internal/plan/dialog.go` still stays —
+nothing upstream has changed about the first-run trust prompt.)*

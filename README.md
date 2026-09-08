@@ -393,6 +393,24 @@ two profiles exist (a static, startup-time check).
 - `prompt_wait_ms` (default: `120000`) — timeout passed to
   `herdr agent prompt --wait` for step 3 of the submit pipeline.
 
+### `[worktree]`
+
+- `trust_repository` (default: `false`) — adds `--trust-repository` to
+  `herdr worktree create`, which tells herdr to trust a verified repository
+  **for that one request** instead of you editing your global git
+  configuration. Needs herdr ≥ 0.9.0, which is this plugin's minimum.
+
+  Turn it on if worktree creation fails with git's "dubious ownership"
+  error — typically a repository owned by a different user or, on Windows,
+  a different SID. The alternative is the permanent, machine-wide
+  `git config --global --add safe.directory <path>`, which this key exists
+  to let you avoid.
+
+  It is `config.toml`-only, deliberately: a repository can never set it
+  (see [Repo-level shared config](#repo-level-shared-config-herdr-drafttoml)),
+  and neither `last-used.json` nor `projects.json` remembers it, because
+  those remember what you *chose in the form* and there is no row for this.
+
 ### `[palette]`
 
 Optional escape hatch when herdr's own theme can't be read correctly (see
@@ -495,8 +513,10 @@ of a launched agent's command line), `[agents] favorites`/`default` (a
 repository doesn't choose which agent runs on your machine), `[linear]
 prompt_template` (it would become the agent's first instruction),
 `[linear] api_key`/`api_key_cmd` (a credential, and a command), and all of
-`[clauth]`, `[timeouts]` and `[palette]`. So is a key that is simply
-misspelled. A malformed file is ignored too — it never blocks the form.
+`[clauth]`, `[timeouts]`, `[palette]` and `[worktree]` (a repository does
+not decide that it is trusted — `trust_repository` waives a git safety
+check, and the answer to "is this repository safe?" can never come from the
+repository). So is a key that is simply misspelled. A malformed file is ignored too — it never blocks the form.
 
 **Where you see all this.** The report — one line per ignored key, with the
 reason — is in the **project** row's panel, since the project row is what
@@ -557,17 +577,6 @@ them before filing a bug against something documented here:
   yet distinguish a blocking confirmation dialog from a truly idle
   terminal), not something this plugin can fix; this guard is a defensive
   workaround that stays in place until herdr's detection improves.
-- **`[worktree] trust_repository` is blocked upstream, not just
-  unimplemented.** The design spec's submit pipeline mentions
-  `--trust-repository per config`, and herdr does have that flag — on
-  `master`, added in commit `095f1337` (#3344, 2026-08-28), which is in no
-  release yet. herdr 0.8.2 answers
-  `unknown option: --trust-repository`, so passing it would break worktree
-  creation. The config key is deliberately absent rather than present and
-  inert: a key that silently does nothing is worse than no key. Until a
-  herdr release carries that commit, trust the repository yourself
-  (`git config --global --add safe.directory <path>`) before or after
-  creation.
 - **Popup panes are only reachable via keybinding or CLI.** Plugin actions
   do not appear in herdr's own context/global menus in plugin v1 — see
   [Keybinding](#keybinding) for both routes.
@@ -586,6 +595,14 @@ or malformed, or when `config.toml` fails to parse. Check
 `$HERDR_SOCKET_PATH` is set and the herdr server behind it is actually
 running; check `config.toml` for a syntax error if you've recently edited
 it.
+
+**Worktree creation fails with git's "dubious ownership".** git refuses to
+operate on a repository owned by another user (on Windows, another SID),
+and worktree creation is where you meet it. Set `trust_repository = true`
+under [`[worktree]`](#worktree) — herdr then trusts the repository for that
+one request, which is narrower than the machine-wide
+`git config --global --add safe.directory <path>` you would otherwise need.
+Requires herdr ≥ 0.9.0.
 
 **Plugin actions not appearing in herdr's menus.** Expected in plugin v1 —
 see [Known limitations](#known-limitations). Use the keybinding or the CLI

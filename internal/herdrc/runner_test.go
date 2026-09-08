@@ -244,6 +244,48 @@ func TestCLIRunnerWorktreeCreateNoFocus(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerWorktreeCreateTrustRepository pins the ONE argv difference
+// `[worktree] trust_repository` makes. The flag is positional-last and
+// takes no value, so a regression here is silent: herdr would simply
+// create the worktree without trusting the repository, and the failure
+// surfaces later as a git "dubious ownership" error from a subprocess
+// nobody is watching.
+func TestCLIRunnerWorktreeCreateTrustRepository(t *testing.T) {
+	stdout := readFixture(t, filepath.Join("testdata", "live", "worktree_create.json"))
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	req := WorktreeCreateReq{Cwd: "/var/tmp/repo", Branch: "probe/x", Focus: true, TrustRepository: true}
+	if _, err := r.WorktreeCreate(context.Background(), req); err != nil {
+		t.Fatalf("WorktreeCreate: %v", err)
+	}
+
+	wantArgv := "worktree create --cwd /var/tmp/repo --branch probe/x --focus --trust-repository"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerWorktreeCreateNoTrustRepositoryByDefault is the other half,
+// and the one that matters for anyone who never set the key: the flag must
+// be ABSENT, not present-and-false. herdr 0.9.0 takes `--trust-repository`
+// as a bare switch, so there is no false to pass -- sending it always
+// would silently opt every user into relaxing a git safety check.
+func TestCLIRunnerWorktreeCreateNoTrustRepositoryByDefault(t *testing.T) {
+	stdout := readFixture(t, filepath.Join("testdata", "live", "worktree_create.json"))
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	req := WorktreeCreateReq{Cwd: "/var/tmp/repo", Branch: "probe/x", Focus: true}
+	if _, err := r.WorktreeCreate(context.Background(), req); err != nil {
+		t.Fatalf("WorktreeCreate: %v", err)
+	}
+
+	if got := readArgvLog(t, argvLog); strings.Contains(got, "--trust-repository") {
+		t.Errorf("argv = %q, want no --trust-repository", got)
+	}
+}
+
 func TestCLIRunnerWorktreeCreateNonZeroExit(t *testing.T) {
 	bin := fakeHerdrFail(t, "fatal: not a git repository")
 	r := &CLIRunner{Bin: bin}

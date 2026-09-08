@@ -378,11 +378,13 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 
 		DetectionTimeout: time.Duration(t.cfg.Timeouts.DetectionMS) * time.Millisecond,
 		PromptTimeout:    time.Duration(t.cfg.Timeouts.PromptWaitMS) * time.Millisecond,
-		// Unwired, not merely unimplemented: herdr 0.8.2 (this plugin's
-		// min_herdr_version) answers `unknown option: --trust-repository`
-		// and fails worktree creation outright. See buildPlanInput's own
-		// note; the two must be wired together or not at all.
-		TrustRepository: false,
+		// `[worktree] trust_repository`, straight off the resolver -- see
+		// buildPlanInput's own note. There is deliberately no
+		// `--trust-repository` FLAG on this verb: every flag here has a
+		// form row behind it, this value has none, and equivalence_test.go
+		// exists to prove the two paths build the same plan.Input. A flag
+		// only `create` could set would be the first thing to break that.
+		TrustRepository: res.TrustRepository,
 	}, prov, nil
 }
 

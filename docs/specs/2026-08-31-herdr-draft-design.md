@@ -287,16 +287,21 @@ Staged creation, with per-step progress lines rendered in the popup
 **Step 1 — topology** (herdr CLI; all creation output is JSON, IDs parsed
 from it):
 
-> *Note, 2026-09-01:* `--trust-repository` is **blocked upstream**, not
-> merely unimplemented. herdr added the flag to `worktree create` in
-> commit `095f1337` ("fix: trust worktree repositories per request",
-> #3344, 2026-08-28), which is on herdr `master` and in no release —
-> herdr 0.8.2, this plugin's `min_herdr_version`, answers
-> `unknown option: --trust-repository`. Passing it today would break
-> worktree creation outright. The `[worktree] trust_repository` config key
-> is therefore deliberately absent rather than inert; wire it when a herdr
-> release contains `095f1337`, and raise `min_herdr_version` in the same
-> change.
+> *Note, 2026-09-01, resolved 2026-09-08:* `--trust-repository` was
+> **blocked upstream** for the whole of v1. herdr added the flag to
+> `worktree create` in commit `095f1337` ("fix: trust worktree
+> repositories per request", #3344, 2026-08-28), which sat on `master` and
+> in no release; herdr 0.8.2 answered `unknown option:
+> --trust-repository`, so passing it would have broken worktree creation
+> outright. The `[worktree] trust_repository` key was therefore kept
+> deliberately absent rather than present and inert, and this note set the
+> two conditions for wiring it: a herdr release containing `095f1337`, and
+> a `min_herdr_version` raised in the same change.
+>
+> Both are now met. herdr 0.9.0 (2026-09-07) ships the flag as #3044, the
+> floor moved to 0.9.0, and the key is live — `config.toml`-only, since no
+> repository or remembered choice may supply it. See the README's
+> `[worktree]` section.
 
 - Worktree on: `herdr worktree create --cwd <project> --branch <b>
   --base <ref> --label <title> --focus [--trust-repository per config]` →
