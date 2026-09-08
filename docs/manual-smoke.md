@@ -135,7 +135,31 @@ exec env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH -u HERDR_ENV \
 Prefer this to Route A. It costs nothing, touches no configuration you would
 then have to remember to undo, and it runs the **real form** — `pane run` the
 Route B block below into one of its panes, then `pane send-keys` and
-`pane read --source visible` to drive and read it. The one thing it cannot do
+`pane read --source visible` to drive and read it.
+
+> **Reading a TUI you are driving: two traps, both of which produce confident
+> nonsense.** Both cost a false reading on the 0.9.0 pass.
+>
+> `pane read` returns whatever is on screen *now*, and the form has not
+> necessarily repainted since your keystroke, so a naive send-then-read is
+> **one keystroke stale**. Three `Right`s on the placement chips read back as
+> `new space → new space → tab here`, which looks exactly like a row reverting
+> on its own. Settle ~0.4s before reading, and remember the chip rows **wrap**.
+>
+> `pane wait-output` is not a "has changed" primitive: it searches the
+> selected snapshot **immediately, including existing output**, then polls. So
+> waiting for a string already on screen returns at once — waiting for
+> `split here` after pressing `→` matches the chip row that always contains
+> it, and waiting for `Quick safety check` before launching a *second* agent
+> matches the *previous* agent's dialog still in the buffer. Wait on something
+> that can only appear after the change (a per-choice hint, say), or `clear`
+> the pane first.
+>
+> Answering a dialog needs the same care for a different reason: Claude Code's
+> trust prompt paints before its key handling is wired, so a `Down` sent the
+> instant the text appears can be dropped — and since **"No, exit" is the
+> preselected row**, the following `Enter` then declines. Read back the `❯`
+> marker and confirm it moved before pressing `Enter`. The one thing it cannot do
 is the popup: `plugin pane open` spawns the plugin process, but the popup gets
 no entry in `pane list` at all, because it is composited by an attached TUI
 client and a headless server has none. That is the precise reason Cell 1
@@ -699,6 +723,18 @@ when you started this cell: `worktree create` opens it too, as
 leaves that workspace alone). Against the fresh throwaway repo this
 cell's own setup calls for, that means **two** new workspaces, not one —
 reading it as one would mistake this cell's own setup for a failure.
+
+**Count panes with other plugins in mind.** Plugin install/link state is
+global, so a Route A0 session inherits every plugin installed for your normal
+one — and three of them subscribe to `worktree.created`. One,
+`persiyanov.reviewr`, answers it by *opening a pane*
+(`[[events]] on = "worktree.created"`, `command = ["bash", "herdr/pane.sh",
+"auto-open"]`), so the worktree's own workspace holds **two** idle shells
+rather than the one this cell describes. Confirmed independent of
+herdr-draft: a bare `herdr worktree create` reproduces it, and the plan only
+ever issues the two calls its progress stack shows. Check
+`herdr[S] plugin list` before treating a surplus container as a finding, and
+count what changed rather than the absolute total.
 `herdr[S] tab list --workspace <your original workspace>` should show one
 more tab than before, and that tab's pane is running the agent. This is
 placement spec §5.3's disclosed cost — the idle shell in the worktree's
@@ -760,6 +796,51 @@ first to confirm whether it did, since reuse depends on herdr's own
 `open_workspace_idx_for_checkout` match rules (design doc §2.1), which
 this manual step cannot force with certainty every time.
 
+**This cell is not runnable as written, and here is the recipe that does
+work.** "Same typed title, same branch" is refused twice over:
+
+- Through the form, the duplicate check stops the submit. Retyping Cell 8's
+  title puts `branch & label in use` in the title panel, and a duplicate
+  verdict is the one thing that can block a create (`internal/app/async.go`'s
+  `titleNote`). Since reuse *requires* an existing checkout, and an existing
+  checkout is exactly `branch exists`, no same-branch create can be submitted
+  from the form at all.
+- Headlessly, `herdr worktree create` fails before herdr ever considers
+  reuse: `fatal: '<checkout>' already exists`, surfaced as
+  `worktree_create_failed`.
+
+Reuse needs a **stale workspace**: one herdr still holds open for a checkout
+that is no longer on disk. That is reachable, and it is the shape §5.2 was
+written for:
+
+```bash
+# after Cell 8, with its worktree workspace still open
+rm -rf /home/zvi/.herdr/worktrees/<repo>/<branch-slug>
+git -C <repo> worktree prune
+# then create the SAME branch again, placement new-space so the worktree op
+# is itself the agent's pane -- the only shape in which the correction fires
+herdr-draft create --project <repo> --title "<a different title>" \
+    --branch <same branch> --worktree --placement new-space --json
+```
+
+`--placement new-space` is load-bearing: with `tab here` or `split here` a
+placement op follows and *it* decides where the agent goes, so `plan.Execute`
+deliberately skips the claim (`exec.go`, "a claim in the reused workspace
+would be litter").
+
+**Passed on 0.9.0.** herdr reused the open workspace, and the correction
+claimed a fresh **tab** in it — the agent landed in a new pane, and the first
+session's two shells were untouched:
+
+```
+w3:p1  w3:t1  unknown  …/zvi-smoke-b-wt (deleted)   <- first session, untouched
+w3:p2  w3:t1  unknown  …/zvi-smoke-b-wt (deleted)
+w3:p3  w3:t2  blocked  …/zvi-smoke-b-wt             <- the agent, in the claimed tab
+```
+
+The `--json` report is wrong about where the agent is (`pane_id` named
+`w3:p1`): **#99**.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:
@@ -779,10 +860,13 @@ this manual step cannot force with certainty every time.
 - If you enabled `[experimental] allow_nested` for Route A, decide whether to
   leave it on. Route A0 needs no such decision, which is most of why it is
   the one to prefer.
-- Check for an orphaned plugin process: `pgrep -f herdr-draft`. A
+- Check for an orphaned plugin process: **`pgrep -x herdr-draft`**. A
   `plugin pane open` in a headless session (Route A0) spawns the binary with
   no client to attach it to, so it outlives the session that started it and
-  has to be killed by hand.
+  has to be killed by hand. Use `-x` (match the process *name*), not `-f`:
+  `pgrep -f herdr-draft` matches every command line containing the string,
+  including the shell running the `pgrep` itself, so it reports phantom
+  orphans — it answered 5 on a machine whose real count was 0.
 - Record the herdr and clauth versions tested, which cells passed as
   expected, and anything that deviated from "Expected" above (including which
   known-limitation caveats you actually hit) — in **Recorded runs** below, and
@@ -790,25 +874,50 @@ this manual step cannot force with certainty every time.
 
 ## Recorded runs
 
-### herdr 0.9.0 — 2026-09-08 (partial)
+### herdr 0.9.0 — 2026-09-08/09
 
-herdr 0.9.0, clauth profile `quantivly-2`, plugin at `0bef09e`. Run via
-Route A0 (headless disposable sessions) plus Route B for the form.
+herdr 0.9.0, clauth 0.15.1, plugin at `d15255f`. Run via Route A0 (headless
+disposable sessions) plus Route B for the form. Two sittings: cells 3–6 on
+2026-09-08 at `0bef09e`, cells 2/7/8/9 on 2026-09-09 at `d15255f`.
 
 | Cell | Result |
 |---|---|
-| 1 — Path A, worktree on | **not run** (popup; needs an attached TUI) |
-| 2 — Path A, worktree off | **not run** |
+| 1 — Path A, worktree on | **not run** — the popup, and the only cell that needs a person. Its whole *form* walk was covered through Route B while running cells 2/8/9 (opening state, the Linear panel's table/scrollbar/count/filter, the `⌃R ⌃R` clear, the prompt's `+N more`, the worktree three-part editor, the placement chips and hints, the account panel and #29's browse-vs-pin); what remains unverified is only the popup **wrapper** |
+| 2 — Path A, worktree off | **pass, with a finding** — `split here` produced exactly one new pane in the invoking tab, the progress stack's first row read `pane`, and the multi-line prompt really was delivered. But the agent could not run: `[agents.extra_args]`' quoted model id reaches Path A's argv exec unstripped, so `--model` was the literal `'claude-opus-5[1m]'`. All three steps reported success. **#72** |
 | 3 — Path B, worktree on | **pass**, after #94 — the blocked-detection path above. Reproduced the pre-fix failure first, then confirmed the agent survives and the dialog answers cleanly |
 | 4 — Path B, worktree off | **pass** — all four steps, prompt delivered and answered in the pane, `tokens.clauth` and `process-info` both as expected |
 | 5 — headless `create` | **pass** — all six inert probes, the no-config warning, and a live create returning `ok: true` with its provenance map |
 | 6 — forbidden repo-config key | **pass except one line** — value applied, both forbidden keys rejected with reasons, `branch_prefix` falling back to the user's own. The `from .herdr-draft.toml` provenance line does not render: **#93** |
-| 7 — per-project defaults | **not run** |
-| 8 — placement tab here | **not run** |
-| 9 — the reuse path | **not run** |
+| 7 — per-project defaults | **pass, both halves** — with `last-used.json` saying `claude`/`new-space` and `projects.json[X]` saying `codex`/`tab-here`, switching the project to X brought back X's values (tier 1 over tier 3), and the account row degraded to `account pinning only applies to claude`. Then, on a **second** project change, a touched `placement` survived while the untouched `agent` re-applied — the case CLAUDE.md's shared-snapshot hazard would have broken |
+| 8 — placement tab here | **pass** — two new workspaces (the worktree's own plus the origin repo's) and one new tab in the invoking workspace, agent pane in **that** workspace with its cwd on the checkout, `agent_status: blocked` rather than dead. #90's message was exactly right: instruction first, then the matched `"Quick safety check"`, then herdr's own error, with the keep/clean gate offered. See the pane-count caution in the cell — another plugin adds one |
+| 9 — the reuse path | **pass, via a rewritten recipe** — not runnable as documented (refused by the form's duplicate check and by `worktree create` alike); reached through a stale workspace, see the cell. §5.2's correction claimed a fresh tab and left the first session's panes alone. The `--json` report named the wrong pane: **#99** |
 
-Two defects came out of this pass, both live-only — the suite was green
-throughout. #94 (Path B killed the agent it launched) is fixed; #93 (a
-missing provenance line) is open. The opening-state and Cell 6 checks were
-driven through the real form in a pane, which is what Route A0 makes
-possible; only the popup itself still needs a person.
+Four findings, all live-only against a green `just check`:
+
+- **#72** (open) — the quoted-`extra_args` workaround this repo recommends
+  *breaks* Path A, because `agent start` execs an argv vector while
+  `pane run` types into a shell. No single config value works on both paths,
+  and the failure is silent: every step reports success.
+- **#99** (open, filed here) — `create`'s reported `pane_id`/`pane=` name the
+  space's pane, not the pane the agent is in, whenever a placement op or a
+  reuse correction moved it. `ExecResult.AgentPane` exists for exactly this
+  and has no reader outside `internal/plan`.
+- **#93** (open) — the missing `from .herdr-draft.toml` provenance line.
+- **#94** (fixed) — Path B killed the agent it had just launched.
+
+Two non-findings worth not rediscovering: the surplus pane in a worktree's
+workspace is `persiyanov.reviewr`'s `worktree.created` hook, not ours; and
+`pgrep -f herdr-draft` self-matches its own shell. Both are now written into
+the cells above.
+
+Also confirmed incidentally: `esc` cancels without creating, `⌃S` submits from
+any row, a failed create writes **no** state (Cell 8's failure left
+`last-used.json` untouched), and the `label in use` / `branch & label in use`
+verdicts fire live against a real session list.
+
+Teardown was clean — no stray workspaces, no orphaned process
+(`pgrep -x herdr-draft` → 0), checkouts and their per-repo parents removed,
+probe session deleted. The run's own litter in the user's state
+(`last-used.json`, and three paths each in `projects.json`/`recents.json`) was
+reverted by hand afterwards; a smoke pass writes real state, so budget for
+that or accept it.
