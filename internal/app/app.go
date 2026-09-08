@@ -16,6 +16,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -234,13 +235,13 @@ type Setup struct {
 func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc gitSource, clock Clock) (Model, error) {
 	ctx, err := herdrc.ParseContext(env.ContextJSON)
 	if err != nil {
-		return Model{}, err
+		return Model{}, refusalContext(err)
 	}
 
 	bg := context.Background()
 	workspaces, err := runner.WorkspaceList(bg)
 	if err != nil {
-		return Model{}, fmt.Errorf("herdr unreachable: %w", err)
+		return Model{}, refusalHerdrUnreachable(err)
 	}
 
 	cfg, err := config.Load(env.ConfigDir)
@@ -308,6 +309,75 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		HomeDir:           pathx.Home(),
 	}), nil
 }
+
+// The three refusals below are, for most people who ever see one, their
+// FIRST contact with this binary -- the message is the entire product at
+// that moment. spec §9 settles that these three conditions refuse rather
+// than open broken; what they say is a separate question, and the answer
+// used to be a bare wrapped error:
+//
+//	herdr-draft: parse plugin context: unexpected end of JSON input
+//
+// That is what running the binary from a shell printed. It does not say
+// the program expects to be launched by herdr, does not name the variable
+// it wanted, and does not say what to run instead. The word "plugin" is
+// the only clue.
+//
+// The headless verb already had the better instinct -- usablePluginEnv's
+// stderr lines name the variable, name the command that sets it, and say
+// what is lost without it -- so these follow its example rather than
+// inventing a style. Each names what was wrong, then what to do.
+
+// refusalContext explains an unusable $HERDR_PLUGIN_CONTEXT_JSON.
+//
+// The unset case gets the long answer because it is not really an error at
+// all: it is a person running the binary directly to see what it does, and
+// what they need is orientation. A MALFORMED context is a different
+// situation -- something did set the variable, so the reader is already
+// inside a herdr context and does not need to be told what herdr is.
+func refusalContext(err error) error {
+	if !errors.Is(err, herdrc.ErrContextUnset) {
+		return err
+	}
+	return fmt.Errorf(`%w
+
+herdr-draft is a herdr plugin: herdr launches it in a popup pane and passes
+the invocation context in that variable. There is nothing to show without
+it, so this is not a program to run directly.
+
+  open the popup:      herdr %s
+  or skip the popup:   herdr-draft create --title "..."
+  the flags:           herdr-draft create --help
+
+See %s`,
+		err,
+		"plugin pane open --plugin "+herdrc.PluginID+" --entrypoint open",
+		readmeURL)
+}
+
+// refusalHerdrUnreachable explains a herdr that did not answer.
+//
+// It deliberately does NOT tell the user to start herdr: the overwhelmingly
+// likely reader is sitting inside a running herdr, which is the only place
+// the popup opens from. A socket pointing somewhere else, or a server that
+// has been restarted under a stale environment, fits the evidence far
+// better -- and is the case that produces a bare non-zero exit with no
+// stderr at all, which is why cmdError stopped printing a dangling colon
+// for it.
+func refusalHerdrUnreachable(err error) error {
+	return fmt.Errorf(`herdr unreachable: %w
+
+herdr-draft drives herdr through its CLI, so it cannot open without one
+answering. $HERDR_BIN_PATH is the binary it runs and $HERDR_SOCKET_PATH is
+the server it expects to reach; a plugin launched by herdr gets both.
+
+A protocol mismatch reports itself here too: an upgraded herdr binary
+talking to a server still running the old one needs the server restarted
+before either will work.`, err)
+}
+
+// readmeURL is where a refusal sends someone who wants the whole picture.
+const readmeURL = "https://github.com/ZviBaratz/herdr-draft#readme"
 
 // linearUnavailableReason turns a linear.ResolveAPIKey error into the
 // short line IssueField.SetUnavailable renders on its hint row. The

@@ -2315,3 +2315,78 @@ func TestBootstrap_UnsetPluginDirsIgnoreTheWorkingDirectory(t *testing.T) {
 		t.Errorf("projects.Entries = %v, want none -- it read the working directory", m.projects.Entries)
 	}
 }
+
+// TestBootstrap_UnsetContextRefusalIsInstructive covers the message a
+// person actually meets first. The refusal itself was already correct and
+// already tested; what it SAID was `parse plugin context: unexpected end
+// of JSON input`, which names none of the things the reader needs.
+//
+// Asserting on message content is usually brittle and usually not worth
+// it. It is worth it here because the message is the entire product at
+// that moment -- this is someone's first contact with the binary, and
+// there is no UI behind it to make up for a bad one. Each assertion is a
+// question the old message left unanswered, not a spelling.
+func TestBootstrap_UnsetContextRefusalIsInstructive(t *testing.T) {
+	env := Env{ContextJSON: "", ConfigDir: t.TempDir(), StateDir: t.TempDir()}
+	_, err := Bootstrap(env, &fakeRunner{}, nil, nil, noSleep)
+	if err == nil {
+		t.Fatal("Bootstrap with an unset context returned nil, want the pre-open refusal")
+	}
+	got := err.Error()
+
+	for _, want := range []struct{ needle, why string }{
+		{"HERDR_PLUGIN_CONTEXT_JSON", "name the variable that was missing"},
+		{"herdr plugin", "say this is a herdr plugin rather than a program to run directly"},
+		{herdrc.PluginID, "name this plugin, so the command can be copied as written"},
+		{"--entrypoint open", "give the command that actually opens the popup"},
+		{"herdr-draft create", "point at the entry point that works without a popup"},
+		{"github.com/ZviBaratz/herdr-draft", "point somewhere with the whole picture"},
+	} {
+		if !strings.Contains(got, want.needle) {
+			t.Errorf("refusal does not %s (looking for %q):\n%s", want.why, want.needle, got)
+		}
+	}
+}
+
+// TestBootstrap_MalformedContextStaysShort is the other half, and the
+// reason the two cases are distinguished at all. A context that was SET
+// but unreadable means the reader is already inside a herdr context;
+// explaining what herdr is would be answering a question they did not ask,
+// and burying the actual parse failure under it.
+func TestBootstrap_MalformedContextStaysShort(t *testing.T) {
+	env := Env{ContextJSON: `{"workspace_id":`, ConfigDir: t.TempDir(), StateDir: t.TempDir()}
+	_, err := Bootstrap(env, &fakeRunner{}, nil, nil, noSleep)
+	if err == nil {
+		t.Fatal("Bootstrap with a malformed context returned nil, want the pre-open refusal")
+	}
+	got := err.Error()
+
+	if strings.Contains(got, "--entrypoint open") {
+		t.Errorf("a malformed context got the unset case's orientation text:\n%s", got)
+	}
+	if !strings.Contains(got, "parse plugin context") {
+		t.Errorf("refusal = %q, want it to name the parse failure", got)
+	}
+}
+
+// TestBootstrap_UnreachableHerdrRefusalNamesWhatToCheck pins the second
+// refusal's content. It deliberately does not tell the reader to start
+// herdr -- they are almost certainly sitting inside a running one, since
+// that is the only place the popup opens from -- so it names the two
+// variables that decide WHICH herdr is being talked to, plus the
+// protocol-mismatch case, which produces this refusal and is fixed by
+// restarting the server rather than by anything in this plugin.
+func TestBootstrap_UnreachableHerdrRefusalNamesWhatToCheck(t *testing.T) {
+	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
+	_, err := Bootstrap(env, &fakeRunner{listErr: context.DeadlineExceeded}, nil, nil, noSleep)
+	if err == nil {
+		t.Fatal("Bootstrap with an unreachable herdr returned nil, want the pre-open refusal")
+	}
+	got := err.Error()
+
+	for _, needle := range []string{"HERDR_BIN_PATH", "HERDR_SOCKET_PATH", "protocol mismatch"} {
+		if !strings.Contains(got, needle) {
+			t.Errorf("refusal does not mention %q:\n%s", needle, got)
+		}
+	}
+}

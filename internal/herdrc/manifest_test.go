@@ -1,4 +1,4 @@
-package create
+package herdrc
 
 import (
 	"os"
@@ -32,7 +32,7 @@ func readManifest(t *testing.T) manifest {
 	return m
 }
 
-// TestPluginIDMatchesManifest makes pluginID's "keep it byte-identical to
+// TestPluginIDMatchesManifest makes PluginID's "keep it byte-identical to
 // herdr-plugin.toml's id" a check rather than a request.
 //
 // The drift it guards is silent in the worst way. usablePluginEnv compares
@@ -50,10 +50,10 @@ func TestPluginIDMatchesManifest(t *testing.T) {
 	if m.ID == "" {
 		t.Fatal("herdr-plugin.toml declares no id")
 	}
-	if m.ID != pluginID {
-		t.Errorf("herdr-plugin.toml id = %q, pluginID = %q; they must match exactly -- "+
-			"usablePluginEnv compares $HERDR_PLUGIN_ID against pluginID, so a drift makes "+
-			"`create` mistake its own plugin environment for another plugin's", m.ID, pluginID)
+	if m.ID != PluginID {
+		t.Errorf("herdr-plugin.toml id = %q, PluginID = %q; they must match exactly -- "+
+			"usablePluginEnv compares $HERDR_PLUGIN_ID against PluginID, so a drift makes "+
+			"`create` mistake its own plugin environment for another plugin's", m.ID, PluginID)
 	}
 }
 
@@ -65,10 +65,10 @@ func TestPluginIDMatchesManifest(t *testing.T) {
 // public install and breaks strangers after it, which is why this is worth
 // a guard rather than a convention.
 func TestPluginIDIsVendorQualified(t *testing.T) {
-	before, after, found := strings.Cut(pluginID, ".")
+	before, after, found := strings.Cut(PluginID, ".")
 	if !found || before == "" || after == "" {
-		t.Errorf("pluginID = %q, want a vendor-qualified <vendor>.<name> id "+
-			"(herdr's own documented example is example.layout)", pluginID)
+		t.Errorf("PluginID = %q, want a vendor-qualified <vendor>.<name> id "+
+			"(herdr's own documented example is example.layout)", PluginID)
 	}
 }
 

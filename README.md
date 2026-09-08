@@ -596,10 +596,15 @@ and try again.
 **"herdr-draft: ..." plain-text error, nothing renders.** herdr-draft
 refuses to open the form at all — rather than opening it broken — when it
 can't reach the herdr socket, when `$HERDR_PLUGIN_CONTEXT_JSON` is missing
-or malformed, or when `config.toml` fails to parse. Check
-`$HERDR_SOCKET_PATH` is set and the herdr server behind it is actually
-running; check `config.toml` for a syntax error if you've recently edited
-it.
+or malformed, or when `config.toml` fails to parse. The first two say what
+to check and what to run; the config one names the file and the line.
+
+**"$HERDR_PLUGIN_CONTEXT_JSON is not set" when you run the binary
+yourself.** Expected, and not a fault: herdr sets that variable when it
+launches the plugin, so there is no invocation context — no workspace, no
+tab, no pane — when you start the binary from a shell. Use the popup, or
+`herdr-draft create`, both of which the message names. `just smoke` runs
+the real form in an ordinary pane by building a context by hand.
 
 **Worktree creation fails with git's "dubious ownership".** git refuses to
 operate on a repository owned by another user, and worktree creation is
