@@ -3,7 +3,10 @@ package main
 import (
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+
+	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"testing"
 )
 
@@ -75,6 +78,30 @@ func TestDispatch(t *testing.T) {
 			wantCode:   0,
 			wantStdout: "usage:",
 		},
+		// All three spellings, for the same reason help takes three:
+		// asking a program what it is should not require guessing which
+		// convention its author picked. A user who guesses wrong on a
+		// binary that has no --version at all gets `unknown command` and
+		// exit 2, which reads as "this program has no version" rather
+		// than "try the other spelling".
+		{
+			name:       "version exits 0 on stdout",
+			args:       []string{"version"},
+			wantCode:   0,
+			wantStdout: "herdr-draft " + herdrc.Version,
+		},
+		{
+			name:       "--version is not an unknown verb",
+			args:       []string{"--version"},
+			wantCode:   0,
+			wantStdout: "herdr-draft " + herdrc.Version,
+		},
+		{
+			name:       "-V is not an unknown verb",
+			args:       []string{"-V"},
+			wantCode:   0,
+			wantStdout: "herdr-draft " + herdrc.Version,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr strings.Builder
@@ -109,5 +136,45 @@ func TestDispatch(t *testing.T) {
 				t.Errorf("stderr = %q, want the usage alongside the refusal", stderr.String())
 			}
 		})
+	}
+}
+
+// TestVersionStringCarriesWhatABugReportNeeds pins the content, not the
+// layout. The point of adding a version at all was that a user could
+// answer "what are you running?" and a bug report could state it, so the
+// two facts nobody can reconstruct from the version alone have to be
+// there: which plugin id this binary answers to -- forks install side by
+// side under different ids -- and what compiled it.
+func TestVersionStringCarriesWhatABugReportNeeds(t *testing.T) {
+	got := versionString()
+
+	for _, want := range []string{
+		"herdr-draft " + herdrc.Version,
+		herdrc.PluginID,
+		runtime.Version(),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("versionString() does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestVersionStringOmitsAnUnstampedBuild covers the case an INSTALLED
+// plugin is always in. herdr's own [[build]] runs a plain argv with no
+// shell, so it cannot compute a `git describe` and main.build stays empty
+// -- an empty "build" line would be a field that looks broken rather than
+// absent.
+func TestVersionStringOmitsAnUnstampedBuild(t *testing.T) {
+	saved := build
+	t.Cleanup(func() { build = saved })
+
+	build = ""
+	if got := versionString(); strings.Contains(got, "build") {
+		t.Errorf("versionString() with no stamp mentions a build:\n%s", got)
+	}
+
+	build = "v0.1.0-3-gabc1234"
+	if got := versionString(); !strings.Contains(got, "v0.1.0-3-gabc1234") {
+		t.Errorf("versionString() dropped the stamped build:\n%s", got)
 	}
 }

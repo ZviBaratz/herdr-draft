@@ -12,6 +12,7 @@ import (
 // manifest is the subset of herdr-plugin.toml these tests assert on.
 type manifest struct {
 	ID        string   `toml:"id"`
+	Version   string   `toml:"version"`
 	Platforms []string `toml:"platforms"`
 }
 
@@ -101,5 +102,29 @@ func TestManifestDeclaresOnlySupportedPlatforms(t *testing.T) {
 				"[[build]] writes an extensionless binary, so a Windows install would register " +
 				"and then fail to launch. Make those two real before adding it back")
 		}
+	}
+}
+
+// TestVersionMatchesManifest holds the Version constant to the manifest.
+//
+// herdr shows the manifest's version for an installed plugin, so a drift
+// makes `herdr-draft version` and `herdr plugin list` disagree about what
+// is running -- which is worse than having no version at all, since the
+// whole reason to add one was so a bug report could state it.
+//
+// The git tag is the third member of this set and the one no test can
+// reach: a tag lives in the repository, not in the tree being tested, and
+// asserting on `git describe` would fail in every shallow CI checkout and
+// every `go install` from a module cache. Keeping the tag in step is the
+// release process's job; keeping these two in step is this test's.
+func TestVersionMatchesManifest(t *testing.T) {
+	m := readManifest(t)
+	if m.Version == "" {
+		t.Fatal("herdr-plugin.toml declares no version")
+	}
+	if m.Version != Version {
+		t.Errorf("herdr-plugin.toml version = %q, herdrc.Version = %q; bump them together -- "+
+			"herdr shows the manifest's value for an installed plugin, so a drift makes the "+
+			"binary and herdr disagree about what is running", m.Version, Version)
 	}
 }

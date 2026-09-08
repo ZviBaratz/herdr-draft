@@ -593,6 +593,25 @@ them before filing a bug against something documented here:
 herdr modal is already open. Close whatever herdr dialog is currently up
 and try again.
 
+**Which version am I running?**
+
+```bash
+herdr-draft version     # --version and -V work too
+```
+
+```
+herdr-draft 0.1.0
+  plugin id  zvibaratz.draft
+  build      v0.1.0-3-gabc1234
+  built with go1.26.4
+```
+
+The first line is the version `herdr-plugin.toml` declares, which is what
+herdr shows for the install. `build` is the exact commit, and appears only
+when there was one to record — herdr's own build step runs a plain argv
+with no shell, so an installed plugin has no `git describe` to stamp and
+the line is simply absent. Quote all of it in a bug report.
+
 **"herdr-draft: ..." plain-text error, nothing renders.** herdr-draft
 refuses to open the form at all — rather than opening it broken — when it
 can't reach the herdr socket, when `$HERDR_PLUGIN_CONTEXT_JSON` is missing

@@ -2,6 +2,11 @@
 // herdr-draft plugin: it decodes the plugin invocation context herdr hands
 // the process on startup, and it drives the herdr CLI (never the raw socket
 // API) to create and control agent sessions.
+//
+// It also holds the two facts herdr-plugin.toml declares ABOUT this plugin
+// -- PluginID and Version -- because those are what herdr reads to install
+// and name it, and because keeping them together keeps them under one
+// manifest-consistency test (manifest_test.go) instead of two.
 package herdrc
 
 import (
@@ -21,6 +26,16 @@ import (
 // a second thing to forget. TestPluginIDMatchesManifest holds it to the
 // manifest.
 const PluginID = "zvibaratz.draft"
+
+// Version is this plugin's own version, as declared by
+// herdr-plugin.toml's `version`. It is what herdr shows for the installed
+// plugin, so reporting anything else here would mean the plugin and the
+// thing that installed it disagree about what is running.
+//
+// Bump this and the manifest together; TestVersionMatchesManifest fails
+// otherwise. The git tag is the third member of that set and the one no
+// test can reach -- see CHANGELOG/release process.
+const Version = "0.1.0"
 
 // ErrContextUnset reports that $HERDR_PLUGIN_CONTEXT_JSON was empty rather
 // than malformed. The two are worth telling apart: malformed means herdr

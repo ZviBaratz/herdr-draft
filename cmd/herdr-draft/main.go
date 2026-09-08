@@ -20,6 +20,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -47,10 +49,71 @@ const usage = `herdr-draft -- herdr's new-session plugin
 usage:
   herdr-draft                 open the new-session popup (how herdr launches it)
   herdr-draft create [flags]  create a session without the popup
+  herdr-draft version         print the version
   herdr-draft help            print this
 
 run "herdr-draft create --help" for the create flags.
 `
+
+// build is the `git describe` of the tree this binary was compiled from,
+// stamped by `just build`:
+//
+//	go build -ldflags "-X main.build=$(git describe --tags --always --dirty)"
+//
+// It is a SEPARATE fact from the version, not an override of it, which is
+// the distinction that makes both honest. The version is what
+// herdr-plugin.toml declares and what herdr displays for the install; the
+// build is which commit produced this particular binary. Collapsing them
+// meant that before any tag existed `git describe --always` fell back to a
+// bare hash and the version line stopped naming a version at all.
+//
+// Empty by default, and normally empty for an installed plugin: herdr's
+// own `[[build]]` runs a plain argv with no shell, so there is nowhere to
+// run `git describe`. That is fine -- an install is exactly the case where
+// the manifest version is the whole truth.
+var build = ""
+
+// versionString is what `herdr-draft version` prints: the version first,
+// then the two facts a bug report needs and nobody can reconstruct from
+// it -- which plugin id this binary answers to (they are installable side
+// by side, under different ids, from forks) and what it was built with.
+//
+// The commit line appears only when the toolchain actually stamped one.
+// It does not always: a build from a git WORKTREE produces no vcs.*
+// settings at all, silently, even with -buildvcs=true -- which is how
+// this repository is developed, so a version command that promised a
+// commit would be empty exactly where it is most used.
+func versionString() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "herdr-draft %s\n", herdrc.Version)
+	fmt.Fprintf(&b, "  plugin id  %s\n", herdrc.PluginID)
+	if build != "" {
+		fmt.Fprintf(&b, "  build      %s\n", build)
+	}
+
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		var rev, modified string
+		for _, s := range bi.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				rev = s.Value
+			case "vcs.modified":
+				modified = s.Value
+			}
+		}
+		if rev != "" {
+			if len(rev) > 12 {
+				rev = rev[:12]
+			}
+			if modified == "true" {
+				rev += " (modified)"
+			}
+			fmt.Fprintf(&b, "  commit     %s\n", rev)
+		}
+		fmt.Fprintf(&b, "  built with %s\n", bi.GoVersion)
+	}
+	return b.String()
+}
 
 // clauthStatusFilePath resolves clauth's own on-disk status feed path
 // (spec §11: "prefer reading the daemon's ~/.clauth/status.json when
@@ -89,6 +152,12 @@ func dispatch(args []string, stdout, stderr io.Writer, popup func() int, createV
 		return createVerb(args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
+		return 0
+	// Both spellings, for the same reason help takes three: asking a
+	// program what it is should not require guessing which convention its
+	// author picked.
+	case "version", "--version", "-V":
+		fmt.Fprint(stdout, versionString())
 		return 0
 	default:
 		fmt.Fprintf(stderr, "herdr-draft: unknown command %q\n\n", args[0])

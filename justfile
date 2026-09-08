@@ -62,8 +62,19 @@ check:
     just unused
     go test ./...
 
+# build stamps `main.build` with `git describe`, so a binary built from a
+# working tree can say exactly which commit produced it. That is a separate
+# line from the version, which always comes from herdr-plugin.toml: before
+# any tag exists `git describe --always` returns a bare hash, and folding
+# the two together meant the version line stopped naming a version at all.
+#
+# herdr's own [[build]] in herdr-plugin.toml deliberately does NOT do this
+# and cannot: it runs a plain argv with no shell, so there is nowhere to run
+# `git describe`. An installed plugin falls back to the manifest-declared
+# version, which is the right answer there anyway -- it is the value herdr
+# itself displays for the install, so the two agree.
 build:
-    go build -o bin/herdr-draft ./cmd/herdr-draft
+    go build -ldflags "-X main.build=$(git describe --tags --always --dirty 2>/dev/null || echo '')" -o bin/herdr-draft ./cmd/herdr-draft
 
 # smoke runs the real form in an ordinary pane with no popup --
 # docs/manual-smoke.md's "Route B", which was a copy-paste block until a
