@@ -39,9 +39,23 @@ Single package/test: `go test ./internal/plan/...` or
 `go test ./internal/app/ -run TestHandleSubmit`.
 
 `just unused` needs **staticcheck**, the one dev-tool dependency outside
-`go.mod`: `go install honnef.co/go/tools/cmd/staticcheck@2026.2.1`, or run
-it without installing via `go run` (the recipe's own error message carries
-both spellings). It is a real gate, not advice — `just check` fails on a
+`go.mod`. Its version is pinned in exactly one place — the justfile's
+`staticcheck_version` — and both the recipe and CI read it from there
+(`just --evaluate staticcheck_version`), so don't repeat the number
+anywhere else, including here. Run `just unused` with it missing and the
+recipe prints both spellings (`go install`, or `go run` without
+installing) already carrying the pinned version; an installed version that
+differs is reported as a note and not enforced, because a newer release
+refining `unused` is a finding to read rather than a break to work around.
+
+It is deliberately **not** a `tool` directive in `go.mod`, which is
+otherwise how you would pin one today: the pinned staticcheck needs Go
+1.26, so `go get -tool` rewrites this module's own `go` line 1.25 → 1.26 — and
+herdr runs `[[build]]`'s `go build` on the **user's** machine at install
+time, so pinning a linter that way would raise the floor for everyone
+installing the plugin. A dev tool must not narrow who can install.
+
+It is a real gate, not advice — `just check` fails on a
 hit — because `go vet` does not detect unused unexported code **at all**,
 and that blind spot is the one this project keeps falling into: it is how
 the whole v1 drop-lines cascade survived the compose path's deletion, and
