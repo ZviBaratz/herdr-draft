@@ -52,6 +52,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierBuiltin,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -77,6 +78,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierUserConfig,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -108,6 +110,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierGlobalMemory,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -126,6 +129,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierBuiltin,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -144,6 +148,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierBuiltin,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -166,6 +171,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierUserConfig,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -182,6 +188,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierGlobalMemory,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -199,6 +206,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierBuiltin,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -245,6 +253,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierGlobalMemory,
 				FieldBaseRef:          TierRepoConfig,
 				FieldLinearBranchName: TierRepoConfig,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -280,6 +289,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierBuiltin,
 				FieldBaseRef:          TierProjectMemory,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -306,6 +316,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierGlobalMemory,
 				FieldBaseRef:          TierRepoConfig,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -328,6 +339,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierBuiltin,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -346,6 +358,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierBuiltin,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierRepoConfig,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -392,6 +405,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierProjectMemory,
 				FieldBaseRef:          TierProjectMemory,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -417,6 +431,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierUserConfig,
 				FieldBaseRef:          TierProjectMemory,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -439,6 +454,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierUserConfig,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 		{
@@ -458,6 +474,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldAgentKind:        TierUserConfig,
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
+				FieldTrustRepository:  TierBuiltin,
 			},
 		},
 	}
@@ -565,4 +582,79 @@ func assertFrom(t *testing.T, got, want map[string]Tier) {
 			t.Errorf("From[%q] = %v, want %v", field, gotTier, wantTier)
 		}
 	}
+}
+
+// TestResolve_TrustRepositoryComesOnlyFromConfigToml pins the deliberately
+// short tier chain. Every other resolved value walks all five tiers; this
+// one stops at config.toml, and each tier it skips is wrong for its own
+// reason:
+//
+//   - .herdr-draft.toml, because a repository asserting its own
+//     trustworthiness is the trust boundary inverted (config/repo.go's
+//     deny-list refuses it at load, so nothing can even arrive here).
+//   - last-used.json and projects.json, because those remember what the
+//     user CHOSE IN THE FORM, and no row offers this. "Remembering" it
+//     would be inventing a memory of a choice nobody made.
+//
+// The subtests stack a value into each higher tier's own source anyway --
+// as far as those types allow one to be expressed at all -- so that a
+// future edit wiring this into another tier fails here rather than
+// silently widening who can waive a git safety check.
+func TestResolve_TrustRepositoryComesOnlyFromConfigToml(t *testing.T) {
+	t.Run("absent everywhere is the built-in false", func(t *testing.T) {
+		r := Resolve(Sources{})
+		if r.TrustRepository {
+			t.Error("TrustRepository = true with no tier set, want false")
+		}
+		if got := r.From[FieldTrustRepository]; got != TierBuiltin {
+			t.Errorf("From[trust_repository] = %v, want %v", got, TierBuiltin)
+		}
+	})
+
+	t.Run("config.toml supplies it and is attributed", func(t *testing.T) {
+		r := Resolve(Sources{
+			Config: config.Config{Worktree: config.WorktreeConfig{TrustRepository: boolp(true)}},
+		})
+		if !r.TrustRepository {
+			t.Error("TrustRepository = false, want true from config.toml")
+		}
+		if got := r.From[FieldTrustRepository]; got != TierUserConfig {
+			t.Errorf("From[trust_repository] = %v, want %v", got, TierUserConfig)
+		}
+	})
+
+	t.Run("an explicit config false stays false and attributed", func(t *testing.T) {
+		r := Resolve(Sources{
+			Config: config.Config{Worktree: config.WorktreeConfig{TrustRepository: boolp(false)}},
+		})
+		if r.TrustRepository {
+			t.Error("TrustRepository = true, want false")
+		}
+		if got := r.From[FieldTrustRepository]; got != TierUserConfig {
+			t.Errorf("From[trust_repository] = %v, want %v", got, TierUserConfig)
+		}
+	})
+
+	t.Run("no higher tier can turn it on", func(t *testing.T) {
+		// Everything the higher tiers CAN carry, all set to their most
+		// permissive value at once. None of them has a trust_repository of
+		// its own -- which is the point -- so the assertion is that a
+		// fully-populated stack still leaves the config.toml answer alone.
+		r := Resolve(Sources{
+			Config: config.Config{
+				DefaultWorktree: true,
+				Worktree:        config.WorktreeConfig{TrustRepository: boolp(false)},
+			},
+			Global:      config.State{LastWorktree: boolp(true), LastPlacement: "tab-here"},
+			Repo:        config.RepoConfig{DefaultWorktree: boolp(true), DefaultPlacement: "new-space"},
+			Project:     config.ProjectDefaults{Worktree: boolp(true), Placement: "tab-here"},
+			HaveProject: true,
+		})
+		if r.TrustRepository {
+			t.Error("TrustRepository = true: a tier above config.toml supplied it, which none may")
+		}
+		if got := r.From[FieldTrustRepository]; got != TierUserConfig {
+			t.Errorf("From[trust_repository] = %v, want %v (config.toml's own answer must stand)", got, TierUserConfig)
+		}
+	})
 }

@@ -92,6 +92,7 @@ var repoDeniedKeys = []repoDeniedKey{
 	{"clauth", "a repository does not configure your clauth accounts"},
 	{"timeouts", "a repository does not set your timeouts"},
 	{"palette", "a repository does not set your colors"},
+	{"worktree", "a repository does not decide that it is trusted"},
 }
 
 // init enforces the one invariant that keeps the two lists honest: nothing

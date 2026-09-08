@@ -58,6 +58,36 @@ type AgentsConfig struct {
 	ExtraArgs map[string][]string `toml:"extra_args"`
 }
 
+// WorktreeConfig is the optional `[worktree]` table.
+//
+// It is deliberately a table of its own rather than another top-level key
+// beside default_worktree: every key here is a herdr worktree-creation
+// FLAG, not a form default, and `.herdr-draft.toml`'s allow-list is flat
+// by construction so that "a table header in the file is always, by
+// construction, something to reject" (repo.go). Putting trust_repository
+// in a table therefore makes it unreachable from a cloned repository by
+// the same mechanism that already rejects [clauth] and [palette], instead
+// of relying on someone remembering to keep it off the allow-list.
+type WorktreeConfig struct {
+	// TrustRepository adds `--trust-repository` to `herdr worktree
+	// create`, which trusts a verified repository for that ONE request
+	// rather than changing global git configuration -- herdr 0.9.0
+	// (#3044). Absent means false: this relaxes a git safety check, so it
+	// is opt-in, and the user opting in is the whole point of the key.
+	//
+	// A POINTER, unlike default_worktree beside it, because nil and false
+	// must stay distinguishable. defaults() gives default_worktree a real
+	// `true`, so config.toml genuinely supplies one for every file and
+	// attributing it to config.toml is honest. Nothing supplies this key,
+	// so a plain bool would make "the file never mentioned it" and "the
+	// file set it to false" the same value -- and the resolver would then
+	// report `from config.toml` for a file with no [worktree] table at
+	// all. Provenance the user can see has to be earned, not assumed.
+	//
+	// A repository can never set this. See repo.go's repoDeniedKeys.
+	TrustRepository *bool `toml:"trust_repository"`
+}
+
 // TimeoutsConfig is the optional `[timeouts]` table (spec §12).
 type TimeoutsConfig struct {
 	DetectionMS  int `toml:"detection_ms"`
@@ -92,6 +122,7 @@ type Config struct {
 	Clauth   ClauthConfig   `toml:"clauth"`
 	Agents   AgentsConfig   `toml:"agents"`
 	Timeouts TimeoutsConfig `toml:"timeouts"`
+	Worktree WorktreeConfig `toml:"worktree"`
 
 	// Palette is the optional `[palette]` table: an escape hatch for
 	// overriding herdr theme colors when detection is wrong (spec §7,

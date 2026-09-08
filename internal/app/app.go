@@ -1167,16 +1167,15 @@ func (m Model) buildPlanInput() plan.Input {
 		Ctx:              m.ctx,
 		DetectionTimeout: time.Duration(m.cfg.Timeouts.DetectionMS) * time.Millisecond,
 		PromptTimeout:    time.Duration(m.cfg.Timeouts.PromptWaitMS) * time.Millisecond,
-		// TrustRepository is blocked upstream, not merely unwired -- see
-		// spec §9's note and the README's known limitations. herdr added
-		// `--trust-repository` to `worktree create` in commit 095f1337
-		// (#3344), which is on master and in no release; herdr 0.8.2, this
-		// plugin's min_herdr_version, answers `unknown option:
-		// --trust-repository`, so a config key feeding this field would
-		// break worktree creation for anyone who set it. Wire it -- key,
-		// this field, and a min_herdr_version bump together -- once a herdr
-		// release contains that commit.
-		TrustRepository: false,
+		// `--trust-repository` on `herdr worktree create` (herdr 0.9.0,
+		// #3044): trust a verified repository for this one request rather
+		// than editing the user's global git config. Opt-in via
+		// `[worktree] trust_repository`, and it comes through the resolver
+		// like every other default so the form and `create` cannot
+		// disagree -- but with a chain that stops at config.toml, since no
+		// repository or remembered choice may supply it (see
+		// defaults.Resolved.TrustRepository).
+		TrustRepository: m.resolved.TrustRepository,
 	}
 }
 

@@ -139,6 +139,30 @@ favorites = ["claude"]
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
+		{
+			// `[worktree] trust_repository` has no flag on the command and
+			// no row in the form: config.toml is its only source, so this
+			// is the one scenario where the two paths agree by BOTH
+			// reading the resolver rather than by one of them being told.
+			// That makes it the case most likely to rot -- a future
+			// `--trust-repository` flag, or a form row, would break the
+			// equality here and nowhere else.
+			name: "trust_repository comes off config.toml for both paths",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+[worktree]
+trust_repository = true
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				TrustRepository:  true,
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configDir, stateDir := t.TempDir(), t.TempDir()

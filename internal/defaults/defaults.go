@@ -70,6 +70,7 @@ const (
 	FieldAgentKind        = "agent_kind"
 	FieldBaseRef          = "base"
 	FieldLinearBranchName = "linear_branch_name"
+	FieldTrustRepository  = "trust_repository"
 )
 
 // Sources is every tier Resolve consults, each already loaded by the
@@ -152,6 +153,19 @@ type Resolved struct {
 	// naming is its own can keep it while still seeding title and prompt
 	// from Linear.
 	LinearBranchName bool
+	// TrustRepository adds `--trust-repository` to `herdr worktree create`
+	// (herdr 0.9.0, #3044): trust a verified repository for that one
+	// request instead of editing the user's global git configuration.
+	//
+	// This is the one resolved value with a DELIBERATELY SHORT tier chain:
+	// built-in false, then config.toml, and nothing above it. The three
+	// tiers it skips are each wrong for it for their own reason. A
+	// repository must never claim its own trustworthiness, which is
+	// repo.go's deny-list. last-used.json and projects.json remember what
+	// the user last CHOSE IN THE FORM, and there is no row to choose this
+	// on -- so "remembering" it would mean inventing a memory for a value
+	// nobody set, and a security-relaxing one at that.
+	TrustRepository bool
 
 	// From maps each Field* key to the tier that supplied its value.
 	// Always fully populated: a value no tier supplied is attributed to
@@ -179,6 +193,7 @@ func Resolve(s Sources) Resolved {
 			FieldAgentKind:        TierBuiltin,
 			FieldBaseRef:          TierBuiltin,
 			FieldLinearBranchName: TierBuiltin,
+			FieldTrustRepository:  TierBuiltin,
 		},
 	}
 
@@ -190,6 +205,15 @@ func Resolve(s Sources) Resolved {
 	r.setBool(FieldWorktree, &r.UseWorktree, &s.Config.DefaultWorktree, TierUserConfig)
 	r.setPlacement(&r.Placement, s.Config.DefaultPlacement, TierUserConfig)
 	r.setAgentKind(&r.AgentKind, s.Config.Agents.Default, TierUserConfig, s.KnownAgentKinds)
+	// Deliberately NOT attributed the way DefaultWorktree above is.
+	// config.Load's defaults() gives DefaultWorktree a real `true`, so
+	// config.toml supplies one for every file and the attribution is
+	// earned; nothing supplies this key, so it arrives as a *bool and a
+	// nil means the file never mentioned [worktree] -- which leaves the
+	// built-in false attributed to TierBuiltin, where it belongs. Getting
+	// this wrong would make `create --json` print `from config.toml` for a
+	// value no config.toml has ever contained.
+	r.setBool(FieldTrustRepository, &r.TrustRepository, s.Config.Worktree.TrustRepository, TierUserConfig)
 
 	// --- TierGlobalMemory: last-used.json --------------------------------
 	r.setBool(FieldWorktree, &r.UseWorktree, s.Global.LastWorktree, TierGlobalMemory)

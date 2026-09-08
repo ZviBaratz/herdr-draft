@@ -42,6 +42,9 @@ codex = []
 detection_ms = 30000
 prompt_wait_ms = 120000
 
+[worktree]
+trust_repository = true          # --trust-repository on worktree create
+
 [palette]  # optional escape hatch when herdr theme detection is wrong (§7)
 # accent = "#89b4fa"
 # panel_bg = "#1e1e2e"
@@ -292,6 +295,10 @@ func TestLoad_FullConfig_ParsesEveryField(t *testing.T) {
 	if cfg.Clauth.Enabled == nil || !*cfg.Clauth.Enabled {
 		t.Errorf("Clauth.Enabled = %v, want *true", cfg.Clauth.Enabled)
 	}
+
+	if cfg.Worktree.TrustRepository == nil || !*cfg.Worktree.TrustRepository {
+		t.Errorf("Worktree.TrustRepository = %v, want *true", cfg.Worktree.TrustRepository)
+	}
 	if cfg.Clauth.Default != "active" {
 		t.Errorf("Clauth.Default = %q, want %q", cfg.Clauth.Default, "active")
 	}
@@ -536,5 +543,51 @@ func TestSaveState_CreatesTheStateDirIfMissing(t *testing.T) {
 	got, _ := LoadState(dir)
 	if len(got.Recents) != 1 || got.Recents[0] != "/x" {
 		t.Fatalf("Recents = %v, want the saved entry", got.Recents)
+	}
+}
+
+// TestLoad_TrustRepositoryAbsentIsNil is the half that a plain bool could
+// not express, and the reason WorktreeConfig.TrustRepository is a pointer:
+// a config.toml with no [worktree] table has not said "false", it has said
+// nothing. internal/defaults reads that difference to decide whether to
+// attribute the value to config.toml or to the built-in, so collapsing the
+// two here would make `create --json` claim a provenance that does not
+// exist.
+func TestLoad_TrustRepositoryAbsentIsNil(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("branch_prefix = \"zvi/\"\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Worktree.TrustRepository != nil {
+		t.Errorf("Worktree.TrustRepository = %v, want nil for a file with no [worktree] table",
+			*cfg.Worktree.TrustRepository)
+	}
+}
+
+// TestLoad_TrustRepositoryExplicitFalseIsNotNil is the same distinction
+// from the other side: a user who writes `trust_repository = false` has
+// made a statement, and it must survive as one.
+func TestLoad_TrustRepositoryExplicitFalseIsNotNil(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[worktree]\ntrust_repository = false\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Worktree.TrustRepository == nil {
+		t.Fatal("Worktree.TrustRepository = nil, want *false: an explicit false is not an absent key")
+	}
+	if *cfg.Worktree.TrustRepository {
+		t.Error("Worktree.TrustRepository = *true, want *false")
 	}
 }
