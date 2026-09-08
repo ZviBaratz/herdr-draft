@@ -48,11 +48,27 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Install pinned staticcheck
-        # The version is read from the justfile, which is its single source
-        # of truth, so CI and a contributor's laptop cannot drift. Note
-        # this may pull a newer Go toolchain than go.mod's: staticcheck
-        # needs 1.26, which is exactly why it is NOT a go.mod tool
-        # directive -- see the justfile's own comment.
+        # The version is read from the justfile, its single source of
+        # truth, so CI and a contributor's laptop cannot drift.
+        #
+        # GOTOOLCHAIN=auto is scoped to THIS STEP and is load-bearing.
+        # setup-go pins GOTOOLCHAIN=local for the whole job, which is the
+        # behaviour we want for the gate itself -- it guarantees `just
+        # check` really runs under go.mod's declared floor rather than
+        # whatever newer toolchain happens to be around. But staticcheck
+        # needs Go 1.26 to BUILD, and `local` forbids fetching it, so the
+        # install fails with "requires go >= 1.26.0 (running go 1.25.0;
+        # GOTOOLCHAIN=local)". Letting just this step fetch a newer
+        # toolchain builds the linter without touching the version
+        # everything else is compiled and tested against.
+        #
+        # This is the same 1.25-vs-1.26 split that kept staticcheck out of
+        # go.mod as a tool directive; see the justfile's own comment. The
+        # split is the point, not a workaround: the plugin must stay
+        # buildable on 1.25 because herdr runs `go build` on the user's
+        # machine.
+        env:
+          GOTOOLCHAIN: auto
         run: go install honnef.co/go/tools/cmd/staticcheck@"$(just --evaluate staticcheck_version)"
 
       - name: just check
