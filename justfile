@@ -112,6 +112,7 @@ smoke repo:
     [[ -d "{{repo}}/.git" ]] || { echo "{{repo}} is not a git repo -- see the recipe's comment for the one-liner" >&2; exit 1; }
     cd "{{repo}}"
     export HERDR_BIN_PATH="$(command -v herdr)"
+    export HERDR_PLUGIN_ID="zvibaratz.draft"
     export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir zvibaratz.draft)"
     export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/zvibaratz.draft"
     export HERDR_PLUGIN_CONTEXT_JSON="$(printf \

@@ -175,11 +175,12 @@ install/link state is global, so a plugin linked from your normal session is
 already visible in the disposable one; confirm with `herdr[S] plugin list`.
 
 **Route B — run the binary directly, with no popup.** herdr hands a launched
-plugin four variables. Set them yourself in a scratch pane and the same form
+plugin five variables. Set them yourself in a scratch pane and the same form
 runs against the same real data, in an ordinary pane you can address:
 
 ```bash
 export HERDR_BIN_PATH="$(command -v herdr)"
+export HERDR_PLUGIN_ID="zvibaratz.draft"
 export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir zvibaratz.draft)"
 export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/zvibaratz.draft"
 export HERDR_PLUGIN_CONTEXT_JSON="$(printf \
@@ -587,6 +588,21 @@ unset, that the first stderr line is the warning that `create` is resolving
 without your config and remembered defaults. A headless caller that silently
 resolved from built-in defaults would be the worst failure mode this command
 has.
+
+Then the other half of that guard (#91), which is worth a live check because
+it is the one that used to lose data: export the two directories **without**
+`HERDR_PLUGIN_ID` and confirm the first stderr line refuses them by name —
+`HERDR_PLUGIN_ID is not set, so it is not demonstrably "zvibaratz.draft"'s`
+— and that the run leaves *nothing* behind in the directory it was pointed
+at. Point it at a scratch directory rather than another plugin's, and check
+it is still empty afterwards:
+
+```bash
+scratch="$(mktemp -d)"
+env -u HERDR_PLUGIN_ID HERDR_PLUGIN_CONFIG_DIR="$scratch" HERDR_PLUGIN_STATE_DIR="$scratch" \
+    herdr-draft create --title "id guard" --no-worktree --placement new-space --json
+ls -A "$scratch"   # must print nothing
+```
 
 Then, **in a disposable session only** (Route A), with a real
 `HERDR_BIN_PATH`, run one that lands:

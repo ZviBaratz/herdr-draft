@@ -232,30 +232,61 @@ func loadMemory(stateDir string) (config.State, config.Projects) {
 }
 
 // usablePluginEnv keeps the plugin-invocation half of env only when it is
-// OURS, and says, once, when this create is therefore resolving against
-// less than the form would.
+// DEMONSTRABLY ours, and says, once, when this create is therefore
+// resolving against less than the form would.
 //
 // Two ways it can be less. The plainer one is that the variables are
 // simply unset, which is the normal headless case (see loadUserConfig).
-// The other is that they belong to a different plugin: a shell started
-// inside another plugin's pane can inherit its whole HERDR_PLUGIN_*
-// environment, and $HERDR_PLUGIN_ID names the plugin they were exported
-// for. Using them would read that plugin's config.toml as ours, write our
-// state files into its state directory, and -- worse -- take its
-// invocation context, whose pane and workspace ids are not necessarily
-// where this command is running. Dropping all four together is the only
-// coherent answer: they are one environment, not four variables.
+// The other is that they are not ours: a shell started inside another
+// plugin's pane can inherit its whole HERDR_PLUGIN_* environment. Using
+// them would read that plugin's config.toml as ours, write our state
+// files into its state directory, and -- worse -- take its invocation
+// context, whose pane and workspace ids are not necessarily where this
+// command is running. Dropping all four together is the only coherent
+// answer: they are one environment, not four variables.
 //
-// Silence in either case would be worse than a line on stderr: the whole
+// $HERDR_PLUGIN_ID is the only variable that says whose the other three
+// are, so the test is that it MATCHES -- not merely that it does not
+// conflict (#91). An unset id used to pass: the guard read
+// `PluginID != "" && PluginID != pluginID`, and the leak this command
+// actually meets does not carry one. Observed live, with the directories
+// pointing at another plugin: three of our state files written into its
+// state directory, its projects.json read back into a resolution and
+// reported truthfully as `"placement": "projects.json"`, and its (empty)
+// config.toml standing in for the user's own, which silently dropped
+// [agents.extra_args] and launched on the wrong model.
+//
+// Absent is not the same as matching, and treating it as ours costs
+// nothing to give up: herdr never produces that shape for a plugin it
+// launched itself. plugin_path_env is the only thing that exports the
+// directory pair (herdr:src/app/api/plugins/env.rs), it has exactly two
+// callers, and both push HERDR_PLUGIN_ID in the same function
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/app/api/plugins/panes.rs#L251
+// for a plugin pane, .../runtime.rs#L39 for an action, event or link
+// command). So "the directories are set" is evidence of nothing on its
+// own, and the id is what makes it evidence.
+//
+// The one caller who has to change is the person following this project's
+// own advice: exporting the two directories by hand into a plain shell
+// (README, docs/manual-smoke.md's Route B) now needs HERDR_PLUGIN_ID
+// beside them. Both messages below say so, because advice that does not
+// survive being followed is worse than none.
+//
+// Silence in any case would be worse than a line on stderr: the whole
 // point of spec §13 is that the command and the form produce the same
 // session, and one that quietly resolved from different inputs would
 // produce a different session with nothing anywhere saying why.
 func usablePluginEnv(env Env, stderr io.Writer) Env {
-	if env.PluginID != "" && env.PluginID != pluginID {
+	pluginEnvSet := env.ConfigDir != "" || env.StateDir != "" || env.ContextJSON != ""
+	if pluginEnvSet && env.PluginID != pluginID {
+		whose := fmt.Sprintf("belongs to plugin %q, not to %q", env.PluginID, pluginID)
+		if env.PluginID == "" {
+			whose = fmt.Sprintf("does not say whose it is -- HERDR_PLUGIN_ID is not set, so it is not demonstrably %q's", pluginID)
+		}
 		fmt.Fprintf(stderr,
-			"herdr-draft create: the HERDR_PLUGIN_* environment here belongs to plugin %q, not to %q -- ignoring it and resolving from built-in defaults; export HERDR_PLUGIN_CONFIG_DIR=$(herdr plugin config-dir %s) to resolve exactly what the form resolves\n",
-			env.PluginID, pluginID, pluginID)
-		env.ConfigDir, env.StateDir, env.ContextJSON = "", "", ""
+			"herdr-draft create: the HERDR_PLUGIN_* environment here %s -- ignoring it and resolving from built-in defaults; export HERDR_PLUGIN_ID=%s together with HERDR_PLUGIN_CONFIG_DIR=$(herdr plugin config-dir %s) and HERDR_PLUGIN_STATE_DIR to resolve exactly what the form resolves\n",
+			whose, pluginID, pluginID)
+		env.PluginID, env.ConfigDir, env.StateDir, env.ContextJSON = "", "", "", ""
 		return env
 	}
 
@@ -268,8 +299,8 @@ func usablePluginEnv(env Env, stderr io.Writer) Env {
 	}
 	if len(missing) > 0 {
 		fmt.Fprintf(stderr,
-			"herdr-draft create: %s not set -- resolving without your config.toml and remembered defaults; export them (herdr plugin config-dir %s) to resolve exactly what the form resolves\n",
-			strings.Join(missing, " and "), pluginID)
+			"herdr-draft create: %s not set -- resolving without your config.toml and remembered defaults; export them, and HERDR_PLUGIN_ID=%s beside them (herdr plugin config-dir %s), to resolve exactly what the form resolves\n",
+			strings.Join(missing, " and "), pluginID, pluginID)
 	}
 	return env
 }

@@ -277,13 +277,14 @@ now decides where the AGENT'S pane lands even when the worktree gets its
 own new space alongside it. Only `new-space` needs none of them. A missing
 one is named exactly.
 
-**Export the plugin directories.** herdr sets those three pane variables
+**Export the plugin environment.** herdr sets those three pane variables
 but not `HERDR_PLUGIN_CONFIG_DIR` / `HERDR_PLUGIN_STATE_DIR`, which it
 gives only to a launched plugin — so without them `create` resolves from
-built-in defaults instead of your own configuration, and says so. In your
-shell rc:
+built-in defaults instead of your own configuration, and says so. All
+three lines, in your shell rc:
 
 ```bash
+export HERDR_PLUGIN_ID="zvibaratz.draft"
 export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir zvibaratz.draft)"
 export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/zvibaratz.draft"
 ```
@@ -293,11 +294,15 @@ layout is `<herdr state dir>/plugins/zvibaratz.draft`
 (`herdr:src/plugin_paths.rs`). Point both at the same directories the popup
 gets and the two paths share one memory.
 
-A shell started inside *another* plugin's pane can inherit that plugin's
-`HERDR_PLUGIN_*` variables. When `HERDR_PLUGIN_ID` says so, `create`
-ignores all of them — including the context JSON, whose pane and workspace
-ids are not necessarily where you are — rather than reading one plugin's
-config as another's, and tells you it did.
+`HERDR_PLUGIN_ID` is not decoration: it is the only one of the four that
+says *whose* the other three are, and `create` uses them only when it
+matches. A shell started inside *another* plugin's pane can inherit that
+plugin's whole `HERDR_PLUGIN_*` environment, and an inherited one does not
+reliably carry the id at all — so a different id and a missing id are
+treated the same way. Either has `create` ignore all four, including the
+context JSON, whose pane and workspace ids are not necessarily where you
+are, rather than read one plugin's config as another's or write your state
+into its directory. It tells you which case it was, and what to export.
 
 ## Configuration
 

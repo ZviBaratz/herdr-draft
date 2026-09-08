@@ -200,6 +200,14 @@ func newHarness(t *testing.T) *harness {
 		env: Env{
 			ConfigDir: t.TempDir(),
 			StateDir:  t.TempDir(),
+			// PluginID is set for the same reason herdr sets it: it is
+			// what makes the two directories above OURS (#91). Leaving it
+			// empty here modelled an environment herdr never produces --
+			// plugin_path_env's only two callers both export the id in the
+			// same function -- and it is why usablePluginEnv's hole was
+			// invisible to this package for its whole life: every test ran
+			// in the exact shape the guard failed to refuse.
+			PluginID: pluginID,
 		},
 		runner: runner,
 		git:    git,
@@ -821,7 +829,13 @@ func TestSuccessRecordsPerProjectMemory(t *testing.T) {
 // the working directory.
 func TestNoPluginDirectoriesNeverReadsTheWorkingDirectory(t *testing.T) {
 	h := newHarness(t)
-	h.env.ConfigDir, h.env.StateDir = "", ""
+	// The whole plugin environment is absent, id included: herdr exports
+	// HERDR_PLUGIN_* only to a launched plugin, never to a pane's shell
+	// (herdr:src/app/api/plugins/env.rs), so this is the shape production
+	// actually meets. Clearing only the directories would leave an id
+	// with nothing to own and pin neither of usablePluginEnv's two
+	// messages to the case it belongs to (#91).
+	h.env.PluginID, h.env.ConfigDir, h.env.StateDir = "", "", ""
 
 	wd := t.TempDir()
 	t.Chdir(wd)
@@ -843,6 +857,12 @@ func TestNoPluginDirectoriesNeverReadsTheWorkingDirectory(t *testing.T) {
 	}
 	if !strings.Contains(h.stderr.String(), "HERDR_PLUGIN_CONFIG_DIR and HERDR_PLUGIN_STATE_DIR not set") {
 		t.Errorf("stderr = %q, want it to name the unset variables", h.stderr)
+	}
+	// An environment with nothing in it is not a foreign one. Saying it is
+	// not demonstrably ours would be true and useless: there is nothing to
+	// refuse, and the advice for the two cases is different.
+	if strings.Contains(h.stderr.String(), "ignoring it") {
+		t.Errorf("stderr = %q, want the unset message, not the refusal", h.stderr)
 	}
 }
 
@@ -870,6 +890,87 @@ func TestAnotherPluginsEnvironmentIsIgnored(t *testing.T) {
 	}
 	if !strings.Contains(h.stderr.String(), `belongs to plugin "someone.else"`) {
 		t.Errorf("stderr = %q, want it to name the plugin whose environment was ignored", h.stderr)
+	}
+}
+
+// TestPluginEnvironmentWithoutAnIdIsIgnored is #91: the guard above used
+// to require a NON-EMPTY $HERDR_PLUGIN_ID before it would refuse an
+// environment, and the leak this command actually meets does not carry
+// one. Observed live: HERDR_PLUGIN_CONFIG_DIR and HERDR_PLUGIN_STATE_DIR
+// pointing at another plugin, HERDR_PLUGIN_ID unset. Absent is not the
+// same as matching -- an environment that does not say whose it is is not
+// demonstrably ours -- so it takes the same path as a foreign id.
+//
+// herdr never produces that shape for a plugin it launched itself:
+// plugin_path_env, which is the only thing that exports the directory
+// pair (herdr:src/app/api/plugins/env.rs), has exactly two callers and
+// both push HERDR_PLUGIN_ID in the same function
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/app/api/plugins/panes.rs#L251
+// and .../runtime.rs#L39). "The directories are set" is therefore not
+// evidence of anything on its own.
+//
+// All three harms #91 recorded live are asserted in every case below:
+// our state files written into the other plugin's directory, its
+// config.toml read as ours, and its invocation context taken over this
+// pane's own ids. Not every assertion discriminates in every case -- with
+// no state directory there is nowhere to write wrongly -- but each case
+// discriminates on at least one, and running all four everywhere is what
+// keeps a subset from looking safe.
+func TestPluginEnvironmentWithoutAnIdIsIgnored(t *testing.T) {
+	// The three variables the id owns, in the subsets an inherited
+	// environment can actually arrive in. The first case is the live
+	// capture verbatim -- both directories, NO context JSON -- and it is
+	// the one that matters: a guard keyed on the context JSON alone would
+	// pass a fixture that set all three while leaving the observed leak
+	// wide open, which is this repo's most expensive recurring defect
+	// (see CONTRIBUTING.md, "Make a test able to fail") seen from the
+	// fixture side rather than the fake's.
+	cases := []struct {
+		name        string
+		dirs        bool
+		contextJSON bool
+	}{
+		{name: "the shape observed live: both directories, no context JSON", dirs: true},
+		{name: "the whole inherited environment", dirs: true, contextJSON: true},
+		{name: "the context JSON alone", contextJSON: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t)
+			otherConfig, otherState := t.TempDir(), t.TempDir()
+			h.env.PluginID = ""
+			h.env.ConfigDir, h.env.StateDir = "", ""
+			if c.dirs {
+				h.env.ConfigDir, h.env.StateDir = otherConfig, otherState
+				// A foreign config.toml that changes what this run does if
+				// it is read as ours: the first favorite is the kind an
+				// unspecified --agent falls through to.
+				writeConfig(t, otherConfig, "[agents]\nfavorites = [\"codex\"]\n")
+			}
+			if c.contextJSON {
+				h.env.ContextJSON = `{"workspace_id":"wOTHER","tab_id":"tOTHER"}`
+			}
+			h.env.WorkspaceID, h.env.TabID = "wS9", "tT9"
+
+			if code := h.run("--title", "t", "--no-worktree", "--placement", "tab-here"); code != ExitOK {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+			}
+			if !strings.Contains(strings.Join(h.runner.calls, " "), "TabCreate(wS9,") {
+				t.Errorf("calls = %v, want the tab in THIS pane's workspace, not the other plugin's", h.runner.calls)
+			}
+			if !strings.Contains(h.stdout.String(), "agent=claude") {
+				t.Errorf("stdout = %q, want the built-in agent kind, not the other plugin's configured favorite", h.stdout)
+			}
+			if entries, _ := os.ReadDir(otherState); len(entries) != 0 {
+				t.Errorf("wrote %d file(s) into another plugin's state directory", len(entries))
+			}
+			// The diagnosis, not the advice that follows it: the advice
+			// names HERDR_PLUGIN_ID too, so a bare substring check on the
+			// name passes even with the reason removed.
+			if !strings.Contains(h.stderr.String(), "HERDR_PLUGIN_ID is not set") {
+				t.Errorf("stderr = %q, want it to say which variable was missing and why that decided it", h.stderr)
+			}
+		})
 	}
 }
 

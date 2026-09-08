@@ -79,11 +79,13 @@ type Env struct {
 	StateDir string
 	// ContextJSON is $HERDR_PLUGIN_CONTEXT_JSON, usually "".
 	ContextJSON string
-	// PluginID is $HERDR_PLUGIN_ID: which plugin the four variables above
-	// were exported for. herdr sets it alongside them for a launched
-	// plugin, and a shell started inside such a plugin's pane can inherit
-	// the whole set -- see usablePluginEnv, which is why this is read at
-	// all.
+	// PluginID is $HERDR_PLUGIN_ID: which plugin the three variables above
+	// were exported for, and the only one of the four that says so. herdr
+	// sets it alongside them for every plugin it launches itself, and a
+	// shell started inside such a plugin's pane can inherit the set --
+	// without reliably inheriting the id. So the three are used only when
+	// this MATCHES: an absent id is not a matching one (#91). See
+	// usablePluginEnv, which is why this is read at all.
 	PluginID string
 	// WorkspaceID/TabID/PaneID are $HERDR_WORKSPACE_ID/$HERDR_TAB_ID/
 	// $HERDR_PANE_ID.
