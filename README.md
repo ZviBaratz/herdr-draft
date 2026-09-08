@@ -180,6 +180,11 @@ there, not the workspace the popup was opened from.
   row to pin a profile on.
 - Go 1.25+ to build from source (`herdr-plugin.toml`'s `[[build]]` runs
   `go build -o bin/herdr-draft ./cmd/herdr-draft` for you).
+- Linux or macOS. The manifest declares `platforms = ["linux", "macos"]`,
+  so herdr refuses the install on Windows rather than registering a plugin
+  that cannot launch: the action entrypoint is `sh -c`, and the build
+  produces an extensionless binary. Windows support is a feature nobody
+  has built or tested, not an oversight in packaging.
 
 ## Install
 
@@ -284,9 +289,9 @@ export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugi
 ```
 
 herdr has a CLI for the config directory but not for the state one, whose
-layout is `<herdr state dir>/plugins/zvibaratz.draft` (`herdr:src/plugin_paths.rs`);
-on Windows the base is `%LOCALAPPDATA%\herdr` instead. Point both at the
-same directories the popup gets and the two paths share one memory.
+layout is `<herdr state dir>/plugins/zvibaratz.draft`
+(`herdr:src/plugin_paths.rs`). Point both at the same directories the popup
+gets and the two paths share one memory.
 
 A shell started inside *another* plugin's pane can inherit that plugin's
 `HERDR_PLUGIN_*` variables. When `HERDR_PLUGIN_ID` says so, `create`
@@ -401,8 +406,8 @@ two profiles exist (a static, startup-time check).
   configuration. Needs herdr ≥ 0.9.0, which is this plugin's minimum.
 
   Turn it on if worktree creation fails with git's "dubious ownership"
-  error — typically a repository owned by a different user or, on Windows,
-  a different SID. The alternative is the permanent, machine-wide
+  error — typically a repository owned by a different user than the one
+  running herdr. The alternative is the permanent, machine-wide
   `git config --global --add safe.directory <path>`, which this key exists
   to let you avoid.
 
@@ -597,8 +602,8 @@ running; check `config.toml` for a syntax error if you've recently edited
 it.
 
 **Worktree creation fails with git's "dubious ownership".** git refuses to
-operate on a repository owned by another user (on Windows, another SID),
-and worktree creation is where you meet it. Set `trust_repository = true`
+operate on a repository owned by another user, and worktree creation is
+where you meet it. Set `trust_repository = true`
 under [`[worktree]`](#worktree) — herdr then trusts the repository for that
 one request, which is narrower than the machine-wide
 `git config --global --add safe.directory <path>` you would otherwise need.

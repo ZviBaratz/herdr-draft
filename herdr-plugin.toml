@@ -3,6 +3,15 @@ name = "herdr-draft"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
 description = "new session creation dialog"
+# Omitting this key does NOT mean "unspecified" -- herdr's own
+# build_platform_supported treats an absent list as every platform
+# (is_none_or), so silence here is an active claim to run on Windows. It
+# cannot: the [[actions]] command below is `sh -c`, and [[build]] writes
+# bin/herdr-draft with no .exe. Declaring the two that work turns a
+# Windows install from "registers, then fails to launch" into a refusal at
+# install time, which is the only honest answer until someone can actually
+# test the other one.
+platforms = ["linux", "macos"]
 
 [[build]]
 command = ["go", "build", "-o", "bin/herdr-draft", "./cmd/herdr-draft"]
