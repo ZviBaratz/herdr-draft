@@ -247,6 +247,24 @@ type panelRowsCase struct {
 	want  int
 }
 
+// capOverflowItems is how many items a */over-the-cap case feeds its
+// field, and it is a LITERAL on purpose -- deliberately not derived from
+// the cap it is meant to overflow.
+//
+// Sizing the fixture as `cap+5` scales it with the constant, so the cap
+// cases followed a retuned cap in silence: raising issuePanelMaxRows from
+// 24 to 50 kept the fixture overflowing and kept `want` equal to the new
+// value, which is the same "expectation derived from the thing under
+// test" shape the rest of this table exists to remove. A typo -- 240 for
+// 24 -- would have passed. With a literal, a cap raised above it fails
+// instead, and the over-the-cap guard in the test below says why rather
+// than leaving the next reader to work out that the case went vacuous.
+//
+// 40 clears every cap in the package by a wide margin (the largest is
+// issuePanelMaxRows at 24). Raising a cap past it is what the guard
+// catches.
+const capOverflowItems = 40
+
 // panelRowsCases enumerates every branch the eight fields' PanelRows()
 // implementations have, with each want spelled out as ARITHMETIC OVER
 // THE FIXTURE from that field's own documented rule -- never read back
@@ -261,15 +279,20 @@ type panelRowsCase struct {
 //
 // A per-state ROW COUNT is the only thing available to compare against.
 // Counting a Panel's real content was the other candidate fix and does
-// not work: seven of the eight fields size their content FROM the height
-// they are handed -- panelPickerLines fills to h, PromptField.Panel calls
-// area.SetRows(h), IssueField.Panel pads to h-1, and TitleField,
-// DirField and WorktreeField each take h minus their own fixed lines --
-// so an accessor that skipped only panelBlock's padding would be the
-// same tautology one layer down. PlacementField alone has an
-// h-independent content count, which is why the precedent this table
-// generalises (field_placement_test.go) could be written for that field
-// and not for the rest.
+// not work, and the reason is that panelBlock is the SECOND of two
+// padding stages: seven of the eight fields size their content FROM the
+// height they are handed before it ever runs -- panelPickerLines fills
+// to h, PromptField.Panel calls area.SetRows(h), IssueField.Panel pads
+// to h-1, and TitleField, DirField and WorktreeField each take h minus
+// their own fixed lines. So an accessor that skipped only panelBlock
+// would be the same tautology one layer down, for seven of eight.
+//
+// PlacementField is the exception, and not because of anything about
+// placement: its panel is the only one with no windowed list and no
+// textarea, so nothing in it needs to know h. Any future field of that
+// shape would be equally open to the direct approach the precedent
+// beside this table takes (field_placement_test.go), and any field with
+// a picker in it would not.
 //
 // Restating eight small formulas here duplicates arithmetic,
 // deliberately. The duplication is what makes a disagreement fail, and
@@ -342,8 +365,8 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		}, 1},
 		{"issue/over-the-cap", func() Section {
 			f := NewIssueField(p)
-			issues := make([]linear.Issue, 0, issuePanelMaxRows+5)
-			for _, id := range countedNames("ENG-", issuePanelMaxRows+5) {
+			issues := make([]linear.Issue, 0, capOverflowItems)
+			for _, id := range countedNames("ENG-", capOverflowItems) {
 				issues = append(issues, linear.Issue{Identifier: id, Title: "a queued issue"})
 			}
 			f.SetIssues(1, issues)
@@ -361,8 +384,8 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		}, 3 + len(sampleSessions())},
 		{"title/over-the-cap", func() Section {
 			f := NewTitleField(p)
-			sessions := make([]Session, 0, titleSessionsMaxRows+3)
-			for _, label := range countedNames("ws-", titleSessionsMaxRows+3) {
+			sessions := make([]Session, 0, capOverflowItems)
+			for _, label := range countedNames("ws-", capOverflowItems) {
 				sessions = append(sessions, Session{Label: label, Status: "idle", Panes: 1})
 			}
 			f.SetSessions(sessions)
@@ -385,7 +408,7 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		}, 8 + 1},
 		{"prompt/over-the-cap", func() Section {
 			f := NewPromptField(p)
-			f.SetValue(textLines(promptPanelMaxRows+5), false)
+			f.SetValue(textLines(capOverflowItems), false)
 			return f
 		}, promptPanelMaxRows},
 
@@ -404,7 +427,7 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		}, 2 + 2 + 1},
 		{"dir/over-the-cap", func() Section {
 			d := NewDirField(p)
-			d.SetCandidates(1, countedNames("/home/zvi/p", dirPanelMaxRows+5))
+			d.SetCandidates(1, countedNames("/home/zvi/p", capOverflowItems))
 			return d
 		}, dirPanelMaxRows},
 
@@ -453,7 +476,7 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		}, 1 + 4},
 		{"agent/over-the-cap", func() Section {
 			f := NewAgentField(p)
-			f.SetKinds(countedNames("kind", agentPanelMaxRows+5))
+			f.SetKinds(countedNames("kind", capOverflowItems))
 			return f
 		}, agentPanelMaxRows},
 
@@ -476,7 +499,7 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			f := NewAccountField(p)
 			f.SetAgentIsClaude(true)
 			status := clauth.Status{Schema: 1, ActiveProfile: "p0"}
-			for _, name := range countedNames("p", accountPanelMaxRows+5) {
+			for _, name := range countedNames("p", capOverflowItems) {
 				status.Profiles = append(status.Profiles, clauth.Profile{Name: name, Tier: "Team", AuthStatus: "ok"})
 			}
 			f.SetProfiles(status, sampleNow())
@@ -536,7 +559,7 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			w := NewWorktreeField(p)
 			w.SetGitTarget(true)
 			w.SetOn(true)
-			w.SetBaseItems(1, countedNames("release/", worktreePanelMaxRows+5))
+			w.SetBaseItems(1, countedNames("release/", capOverflowItems))
 			return w
 		}, worktreePanelMaxRows},
 	}
@@ -586,6 +609,13 @@ func TestFieldPanelRows_NeverReservesRowsItCannotFill(t *testing.T) {
 		}
 		if got != c.want {
 			t.Errorf("%s: %s.PanelRows() = %d, want %d", c.name, s.ID(), got, c.want)
+		}
+		// A cap case proves nothing once its cap rises above the fixture
+		// feeding it -- see capOverflowItems. This says so out loud
+		// instead of passing vacuously.
+		if strings.HasSuffix(c.name, "/over-the-cap") && c.want >= capOverflowItems {
+			t.Errorf("%s: the cap is %d but the fixture feeds only %d items, so this case no longer proves the cap binds -- raise capOverflowItems",
+				c.name, c.want, capOverflowItems)
 		}
 	}
 
