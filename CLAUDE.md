@@ -169,10 +169,19 @@ Layering, outermost to innermost:
   subcommand uses before wiring it up.
 - **Screen detection is evidence-based, not trusted blindly.** herdr's own
   agent detection can report a pane "idle"/ready while it is actually
-  showing a blocking dialog (e.g. Claude Code's first-run trust prompt).
-  `plan.Execute` always calls `Runner.AgentRead` (`--source detection`) and
-  checks it against `internal/plan/dialog.go`'s known signatures *before*
-  sending a queued prompt — never send on "detected" alone.
+  showing a blocking dialog. `plan.Execute` always calls `Runner.AgentRead`
+  (`--source detection`) and checks it against `internal/plan/dialog.go`'s
+  known signatures *before* sending a queued prompt — never send on
+  "detected" alone. The founding example, Claude Code's first-run trust
+  prompt, is no longer one: herdr 0.9.0's manifest learned that screen and
+  reports it `blocked`, refusing it upstream under two codes
+  (`agent start` → `agent_not_ready`, `agent prompt` → `agent_blocked`).
+  That is why the guard is worth reading rather than deleting — the
+  manifest knows *that screen*, not the class, so a login chooser or a
+  permission prompt still arrives as "ready". Reading the pane also now
+  earns its second keep: `explainBlockedStart` matches the same signature
+  list to turn herdr's "blocked during startup" into an instruction the
+  user can act on (#90).
 - **Citations into herdr's source name a pinned commit, never a local
   path.** Two spellings, both anchored to
   `b1ff4582e9688f52ffb943cfa8bee4871ae122e4`: the `herdr:src/cli.rs`

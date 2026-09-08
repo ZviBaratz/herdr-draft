@@ -57,9 +57,20 @@ type Progress struct {
 // AgentPane is the pane the launch ops actually targeted: equal to
 // Created.PaneID unless a placement op (§5.3) or a reuse correction (§5.2)
 // moved it. FailedIndex is the index of the first op that failed, or -1
-// on success. PromptText is only populated when the OpAgentPrompt op
-// fails, so the caller can surface the prompt text that was never sent
-// back to the user for manual paste (spec §9 step 3).
+// on success. PromptText carries a prompt that never reached the agent, so
+// the caller can surface it for manual paste (spec §9 step 3); it is empty
+// on success and on any plan that carried no prompt at all.
+//
+// PromptText means "the prompt did not land", not "the prompt op failed".
+// It used to mean the narrower thing -- set only when OpAgentPrompt itself
+// was the failing op -- which quietly destroyed the prompt whenever the
+// plan stopped BEFORE reaching it. That was a rare shape until herdr 0.9.0
+// started refusing `agent start` against an untrusted directory (#90,
+// explainBlockedStart), which made "fails at step 2 of three" the ordinary
+// outcome of a submit into a fresh worktree; the user's composed prompt
+// was the one thing it took with it. It also made `create --json` report
+// `prompt_sent: true` for a run that never started an agent, since that
+// field is derived from this one being empty.
 type ExecResult struct {
 	Created     *herdrc.CreatedTopology
 	AgentPane   string
@@ -107,6 +118,23 @@ const busyPaneErrorCode = "agent_pane_busy"
 // attempt with the same one. See startAgentWithDedupe.
 const nameTakenErrorCode = "agent_name_taken"
 
+// agentNotReadyErrorCode is the herdr error code `agent start` raises when
+// its readiness poll finds the agent it just launched sitting at
+// `agent_status: "blocked"`
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/agent.rs#L607).
+// `agent start`'s contract is "the expected agent was detected in the same
+// terminal and is ready for input", and there is no opt-out flag --
+// `--timeout` only changes how long it waits -- so a blocked agent fails
+// the step however healthy the process itself is.
+//
+// This is NOT the code `agent prompt` uses for the same condition: that one
+// answers `agent_blocked`
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/app/api/agents.rs#L85).
+// Two codes for one situation, on the two calls herdr-draft makes, is why
+// this constant is named for the call that raises it rather than for the
+// state it describes.
+const agentNotReadyErrorCode = "agent_not_ready"
+
 // maxAgentNameAttempts bounds startAgentWithDedupe: the caller's own name
 // plus eight suffixed alternatives ("-2" through "-9", the two-rune
 // suffixes build.go's maxAgentNameLen already reserves room for). Nine
@@ -138,6 +166,13 @@ func isBusyPaneError(err error) bool {
 // a typed error code.
 func isNameTakenError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), nameTakenErrorCode)
+}
+
+// isAgentNotReadyError reports whether err's text contains
+// agentNotReadyErrorCode, by the same substring match (and for the same
+// reason) isBusyPaneError uses.
+func isAgentNotReadyError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), agentNotReadyErrorCode)
 }
 
 // startAgentWithDedupe runs `herdr agent start` for req and, when herdr
@@ -268,11 +303,82 @@ func withPaneTail(ctx context.Context, r herdrc.Runner, paneID string, err error
 	if readErr != nil {
 		return err
 	}
+	return withScreenTail(screen, err)
+}
+
+// withScreenTail is withPaneTail's formatting half, split out so
+// explainBlockedStart -- which has already read the screen for its own
+// reasons -- can append the same tail without reading the pane a second
+// time. Kept as one function rather than two copies of three lines: a
+// duplicated body drifts, and the two callers must keep saying "the pane
+// shows" the same way, since a reader who has seen one failure quote a
+// pane should recognize the next.
+func withScreenTail(screen string, err error) error {
 	tail := lastNonBlankLines(screen, paneTailLines)
 	if tail == "" {
 		return err
 	}
 	return fmt.Errorf("%w; the pane shows: %s", err, tail)
+}
+
+// explainBlockedStart turns herdr's own `agent_not_ready` refusal into
+// something the user can act on, and returns every other error untouched.
+//
+// herdr 0.9.0's detection manifest learned to recognize Claude Code's
+// first-run trust prompt, so it now reports that screen as
+// `agent_status: "blocked"` rather than the idle/interactive_ready it
+// reported on 0.8.2 (see dialog.go's own header for what that used to
+// cost). `agent start` polls for readiness and refuses a blocked agent
+// outright, so on 0.9.0 a submit into any FRESH WORKTREE -- a path Claude
+// Code has never been trusted in, which is every worktree the first time --
+// fails at the launch step. Upstream is right to refuse; what it cannot
+// know is that the agent is running fine and is one keystroke from ready,
+// which makes "starting agent failed" a frightening message about a session
+// that is healthy.
+//
+// So: on that one code, read the pane and say what is actually true. A
+// known dialog signature (dialog.go) gets the specific instruction; any
+// other blocked-at-startup screen gets quoted verbatim, which is the same
+// service withPaneTail does for a detection timeout and is strictly better
+// than a bare error code. A pane that cannot be read leaves herdr's error
+// exactly as it was -- never replace a real diagnosis with a complaint
+// about not being able to fetch one.
+//
+// The instruction is deliberately FIRST in the message and herdr's own
+// error last. SubmitView.stepValue truncates a step's value at the head
+// (v2 spec §7, "keeping the informative end"), so at an 80-cell popup only
+// the opening clause survives on screen -- while `create`'s stderr and
+// `--json` carry the whole thing, herdr's error code included. The action
+// belongs where the user with the narrowest window will still see it.
+//
+// kind is the agent kind being launched ("claude"), used only to name it;
+// an empty kind falls back to "the agent" rather than opening the sentence
+// with a space.
+func explainBlockedStart(ctx context.Context, r herdrc.Runner, kind, paneID string, err error) error {
+	if !isAgentNotReadyError(err) || paneID == "" {
+		return err
+	}
+	screen, readErr := r.AgentRead(ctx, paneID)
+	if readErr != nil {
+		return err
+	}
+	if sig := blockingDialogSignature(screen); sig != "" {
+		return fmt.Errorf("%s started; answer the dialog in the pane, then keep this session -- it is showing %q: %w",
+			agentKindName(kind), sig, err)
+	}
+	return withScreenTail(screen, err)
+}
+
+// agentKindName names an agent kind in prose, falling back to "the agent"
+// for an empty one. Build never emits an OpAgentStart with an empty Kind
+// (Input.AgentKind is resolved before it), but a hand-built op can, and a
+// sentence starting " started; answer the dialog" is worse than a generic
+// one.
+func agentKindName(kind string) string {
+	if kind == "" {
+		return "the agent"
+	}
+	return kind
 }
 
 // paneTailLines is how much of the pane a detection failure quotes. Three
@@ -304,6 +410,23 @@ func lastNonBlankLines(s string, n int) string {
 		kept[i], kept[j] = kept[j], kept[i]
 	}
 	return strings.Join(kept, " | ")
+}
+
+// unsentPromptText returns the prompt text of an OpAgentPrompt in ops that
+// did NOT reach the agent, given the index of the op that failed, or "" if
+// there is no prompt op or it had already succeeded.
+//
+// "Did not reach the agent" is every prompt op at or after failedIdx: ops
+// after it never ran at all, and the one AT it is the failing op itself --
+// which promptIfReady may well have refused deliberately, without sending
+// a byte (dialog.go's guard). Both cases owe the user their text back.
+func unsentPromptText(ops []Op, failedIdx int) string {
+	for i := failedIdx; i >= 0 && i < len(ops); i++ {
+		if ops[i].Kind == OpAgentPrompt && ops[i].Prompt != nil {
+			return ops[i].Prompt.Text
+		}
+	}
+	return ""
 }
 
 // isTopologyKind reports whether kind is one of the four ops that can
@@ -365,7 +488,6 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 
 		var topo herdrc.CreatedTopology
 		gotTopo := false
-		var promptText string
 		var reused bool
 		var reusedLabel string
 		var claimedPane string
@@ -483,6 +605,12 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 					req.PaneID = agentPane
 				}
 				err = startAgentWithDedupe(ctx, r, req)
+				// Runs AFTER the dedupe loop, so it sees the error the step
+				// actually failed with rather than an intermediate
+				// agent_name_taken, and returns everything that is not
+				// agent_not_ready untouched -- including agent_pane_busy,
+				// which retryBusy one level up still has to recognize.
+				err = explainBlockedStart(ctx, r, req.Kind, req.PaneID, err)
 			case OpClauthLaunch:
 				paneID := ""
 				if haveAgentPane {
@@ -506,7 +634,6 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 				if req.Target == "" && haveAgentPane {
 					req.Target = agentPane
 				}
-				promptText = req.Text
 				err = promptIfReady(ctx, r, req)
 			default:
 				err = fmt.Errorf("plan: execute: unknown op kind %v", op.Kind)
@@ -534,9 +661,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 			wrapped := fmt.Errorf("plan: execute: %s: %w", op.Label, runErr)
 			emitProgress(onProgress, i, total, op.Label, StepFailed, wrapped)
 			result.FailedIndex = i
-			if op.Kind == OpAgentPrompt {
-				result.PromptText = promptText
-			}
+			result.PromptText = unsentPromptText(ops, i)
 			return result
 		}
 

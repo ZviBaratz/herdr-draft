@@ -39,6 +39,13 @@ type fakeRunner struct {
 	workspaces []herdrc.WorkspaceInfo
 	failAt     string
 	readText   string
+
+	// failErr, when non-nil, is what failAt fails with instead of the
+	// generic error below -- needed only where the error's own TEXT is
+	// what the test is about, since herdrc.CLIRunner surfaces herdr's
+	// error codes as plain text and internal/plan matches on them by
+	// substring.
+	failErr error
 }
 
 var _ herdrc.Runner = (*fakeRunner)(nil)
@@ -52,6 +59,9 @@ func newFakeRunner() *fakeRunner {
 func (r *fakeRunner) record(name string, args ...string) error {
 	r.calls = append(r.calls, name+"("+strings.Join(args, ",")+")")
 	if name == r.failAt {
+		if r.failErr != nil {
+			return r.failErr
+		}
 		return errors.New("the pane was busy")
 	}
 	return nil
@@ -609,6 +619,66 @@ func TestUnsentPromptIsRecoverable(t *testing.T) {
 	}
 	if out.WorkspaceID != "wS1" {
 		t.Errorf("workspace_id = %q, want the session that WAS created", out.WorkspaceID)
+	}
+}
+
+// TestUnsentPromptSurvivesAFailureBeforeTheAgentStarts is the same recovery
+// one step earlier, and it used to be broken in the most misleading way
+// available: `prompt_sent` is derived from PromptText being empty, and
+// PromptText was only ever set when the PROMPT op failed -- so a run that
+// died at `agent start`, having typed nothing anywhere, reported
+// `prompt_sent: true` and dropped the text.
+//
+// #90 made that the ordinary outcome rather than a corner: on herdr 0.9.0 a
+// fresh worktree's first-run trust prompt blocks `agent start` outright, so
+// every first submit into a new checkout stops here. A headless caller has
+// no pane to scroll back through, which is exactly why the text has to come
+// out in the report.
+func TestUnsentPromptSurvivesAFailureBeforeTheAgentStarts(t *testing.T) {
+	h := newHarness(t)
+	h.runner.failAt = "AgentStart"
+
+	const prompt = "Work on ENG-101\n\nthe long body a caller would hate to retype"
+	code := h.run("--title", "t", "--no-worktree", "--prompt", prompt, "--json")
+	if code != ExitFailed {
+		t.Fatalf("exit = %d, want %d", code, ExitFailed)
+	}
+	if h.runner.called("AgentPrompt") {
+		t.Fatalf("the plan stopped at AgentStart, but a prompt was sent anyway: %v", h.runner.calls)
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if out.PromptSent == nil || *out.PromptSent {
+		t.Errorf("prompt_sent = %v, want false -- nothing was ever typed", out.PromptSent)
+	}
+	if out.UnsentPrompt != prompt {
+		t.Errorf("unsent_prompt = %q, want the whole prompt back", out.UnsentPrompt)
+	}
+}
+
+// TestBlockedStartIsExplainedHeadlessly is #90's message reaching the
+// headless verb. `create` has no pane and no keep-or-clean gate, so the one
+// place it can say what happened is stderr -- and unlike the popup, it has
+// the room to carry herdr's own error code alongside the instruction.
+func TestBlockedStartIsExplainedHeadlessly(t *testing.T) {
+	h := newHarness(t)
+	h.runner.failAt = "AgentStart"
+	h.runner.failErr = errors.New("herdr agent start t --kind claude: exit status 1: " +
+		`{"error":{"code":"agent_not_ready","message":"agent t is blocked during startup and is not ready for prompts"}}`)
+	h.runner.readText = "Quick safety check: Is this a project you created or one you trust?\n" +
+		"❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel"
+
+	if code := h.run("--title", "t", "--no-worktree"); code != ExitFailed {
+		t.Fatalf("exit = %d, want %d", code, ExitFailed)
+	}
+	stderr := h.stderr.String()
+	for _, want := range []string{"answer the dialog in the pane", "Quick safety check", "agent_not_ready"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+		}
 	}
 }
 

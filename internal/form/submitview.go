@@ -174,8 +174,17 @@ func (v *SubmitView) SetFailure(res plan.ExecResult, clean plan.CleanDecision) {
 // at all (see the deadEnd field). It is deliberately separate from
 // SetFailure: SetFailure means "there is a created space to decide
 // about", and this means the opposite.
-func (v *SubmitView) SetDeadEnd() {
+//
+// It takes the result anyway, and for one reason: a dead end can still
+// carry an unsent prompt. Since #90 generalised ExecResult.PromptText from
+// "the prompt op failed" to "the prompt did not land", a plan that never
+// got past `worktree create` reports the prompt the user had composed, and
+// unsentPromptLines needs to know there is one in order to say so while
+// the save is still in flight. There is no CleanDecision to pass, because
+// there is nothing to decide about.
+func (v *SubmitView) SetDeadEnd(res plan.ExecResult) {
 	v.deadEnd = true
+	v.result = res
 }
 
 // SetCleanFailed records that a "c" (remove) attempt itself failed -- the
@@ -517,8 +526,15 @@ func (v *SubmitView) regionLines(width, region int, rule bool) []string {
 // unavailable. Empty while the pipeline is still running.
 func (v *SubmitView) failureBody(width int) []string {
 	if v.deadEnd {
-		return []string{indentedLine(dimText(v.palette).Render(
-			"nothing was created — there is nothing to keep or remove"), width)}
+		// The unsent prompt goes ABOVE the dead-end line, following this
+		// stack's own least- to most-important ordering: "nothing was
+		// created" is what explains the single `esc close` button, so it
+		// is the line that must survive regionLines clipping from the top.
+		// A dead end can carry an unsent prompt since #90 generalised
+		// ExecResult.PromptText -- a plan that never got past `worktree
+		// create` still had one composed.
+		return append(v.unsentPromptLines(width), indentedLine(dimText(v.palette).Render(
+			"nothing was created — there is nothing to keep or remove"), width))
 	}
 	if !v.haveFailure {
 		return nil

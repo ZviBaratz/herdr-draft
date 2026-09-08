@@ -701,6 +701,13 @@ screens.
 - `internal/plan/dialog.go` stays. Claude Code's first-run trust dialog is
   still undetected on herdr master, and `agent prompt`'s `agent_blocked` gate
   reads cached state rather than the screen, so the guard is load-bearing.
+  *(Overtaken 2026-09-08, #90: herdr 0.9.0's detection manifest recognises
+  that dialog and reports the agent `blocked`, so `agent prompt` now refuses
+  with `agent_blocked` on the real state and `agent start` refuses with
+  `agent_not_ready`. The conclusion survives its reasoning — the guard stays,
+  because the manifest knows this one screen rather than the class, and
+  because `plan.Execute` now reuses the same signatures to explain the
+  refusal. This bullet records the v2-era constraint and is kept as written.)*
 - The plugin manifest does not change. At rest the form is roughly seventeen
   rows, which an 80%-height popup holds from 80×24 upward.
 

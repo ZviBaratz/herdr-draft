@@ -34,6 +34,13 @@ type mockRunner struct {
 	// assumption that the pane is a normal ready state).
 	readText string
 
+	// readErr, when non-nil, is what AgentRead fails with -- independent of
+	// failAt, which names a single method and so cannot express "this op
+	// failed AND reading the pane afterwards also failed". That pair is
+	// exactly explainBlockedStart's fail-safe branch (an agent_not_ready
+	// start whose pane cannot be read), so it needs a second dial.
+	readErr error
+
 	// workspacesBeforeCreate, when non-nil, is what WorkspaceList returns --
 	// the "what already exists" snapshot Execute's reuse check takes
 	// immediately before a worktree create (placement spec §5.2/§3).
@@ -135,6 +142,9 @@ func (m *mockRunner) AgentPrompt(ctx context.Context, req herdrc.AgentPromptReq)
 
 func (m *mockRunner) AgentRead(ctx context.Context, target string) (string, error) {
 	m.record("AgentRead", target)
+	if m.readErr != nil {
+		return "", m.readErr
+	}
 	if m.shouldFail("AgentRead") {
 		return "", m.failErr
 	}
@@ -1386,4 +1396,297 @@ func TestExecuteDetectionTimeoutSurvivesAnUnreadablePane(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- #90: a start herdr refused because of a blocking dialog --------------
+
+// notReadyErr is the failure `herdr agent start` produces on 0.9.0 when its
+// readiness poll finds the agent blocked, as herdrc.CLIRunner surfaces it:
+// the subcommand named, then herdr's own JSON error envelope from stderr
+// (cmdError's `herdr %s: %w: %s`). Verbatim from the live 0.9.0 session
+// that filed #90 -- the error code has to arrive inside a string for
+// isAgentNotReadyError's substring match to be the right test, and a
+// hand-written `errors.New("agent_not_ready")` would pass that match while
+// proving nothing about the shape the real CLI hands over.
+func notReadyErr(agentName string) error {
+	return fmt.Errorf("herdr agent start %s --kind claude: exit status 1: "+
+		`{"error":{"code":"agent_not_ready","message":"agent %s is blocked during startup and is not ready for prompts"}}`,
+		agentName, agentName)
+}
+
+// trustDialogScreen is Claude Code's first-run trust prompt as `agent read
+// --source detection` renders it -- the same screen dialog_test.go's
+// fixture preserves, re-observed live on herdr 0.9.0 while filing #90.
+const trustDialogScreen = "Quick safety check: Is this a project you created or one you trust?\n\n" +
+	"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n"
+
+// TestExecuteBlockedStartIsExplained is #90's core scenario. herdr 0.9.0
+// detects the first-run trust prompt and reports the agent `blocked`, so
+// `agent start` refuses with agent_not_ready -- and since every freshly
+// created worktree is a directory Claude Code has never been trusted in,
+// Path A's step 2 now fails routinely on a session that is in fact healthy
+// and one keystroke from ready.
+//
+// What the step must say is what the user can do about it, FIRST, because
+// SubmitView truncates a step's value at the head.
+func TestExecuteBlockedStartIsExplained(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt:    "AgentStart",
+		failErr:   notReadyErr("fix-pagination"),
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:  trustDialogScreen,
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+
+	if result.FailedIndex != 1 {
+		t.Fatalf("FailedIndex = %d, want 1 (the agent start op): %+v", result.FailedIndex, result)
+	}
+	if !containsCall(m.calls, "AgentRead(pane-1)") {
+		t.Fatalf("calls = %v, want the agent pane read to find out WHY the start was refused", m.calls)
+	}
+
+	last := progressed[len(progressed)-1]
+	if last.State != StepFailed {
+		t.Fatalf("last progress = %+v, want StepFailed", last)
+	}
+	msg := last.Err.Error()
+
+	// The instruction, and the agent named -- not "starting agent failed".
+	for _, want := range []string{"claude started", "answer the dialog in the pane", "keep this session"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("blocked start = %q, want it to contain %q", msg, want)
+		}
+	}
+	// The dialog it matched, so the message is checkable against the screen.
+	if !strings.Contains(msg, "Quick safety check") {
+		t.Errorf("blocked start = %q, want it to name the dialog signature it matched", msg)
+	}
+	// herdr's own error is still in there for `create --json` and stderr.
+	if !errors.Is(last.Err, m.failErr) {
+		t.Errorf("blocked start = %q, want herdr's own agent_not_ready error still wrapped", msg)
+	}
+	if strings.ContainsAny(msg, "\n\r") {
+		t.Errorf("blocked start = %q, want a single line -- the failure screen budgets its rows", msg)
+	}
+
+	// The prompt never reached the agent, so it must come back for paste.
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want %q -- the step-2 failure must not eat the prompt", result.PromptText, in.Prompt)
+	}
+}
+
+// TestExplainBlockedStartLeadsWithTheAction pins the one property of this
+// message that the popup can take away: SubmitView.stepValue truncates a
+// step's value at the head (v2 spec §7), and at an 80-cell popup that
+// value column is around sixty cells. So the instruction has to come
+// before the evidence -- the natural English order ("agent X is blocked
+// because ...: do Y") puts the actionable half exactly where it gets cut.
+//
+// Asserted here rather than through Execute because Execute wraps the
+// error as `plan: execute: <label>: ...` and internal/app strips that
+// prefix back off (async.go's execErrorPrefix) before rendering: measuring
+// the rendered head through Execute would mean re-implementing the app's
+// stripping inside a plan test, against the wrong string.
+func TestExplainBlockedStartLeadsWithTheAction(t *testing.T) {
+	m := &mockRunner{readText: trustDialogScreen}
+	err := explainBlockedStart(context.Background(), m, "claude", "pane-1", notReadyErr("fix-pagination"))
+
+	const rendered = 60 // roughly what an 80-cell popup gives the value column
+	head := firstRunes(err.Error(), rendered)
+	if !strings.Contains(head, "answer the dialog") {
+		t.Errorf("first %d runes = %q, want the instruction still visible there", rendered, head)
+	}
+}
+
+// TestExecuteBlockedStartQuotesAnUnrecognizedScreen covers the other reason
+// `agent start` reports agent_not_ready: some screen dialog.go has never
+// heard of. Quoting the pane is the same service a detection timeout gets,
+// and is strictly better than handing back a bare error code -- herdr's
+// detection manifest knows one dialog, not every dialog.
+func TestExecuteBlockedStartQuotesAnUnrecognizedScreen(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt:    "AgentStart",
+		failErr:   notReadyErr("fix-pagination"),
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:  "Select login method:\n\n❯ Claude account with subscription\n  Anthropic Console account\n",
+	}
+
+	var progressed []Progress
+	Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+
+	msg := progressed[len(progressed)-1].Err.Error()
+	if !strings.Contains(msg, "Anthropic Console account") {
+		t.Errorf("blocked start = %q, want the unrecognized screen quoted", msg)
+	}
+	if strings.Contains(msg, "answer the dialog in the pane") {
+		t.Errorf("blocked start = %q, want NO trust-prompt instruction for a screen dialog.go did not match", msg)
+	}
+	if strings.ContainsAny(msg, "\n\r") {
+		t.Errorf("blocked start = %q, want a single line", msg)
+	}
+}
+
+// TestExecuteBlockedStartSurvivesAnUnreadablePane keeps the explanation
+// best-effort, exactly as withPaneTail is: herdr's refusal is the real
+// failure, and replacing it with a complaint about not being able to read
+// the pane would be strictly worse than the message this set out to
+// improve.
+func TestExecuteBlockedStartSurvivesAnUnreadablePane(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	refused := notReadyErr("fix-pagination")
+
+	m := &mockRunner{
+		failAt:    "AgentStart",
+		failErr:   refused,
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readErr:   errors.New("agent target pane-1 not found"),
+	}
+
+	var progressed []Progress
+	Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+
+	last := progressed[len(progressed)-1]
+	if !errors.Is(last.Err, refused) {
+		t.Errorf("blocked start = %v, want herdr's own refusal intact", last.Err)
+	}
+	if strings.Contains(last.Err.Error(), "pane-1 not found") {
+		t.Errorf("blocked start = %q, want the READ's failure kept out of it -- it is not the diagnosis", last.Err.Error())
+	}
+}
+
+// TestExecuteAgentStartFailureLeavesOtherErrorsAlone is the scope guard.
+// Only agent_not_ready means "blocked on a screen worth reading"; every
+// other start failure -- a name herdr will not accept, an exhausted dedupe
+// loop, a busy pane -- has its answer in the error itself, and reading the
+// pane for it would add a herdr round-trip and a paragraph of irrelevant
+// terminal output to a message that was already correct.
+func TestExecuteAgentStartFailureLeavesOtherErrorsAlone(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	refused := errors.New(`herdr agent start x --kind claude: exit status 1: ` +
+		`{"error":{"code":"agent_start_failed","message":"agent process exited before becoming interactive"}}`)
+
+	m := &mockRunner{
+		failAt:    "AgentStart",
+		failErr:   refused,
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:  trustDialogScreen, // present, and must go unread
+	}
+
+	var progressed []Progress
+	Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+
+	if containsCall(m.calls, "AgentRead(pane-1)") {
+		t.Errorf("calls = %v, want NO pane read for a failure that is not agent_not_ready", m.calls)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	if strings.Contains(msg, "Quick safety check") || strings.Contains(msg, "answer the dialog") {
+		t.Errorf("start failure = %q, want herdr's own error unembellished", msg)
+	}
+}
+
+// TestExecuteUnsentPromptSurvivesAFailureBeforeThePromptOp pins the
+// generalisation #90 forced. PromptText used to be set only when
+// OpAgentPrompt was itself the failing op, so a plan that stopped earlier
+// destroyed the prompt outright: nothing saved it for paste, and
+// `create --json` derived `prompt_sent: true` from it being empty. Every
+// step before the prompt op is a step that can now do that.
+func TestExecuteUnsentPromptSurvivesAFailureBeforeThePromptOp(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		failAt string
+	}{
+		{"the worktree is never created", "WorktreeCreate"},
+		{"the agent never starts", "AgentStart"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := validInput()
+			in.UseWorktree = true
+			in.Prompt = "implement the fix\n\nsecond paragraph"
+			ops, err := Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+
+			m := &mockRunner{
+				failAt:    tc.failAt,
+				failErr:   errors.New("herdr said no"),
+				failCount: 1,
+				topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+			}
+
+			result := Execute(context.Background(), m, ops, nil)
+
+			if result.FailedIndex == -1 {
+				t.Fatalf("Execute succeeded, want %s to fail", tc.failAt)
+			}
+			if result.PromptText != in.Prompt {
+				t.Fatalf("PromptText = %q, want %q -- a prompt that never reached the agent must come back", result.PromptText, in.Prompt)
+			}
+		})
+	}
+}
+
+// TestExecuteSuccessLeavesPromptTextEmpty is the other half of that
+// contract, and the one `create --json`'s `prompt_sent` actually reads:
+// PromptText means "the prompt did not land", so a plan that ran to the end
+// must leave it empty however long the prompt was.
+func TestExecuteSuccessLeavesPromptTextEmpty(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("Execute failed, want success: %+v", result)
+	}
+	if result.PromptText != "" {
+		t.Fatalf("PromptText = %q, want empty -- the prompt was sent", result.PromptText)
+	}
+}
+
+// firstRunes returns the first n runes of s, for asserting on what survives
+// a head-keeping truncation.
+func firstRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		r = r[:n]
+	}
+	return string(r)
 }
