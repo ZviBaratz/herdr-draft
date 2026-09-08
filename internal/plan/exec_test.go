@@ -1282,3 +1282,108 @@ func TestDisposableRejectsAnEmptyBaseRef(t *testing.T) {
 		t.Fatal("Disposable(worktree, \"\") reported a worktree with an extra commit as disposable")
 	}
 }
+
+// TestExecuteDetectionTimeoutQuotesThePane is the diagnosability half of
+// the live 2026-09-08 finding: an `[agents.extra_args]` value containing
+// shell glob characters was rejected by zsh, the agent never started, and
+// the only thing reported was that detection had timed out after 30s. The
+// pane held the actual reason for the whole thirty seconds.
+//
+// The launch step cannot catch this on its own -- herdr's `pane run` TYPES
+// into an interactive shell and reports success by exit code, which
+// reflects the typing rather than the command -- so this step, already
+// waiting next to the pane, is where the answer is available.
+func TestExecuteDetectionTimeoutQuotesThePane(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	// Path B: build.go emits OpAwaitDetection only for an account-pinned
+	// launch, which is also the path the live failure was on -- the glob
+	// characters were in extra_args on a `clauth start` command line.
+	in.AccountPin = "personal"
+	in.ExtraArgs = []string{"--model", "claude-opus-5[1m]"}
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt:    "AwaitDetection",
+		failErr:   errors.New("await detection for pane pane-1: timed out after 30.001s"),
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText: "❯ clauth start personal -- --model claude-opus-5[1m] --effort xhigh\n" +
+			"zsh: no matches found: claude-opus-5[1m]\n" +
+			"❯ \n\n\n",
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+
+	if result.FailedIndex == -1 {
+		t.Fatalf("Execute succeeded, want the detection op to fail: %+v", result)
+	}
+	last := progressed[len(progressed)-1]
+	if last.State != StepFailed {
+		t.Fatalf("last progress = %+v, want StepFailed", last)
+	}
+	msg := last.Err.Error()
+
+	if !strings.Contains(msg, "no matches found") {
+		t.Errorf("detection failure = %q, want it to quote the shell's rejection from the pane", msg)
+	}
+	// The timeout is still the failure; the pane text only enriches it.
+	if !errors.Is(last.Err, m.failErr) {
+		t.Errorf("detection failure = %q, want the original timeout still wrapped", msg)
+	}
+	// A screen dump with embedded newlines would break the failure
+	// screen's own row budget.
+	if strings.ContainsAny(msg, "\n\r") {
+		t.Errorf("detection failure = %q, want a single line", msg)
+	}
+}
+
+// TestExecuteDetectionTimeoutSurvivesAnUnreadablePane keeps the enrichment
+// best-effort. The timeout is the real failure; replacing it with a
+// complaint about not being able to fetch a diagnosis would be strictly
+// worse than the message this set out to improve.
+func TestExecuteDetectionTimeoutSurvivesAnUnreadablePane(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.AccountPin = "personal"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	timeout := errors.New("await detection for pane pane-1: timed out after 30.001s")
+
+	for _, tc := range []struct {
+		name     string
+		readText string
+	}{
+		{"the pane is blank", "\n   \n\n"},
+		{"the pane is empty", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &mockRunner{
+				failAt:    "AwaitDetection",
+				failErr:   timeout,
+				failCount: 1,
+				topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+				readText:  tc.readText,
+			}
+
+			var progressed []Progress
+			result := Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+			if result.FailedIndex == -1 {
+				t.Fatal("Execute succeeded, want the detection op to fail")
+			}
+			last := progressed[len(progressed)-1]
+			if !errors.Is(last.Err, timeout) {
+				t.Errorf("detection failure = %v, want the original timeout intact", last.Err)
+			}
+			if strings.Contains(last.Err.Error(), "the pane shows") {
+				t.Errorf("detection failure = %q, want no empty pane quote appended", last.Err.Error())
+			}
+		})
+	}
+}
