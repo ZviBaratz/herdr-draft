@@ -311,13 +311,21 @@ const capOverflowItems = 40
 // placement/off-other-chip exist for those two sides and nothing else.
 func panelRowsCases(p theme.Palette) []panelRowsCase {
 	// chipsRight advances a chip row n places from its fresh selection,
-	// through the same key path a user would (SetValue would work for
-	// placement, but not every chip row has one).
-	chipsRight := func(s Section, n int) Section {
+	// through the same key path a user would.
+	//
+	// SetValue would do it in one call. The keypresses are used because
+	// the sibling matrix in field_placement_test.go moves the chip this
+	// way, and two tests over one field's arithmetic that disagree about
+	// how the field arrives at a state are two tests whose disagreement
+	// is the first thing to rule out when one of them fails.
+	//
+	// Returns nothing, deliberately: a helper that both mutates and
+	// returns its argument invites the two spellings this table had, one
+	// case returning the call and the next discarding it.
+	chipsRight := func(s Section, n int) {
 		for i := 0; i < n; i++ {
 			s.Update(key(tea.KeyRight, 0))
 		}
-		return s
 	}
 	// countedNames is n distinct one-word items, for the cases whose only
 	// job is to overflow a cap.
@@ -445,7 +453,8 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		}, 2 + 1},
 		{"placement/off-other-chip", func() Section {
 			f := NewPlacementField(p)
-			return chipsRight(f, 1) // tab here, no worktree
+			chipsRight(f, 1) // tab here, no worktree
+			return f
 		}, 2},
 		{"placement/on-default-chip", func() Section {
 			f := NewPlacementField(p)
@@ -455,7 +464,8 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		{"placement/on-other-chip", func() Section {
 			f := NewPlacementField(p)
 			f.SetWorktreeOn(true)
-			return chipsRight(f, 1) // tab here
+			chipsRight(f, 1) // tab here
+			return f
 		}, 2 + 1},
 		{"placement/on-other-chip-with-provenance", func() Section {
 			f := NewPlacementField(p)
