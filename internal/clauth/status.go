@@ -153,7 +153,15 @@ func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return Status{}, fmt.Errorf("clauth status --json: %w: %s", err, strings.TrimSpace(stderr.String()))
+		// The wrapping keeps exec.ErrNotFound reachable through
+		// errors.Is, which the app layer needs: "clauth is not installed"
+		// and "clauth is installed and broken" are the same error value
+		// here but must produce opposite UI. Not installed is the normal
+		// case for most people and shows nothing; broken is worth saying.
+		if s := strings.TrimSpace(stderr.String()); s != "" {
+			return Status{}, fmt.Errorf("clauth status --json: %w: %s", err, s)
+		}
+		return Status{}, fmt.Errorf("clauth status --json: %w", err)
 	}
 	return ParseStatus(stdout.Bytes())
 }

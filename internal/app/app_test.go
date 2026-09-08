@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -248,7 +250,12 @@ type testSetup struct {
 	Projects     config.Projects
 	Workspaces   []herdrc.WorkspaceInfo
 	ClauthStatus clauth.Status
-	LinearCache  []linear.Issue
+	// ClauthUnavailable stands in for Bootstrap's own "clauth is installed
+	// and unreadable" outcome, so a test reaches the inert account row
+	// through New's real construction path rather than by reaching past it
+	// and poking the field.
+	ClauthUnavailable string
+	LinearCache       []linear.Issue
 	// RepoConfig stands in for config.LoadRepoConfig (spec §11), so a test
 	// gets a deterministic .herdr-draft.toml without putting one on disk.
 	// nil leaves Deps.RepoConfig nil, which is the production reader --
@@ -294,16 +301,17 @@ func newTestModel(t *testing.T, s testSetup) Model {
 			Clock:      noSleep,
 			RepoConfig: s.RepoConfig,
 		},
-		Ctx:          s.Ctx,
-		Config:       cfg,
-		State:        s.State,
-		Projects:     s.Projects,
-		Palette:      theme.Default(),
-		StateDir:     t.TempDir(),
-		Workspaces:   s.Workspaces,
-		ClauthStatus: s.ClauthStatus,
-		LinearCache:  s.LinearCache,
-		HomeDir:      testHomeDir,
+		Ctx:               s.Ctx,
+		Config:            cfg,
+		State:             s.State,
+		Projects:          s.Projects,
+		Palette:           theme.Default(),
+		StateDir:          t.TempDir(),
+		Workspaces:        s.Workspaces,
+		ClauthStatus:      s.ClauthStatus,
+		ClauthUnavailable: s.ClauthUnavailable,
+		LinearCache:       s.LinearCache,
+		HomeDir:           testHomeDir,
 	})
 }
 
@@ -821,6 +829,14 @@ func TestBootstrap_Success(t *testing.T) {
 }
 
 // A clauth load failure must degrade, not refuse -- spec §13.
+//
+// This test used to also assert `m.account == nil`, i.e. that a broken
+// clauth showed nothing. That half WAS the defect: it made a clauth that
+// crashed indistinguishable from one that is not installed, and the error
+// explaining which was discarded at the point of failure. §13's own
+// wording is "degrade ... to inert WITH A REASON", and there was no
+// reason. The no-refusal half, which is what the test is named for, still
+// holds and is still asserted.
 func TestBootstrap_ClauthFailureDegrades(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
 	runner := &fakeRunner{}
@@ -829,8 +845,38 @@ func TestBootstrap_ClauthFailureDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bootstrap with a failing clauth source returned an error, want it to degrade: %v", err)
 	}
+	if m.account == nil {
+		t.Fatal("Model.account is nil after a clauth that was there and failed, want an inert row carrying the reason")
+	}
+	if m.account.Enabled() {
+		t.Error("AccountField.Enabled() = true for an unreadable clauth, want inert (skipped by the focus ring)")
+	}
+	if got := fieldText(m.account, 80); !strings.Contains(got, "unavailable") {
+		t.Errorf("account row = %q, want it to say it is unavailable", got)
+	}
+}
+
+// TestBootstrap_ClauthNotInstalledShowsNothing is the other side of the
+// same distinction, and the one that keeps the fix from becoming noise.
+//
+// Most people who install this plugin have never heard of clauth. It is an
+// optional integration, and its absence is the documented, deliberate
+// reason the account row does not render ("a static, by-design check, not
+// a bug"). Announcing a missing optional dependency to everyone who does
+// not have it would be worse than the silence this issue is about.
+//
+// exec.ErrNotFound is what separates the two: the binary is not there,
+// versus it was there and did not work.
+func TestBootstrap_ClauthNotInstalledShowsNothing(t *testing.T) {
+	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
+	cl := &fakeClauth{err: fmt.Errorf("clauth status --json: %w", &exec.Error{Name: "clauth", Err: exec.ErrNotFound})}
+
+	m, err := Bootstrap(env, &fakeRunner{}, cl, newFakeGit(), noSleep)
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
 	if m.account != nil {
-		t.Fatalf("Model.account is non-nil despite a failed clauth load, want nil (degraded, not shown)")
+		t.Error("Model.account is non-nil with clauth not installed, want no row at all")
 	}
 }
 
@@ -2388,5 +2434,25 @@ func TestBootstrap_UnreachableHerdrRefusalNamesWhatToCheck(t *testing.T) {
 		if !strings.Contains(got, needle) {
 			t.Errorf("refusal does not mention %q:\n%s", needle, got)
 		}
+	}
+}
+
+// TestClauthUnavailableReason keeps the row's one line readable. A failing
+// clauth's stderr can be multi-line -- a Rust panic with a goroutine dump
+// is the realistic case -- and the panel builds a fixed number of lines,
+// so an unflattened reason would push the layout past the height it was
+// asked for. An error message that breaks the form it is explaining is a
+// worse bug than the silence it replaced.
+func TestClauthUnavailableReason(t *testing.T) {
+	got := clauthUnavailableReason(fmt.Errorf("clauth status --json: exit status 1: panic: something\n\n  goroutine 1"))
+
+	if strings.ContainsAny(got, "\n\r") {
+		t.Errorf("clauthUnavailableReason = %q, want a single line", got)
+	}
+	if strings.HasPrefix(got, "clauth status --json: ") {
+		t.Errorf("clauthUnavailableReason = %q, want the package's own prefix dropped", got)
+	}
+	if !strings.Contains(got, "exit status 1") {
+		t.Errorf("clauthUnavailableReason = %q, want it to keep the actual failure", got)
 	}
 }

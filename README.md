@@ -643,6 +643,12 @@ two profiles, or clauth not detected at all, means the row is simply absent
 — a static, by-design check, not a bug. Same for the `issue` row and
 Linear.
 
+**The `account` row says `unavailable`.** Different situation: clauth *is*
+installed, and herdr-draft could not read it — it exited non-zero, or its
+`--json` output did not parse. The reason is on the row. The row is inert
+and the focus ring skips it; it goes back to normal, or back to being
+absent, once clauth works.
+
 **The `issue` row says `unavailable`.** Your key source is configured but
 failed; the reason is on the row itself and in its panel. See
 [`[linear]`](#linear).
