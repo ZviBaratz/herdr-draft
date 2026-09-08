@@ -620,7 +620,13 @@ func titleVerdictText(branchExists, labelTaken bool) string {
 
 type linearResultMsg struct {
 	issues []linear.Issue
-	err    bool
+	// err is the fetch failure itself, not a flag that one happened. It
+	// used to be a bool, which destroyed the reason at the point of
+	// failure and left handleLinearResult with nothing to display -- so a
+	// revoked or mistyped API key rendered exactly like an empty Linear
+	// queue. spec §13 requires a network failure to degrade "to inert
+	// with a reason", and there was no reason to be had.
+	err error
 }
 
 // refreshLinearCmd fetches the viewer's assigned issues over the network
@@ -641,23 +647,38 @@ func (m Model) refreshLinearCmd() tea.Cmd {
 	return func() tea.Msg {
 		issues, err := src.AssignedIssues(context.Background())
 		if err != nil {
-			return linearResultMsg{err: true}
+			return linearResultMsg{err: err}
 		}
 		return linearResultMsg{issues: issues}
 	}
 }
 
 // handleLinearResult applies a successful refresh to IssueField and
-// persists it as the new cache (spec §10) -- both are no-ops when Linear
+// persists it as the new cache (spec §10). Both are no-ops when Linear
 // isn't configured at all (m.issue == nil) or the fetch failed: a failed
 // refresh leaves whatever the cache-rendered (or previously fetched) list
 // already showing in place, matching spec §13's "network failures degrade
 // ... to inert with a reason; they never block manual-mode creation" (the
 // cache-rendered list, however stale, is still usable).
+//
+// What it no longer does is fail SILENTLY. The list is left alone, as
+// above, but the reason now reaches the panel through SetRefreshError --
+// which deliberately does not mark the field inert, precisely so the
+// stale-but-usable list this function is careful to preserve stays
+// pickable. Reporting a network error by removing the user's ability to
+// pick an issue would undo the very degradation this comment describes.
+//
+// A success clears any previous reason, so a transient failure followed by
+// a working refresh does not leave a stale explanation on screen.
 func (m Model) handleLinearResult(msg linearResultMsg) (Model, tea.Cmd) {
-	if msg.err || m.issue == nil {
+	if m.issue == nil {
 		return m, nil
 	}
+	if msg.err != nil {
+		m.issue.SetRefreshError(linearRefreshReason(msg.err))
+		return m, nil
+	}
+	m.issue.SetRefreshError("")
 	m.issueItemsVersion++
 	m.issue.SetIssues(m.issueItemsVersion, msg.issues)
 	m.linearIssues = msg.issues                  // see Model.linearIssues' own doc comment (handleClearRequested's reseed source).

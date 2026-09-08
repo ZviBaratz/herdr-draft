@@ -122,6 +122,23 @@ type IssueField struct {
 	// is configured but could not be reached, so the field renders inert
 	// carrying that reason instead of a picker (spec §13).
 	unavailable string
+
+	// refreshErr, when non-empty, is SetRefreshError's own reason: the
+	// last network fetch of the assigned-issue list failed.
+	//
+	// Deliberately SEPARATE from unavailable rather than folded into it,
+	// even though both mean "Linear is not working". unavailable makes the
+	// field inert -- Enabled() false, skipped by the focus ring, no list
+	// drawn at all -- which is right for a key that cannot resolve, since
+	// there is nothing to pick and never was. A failed REFRESH is a
+	// different situation: the cache-rendered list from a previous run is
+	// still sitting there and is still perfectly usable for seeding a
+	// title, a branch and a prompt. Marking the field inert would throw
+	// that away to report a network error, which is the opposite of
+	// degrading gracefully.
+	//
+	// So this changes what the panel SAYS and nothing else.
+	refreshErr string
 }
 
 // NewIssueField returns an empty, blurred IssueField (selection on the
@@ -180,6 +197,20 @@ func (f *IssueField) Enabled() bool { return f.unavailable == "" }
 // now render differently: absent is still not rendered at all (the static
 // precondition), broken is rendered inert, carrying its reason.
 func (f *IssueField) SetUnavailable(reason string) { f.unavailable = reason }
+
+// SetRefreshError records why the last assigned-issues fetch failed, or
+// clears it with "". Unlike SetUnavailable this does NOT make the field
+// inert: whatever list is already on screen stays selectable -- see
+// refreshErr's own doc comment.
+//
+// It exists because a failed fetch used to produce no reason anywhere.
+// linearResultMsg carried a bare bool, so the error text was destroyed at
+// the point of failure, and the panel fell through to "no assigned
+// issues" -- which made a revoked or mistyped API key byte-identical to
+// genuinely having nothing assigned. A 401 read as an empty inbox.
+//
+// reason must be a single line; the app layer flattens it.
+func (f *IssueField) SetRefreshError(reason string) { f.refreshErr = reason }
 
 // Focus gives the field input focus, returning the wrapped lineInput's own
 // blink tea.Cmd.
@@ -450,9 +481,22 @@ func (f *IssueField) panelStatus() string {
 	case f.unavailable != "":
 		return f.unavailable
 	case len(f.issues) == 0:
+		// The case this whole distinction exists for: a fetch that failed
+		// with no cache to fall back on. "no assigned issues" is not a
+		// weaker statement here, it is a false one -- it describes the
+		// user's Linear queue, and nobody looked at the queue.
+		if f.refreshErr != "" {
+			return f.refreshErr
+		}
 		return issuePanelEmpty
 	case f.picker.FilteredLen() == 0:
+		// A filter matching nothing beats a stale-list note: the user
+		// typed the filter a keystroke ago and it is the more immediate
+		// fact, exactly as the empty-Linear check outranks it above.
 		return issuePanelNoMatch
+	case f.refreshErr != "":
+		// A list IS showing and is usable; say why it may be out of date.
+		return f.refreshErr
 	default:
 		return ""
 	}
