@@ -147,11 +147,24 @@ func TestPlacementField_PanelDisclosesTheWorktreesOwnSpace(t *testing.T) {
 // rule: 2 base rows, +1 under a worktree for a non-default chip, +1 when
 // a config file chose the value.
 //
-// field_rows_test.go's panelRowsCases carries the same field's five
-// BRANCHES, so what this adds is the product rather than a representative
-// of each branch, and it adds one thing that table cannot: the chip is
-// moved by real Right keypresses through Update, so a selection the
-// key path resolves differently from the constructor is caught here.
+// field_rows_test.go's panelRowsCases carries this field's BRANCHES, one
+// case per side of the conjunction. Three things are left for this test,
+// and an earlier version of this comment named a fourth that was simply
+// false -- that only this test moves the chip by real keypresses, when
+// panelRowsCases' own chipsRight helper sends the identical
+// key(tea.KeyRight, 0) through Update. Corrected here rather than
+// quietly, because an unsupported rationale in a comment is the shape of
+// defect that lets a future reader delete real coverage believing it is
+// duplicated.
+//
+// What it actually adds: the full PRODUCT, where the table has one case
+// per branch -- interactions like (worktree on, split here, provenance)
+// that no single branch case reaches; the only exercise of the THIRD
+// chip anywhere in either test's row arithmetic, since the table needs
+// just one non-default chip and uses tab-here; and the
+// placementChipID(f.Value()) setup assertion below, which pins that
+// Value() agrees with the chip the keypresses actually landed on -- a
+// fact the table takes on trust.
 //
 // It was written when the shared invariant could not fail. That is fixed
 // (#33): the shared test now compares PanelRows() against an expectation
