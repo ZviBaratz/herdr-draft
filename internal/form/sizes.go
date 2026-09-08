@@ -1,10 +1,16 @@
-// Derived from atrium (github.com/ZviBaratz/atrium) ui/overlay/textInput_size.go
-// and ui/overlay/textInput_render.go, © Zvi Baratz, relicensed by the author.
+// Historically derived from atrium (github.com/ZviBaratz/atrium)
+// ui/overlay/textInput_size.go and ui/overlay/textInput_render.go, © Zvi
+// Baratz, relicensed by the author. NOTICE no longer lists this file, and
+// the record of why is there rather than repeated here: nothing derived
+// from the size half survives anywhere, and the render half is PaintLine,
+// whose body moved to widgets/paint.go -- which NOTICE now lists in this
+// file's place, so the credit sits where the code does.
 //
-// What survives of that port is paintLine -- whose body has since moved
-// to widgets.PaintLine, leaving the name here as a delegator, see its own
-// doc comment -- plus two of this form's own layout constants. Everything
-// else is gone:
+// What is left here is a one-line delegator to widgets.PaintLine (kept
+// because this form's call sites and the citations pointing here all read
+// paintLine), boldSpan, and two of this form's own layout constants.
+// Everything else is gone, and the history is worth keeping because one
+// part of it is a cautionary tale:
 //
 //   - Atrium's shared height BUDGET -- reproduced here as allocateHeights
 //     over the opaque Section interface -- went with v1's variable-height
