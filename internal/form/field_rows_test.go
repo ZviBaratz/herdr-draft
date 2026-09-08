@@ -275,6 +275,17 @@ type panelRowsCase struct {
 // deliberately. The duplication is what makes a disagreement fail, and
 // it fails LOUDLY: changing a PanelRows() without changing its rows here
 // is a red test, not a green one.
+//
+// A COMPOUND condition needs a case per side, and this is the one gap the
+// coverage guard below cannot see -- it guards which FIELDS are listed,
+// not which branches. An independent review of the first version of this
+// table found both instances: worktree/non-git was the table's only
+// non-git case and had the toggle off too, so `!w.isGitRepo || !w.On()`
+// was satisfied by the second disjunct and dropping the first changed
+// nothing anywhere in the tree; and placement had no worktree-off case
+// with a non-default chip, so `f.worktreeOn && ID != "new"` was decided
+// by the second conjunct alone. worktree/non-git-while-on and
+// placement/off-other-chip exist for those two sides and nothing else.
 func panelRowsCases(p theme.Palette) []panelRowsCase {
 	// chipsRight advances a chip row n places from its fresh selection,
 	// through the same key path a user would (SetValue would work for
@@ -409,6 +420,10 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			f.SetProvenance(".herdr-draft.toml")
 			return f
 		}, 2 + 1},
+		{"placement/off-other-chip", func() Section {
+			f := NewPlacementField(p)
+			return chipsRight(f, 1) // tab here, no worktree
+		}, 2},
 		{"placement/on-default-chip", func() Section {
 			f := NewPlacementField(p)
 			f.SetWorktreeOn(true)
@@ -474,6 +489,22 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		// included, capped at worktreePanelMaxRows. An off or non-git
 		// field reserves no list rows: there is no list to show.
 		{"worktree/non-git", func() Section { return NewWorktreeField(p) }, worktreePanelParts},
+		{"worktree/non-git-while-on", func() Section {
+			w := NewWorktreeField(p)
+			w.SetGitTarget(true)
+			w.SetOn(true)
+			w.SetBaseItems(1, []string{"main", "release/1.4"})
+			// The project then switched to a non-repository, which is how
+			// this state arrives in production: async.go pushes git-ness
+			// from the debounced dir check, and SetGitTarget(false) does
+			// not move the toggle. The field goes inert, but focus does
+			// not leave it (focus.go's focusByID moves "regardless of
+			// that section's Enabled() state", and nothing ejects focus
+			// from a section that goes disabled), so its panel is still
+			// rendered from these rows.
+			w.SetGitTarget(false)
+			return w
+		}, worktreePanelParts},
 		{"worktree/off", func() Section {
 			w := NewWorktreeField(p)
 			w.SetGitTarget(true)
