@@ -1695,3 +1695,114 @@ func firstRunes(s string, n int) string {
 	}
 	return string(r)
 }
+
+// --- #94: Path B must not prompt an agent that is not ready ---------------
+
+// TestExecutePathBBlockedDetectionNeverPrompts is #94's regression test, and
+// the assertion that matters is the negative one: AgentPrompt must not be
+// called.
+//
+// Live on 0.9.0, Path B into a fresh worktree destroyed the agent it had
+// just launched. `OpAwaitDetection` was satisfied by `agent get` merely
+// exiting zero, which happens ~450ms before Claude Code paints its
+// first-run trust screen; promptIfReady then read a screen with no dialog
+// on it yet, sent, and the prompt's trailing Enter confirmed the dialog's
+// highlighted "No, exit". Detection now means READY, so the plan stops here
+// with something the user can act on and the prompt op is never reached.
+func TestExecutePathBBlockedDetectionNeverPrompts(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.AccountPin = "personal" // Path B: clauth launch + explicit detection wait
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt:    "AwaitDetection",
+		failErr:   fmt.Errorf("await detection for pane pane-1: %w", herdrc.ErrAgentBlocked),
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:  trustDialogScreen,
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+
+	if containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
+		t.Fatalf("calls = %v, want NO AgentPrompt -- this is the call that killed the agent", m.calls)
+	}
+	if result.FailedIndex != 2 {
+		t.Fatalf("FailedIndex = %d, want 2 (the detection op): %+v", result.FailedIndex, result)
+	}
+
+	msg := progressed[len(progressed)-1].Err.Error()
+	for _, want := range []string{"claude started", "answer the dialog in the pane", "Quick safety check"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("blocked detection = %q, want it to contain %q", msg, want)
+		}
+	}
+	// Path A and Path B must not describe the same situation two ways.
+	if strings.Contains(msg, "timed out") {
+		t.Errorf("blocked detection = %q, want the instruction rather than a timeout", msg)
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want %q -- the prompt must survive for paste", result.PromptText, in.Prompt)
+	}
+}
+
+// TestExecutePathBDetectionTimeoutStillQuotesThePane guards the branch the
+// blocked case now sits beside: an ordinary timeout is NOT a blocked agent
+// and must keep the pane-quoting treatment PR #89 added, rather than being
+// swept into the dialog explanation.
+func TestExecutePathBDetectionTimeoutStillQuotesThePane(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.AccountPin = "personal"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt:    "AwaitDetection",
+		failErr:   errors.New("await detection for pane pane-1: timed out after 30.001s"),
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:  "❯ clauth start personal --\nzsh: command not found: clauth\n❯ \n",
+	}
+
+	var progressed []Progress
+	Execute(context.Background(), m, ops, func(p Progress) { progressed = append(progressed, p) })
+
+	msg := progressed[len(progressed)-1].Err.Error()
+	if !strings.Contains(msg, "command not found") {
+		t.Errorf("detection timeout = %q, want the pane quoted", msg)
+	}
+	if strings.Contains(msg, "answer the dialog") {
+		t.Errorf("detection timeout = %q, want NO dialog instruction for a plain timeout", msg)
+	}
+}
+
+// TestBuildPathBCarriesTheAgentKindForMessages pins the field the blocked
+// explanation names the agent from. Path B is claude-only today, so
+// hardcoding "claude" in exec.go would read correctly and be right by
+// coincidence; this is what makes it right on purpose.
+func TestBuildPathBCarriesTheAgentKindForMessages(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "personal"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, op := range ops {
+		if op.Kind == OpAwaitDetection {
+			if op.AgentKind != in.AgentKind {
+				t.Fatalf("OpAwaitDetection.AgentKind = %q, want %q", op.AgentKind, in.AgentKind)
+			}
+			return
+		}
+	}
+	t.Fatal("Build emitted no OpAwaitDetection for an account-pinned launch")
+}

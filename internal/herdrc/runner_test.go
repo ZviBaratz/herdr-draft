@@ -544,7 +544,15 @@ func TestCLIRunnerWorkspaceClose(t *testing.T) {
 }
 
 func TestCLIRunnerAwaitDetectionRetriesUntilDetected(t *testing.T) {
-	stdout := `{"id":"cli:agent:get","result":{"type":"agent","agent":{"agent":"claude","status":"working"}}}`
+	// The shape here is `herdr agent get`'s real one, captured live from
+	// 0.9.0 on 2026-09-08. The fixture this replaces said
+	// `{"agent":"claude","status":"working"}` -- a key herdr does not emit
+	// (it is `agent_status`), carrying a value that would not mean ready
+	// even if it did. It passed only because AwaitDetection used to ignore
+	// stdout completely and read the exit code alone, which is the bug #94
+	// is about: a fake with the wrong contract cannot fail the way the real
+	// CLI does.
+	stdout := agentGetJSON(`"agent_status":"idle","interactive_ready":true`)
 	bin, argvLog := fakeHerdrFlaky(t, 2, stdout)
 	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
 
@@ -987,5 +995,126 @@ func TestCLIRunnerDefaultPollInterval(t *testing.T) {
 	r.PollInterval = 250 * time.Millisecond
 	if got := r.pollInterval(); got != 250*time.Millisecond {
 		t.Errorf("pollInterval() = %v, want 250ms", got)
+	}
+}
+
+// --- #94: detection must mean READY, not merely present -------------------
+
+// agentGetJSON wraps agent fields in `herdr agent get`'s real envelope. The
+// surrounding shape (and the field names inside) are verbatim from a live
+// 0.9.0 capture on 2026-09-08; only the fields a test varies are passed in,
+// so no test has to restate the parts that never change.
+func agentGetJSON(fields string) string {
+	return `{"id":"cli:agent:get","result":{"type":"agent_info","agent":{` +
+		`"agent":"claude","name":"probe","pane_id":"w1:p2","workspace_id":"w1",` +
+		fields + `}}}`
+}
+
+// TestClassifyAgent pins herdr's own readiness rule
+// (herdr:src/cli/agent.rs:607-625), which pollDetection reproduces so that
+// Path B means the same thing by "detected" as Path A does.
+func TestClassifyAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent agentInfo
+		want  detectionState
+	}{
+		// The one that cost an agent its life: herdr registers Claude Code
+		// before it paints its first-run screen, and "unknown" was being
+		// read as "go ahead and type".
+		{"unknown is not ready", agentInfo{AgentStatus: "unknown"}, detectionPending},
+		{"working is not ready", agentInfo{AgentStatus: "working"}, detectionPending},
+		{"blocked stops the wait", agentInfo{AgentStatus: "blocked", LaunchPending: true}, detectionBlocked},
+		{"idle and interactive is ready", agentInfo{AgentStatus: "idle", InteractiveReady: true}, detectionReady},
+		{"done and interactive is ready", agentInfo{AgentStatus: "done", InteractiveReady: true}, detectionReady},
+		{"idle, still launching, keeps waiting", agentInfo{AgentStatus: "idle", LaunchPending: true}, detectionPending},
+		// The ordinary ready state. `herdr agent get` omits BOTH flags once
+		// the launch bookkeeping is done -- verified live on 0.9.0 against a
+		// healthy idle claude -- so reading their absence as "never became
+		// interactive" would fail every successful Path B launch. This is
+		// the assertion that caught it.
+		{"idle with neither flag is the ready state", agentInfo{AgentStatus: "idle"}, detectionReady},
+		{"done with neither flag is the ready state", agentInfo{AgentStatus: "done"}, detectionReady},
+		// A status this herdr does not have must not be promoted to ready
+		// by a later release; waiting is the safe default.
+		{"an unrecognised status keeps waiting", agentInfo{AgentStatus: "brand-new"}, detectionPending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyAgent(tc.agent); got != tc.want {
+				t.Errorf("classifyAgent(%+v) = %v, want %v", tc.agent, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCLIRunnerAwaitDetectionWaitsThroughUnknown is #94 at the herdrc level:
+// a detected-but-not-ready agent must not end the wait. Before this,
+// `agent get` merely exiting zero was the whole test, so this poll returned
+// success against the exact JSON below.
+func TestCLIRunnerAwaitDetectionWaitsThroughUnknown(t *testing.T) {
+	bin, _ := fakeHerdr(t, agentGetJSON(`"agent_status":"unknown","launch_pending":true`))
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	err := r.AwaitDetection(context.Background(), "w1:p2", 60*time.Millisecond)
+	if err == nil {
+		t.Fatal("AwaitDetection returned success for an agent that never became ready")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %q, want a timeout -- unknown is not a terminal state", err.Error())
+	}
+}
+
+// TestCLIRunnerAwaitDetectionReportsBlocked: an agent sitting on a dialog
+// will never become ready on its own, so waiting out the full timeout tells
+// the user nothing they can act on. It ends the wait immediately with a
+// sentinel internal/plan turns into the instruction that answers it.
+func TestCLIRunnerAwaitDetectionReportsBlocked(t *testing.T) {
+	bin, _ := fakeHerdr(t, agentGetJSON(`"agent_status":"blocked","launch_pending":true`))
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	start := time.Now()
+	err := r.AwaitDetection(context.Background(), "w1:p2", 10*time.Second)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrAgentBlocked) {
+		t.Fatalf("AwaitDetection error = %v, want it to wrap ErrAgentBlocked", err)
+	}
+	if !strings.Contains(err.Error(), "w1:p2") {
+		t.Errorf("error = %q, does not name the pane", err.Error())
+	}
+	if elapsed > time.Second {
+		t.Errorf("took %v to report a blocked agent against a 10s timeout; it must not wait out the deadline", elapsed)
+	}
+}
+
+// TestCLIRunnerAwaitDetectionAcceptsASettledAgent is the happy path this
+// change nearly broke. A ready claude answers `agent get` with
+// `agent_status: "idle"` and NO interactive_ready and NO launch_pending --
+// both are Options on the Rust side, omitted once the launch is done. An
+// earlier draft transcribed `agent start`'s rule literally and read that as
+// "settled but never interactive", which would have failed every successful
+// Path B launch rather than only the blocked ones.
+func TestCLIRunnerAwaitDetectionAcceptsASettledAgent(t *testing.T) {
+	bin, _ := fakeHerdr(t, agentGetJSON(`"agent_status":"idle"`))
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	if err := r.AwaitDetection(context.Background(), "w1:p2", time.Second); err != nil {
+		t.Fatalf("AwaitDetection: %v, want success for a settled idle agent", err)
+	}
+}
+
+// TestCLIRunnerAwaitDetectionUnparseableResponseKeepsWaiting: a detected
+// agent whose response cannot be read is not evidence of readiness. The
+// timeout is the backstop, and it quotes the pane.
+func TestCLIRunnerAwaitDetectionUnparseableResponseKeepsWaiting(t *testing.T) {
+	bin, _ := fakeHerdr(t, "this is not json")
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	err := r.AwaitDetection(context.Background(), "w1:p2", 60*time.Millisecond)
+	if err == nil {
+		t.Fatal("AwaitDetection returned success against an unreadable response")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %q, want a timeout", err.Error())
 	}
 }
