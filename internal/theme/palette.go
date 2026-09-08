@@ -10,9 +10,9 @@
 //
 // Attribution: the color constants in builtinPalettes below are translated
 // from herdr's Palette constructors
-// (/home/zvi/Projects/herdr/src/app/state.rs, `impl Palette`, ~line 110
-// onward; `Palette::from_name`, ~line 562), at herdr commit b1ff4582
-// (b1ff4582e9688f52ffb943cfa8bee4871ae122e4). herdr is licensed under the
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/app/state.rs#L110
+// onward, `impl Palette`; `Palette::from_name` at ~line 562), at herdr
+// commit b1ff4582e9688f52ffb943cfa8bee4871ae122e4. herdr is licensed under the
 // Apache License, Version 2.0; see this repository's NOTICE file.
 //
 // Field mapping (herdr's 19-field Palette -> this package's 12-field
@@ -298,7 +298,9 @@ var builtinPalettes = map[string]Palette{
 }
 
 // themeAliases maps every name and alias herdr's canonical_theme_name
-// accepts (/home/zvi/Projects/herdr/src/config/theme.rs:25-47) to its
+// accepts
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/config/theme.rs#L25-L47)
+// to its
 // canonical builtinPalettes key.
 var themeAliases = map[string]string{
 	"catppuccin": "catppuccin", "catppuccin-mocha": "catppuccin",
@@ -644,7 +646,8 @@ func rgb8(c Color) (r, g, b uint8, ok bool) {
 }
 
 // herdrThemeCustom mirrors the subset of herdr's CustomThemeColors
-// (/home/zvi/Projects/herdr/src/config/theme.rs:102-126) that maps onto this
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/config/theme.rs#L102-L126)
+// that maps onto this
 // package's smaller Palette. herdr's other seven [theme.custom] keys
 // (sidebar_bg, active_row_bg, surface1, overlay1, yellow, blue, teal) and
 // the nested [theme.custom.light]/[theme.custom.dark] per-appearance
@@ -726,7 +729,8 @@ func (c herdrThemeCustom) toOverrides() map[string]string {
 }
 
 // herdrThemeConfig mirrors the subset of herdr's ThemeConfig
-// (/home/zvi/Projects/herdr/src/config/theme.rs:61-72) this package reads
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/config/theme.rs#L61-L72)
+// this package reads
 // from herdr's own config.toml.
 type herdrThemeConfig struct {
 	Name       string `toml:"name"`
@@ -745,7 +749,8 @@ type herdrConfig struct {
 
 // herdrConfigPath resolves herdr's own config.toml path on this machine:
 // ${XDG_CONFIG_HOME:-~/.config}/herdr/config.toml
-// (/home/zvi/Projects/herdr/src/config/io.rs:30-35,62-68,173). It returns
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/config/io.rs#L30-L35,
+// #L62-L68, #L173). It returns
 // "" when neither XDG_CONFIG_HOME nor the user's home directory can be
 // determined, in which case LoadHerdrPalette falls back to Default().
 func herdrConfigPath() string {

@@ -1057,7 +1057,9 @@ func (c *createSection) PanelRows() int        { return 0 }
 // actionButtonText / panelContrastFG / createButton port herdr's
 // own action-button convention (READ-ONLY reference per the task brief,
 // Apache-2.0, attributed generally in this repository's NOTICE per spec
-// §14: /home/zvi/Projects/herdr/src/ui/widgets.rs lines 151-210 --
+// §14:
+// https://github.com/herdrdev/herdr/blob/b1ff4582/src/ui/widgets.rs#L151-L210
+// --
 // action_button_text, render_action_button, panel_contrast_fg, and the
 // specific fg/bg/bold combination herdr's own dialogs.rs call sites use
 // for a primary action button), imitating its SHAPE rather than

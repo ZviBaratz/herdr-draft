@@ -49,7 +49,8 @@ const Version = "0.1.0"
 var ErrContextUnset = errors.New("$HERDR_PLUGIN_CONTEXT_JSON is not set")
 
 // ContextWorktree mirrors herdr's WorkspaceWorktreeInfo
-// (/home/zvi/Projects/herdr/src/api/schema/workspaces.rs, ~line 76): the
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/api/schema/workspaces.rs#L76):
+// the
 // worktree summary embedded in a workspace when that workspace is backed by
 // a Git worktree checkout.
 type ContextWorktree struct {
@@ -61,7 +62,8 @@ type ContextWorktree struct {
 }
 
 // Context is herdr's plugin invocation context
-// (PluginInvocationContext, /home/zvi/Projects/herdr/src/api/schema/plugins.rs:363),
+// (PluginInvocationContext,
+// https://github.com/herdrdev/herdr/blob/b1ff4582/src/api/schema/plugins.rs#L363),
 // delivered to the plugin process via $HERDR_PLUGIN_CONTEXT_JSON. Every
 // field is Optional on the Rust side, so callers must tolerate any field
 // being absent from the payload -- a missing key simply leaves the

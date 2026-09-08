@@ -24,7 +24,8 @@ type CreatedTopology struct {
 }
 
 // WorkspaceInfo mirrors herdr's WorkspaceInfo response shape
-// (/home/zvi/Projects/herdr/src/api/schema/workspaces.rs, ~line 59), as
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/api/schema/workspaces.rs#L59),
+// as
 // returned by `herdr workspace list`.
 type WorkspaceInfo struct {
 	WorkspaceID string           `json:"workspace_id"`
@@ -145,7 +146,8 @@ func (r *CLIRunner) pollInterval() time.Duration {
 // paneRef is the pane/tab/workspace identity embedded in herdr's pane
 // response objects (root_pane, pane): see the "pane_id"/"tab_id"/
 // "workspace_id" fields consistently present across
-// /home/zvi/Projects/herdr/src/api/schema/panes.rs's PaneInfo and confirmed
+// https://github.com/herdrdev/herdr/blob/b1ff4582/src/api/schema/panes.rs
+// (PaneInfo) and confirmed
 // in the live-captured fixtures under testdata/live/.
 type paneRef struct {
 	PaneID      string `json:"pane_id"`

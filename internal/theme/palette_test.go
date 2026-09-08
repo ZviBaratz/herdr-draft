@@ -146,7 +146,8 @@ func TestBuiltin_UnknownNameReturnsFalse(t *testing.T) {
 
 // TestBuiltin_EveryNameAndAlias walks every canonical theme name and every
 // alias accepted by herdr's own canonical_theme_name
-// (/home/zvi/Projects/herdr/src/config/theme.rs:25), confirming Builtin
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/config/theme.rs#L25),
+// confirming Builtin
 // translates all of them.
 func TestBuiltin_EveryNameAndAlias(t *testing.T) {
 	names := []string{

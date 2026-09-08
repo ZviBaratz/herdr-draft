@@ -49,7 +49,7 @@ const formName = "new session"
 
 // knownAgentKinds is herdr's full 23-kind agent list (spec §6 field 6:
 // "full kind list (herdr's 23)"), translated from
-// /home/zvi/Projects/herdr/src/detect/mod.rs's `Agent::ALL` /
+// https://github.com/herdrdev/herdr/blob/b1ff4582/src/detect/mod.rs's `Agent::ALL` /
 // `agent_label` (herdr commit b1ff4582, the same pinned commit
 // internal/theme/palette.go's own translated constants cite) -- this is
 // the ONLY source of the value herdr-draft ships for "the known 23"; spec
