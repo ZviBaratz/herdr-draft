@@ -565,20 +565,169 @@ func (r *CLIRunner) AgentRead(ctx context.Context, target string) (string, error
 	return r.runText(ctx, "agent", "read", target, "--source", "detection", "--format", "text")
 }
 
-// pollDetection runs `herdr agent get <paneID>` and reports only whether it
-// exited zero. AwaitDetection only needs a detected/not-yet boolean signal
-// -- any status counts as detected -- so this bypasses runJSON's response
-// parsing entirely and discards stdout/stderr.
-func (r *CLIRunner) pollDetection(ctx context.Context, paneID string) error {
+// ErrAgentBlocked reports an agent that herdr has detected and is running,
+// but which is sitting on something requiring interactive input -- in
+// practice Claude Code's first-run trust prompt in a directory the
+// launching account has not been trusted in yet.
+//
+// A typed sentinel rather than the substring match every OTHER herdr error
+// in this package reaches Go through, and deliberately so: those arrive as
+// the CLI's stderr wrapped into an error string, with no structure to test.
+// This one is decided HERE, by AwaitDetection reading herdr's own JSON, so
+// there is a real value to return and callers should not be reduced to
+// grepping prose for it.
+var ErrAgentBlocked = errors.New("agent is blocked and needs interactive input")
+
+// pollWaitDelay bounds how long a killed `agent get` may keep
+// AwaitDetection waiting on its stdout pipe after the deadline has passed
+// (see pollDetection). Short enough that the timeout stays honest, long
+// enough that a healthy poll finishing normally is never truncated -- it
+// only ever applies once the process has already been killed.
+const pollWaitDelay = 100 * time.Millisecond
+
+// detectionState is one pollDetection verdict.
+type detectionState int
+
+const (
+	// detectionPending means keep waiting: either no agent yet, or one
+	// whose status cannot yet decide the question.
+	detectionPending detectionState = iota
+	// detectionReady means the agent is detected AND ready for input.
+	detectionReady
+	// detectionBlocked means detected, running, and waiting on a dialog.
+	detectionBlocked
+)
+
+// agentInfo is the subset of `herdr agent get`'s `result.agent` object that
+// decides readiness. Everything else herdr reports there is deliberately
+// not modelled: this type exists to answer one question.
+type agentInfo struct {
+	AgentStatus      string `json:"agent_status"`
+	InteractiveReady bool   `json:"interactive_ready"`
+	LaunchPending    bool   `json:"launch_pending"`
+}
+
+// pollDetection runs `herdr agent get <paneID>` once and classifies the
+// answer.
+//
+// It used to report only whether the command exited zero -- "any status
+// counts as detected" -- and that was the bug behind #94. herdr registers
+// Claude Code as detected before it has painted its first-run trust screen:
+// measured live, `agent get` succeeded at 0.48s with `agent_status:
+// "unknown"` while the dialog only appeared at 0.93s. A caller that treated
+// the 0.48s answer as "ready" then typed a queued prompt into a dialog that
+// was about to appear, and the trailing Enter confirmed its highlighted
+// "No, exit" -- destroying the agent herdr-draft had just launched.
+//
+// The classification below is herdr's OWN readiness rule, the one `agent
+// start` applies while polling
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/agent.rs#L607-L625),
+// reproduced here on purpose: Path A gets its readiness guarantee from
+// `agent start` server-side, and Path B -- a `clauth start` typed into a
+// shell by `pane run`, which returns as soon as the TYPING succeeds -- has
+// no server-side wait at all. Mirroring the rule is what makes the two
+// paths mean the same thing by "detected", rather than leaving Path B with
+// a weaker promise nobody wrote down.
+func (r *CLIRunner) pollDetection(ctx context.Context, paneID string) detectionState {
 	cmd := exec.CommandContext(ctx, r.Bin, "agent", "get", paneID)
-	return cmd.Run()
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	// WaitDelay is load-bearing here, not tidiness. This poll used to
+	// discard stdout entirely, so a ctx deadline killing the child returned
+	// from Run immediately. Capturing stdout into a non-*os.File makes
+	// os/exec create a pipe and wait for the copying goroutine, and that
+	// goroutine blocks until EVERY writer closes the write end -- including
+	// a grandchild that inherited the fd and outlived the kill. Without
+	// this, a hung `agent get` whose child spawned anything holds
+	// AwaitDetection well past its own deadline; the existing
+	// TestCLIRunnerAwaitDetectionTimeoutKillsHangingPoll caught exactly
+	// that, taking 5s against a 50ms timeout.
+	cmd.WaitDelay = pollWaitDelay
+	if err := cmd.Run(); err != nil {
+		// No agent detected in that pane yet -- the ordinary "not yet"
+		// answer, and the only one this call had before.
+		return detectionPending
+	}
+
+	var envelope struct {
+		Result struct {
+			Agent agentInfo `json:"agent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		// A detected agent whose response cannot be read is not evidence
+		// of readiness. Keep waiting rather than promote an unparseable
+		// answer to "ready" -- the timeout is the backstop, and it quotes
+		// the pane.
+		return detectionPending
+	}
+	return classifyAgent(envelope.Result.Agent)
+}
+
+// classifyAgent applies herdr's readiness rule to one agent record. Split
+// from pollDetection so the rule is testable without a subprocess -- it is
+// the whole of what this change is, and it deserves to be pinned directly
+// rather than only through a fake CLI.
+func classifyAgent(a agentInfo) detectionState {
+	switch a.AgentStatus {
+	case "blocked":
+		return detectionBlocked
+	case "idle", "done":
+		if a.InteractiveReady {
+			return detectionReady
+		}
+		if a.LaunchPending {
+			// Settled-looking but still coming up: keep waiting.
+			return detectionPending
+		}
+		// Settled, with NEITHER flag present. This is the ordinary ready
+		// state, verified live on 0.9.0: `herdr agent get` against a
+		// perfectly healthy idle claude returns the keys
+		//
+		//   agent, agent_session, agent_status, cwd, focused,
+		//   foreground_cwd, pane_id, revision, state_change_seq, tab_id,
+		//   terminal_id, terminal_title, terminal_title_stripped, tokens,
+		//   workspace_id
+		//
+		// and no interactive_ready or launch_pending at all -- both are
+		// Options on the Rust side and omitted once the launch bookkeeping
+		// is done. `agent start`'s own rule reads the API's richer agent
+		// record while a launch is in flight, where those fields do exist;
+		// transcribing it literally against the CLI's output would classify
+		// every ready Path B agent as one that had exited, which is the
+		// opposite of the truth and would fail every successful launch.
+		//
+		// There is deliberately no "exited" verdict here: a dead agent is
+		// not reported by `agent get` at all (the call fails, which reads
+		// as pending and then times out with the pane quoted), so this
+		// package has no way to observe that state and should not pretend
+		// to.
+		return detectionReady
+	default:
+		// "working", "unknown", and anything a later herdr adds: not an
+		// answer yet. Unknown is the state #94 leaked through.
+		return detectionPending
+	}
 }
 
 // AwaitDetection polls `herdr agent get <paneID>` every PollInterval until
-// it exits zero (an agent was detected, in any status) or timeout elapses
-// since AwaitDetection was called. The returned error names the pane id and
-// the elapsed wait when it times out, or wraps ctx's error if ctx is
-// cancelled first.
+// the agent there is READY for input, until it reaches a state that will
+// never become ready, or until timeout elapses since AwaitDetection was
+// called. The returned error names the pane id and the elapsed wait when it
+// times out, or wraps ctx's error if ctx is cancelled first.
+//
+// "Ready", not "present": see pollDetection for why the difference cost an
+// agent its life (#94). Two states end the wait early rather than at the
+// deadline, because neither can improve on its own and both have something
+// better to say than "timed out after 30s":
+//
+//   - ErrAgentBlocked, an agent waiting on a dialog. internal/plan turns
+//     this into the instruction that answers it, exactly as it does for
+//     Path A's `agent_not_ready`.
+//
+// There is no third: an agent that has died is not reported by `agent get`
+// at all, so it reads as "not yet" and ends at the deadline, where the
+// timeout quotes the pane and the reason is usually on it.
 //
 // Every poll runs against a deadline-bound child context so a single hung
 // `herdr agent get` (e.g. an unresponsive server) is killed at the deadline
@@ -602,8 +751,11 @@ func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout t
 			return fmt.Errorf("await detection for pane %s: timed out after %s", paneID, now.Sub(start).Round(time.Millisecond))
 		}
 
-		if err := r.pollDetection(deadlineCtx, paneID); err == nil {
+		switch r.pollDetection(deadlineCtx, paneID) {
+		case detectionReady:
 			return nil
+		case detectionBlocked:
+			return fmt.Errorf("await detection for pane %s: %w", paneID, ErrAgentBlocked)
 		}
 
 		now = time.Now()

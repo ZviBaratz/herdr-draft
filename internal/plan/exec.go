@@ -6,6 +6,7 @@ package plan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -173,6 +174,21 @@ func isNameTakenError(err error) bool {
 // reason) isBusyPaneError uses.
 func isAgentNotReadyError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), agentNotReadyErrorCode)
+}
+
+// isBlockedAgentError reports an agent that is running but waiting on
+// something interactive, however that fact reached us. The two launch paths
+// learn it differently and neither spelling is available on the other:
+//
+//   - Path A: `herdr agent start` refuses with the agent_not_ready CODE, in
+//     stderr text (isAgentNotReadyError).
+//   - Path B: there is no server-side wait to refuse at all, so
+//     herdrc.AwaitDetection decides it here, from herdr's own agent JSON,
+//     and says so with a typed sentinel (#94).
+//
+// Both mean the same thing to a user, so both get the same explanation.
+func isBlockedAgentError(err error) bool {
+	return isAgentNotReadyError(err) || errors.Is(err, herdrc.ErrAgentBlocked)
 }
 
 // startAgentWithDedupe runs `herdr agent start` for req and, when herdr
@@ -355,7 +371,7 @@ func withScreenTail(screen string, err error) error {
 // an empty kind falls back to "the agent" rather than opening the sentence
 // with a space.
 func explainBlockedStart(ctx context.Context, r herdrc.Runner, kind, paneID string, err error) error {
-	if !isAgentNotReadyError(err) || paneID == "" {
+	if !isBlockedAgentError(err) || paneID == "" {
 		return err
 	}
 	screen, readErr := r.AgentRead(ctx, paneID)
@@ -623,7 +639,14 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 					paneID = agentPane
 				}
 				err = r.AwaitDetection(ctx, paneID, op.Timeout)
-				if err != nil {
+				switch {
+				case err == nil:
+				case isBlockedAgentError(err):
+					// Path B's equivalent of #90's refused start: the agent
+					// is up and waiting on a dialog, which is an instruction
+					// to give rather than a timeout to report.
+					err = explainBlockedStart(ctx, r, op.AgentKind, paneID, err)
+				default:
 					err = withPaneTail(ctx, r, paneID, err)
 				}
 			case OpAgentPrompt:

@@ -121,6 +121,14 @@ type Op struct {
 	Prompt    *herdrc.AgentPromptReq     // OpAgentPrompt
 	Timeout   time.Duration              // OpAwaitDetection
 
+	// AgentKind is OpAwaitDetection's other field: the kind being waited
+	// for, carried for MESSAGES only and never for behaviour. Path B is
+	// claude-only today (launchOps gates on it), so exec.go could have
+	// written "claude" into the blocked-agent explanation and been right;
+	// it would have been right by coincidence, and silently wrong the day
+	// another kind gains an account-pinned launch.
+	AgentKind string
+
 	// CwdFromCheckout tells Execute to fill this op's Cwd from the SPACE
 	// op's CheckoutPath, which Build cannot know: only OpTabCreate and
 	// OpPaneSplit ever set it, and only as placement spec §5.3's
@@ -278,9 +286,10 @@ func launchOps(in Input) []Op {
 				RunArgv: runArgv,
 			},
 			{
-				Kind:    OpAwaitDetection,
-				Label:   "waiting for agent detection",
-				Timeout: in.DetectionTimeout,
+				Kind:      OpAwaitDetection,
+				Label:     "waiting for agent detection",
+				Timeout:   in.DetectionTimeout,
+				AgentKind: in.AgentKind,
 			},
 		}
 	}
