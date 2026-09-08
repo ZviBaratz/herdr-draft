@@ -318,6 +318,23 @@ func linearUnavailableReason(err error) string {
 	return strings.TrimPrefix(err.Error(), "resolve linear api key: ")
 }
 
+// linearRefreshReason turns an AssignedIssues error into the single line
+// IssueField.SetRefreshError puts on the panel's status row. Same reasoning
+// as linearUnavailableReason for dropping the package's own prefix, plus
+// one thing that sibling does not need: the text is FLATTENED.
+//
+// A Linear 401 arrives as `unexpected status 401: <response body>`, and
+// that body is JSON with newlines in it. The panel builds a fixed number
+// of lines and a multi-line status would push the row count past the
+// height Panel was asked for -- an error message that breaks the form's
+// layout is a worse bug than the one being reported. strings.Fields also
+// collapses the runs of spaces indented JSON is full of, which matters
+// when the line is about to be elided to the panel's width.
+func linearRefreshReason(err error) string {
+	msg := strings.TrimPrefix(err.Error(), "linear assigned issues: ")
+	return strings.Join(strings.Fields(msg), " ")
+}
+
 // Model is the real tea.Model herdr-draft runs: form.Model plus every
 // concrete field it needs to drive via setters (form.go's own doc: "the
 // app layer is expected to hold each concrete Section by its own concrete

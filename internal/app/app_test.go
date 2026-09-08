@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1244,8 +1245,13 @@ func TestRefreshLinearCmd_ErrorReported(t *testing.T) {
 	fl := &fakeLinear{err: context.DeadlineExceeded}
 	m := newTestModel(t, testSetup{Linear: fl})
 	result := m.refreshLinearCmd()().(linearResultMsg)
-	if !result.err {
-		t.Fatalf("linearResultMsg.err = false after a failing AssignedIssues call, want true")
+	if result.err == nil {
+		t.Fatalf("linearResultMsg.err = nil after a failing AssignedIssues call, want the error")
+	}
+	// The ERROR, not merely that there was one: carrying a bool here is
+	// what left the panel with nothing to say.
+	if !errors.Is(result.err, context.DeadlineExceeded) {
+		t.Errorf("linearResultMsg.err = %v, want it to wrap the source's own error", result.err)
 	}
 }
 
@@ -1286,13 +1292,62 @@ func TestLinearResult_ErrorLeavesIssuesUntouched(t *testing.T) {
 	cached := []linear.Issue{{Identifier: "ENG-6", Title: "from cache"}}
 	m := newTestModel(t, testSetup{Linear: &fakeLinear{}, LinearCache: cached})
 
-	m2, _ := m.handleLinearResult(linearResultMsg{err: true})
+	m2, _ := m.handleLinearResult(linearResultMsg{err: context.DeadlineExceeded})
 	m = m2
 
 	m.issue.Focus()
 	frame := fieldText(m.issue, 80)
 	if !strings.Contains(frame, "ENG-6") {
 		t.Fatalf("the issue panel = %q, want the cache-rendered issue still present after a failed refresh", frame)
+	}
+	// ... and still PICKABLE. Reporting the failure by marking the field
+	// inert would have removed the very list this test exists to protect.
+	if !m.issue.Enabled() {
+		t.Error("IssueField.Enabled() = false after a failed refresh, want the stale list to stay usable")
+	}
+}
+
+// TestLinearResult_ErrorReachesThePanel is the defect this pair was
+// missing. A fetch failure with nothing cached used to render the panel's
+// "no assigned issues" -- a statement about the user's Linear queue, made
+// when nobody had successfully looked at the queue. A revoked or mistyped
+// API key was therefore byte-identical to genuinely having nothing
+// assigned.
+func TestLinearResult_ErrorReachesThePanel(t *testing.T) {
+	m := newTestModel(t, testSetup{Linear: &fakeLinear{}}) // no cache
+
+	m2, _ := m.handleLinearResult(linearResultMsg{
+		err: errors.New("linear assigned issues: unexpected status 401: {\n  \"error\": \"authentication failed\"\n}"),
+	})
+	m = m2
+
+	m.issue.Focus()
+	frame := fieldText(m.issue, 80)
+	if strings.Contains(frame, "no assigned issues") {
+		t.Errorf("the issue panel = %q, want the failure reason rather than a claim about the queue", frame)
+	}
+	if !strings.Contains(frame, "401") {
+		t.Errorf("the issue panel = %q, want it to name the failure", frame)
+	}
+}
+
+// TestLinearResult_SuccessClearsAPreviousError covers the other direction:
+// a transient failure followed by a working refresh must not leave a stale
+// explanation sitting under a fresh list.
+func TestLinearResult_SuccessClearsAPreviousError(t *testing.T) {
+	m := newTestModel(t, testSetup{Linear: &fakeLinear{}})
+
+	m2, _ := m.handleLinearResult(linearResultMsg{err: errors.New("linear assigned issues: request: dial tcp: timeout")})
+	m3, _ := m2.handleLinearResult(linearResultMsg{issues: []linear.Issue{{Identifier: "ENG-7", Title: "recovered"}}})
+	m = m3
+
+	m.issue.Focus()
+	frame := fieldText(m.issue, 80)
+	if strings.Contains(frame, "dial tcp") {
+		t.Errorf("the issue panel = %q, want the stale failure reason cleared by the successful refresh", frame)
+	}
+	if !strings.Contains(frame, "ENG-7") {
+		t.Errorf("the issue panel = %q, want the freshly fetched issue", frame)
 	}
 }
 

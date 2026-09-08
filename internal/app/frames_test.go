@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -551,5 +552,59 @@ func TestAssembledForm_PlacementUnderWorktree(t *testing.T) {
 			m = next.(Model)
 		}
 		assertAppFrame(t, "assembled-placement-worktree-"+chip.name+"-101x30", m, framePopupW, framePopupH)
+	}
+}
+
+// TestAssembledForm_LinearRefreshFailed pins the two states this
+// repository's golden suite had no fixture for, and whose absence is what
+// let the defect ship.
+//
+// The "empty" case is the defect itself. With no cache to fall back on the
+// panel used to read "no assigned issues" -- a statement about the user's
+// Linear queue, made when no successful look at the queue had happened. A
+// revoked or mistyped API key was byte-identical to genuinely having
+// nothing assigned, and a frame showing that would have looked entirely
+// plausible to whoever reviewed it.
+//
+// The "stale" case is what the fix must NOT break: a previous list is
+// still on screen, still pickable, with the reason on the status line
+// beside its count. Reporting the failure by marking the field inert would
+// have thrown that list away, which is why a failed refresh does not reuse
+// SetUnavailable.
+//
+// Both also pin the flattening. The 401's body is indented JSON with
+// newlines in it; a status line containing a newline would push the panel
+// past the height it was asked for, so an error message would break the
+// layout it was trying to explain.
+//
+// Focus is on the issue row because a panel renders only for the focused
+// section, and the panel is where the reason belongs -- v2 spec §6 keeps
+// verdicts out of rows.
+func TestAssembledForm_LinearRefreshFailed(t *testing.T) {
+	const authErr = "linear assigned issues: unexpected status 401: {\n  \"error\": \"authentication required\"\n}"
+
+	for _, tc := range []struct {
+		name  string
+		cache bool
+	}{
+		{"empty", false},
+		{"stale", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newAssembledModel(t, true)
+			if !tc.cache {
+				// newAssembledModel seeds a queue; drop it, so this is the
+				// first-run case where the fetch is the only source there
+				// has ever been.
+				m.issueItemsVersion++
+				m.issue.SetIssues(m.issueItemsVersion, nil)
+			}
+			m2, _ := m.handleLinearResult(linearResultMsg{err: errors.New(authErr)})
+			m = m2
+			m.form.FocusByID("issue")
+			m.reactToChanges()
+
+			assertAppFrame(t, "assembled-linear-refresh-"+tc.name+"-101x30", m, framePopupW, framePopupH)
+		})
 	}
 }
