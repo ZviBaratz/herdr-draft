@@ -169,7 +169,10 @@ there, not the workspace the popup was opened from.
 
 ## Requirements
 
-- herdr ≥ 0.8.2 (`min_herdr_version` in `herdr-plugin.toml`).
+- herdr ≥ 0.9.0 (`min_herdr_version` in `herdr-plugin.toml`). herdr refuses
+  to install or link a plugin whose minimum is newer than the running binary,
+  so an older herdr gets a clean refusal rather than a plugin that loads and
+  then misbehaves.
 - [clauth](https://github.com/clauth/clauth) ≥ 0.14.1 for account-pinned
   (Path B) launches — see [clauth integration](#clauth-integration) below.
   clauth is entirely optional: without it, herdr-draft still works for
@@ -558,7 +561,7 @@ them before filing a bug against something documented here:
   unimplemented.** The design spec's submit pipeline mentions
   `--trust-repository per config`, and herdr does have that flag — on
   `master`, added in commit `095f1337` (#3344, 2026-08-28), which is in no
-  release yet. herdr 0.8.2, this plugin's minimum, answers
+  release yet. herdr 0.8.2 answers
   `unknown option: --trust-repository`, so passing it would break worktree
   creation. The config key is deliberately absent rather than present and
   inert: a key that silently does nothing is worse than no key. Until a
