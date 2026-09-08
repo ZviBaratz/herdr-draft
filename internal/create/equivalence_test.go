@@ -230,6 +230,12 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 		ConfigDir:   c.configDir,
 		StateDir:    c.stateDir,
 		ContextJSON: c.contextJSON,
+		// Without the id these three are not demonstrably ours and
+		// usablePluginEnv drops all of them (#91), which would make this
+		// test compare a form resolving from four tiers against a command
+		// resolving from none -- and it did, silently, until the guard
+		// learned that absent is not the same as matching.
+		PluginID: pluginID,
 	}, Deps{
 		Runner:     newFakeRunner(),
 		Git:        newFakeGit(),
