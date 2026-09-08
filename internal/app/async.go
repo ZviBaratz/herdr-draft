@@ -994,9 +994,17 @@ func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 			// The view needs to be told too, so its footer offers the one
 			// key this state actually honors ("esc close") and says so
 			// nowhere else -- see SubmitView.footerParts.
-			m.submitView.SetDeadEnd()
+			m.submitView.SetDeadEnd(msg.result)
 		}
-		return m, nil
+		// A dead end still owes the user their prompt back. This branch
+		// used to return nil because plan.Execute only ever set PromptText
+		// when the PROMPT op failed, and reaching the prompt op means the
+		// topology op had already succeeded -- so Created == nil implied
+		// PromptText == "" and saving here would have been dead code.
+		// ExecResult.PromptText now means "the prompt did not land" (#90),
+		// which makes this the case where a `worktree create` that failed
+		// on a branch name would otherwise take a composed prompt with it.
+		return m, saveUnsentPromptCmd(m.stateDir, msg.result.PromptText)
 	}
 	m.submitResult = msg.result
 	return m, tea.Batch(
@@ -1100,8 +1108,8 @@ type promptSavedMsg struct {
 // Linear-seeded prompt became one glued, truncated line, and then the
 // popup closed and it was gone.
 //
-// Returns nil for an empty text (every failure that is not an
-// OpAgentPrompt failure) or an unset state dir.
+// Returns nil for an empty text (a successful submit, or a plan that
+// carried no prompt at all) or an unset state dir.
 func saveUnsentPromptCmd(stateDir, text string) tea.Cmd {
 	if text == "" || stateDir == "" {
 		return nil

@@ -566,22 +566,37 @@ in README; nothing herdr-draft can fix locally.
 These are real, live-verified rough edges, not deferred features — read
 them before filing a bug against something documented here:
 
-- **Prompt-delivery dialog guard.** When a freshly launched agent shows a
-  confirmation dialog — most commonly Claude Code's first-run "Accessing
-  workspace" trust prompt in a brand-new worktree — herdr's own agent
-  detection reports it as idle/ready-for-input, indistinguishable from the
-  agent actually being ready. herdr-draft deliberately does **not** send
-  the queued prompt in that case: it recognizes a small, explicit list of
-  known dialog signatures (`internal/plan/dialog.go`) and, on a match,
-  stops before sending anything, saving the prompt text to a file and naming
-  it on the failure screen so you can paste it in by hand. The alternative —
-  trusting herdr's "idle"
-  signal and sending the prompt anyway — used to silently answer the
-  dialog's default ("No, exit") and kill the agent with no error shown
-  anywhere. The root cause is upstream (herdr's detection manifest doesn't
-  yet distinguish a blocking confirmation dialog from a truly idle
-  terminal), not something this plugin can fix; this guard is a defensive
-  workaround that stays in place until herdr's detection improves.
+- **A brand-new worktree's first launch stops on Claude Code's trust
+  prompt.** Claude Code asks "Is this a project you created or one you
+  trust?" the first time it runs in any directory, and every worktree
+  herdr-draft creates is a directory it has never seen. herdr 0.9.0
+  recognizes that screen and reports the agent as `blocked`, so `herdr agent
+  start` refuses to call the launch a success — which means your submit
+  stops at the launch step even though the agent is running fine.
+
+  Nothing is lost. herdr-draft reads the pane, recognizes the dialog and
+  says so: *claude started; answer the dialog in the pane, then keep this
+  session*. Press `k` to keep, answer the prompt in the pane, and the
+  session is a normal one from there. Any prompt you had composed is saved
+  to a file, named on the failure screen, so you can paste it in once the
+  agent is ready. It happens once per directory.
+
+- **Prompt-delivery dialog guard.** More generally, herdr-draft never sends
+  a queued prompt into a pane it has not positively confirmed is safe to
+  type into. Before sending it reads the pane and checks it against a small,
+  explicit list of known dialog signatures (`internal/plan/dialog.go`); on a
+  match — or if the pane cannot be read at all — it stops, saves the prompt
+  text and names the file on the failure screen.
+
+  This exists because on herdr 0.8.2 the trust prompt above was reported as
+  idle/ready-for-input, indistinguishable from the agent actually being
+  ready: trusting that signal sent the prompt text into a screen that is not
+  a text field, and the trailing Enter confirmed the highlighted option
+  ("No, exit"), killing the freshly launched agent with no error shown
+  anywhere. herdr's detection has since learned that one screen, but it
+  knows that screen and not the class — a login-method chooser or a
+  permission prompt is still a dialog it will report as ready — so the guard
+  stays.
 - **Popup panes are only reachable via keybinding or CLI.** Plugin actions
   do not appear in herdr's own context/global menus in plugin v1 — see
   [Keybinding](#keybinding) for both routes.

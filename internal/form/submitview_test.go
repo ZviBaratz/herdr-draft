@@ -110,6 +110,32 @@ func TestFrames_FailureCleanDenied(t *testing.T) {
 	assertSubmitFrame(t, "failure-clean-denied-80x24", v, 80, 24)
 }
 
+// TestFrames_DeadEndWithUnsentPrompt is the failure with nothing to decide
+// about: step 1 itself failed, so there is no session to keep or remove and
+// the footer offers only `esc close`.
+//
+// It carries an unsent prompt, which is new. While
+// plan.ExecResult.PromptText meant "the prompt op failed", this state could
+// never have one -- reaching the prompt op meant step 1 had already
+// succeeded -- so the dead-end body was a single line and the recovery path
+// had nowhere to appear. #90 generalised PromptText to "the prompt did not
+// land", and this is the state where losing it hurts most: `esc` is the
+// only way out and it closes the popup.
+//
+// The frame pins the ORDER. regionLines clips this stack from the top, so
+// the line explaining the one available button has to be last.
+func TestFrames_DeadEndWithUnsentPrompt(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps([]Step{
+		{Label: "worktree", Detail: "branch zvi/fix-login-redirect-loop already exists", State: plan.StepFailed},
+		{Label: "claude", State: plan.StepPending},
+		{Label: "prompt", State: plan.StepPending},
+	})
+	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0, PromptText: "Work on ENG-101: Fix login redirect loop"})
+	v.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
+	assertSubmitFrame(t, "failure-dead-end-prompt-80x24", v, 80, 24)
+}
+
 // --- v2 spec §12: the same chrome as the form ------------------------------
 
 // TestSubmitView_LabelColumnMatchesTheForm is the whole point of v2 spec
@@ -378,7 +404,7 @@ func TestSubmitView_KeyBeforeFailureIsNoOp(t *testing.T) {
 func TestSubmitView_EscIsNeverAViewLevelExit(t *testing.T) {
 	states := map[string]func(*SubmitView){
 		"running":  func(v *SubmitView) { v.SetSteps(sampleStepsRunning()) },
-		"dead end": func(v *SubmitView) { v.SetSteps(sampleStepsFailed()); v.SetDeadEnd() },
+		"dead end": func(v *SubmitView) { v.SetSteps(sampleStepsFailed()); v.SetDeadEnd(plan.ExecResult{FailedIndex: 0}) },
 		"keep-or-clean": func(v *SubmitView) {
 			v.SetSteps(sampleStepsFailed())
 			v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true})
@@ -401,7 +427,7 @@ func TestSubmitView_EscIsNeverAViewLevelExit(t *testing.T) {
 func TestSubmitView_DeadEndOffersOnlyClose(t *testing.T) {
 	v := newSubmitTestView()
 	v.SetSteps([]Step{{Label: "workspace", Detail: "herdr: boom", State: plan.StepFailed}})
-	v.SetDeadEnd()
+	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0})
 
 	frame := strippedFrame(v, 80, 24)
 	if !strings.Contains(frame, "esc close") {

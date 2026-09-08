@@ -996,3 +996,19 @@ first-run trust prompt is still undetected).
 herdr 0.9.0 shipped the flag and the floor moved with it, so the key exists
 as `[worktree] trust_repository`. `internal/plan/dialog.go` still stays —
 nothing upstream has changed about the first-run trust prompt.)*
+
+*(The other half expired the same day, hours later — see #90. herdr 0.9.0's
+detection manifest **does** recognise Claude Code's first-run trust prompt:
+it reports that screen as `agent_status: "blocked"`, and both calls
+herdr-draft makes now refuse it upstream — `agent start` with
+`agent_not_ready`, `agent prompt` with `agent_blocked`. The sentence above
+was written against 0.8.2 behaviour and was already false when the floor
+moved.*
+
+*`internal/plan/dialog.go` still stays, but not as the sole protection it
+was: herdr's manifest knows this one screen, not the class, so a login
+chooser or a permission prompt still reaches an `interactive_ready` pane
+that is not safe to type into. Its second job is new — `plan.Execute`
+matches an `agent_not_ready` start against the same signature list to tell
+the user their agent is running and waiting on a keystroke, rather than
+passing on "blocked during startup".)*

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,8 +16,10 @@ import (
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
+	"github.com/ZviBaratz/herdr-draft/internal/form"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
 // This file exists because internal/form's own eleven golden frames all
@@ -47,6 +50,41 @@ var updateAppFrames = flag.Bool("update", false, "regenerate golden frames")
 func assertAppFrame(t *testing.T, name string, m Model, w, h int) {
 	t.Helper()
 	got := m.form.ViewAt(w, h)
+	path := filepath.Join("testdata", "frames", name+".txt")
+	if *updateAppFrames {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil || string(want) != got {
+		t.Errorf("frame %s mismatch (run with -update to regenerate)\n%s", name, got)
+	}
+}
+
+// assertAppSubmitFrame is assertAppFrame's counterpart for the SUBMIT
+// view, which m.form does not contain -- it replaces the form on screen
+// once a submit starts, so a frame of it has to be taken off
+// m.submitView.
+//
+// It exists for the same reason this whole file does, one screen later.
+// internal/form's own failure frames build a SubmitView directly and hand
+// it invented step details ("agent_pane_busy after 5s"), which pins the
+// LAYOUT but says nothing about the strings a real pipeline produces: the
+// text in those fixtures could not drift, because nothing generates it.
+// A frame taken here runs plan.Execute for real against a fake Runner, so
+// the words in it are the words internal/plan actually emits and a change
+// to either layer moves the fixture.
+func assertAppSubmitFrame(t *testing.T, name string, m Model, w, h int) {
+	t.Helper()
+	if m.submitView == nil {
+		t.Fatalf("frame %s: submitView is nil -- the model never entered the submit pipeline", name)
+	}
+	got := m.submitView.ViewAt(w, h)
 	path := filepath.Join("testdata", "frames", name+".txt")
 	if *updateAppFrames {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -632,4 +670,60 @@ func TestAssembledForm_ClauthUnreadable(t *testing.T) {
 	m.reactToChanges()
 
 	assertAppFrame(t, "assembled-clauth-unreadable-101x30", m, framePopupW, framePopupH)
+}
+
+// --- #90: the screen a blocked first-run trust prompt produces -------------
+
+// TestAssembledSubmit_BlockedStartFrame is the state #90 made routine and
+// nothing pinned: herdr 0.9.0 detects Claude Code's first-run trust prompt,
+// reports the agent `blocked`, and `agent start` refuses -- so on 0.9.0
+// every submit into a fresh worktree stops at step 2, on a session that is
+// running fine and one keystroke from ready.
+//
+// The frame is the point. It is easy to assert that an error string
+// contains the right words and still ship a screen where the popup has
+// truncated every one of them away, which is the failure mode this
+// project's own frame convention exists for. Driving the real pipeline
+// means the words here came out of internal/plan, so a reworded
+// explainBlockedStart moves this fixture and a reviewer sees the sentence
+// a user will actually read, at the width they will read it.
+func TestAssembledSubmit_BlockedStartFrame(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt: "AgentStart",
+		failErr: errors.New("herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`),
+		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
+	}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.title.SetTitle("Fix login redirect loop", false)
+	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	if done.result.FailedIndex != 1 {
+		t.Fatalf("FailedIndex = %d, want 1 (the agent start op): %+v", done.result.FailedIndex, done.result)
+	}
+
+	m, cleanCmd := m.handleSubmitDone(done)
+	if cleanCmd == nil {
+		t.Fatal("handleSubmitDone returned no cmd, want the CleanCheck and prompt-save batch")
+	}
+	// Drive the keep-or-clean gate so the frame is the settled screen rather
+	// than one caught mid-flight.
+	m, _ = m.handleCleanCheckResult(cleanCheckMsg{
+		result:   done.result,
+		decision: plan.CleanCheck(context.Background(), m.submitInput, done.result),
+	})
+	// The recovery path is supplied rather than taken from the real save:
+	// t.TempDir's name carries the test's own run-specific suffix, which
+	// would make the golden bytes different on every run. That the app
+	// actually saves it, and where, is pinned by
+	// TestSubmit_UnsentPromptIsSavedForManualPaste; this frame is about
+	// what the popup does with a path once it has one.
+	m.submitView.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
+
+	assertAppSubmitFrame(t, "submit-blocked-start-80x24", m, 80, 24)
 }

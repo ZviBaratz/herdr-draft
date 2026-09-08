@@ -610,6 +610,25 @@ the invoking workspace rather than the worktree's, and that its cwd is
 the worktree checkout; `--on-failure keep`'s report naming the SPACE
 (not an agent pane) is the same evidence read a different way.
 
+**Read the failure message itself — it is part of what this cell
+checks** (#90). herdr's own text is "blocked during startup", which
+describes a healthy session as a broken one; herdr-draft is supposed to
+read the pane and replace it. Expect stderr to carry, in this order, the
+instruction, the dialog it matched, and herdr's own error:
+
+```
+answer the dialog in the pane, then keep this session -- it is showing
+"Quick safety check": ... {"error":{"code":"agent_not_ready", ...
+```
+
+A bare `agent_not_ready` with no instruction means the pane read did not
+happen or did not match, and is a finding. In the popup (Route A) the
+same message appears on the failed step row, truncated to the column —
+check the *instruction* survives there, since that is the half the user
+acts on. Answering the prompt in the pane and pressing `k` should leave
+a working session; a prompt composed in the form should be named on the
+failure screen as saved for manual paste, not lost.
+
 ### Cell 9 — the reuse path
 
 **Setup:** a throwaway repo with a session already created once via Cell

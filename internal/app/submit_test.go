@@ -576,7 +576,7 @@ func TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd(t *testing.T) {
 		},
 		{
 			name:     "step-one dead end",
-			setup:    func(m *Model) { m.submitDeadEnd = true; m.submitView.SetDeadEnd() },
+			setup:    func(m *Model) { m.submitDeadEnd = true; m.submitView.SetDeadEnd(plan.ExecResult{FailedIndex: 0}) },
 			wantQuit: true,
 		},
 	}
@@ -1177,6 +1177,65 @@ func TestSubmit_UnsentPromptIsSavedForManualPaste(t *testing.T) {
 	}
 	if strings.Contains(frame, "Long description here.") {
 		t.Errorf("the failure view pasted the prompt body into the frame:\n%s", frame)
+	}
+}
+
+// TestSubmit_DeadEndStillSavesTheUnsentPrompt covers the failure that never
+// created anything -- a `worktree create` rejected for a branch that already
+// exists, say. This branch used to return no Cmd at all, correctly: while
+// plan.ExecResult.PromptText meant "the prompt op failed", reaching the
+// prompt op implied step 1 had already succeeded, so Created == nil implied
+// PromptText == "" and there was never anything here to save.
+//
+// #90 changed what PromptText means (a prompt that did not land, whenever it
+// did not land), which makes this reachable -- and it is the harshest case
+// of the two: there is no session to keep, so the popup closes on `esc` and
+// takes the composed prompt with it unless it was written down first.
+func TestSubmit_DeadEndStillSavesTheUnsentPrompt(t *testing.T) {
+	m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.submitView = form.NewSubmitView(m.palette)
+	m.submitting = true
+
+	prompt := "Work on ENG-2: Fix the redirect\n\nhttps://linear.app/x/ENG-2\n\nLong description here."
+	m.submitInput = plan.Input{ProjectDir: "/repo", Prompt: prompt}
+
+	// Created == nil: step 1 itself failed, so there is nothing to keep.
+	m2, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{
+		FailedIndex: 0,
+		PromptText:  prompt,
+	}})
+	m = m2
+	if !m.submitDeadEnd {
+		t.Fatal("handleSubmitDone did not enter the dead end for a Created == nil failure")
+	}
+	if cmd == nil {
+		t.Fatal("the dead end returned no follow-up Cmd, so the composed prompt was dropped")
+	}
+
+	saved := findPromptSavedMsg(t, cmd)
+	if saved.err != nil {
+		t.Fatalf("saving the unsent prompt failed: %v", saved.err)
+	}
+	body, err := os.ReadFile(saved.path)
+	if err != nil {
+		t.Fatalf("read the saved prompt at %s: %v", saved.path, err)
+	}
+	if string(body) != prompt {
+		t.Fatalf("saved prompt = %q, want the full text %q", string(body), prompt)
+	}
+
+	m3, _ := m.handlePromptSaved(saved)
+	frame := ansi.Strip(m3.submitView.ViewAt(80, 24))
+	if !strings.Contains(frame, "prompt not sent") {
+		t.Errorf("the dead-end view does not mention the unsent prompt:\n%s", frame)
+	}
+	// The line that explains the single `esc close` button must survive too:
+	// the recovery path is added ABOVE it, not in place of it.
+	if !strings.Contains(frame, "nothing was created") {
+		t.Errorf("the dead-end view lost its own explanation:\n%s", frame)
+	}
+	if strings.Contains(frame, "Long description here.") {
+		t.Errorf("the dead-end view pasted the prompt body into the frame:\n%s", frame)
 	}
 }
 
