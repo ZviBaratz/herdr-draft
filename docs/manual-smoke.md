@@ -6,11 +6,13 @@ version(s) you intend to support, before publishing. It exercises the real
 popup, the real herdr CLI, and (for Path B) a real clauth profile — nothing
 here is mocked.
 
-Nine cells: the original four (Path A/B × worktree on/off), plus three that
+Ten cells: the original four (Path A/B × worktree on/off), plus three that
 cover what v2 added — the headless `create`, the repo-level
 `.herdr-draft.toml`, and per-project memory — plus two that cover what the
 placement spec added: placement honored under a worktree, and the reuse
-path.
+path. The tenth is the one the 0.9.0 floor exists for, a large multi-line
+prompt (#73); it is also the only cell that spends real model quota, so it
+is the one to decide about deliberately rather than by default.
 
 ---
 
@@ -851,6 +853,105 @@ The `--json` report was wrong about where the agent is (`pane_id` named
 should now report `pane_id` = the claimed tab's own pane and carry the
 reused workspace's original ids under `space_*`.
 
+## What the 0.9.0 floor added
+
+### Cell 10 — a large multi-line prompt
+
+**Why this cell exists.** Every other cell in this matrix sends a short
+prompt, and that is exactly why #73 was never caught by one. On herdr
+0.8.2 a ~5 KB multi-line payload was **typed but not submitted**: all four
+steps reported ok, `--json` carried `"prompt_sent": true, "ok": true`, and
+the whole text sat in Claude Code's input buffer below the `❯` with
+`agent_status: "idle"`. A single `pane send-keys <pane> enter` submitted it
+and the agent went to `working` at once. Nothing was written to
+`unsent-prompt.txt`, because as far as herdr-draft knew nothing had failed.
+
+herdr 0.9.0 claims to fix precisely this (#3506/#3685: `agent prompt` sends
+the prompt and Enter *before* reporting success, and `--wait` against a
+non-working agent now requires observed working or blocked activity). This
+cell is how that claim gets checked, and how a regression in it gets caught
+next time.
+
+**This cell costs real model quota** — a ~5 KB prompt is delivered to a real
+agent on a real account. That is the one thing that cannot be faked here:
+the defect is in the delivery of a payload of that size, so a short prompt
+proves nothing. Budget for it, or skip the cell and say you skipped it.
+
+**Setup:** Route A0's disposable session, a payload of roughly the right
+size, and — because this cell needs the agent to actually *run* — a project
+directory Claude Code has **already been trusted in**, under the account the
+cell will use ("Claude Code's trust prompt is a precondition"). A fresh
+throwaway repo is the wrong choice here for once: it stops at the trust
+dialog and the prompt never gets sent, which tests nothing. This repo's own
+checkout does fine. The last line is what keeps the *agent's* own turn
+cheap while the payload stays honest — what is under test is the paste, not
+the answer:
+
+```bash
+{ sed -n '1,120p' docs/specs/2026-08-31-herdr-draft-design.md
+  printf '\n\nDo not act on any of the above. Reply with the single word OK and stop.\n'
+} > /tmp/smoke-prompt.txt
+wc -c /tmp/smoke-prompt.txt    # aim for ~5000; adjust the line count to suit
+```
+
+Use a payload with **blank lines and indented lines** in it, which the
+excerpt above has. A single 5 KB paragraph is a weaker test: a newline is
+what Claude Code's input treats as a submit, so the multi-line shape is the
+part that can go wrong.
+
+**Steps, headless** — the reproduction #73 was filed from:
+
+```bash
+herdr[S] pane send-text <scratch-pane-id> \
+  'herdr-draft create --title "smoke big prompt" --no-worktree \
+     --placement new-space --prompt - --json < /tmp/smoke-prompt.txt'
+```
+
+**Steps, through the form** — the same payload one layer up, since the popup
+composes the prompt rather than reading a file. Paste it into the prompt row
+(the row accepts `⌃J` for a newline; a paste carries its own), then submit.
+Confirm the row's `+N more` count matches the payload's line count before
+submitting, so a truncated paste is not mistaken for a delivery failure.
+
+**Expected:** exit 0, `"ok": true`, `"prompt_sent": true` — and then, because
+that is exactly what was untrue on 0.8.2, **verify it in the pane rather than
+believing the report**:
+
+```bash
+PANE=$(... | jq -r .pane_id)          # the AGENT's pane (#99) -- not space_pane_id
+herdr[S] pane read "$PANE" --source visible | tail -30
+```
+
+The pass condition is the payload appearing **above** the `❯` as a submitted
+turn, with the agent's own answer after it and the input buffer below the `❯`
+**empty**. The failure signature is the exact inverse, and reads like a pass
+from the outside: the full text sitting **below** the `❯`, and a report that
+says `prompt_sent: true`. Recover with
+`herdr[S] pane send-keys "$PANE" enter`, then file it against #73.
+
+**`agent get` cannot answer this, in either direction.** An agent typed into
+but never submitted is genuinely `idle`; so is one that submitted, answered
+and finished — which a one-word answer does in a few seconds, so a pass is
+usually `idle` by the time you look. `working` is a *transient*, not the
+pass condition. Only the pane distinguishes the two, which is the whole
+reason this cell reads it.
+
+**If it does reproduce on 0.9.0**, #73 item 2 is the fix: `plan.Execute`
+already reads the pane *before* sending (`internal/plan/dialog.go`) and can
+read after as well, falling back to the `unsent-prompt.txt` path rather than
+reporting success.
+
+**A wording trap, either way** (#43): herdr's `agent_prompt_stalled` means
+the text **was typed** and the submission did not complete. "Prompt not sent
+— saved for manual paste" is subtly wrong for that code, and a user who
+believes it pastes the prompt a second time.
+
+**Passed on 0.9.0**, headlessly, with 6311 bytes over 120 lines and 22 blank
+lines — a superset of the payload that failed on 0.8.2. The whole thing
+arrived above the `❯` as one submitted turn and the agent answered it; the
+input buffer was empty. #73's silent failure does not survive the floor bump.
+The form half of the cell is still unrun.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:
@@ -887,8 +988,10 @@ reused workspace's original ids under `space_*`.
 ### herdr 0.9.0 — 2026-09-08/09
 
 herdr 0.9.0, clauth 0.15.1, plugin at `d15255f`. Run via Route A0 (headless
-disposable sessions) plus Route B for the form. Two sittings: cells 3–6 on
-2026-09-08 at `0bef09e`, cells 2/7/8/9 on 2026-09-09 at `d15255f`.
+disposable sessions) plus Route B for the form. Three sittings: cells 3–6 on
+2026-09-08 at `0bef09e`, cells 2/7/8/9 on 2026-09-09 at `d15255f`, and cell
+10 plus #99's re-check on 2026-09-09 at `e9961e1` (the #101+#99 stack, built
+locally and not yet merged).
 
 | Cell | Result |
 |---|---|
@@ -901,19 +1004,28 @@ disposable sessions) plus Route B for the form. Two sittings: cells 3–6 on
 | 7 — per-project defaults | **pass, both halves** — with `last-used.json` saying `claude`/`new-space` and `projects.json[X]` saying `codex`/`tab-here`, switching the project to X brought back X's values (tier 1 over tier 3), and the account row degraded to `account pinning only applies to claude`. Then, on a **second** project change, a touched `placement` survived while the untouched `agent` re-applied — the case CLAUDE.md's shared-snapshot hazard would have broken |
 | 8 — placement tab here | **pass** — two new workspaces (the worktree's own plus the origin repo's) and one new tab in the invoking workspace, agent pane in **that** workspace with its cwd on the checkout, `agent_status: blocked` rather than dead. #90's message was exactly right: instruction first, then the matched `"Quick safety check"`, then herdr's own error, with the keep/clean gate offered. See the pane-count caution in the cell — another plugin adds one |
 | 9 — the reuse path | **pass, via a rewritten recipe** — not runnable as documented (refused by the form's duplicate check and by `worktree create` alike); reached through a stale workspace, see the cell. §5.2's correction claimed a fresh tab and left the first session's panes alone. The `--json` report named the wrong pane: **#99** |
+| 10 — a large multi-line prompt | **pass** — 6311 bytes, 120 lines, 22 blank lines, headless `--prompt -` into an already-trusted directory. Delivered **and submitted**: the whole payload above the `❯` as one turn, the agent's answer after it, the input buffer empty. #73's 0.8.2 silent failure does not reproduce on 0.9.0, so the floor bump is the fix. The form half of the cell is still unrun |
 
 Four findings, all live-only against a green `just check`:
 
-- **#72** (open) — the quoted-`extra_args` workaround this repo recommends
-  *breaks* Path A, because `agent start` execs an argv vector while
-  `pane run` types into a shell. No single config value works on both paths,
-  and the failure is silent: every step reports success.
+- **#72** (fixed) — the quoted-`extra_args` workaround this repo recommended
+  *broke* Path A, because `agent start` execs an argv vector while `pane run`
+  types into a shell. No single config value works on both paths, so the
+  quoting moved into `CLIRunner.PaneRun`. Confirmed live during cell 10: with
+  the inner quotes removed from `config.toml`, a Path A launch reported
+  `✻ Opus 5 1M` and `eff_xhigh` in the pane's own status line rather than
+  refusing the model id.
 - **#99** (fixed, filed here) — `create`'s reported `pane_id`/`pane=` named
   the space's pane, not the pane the agent is in, whenever a placement op or
   a reuse correction moved it. The report now reads `ExecResult.AgentAt`,
   widened from a pane id to the whole workspace/tab/pane because a placement
   op moves all three; the space keeps its own `space_*` keys, and the
-  keep-or-clean line still names the SPACE (Cell 8).
+  keep-or-clean line still names the SPACE (Cell 8). **Re-checked live** on
+  the divergent combination (worktree on + `tab here`, which is the only one
+  that separates all three): the report named `w1`/`w1:t2`/`w1:p2` — the
+  invoking workspace's new tab, matching the `--pane w1:p2` in herdr's own
+  `agent start` error — with the worktree's own `w3`/`w3:t1`/`w3:p1` under
+  `space_*`. Before the fix it named `w3:p1`.
 - **#93** (open) — the missing `from .herdr-draft.toml` provenance line.
 - **#94** (fixed) — Path B killed the agent it had just launched.
 
