@@ -637,9 +637,17 @@ herdr[S] pane send-text <scratch-pane-id> \
 ```
 
 Expect exit 0, one JSON object on stdout with `"ok": true`, the created
-`workspace_id` / `pane_id` / `checkout_path`, and a `provenance` map naming
-the tier each unspecified value came from (`flag` for the ones you passed).
-Progress lines go to stderr, one per step, and must not contaminate the JSON.
+`workspace_id` / `tab_id` / `pane_id` / `checkout_path`, and a `provenance`
+map naming the tier each unspecified value came from (`flag` for the ones
+you passed). Progress lines go to stderr, one per step, and must not
+contaminate the JSON.
+
+The three ids name **where the agent is**, and `space_workspace_id` /
+`space_tab_id` / `space_pane_id` beside them name the space `--on-failure
+clean` acts on (#99). This cell runs `--worktree` with the default
+placement, where the two are the same triple twice over — Cell 8's
+combination is the one that separates them, and the one to read this
+against.
 Tear the created topology down as in Cell 1.
 
 ### Cell 6 — a `.herdr-draft.toml` with a forbidden key
@@ -838,8 +846,10 @@ w3:p2  w3:t1  unknown  …/zvi-smoke-b-wt (deleted)
 w3:p3  w3:t2  blocked  …/zvi-smoke-b-wt             <- the agent, in the claimed tab
 ```
 
-The `--json` report is wrong about where the agent is (`pane_id` named
-`w3:p1`): **#99**.
+The `--json` report was wrong about where the agent is (`pane_id` named
+`w3:p1`, the first session's stale shell): **#99**, since fixed. A re-run
+should now report `pane_id` = the claimed tab's own pane and carry the
+reused workspace's original ids under `space_*`.
 
 ## After the matrix
 
@@ -898,10 +908,12 @@ Four findings, all live-only against a green `just check`:
   *breaks* Path A, because `agent start` execs an argv vector while
   `pane run` types into a shell. No single config value works on both paths,
   and the failure is silent: every step reports success.
-- **#99** (open, filed here) — `create`'s reported `pane_id`/`pane=` name the
-  space's pane, not the pane the agent is in, whenever a placement op or a
-  reuse correction moved it. `ExecResult.AgentPane` exists for exactly this
-  and has no reader outside `internal/plan`.
+- **#99** (fixed, filed here) — `create`'s reported `pane_id`/`pane=` named
+  the space's pane, not the pane the agent is in, whenever a placement op or
+  a reuse correction moved it. The report now reads `ExecResult.AgentAt`,
+  widened from a pane id to the whole workspace/tab/pane because a placement
+  op moves all three; the space keeps its own `space_*` keys, and the
+  keep-or-clean line still names the SPACE (Cell 8).
 - **#93** (open) — the missing `from .herdr-draft.toml` provenance line.
 - **#94** (fixed) — Path B killed the agent it had just launched.
 

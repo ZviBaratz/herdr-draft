@@ -55,9 +55,14 @@ type Progress struct {
 // ExecResult is Execute's outcome. Created is the SPACE -- the step-1
 // topology Clean acts on -- and is nil until that op succeeds; its PaneID
 // is no longer necessarily where the agent runs (placement spec §5.1).
-// AgentPane is the pane the launch ops actually targeted: equal to
-// Created.PaneID unless a placement op (§5.3) or a reuse correction (§5.2)
-// moved it. FailedIndex is the index of the first op that failed, or -1
+// AgentAt is where the launch ops actually put the agent -- workspace, tab
+// and pane -- and is equal to Created unless a placement op (§5.3) or a
+// reuse correction (§5.2) moved it; nil until a topology op has succeeded.
+// It is a whole topology rather than a pane id because a placement op can
+// move all three at once: placementOp always targets Input.Ctx, so a
+// worktree plus `tab here` leaves the agent in the INVOKING workspace
+// while Created names the checkout's brand-new one (#99).
+// FailedIndex is the index of the first op that failed, or -1
 // on success. PromptText carries a prompt that never reached the agent, so
 // the caller can surface it for manual paste (spec §9 step 3); it is empty
 // on success and on any plan that carried no prompt at all.
@@ -74,7 +79,7 @@ type Progress struct {
 // field is derived from this one being empty.
 type ExecResult struct {
 	Created     *herdrc.CreatedTopology
-	AgentPane   string
+	AgentAt     *herdrc.CreatedTopology
 	FailedIndex int
 	PromptText  string
 
@@ -506,7 +511,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 		gotTopo := false
 		var reused bool
 		var reusedLabel string
-		var claimedPane string
+		var claimed *herdrc.CreatedTopology
 
 		runErr := retryBusy(ctx, func() error {
 			// Reset per ATTEMPT, not per op: retryBusy may re-run this closure,
@@ -517,7 +522,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 			// agent_pane_busy and none of the three calls in OpWorktreeCreate
 			// can return it, which is exactly why it is worth three lines rather
 			// than a reader's trust.
-			gotTopo, reused, claimedPane = false, false, ""
+			gotTopo, reused, claimed = false, false, nil
 			reusedLabel = ""
 
 			var err error
@@ -582,7 +587,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 						if claimErr != nil {
 							return claimErr
 						}
-						claimedPane = claim.PaneID
+						claimed = &claim
 					}
 				}
 				return nil
@@ -700,13 +705,17 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 				}
 			}
 			if i == agentPaneIdx {
-				if reused {
-					agentPane = claimedPane
-				} else {
-					agentPane = topo.PaneID
+				// The whole topology, not just the pane: a placement op
+				// can move the agent's workspace and tab too, and a
+				// caller that is handed a pane id alone cannot tell which
+				// tab to address (#99).
+				at := topo
+				if claimed != nil {
+					at = *claimed
 				}
+				agentPane = at.PaneID
 				haveAgentPane = true
-				result.AgentPane = agentPane
+				result.AgentAt = &at
 			}
 		}
 		emitProgress(onProgress, i, total, op.Label, StepDone, nil)
@@ -842,8 +851,8 @@ func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) er
 	}
 	created := *result.Created
 
-	if result.AgentPane != "" && result.AgentPane != created.PaneID {
-		if err := r.PaneClose(ctx, result.AgentPane); err != nil {
+	if result.AgentAt != nil && result.AgentAt.PaneID != "" && result.AgentAt.PaneID != created.PaneID {
+		if err := r.PaneClose(ctx, result.AgentAt.PaneID); err != nil {
 			return fmt.Errorf("plan: clean: close agent pane: %w", err)
 		}
 	}

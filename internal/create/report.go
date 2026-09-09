@@ -58,17 +58,26 @@ func (r report) ok() bool { return r.result.FailedIndex == -1 }
 // humanLine is the one line a successful create prints: key=value, so it
 // is greppable by a shell that did not ask for --json but still wants the
 // pane id.
+//
+// The three ids name where the AGENT is (ExecResult.AgentAt), not the
+// space (#99). A caller greps `pane=` in order to send the next keystroke
+// somewhere, and with a worktree plus a `here` placement the space's pane
+// is the worktree's own idle shell -- or, when the workspace was reused,
+// a pane belonging to another session. The space's ids stay available
+// under --json's space_* keys; this line stays three ids long.
 func (r report) humanLine() string {
 	parts := []string{"created"}
-	if c := r.result.Created; c != nil {
+	if a := r.result.AgentAt; a != nil {
 		parts = append(parts,
-			"workspace="+c.WorkspaceID,
-			"tab="+c.TabID,
-			"pane="+c.PaneID,
+			"workspace="+a.WorkspaceID,
+			"tab="+a.TabID,
+			"pane="+a.PaneID,
 		)
-		if c.CheckoutPath != "" {
-			parts = append(parts, "checkout="+c.CheckoutPath)
-		}
+	}
+	// The checkout belongs to the space, which is what made it, and is
+	// the same path either way.
+	if c := r.result.Created; c != nil && c.CheckoutPath != "" {
+		parts = append(parts, "checkout="+c.CheckoutPath)
 	}
 	parts = append(parts, "agent="+r.input.AgentKind)
 	if r.input.UseWorktree {
@@ -133,10 +142,28 @@ type jsonReport struct {
 	Branch     string `json:"branch,omitempty"`
 	Base       string `json:"base,omitempty"`
 
+	// WorkspaceID/TabID/PaneID name where the AGENT ended up
+	// (ExecResult.AgentAt) -- the ids a caller asks a create for, since
+	// they are what it addresses next. Space* name the space the plan
+	// created and --on-failure clean acts on (ExecResult.Created), which
+	// is a different workspace, tab AND pane whenever a worktree is
+	// combined with a `here` placement, and a different tab and pane
+	// whenever the worktree's workspace was already open (#99).
+	//
+	// Both triples are emitted whenever they are known, equal or not: a
+	// consumer comparing them learns whether the agent sits inside the
+	// space, and one that only wants an id does not have to discover that
+	// a key it relies on disappears in the common case. A failure before
+	// any pane was claimed leaves the agent triple absent and the space's
+	// present, which is the true statement about that run.
 	WorkspaceID  string `json:"workspace_id,omitempty"`
 	TabID        string `json:"tab_id,omitempty"`
 	PaneID       string `json:"pane_id,omitempty"`
 	CheckoutPath string `json:"checkout_path,omitempty"`
+
+	SpaceWorkspaceID string `json:"space_workspace_id,omitempty"`
+	SpaceTabID       string `json:"space_tab_id,omitempty"`
+	SpacePaneID      string `json:"space_pane_id,omitempty"`
 
 	// PromptSent is absent when there was no prompt at all, so "false"
 	// always means "there was one and it did not land".
@@ -168,7 +195,11 @@ func (r report) writeJSON(w io.Writer) {
 		out.Base = r.input.BaseRef
 	}
 	if c := r.result.Created; c != nil {
-		out.WorkspaceID, out.TabID, out.PaneID, out.CheckoutPath = c.WorkspaceID, c.TabID, c.PaneID, c.CheckoutPath
+		out.SpaceWorkspaceID, out.SpaceTabID, out.SpacePaneID = c.WorkspaceID, c.TabID, c.PaneID
+		out.CheckoutPath = c.CheckoutPath
+	}
+	if a := r.result.AgentAt; a != nil {
+		out.WorkspaceID, out.TabID, out.PaneID = a.WorkspaceID, a.TabID, a.PaneID
 	}
 	if r.input.Prompt != "" {
 		sent := r.result.PromptText == ""
