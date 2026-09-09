@@ -396,6 +396,23 @@ two profiles exist (a static, startup-time check).
   appended at launch, e.g. `claude = ["--model", "sonnet"]`. Empty by
   default for every kind.
 
+  **Write each argument literally, with no shell quoting of your own.**
+  Values go through as they are written, so a model id containing glob
+  characters is spelled plainly:
+
+  ```toml
+  [agents.extra_args]
+  claude = ["--model", "claude-opus-5[1m]", "--effort", "xhigh"]
+  ```
+
+  One of the two launch paths does type its command into a pane's shell
+  (spec §9 Path B, a pinned clauth account), and herdr-draft quotes for
+  that shell itself. Adding your own quotes breaks the other path, which
+  hands the same values to the agent as an argv vector with no shell
+  involved — the agent then receives a value with the quote marks still
+  attached. If you are carrying a `["--model", "'…'"]` workaround from
+  before this was fixed, remove the inner quotes (#72).
+
 ### `[timeouts]`
 
 - `detection_ms` (default: `30000`) — how long herdr-draft polls

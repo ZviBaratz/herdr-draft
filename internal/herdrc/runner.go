@@ -103,6 +103,9 @@ type Runner interface {
 	AgentPrompt(ctx context.Context, req AgentPromptReq) error
 	AgentRead(ctx context.Context, target string) (string, error)
 	AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error
+	// PaneRun types a command into a pane's shell. Pass a plain argv:
+	// the implementation shell-quotes each element, because herdr's own
+	// `pane run` joins and types rather than execs (#72).
 	PaneRun(ctx context.Context, paneID string, argv []string) error
 	// PaneClose runs `herdr pane close <pane_id>` -- placement spec §5.4:
 	// when Execute claimed a fresh pane for the agent in a workspace it did
@@ -775,6 +778,33 @@ func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout t
 	}
 }
 
+// shellSafeChars is the set a POSIX shell cannot misread: no expansion, no
+// word splitting, no quoting significance. Deliberately conservative --
+// over-quoting a rare character costs nothing, while reasoning about every
+// shell's expansions costs correctness -- but wide enough that ordinary
+// flags, paths, and values pass through untouched, which is what keeps the
+// command herdr types into the user's own pane readable.
+const shellSafeChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-"
+
+// shellQuote returns s as exactly one word for a POSIX shell.
+//
+// Single quotes rather than backslashes because inside them nothing is
+// special at all; the one thing they cannot hold is a single quote, so an
+// embedded one has to close the quoting, escape itself with a backslash,
+// and reopen. The empty string has to be quoted too, or it would vanish
+// from the command line entirely.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	for _, r := range s {
+		if !strings.ContainsRune(shellSafeChars, r) {
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
+}
+
 // PaneRun runs `herdr pane run <paneID> <argv...>`, which types argv into
 // the pane's shell and submits it atomically (send-text + Enter; spec §9
 // Path B's launch primitive -- no raw socket use anywhere in the plugin).
@@ -782,8 +812,30 @@ func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout t
 // success (see runOK's own doc comment) -- routing it through runJSON was
 // task 19's live-checkpoint defect, unconditionally failing every real
 // Path B launch.
+//
+// Each element is shell-quoted here, and that is load-bearing rather than
+// defensive (#72). "Types argv into the pane's shell" is literal: herdr
+// joins args[1..] with single spaces and sends the string as input
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/pane.rs#L1047),
+// so the argv structure is gone by the time anything runs and the pane's
+// own shell re-parses the result. Passing values through unquoted let a
+// model id containing brackets become `zsh: no matches found`, with the
+// agent never starting and this call still reporting success -- its exit
+// code covers the typing, not the command.
+//
+// Quoting belongs HERE, not in the value a caller supplies, because the
+// same value also goes to AgentStart, which herdr execs as an argv vector
+// with no shell at all: one spelling has to serve both, and only the
+// unquoted one can. A config.toml that pre-quoted its `[agents.extra_args]`
+// to survive this path was the documented workaround until this fix, and it
+// broke the other one -- claude received a model name beginning with an
+// apostrophe.
 func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, argv []string) error {
-	args := append([]string{"pane", "run", paneID}, argv...)
+	args := make([]string, 0, len(argv)+3)
+	args = append(args, "pane", "run", paneID)
+	for _, a := range argv {
+		args = append(args, shellQuote(a))
+	}
 	return r.runOK(ctx, args...)
 }
 
