@@ -102,7 +102,11 @@ type Runner interface {
 	AgentStart(ctx context.Context, req AgentStartReq) error
 	AgentPrompt(ctx context.Context, req AgentPromptReq) error
 	AgentRead(ctx context.Context, target string) (string, error)
-	AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error
+	// AwaitDetection polls until the agent in paneID is ready. timeout is
+	// the ordinary detection budget; blockedTimeout, when > 0, is the
+	// separate budget a blocked agent gets (#115) -- pass 0 to keep
+	// blocked terminal.
+	AwaitDetection(ctx context.Context, paneID string, timeout, blockedTimeout time.Duration) error
 	// PaneRun types a command into a pane's shell. Pass a plain argv:
 	// the implementation shell-quotes each element, because herdr's own
 	// `pane run` joins and types rather than execs (#72).
@@ -673,6 +677,24 @@ func (r *CLIRunner) AgentRead(ctx context.Context, target string) (string, error
 // grepping prose for it.
 var ErrAgentBlocked = errors.New("agent is blocked and needs interactive input")
 
+// ErrAgentGone reports an agent that WAS observed blocked and has since
+// stopped being reported at all -- in practice a first-run trust prompt
+// answered "No, exit".
+//
+// It is inference from the only evidence there is, and the doc comment
+// says so rather than pretending otherwise: classifyAgent deliberately
+// has no "exited" verdict, because `herdr agent get` does not report a
+// dead agent -- the call simply fails, which is indistinguishable from
+// "not detected yet". What makes the inference worth drawing here is the
+// TRANSITION: something was being reported in that pane, and now nothing
+// is. Waiting is what a blocked budget is for, but waiting five minutes
+// for a session the user has already declined is not.
+//
+// Only ever returned when a blocked budget is in force AND blocked was
+// actually observed first, so an ordinary slow launch still times out as
+// a timeout rather than renaming itself.
+var ErrAgentGone = errors.New("agent stopped being reported after waiting on a dialog")
+
 // pollWaitDelay bounds how long a killed `agent get` may keep
 // AwaitDetection waiting on its stdout pipe after the deadline has passed
 // (see pollDetection). Short enough that the timeout stays honest, long
@@ -807,35 +829,60 @@ func classifyAgent(a agentInfo) detectionState {
 
 // AwaitDetection polls `herdr agent get <paneID>` every PollInterval until
 // the agent there is READY for input, until it reaches a state that will
-// never become ready, or until timeout elapses since AwaitDetection was
-// called. The returned error names the pane id and the elapsed wait when it
-// times out, or wraps ctx's error if ctx is cancelled first.
+// never become ready, or until its deadline elapses. The returned error
+// names the pane id and the elapsed wait when it times out, or wraps ctx's
+// error if ctx is cancelled first.
 //
 // "Ready", not "present": see pollDetection for why the difference cost an
-// agent its life (#94). Two states end the wait early rather than at the
-// deadline, because neither can improve on its own and both have something
-// better to say than "timed out after 30s":
+// agent its life (#94).
 //
-//   - ErrAgentBlocked, an agent waiting on a dialog. internal/plan turns
-//     this into the instruction that answers it, exactly as it does for
-//     Path A's `agent_not_ready`.
+// # Two budgets, because two different things are being waited on
 //
-// There is no third: an agent that has died is not reported by `agent get`
-// at all, so it reads as "not yet" and ends at the deadline, where the
-// timeout quotes the pane and the reason is usually on it.
+// timeout is the ordinary detection budget, tuned for a machine painting a
+// status transition in tens of seconds. blockedTimeout is what a BLOCKED
+// agent gets instead, and it is tuned for a person reading a security
+// prompt -- one number cannot serve both, which is why the caller passes
+// two (#115, `[timeouts] trust_wait_ms`).
+//
+// blockedTimeout == 0 keeps blocked terminal: the first blocked poll ends
+// the wait with ErrAgentBlocked, which internal/plan turns into the
+// instruction that answers it, exactly as it does for Path A's
+// `agent_not_ready`. That is the whole behaviour headless `create` wants,
+// since a script has nobody at the keyboard to answer anything.
+//
+// blockedTimeout > 0 makes blocked PENDING and hands the wait over to the
+// user: on the first blocked poll the deadline moves to blockedTimeout
+// from that moment, and the poll simply carries on until they answer. The
+// enabling fact is that a blocked agent is alive and addressable
+// throughout -- herdr refuses to call the launch ready, it does not kill
+// anything -- so this is a poll and never a re-launch.
+//
+// The one thing that must not happen is waiting out that whole budget for
+// a session the user has already declined. An agent that has died is not
+// reported by `agent get` at all, so it reads as "not yet"; what gives it
+// away is the TRANSITION, so once blocked has been observed, a full
+// timeout with nothing reported at all ends the wait with ErrAgentGone.
+// Never for a pane that was never blocked: there, nothing was ever there
+// to go, and an ordinary slow launch must still time out as a timeout.
 //
 // Every poll runs against a deadline-bound child context so a single hung
 // `herdr agent get` (e.g. an unresponsive server) is killed at the deadline
-// rather than being allowed to run past timeout, and the deadline is
-// checked before issuing each poll -- not only after one returns -- so no
-// poll is ever started once the deadline has already passed.
-func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout time.Duration) error {
+// rather than being allowed to run past it, and the deadline is checked
+// before issuing each poll -- not only after one returns -- so no poll is
+// ever started once the deadline has already passed. The context is built
+// per poll rather than once, because the deadline moves.
+func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout, blockedTimeout time.Duration) error {
 	start := time.Now()
 	deadline := start.Add(timeout)
 	interval := r.pollInterval()
+	// lastBlocked is when the agent was most recently seen blocked, and
+	// zero until it ever is -- which is also what makes ErrAgentGone
+	// unreachable for a pane that never showed a dialog.
+	var lastBlocked time.Time
 
-	deadlineCtx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
+	timedOut := func(now time.Time) error {
+		return fmt.Errorf("await detection for pane %s: timed out after %s", paneID, now.Sub(start).Round(time.Millisecond))
+	}
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -843,19 +890,38 @@ func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout t
 		}
 		now := time.Now()
 		if !now.Before(deadline) {
-			return fmt.Errorf("await detection for pane %s: timed out after %s", paneID, now.Sub(start).Round(time.Millisecond))
+			return timedOut(now)
 		}
 
-		switch r.pollDetection(deadlineCtx, paneID) {
+		pollCtx, cancel := context.WithDeadline(ctx, deadline)
+		state := r.pollDetection(pollCtx, paneID)
+		cancel()
+
+		switch state {
 		case detectionReady:
 			return nil
 		case detectionBlocked:
-			return fmt.Errorf("await detection for pane %s: %w", paneID, ErrAgentBlocked)
+			if blockedTimeout <= 0 {
+				return fmt.Errorf("await detection for pane %s: %w", paneID, ErrAgentBlocked)
+			}
+			// Moved once, on the FIRST sighting, rather than pushed
+			// forward on every later one: the user gets blockedTimeout to
+			// answer the dialog, not blockedTimeout after they last
+			// happened to be looking at it, so the total wait stays a
+			// number the caller chose.
+			if lastBlocked.IsZero() {
+				deadline = time.Now().Add(blockedTimeout)
+			}
+			lastBlocked = time.Now()
+		default:
+			if !lastBlocked.IsZero() && time.Since(lastBlocked) >= timeout {
+				return fmt.Errorf("await detection for pane %s: %w", paneID, ErrAgentGone)
+			}
 		}
 
 		now = time.Now()
 		if !now.Before(deadline) {
-			return fmt.Errorf("await detection for pane %s: timed out after %s", paneID, now.Sub(start).Round(time.Millisecond))
+			return timedOut(now)
 		}
 
 		wait := interval

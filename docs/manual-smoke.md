@@ -69,10 +69,23 @@ rediscovering it per cell.
 
 Claude Code asks "Is this a project you created or one you trust?" the first
 time it runs in any directory, and **herdr 0.9.0 detects that screen** and
-reports the agent `blocked`. So any cell that expects a *clean* run has to be
-pointed at a directory Claude Code has already been trusted in. Otherwise
-`agent start` refuses (Path A) or the detection wait stops (Path B), which is
-correct behaviour and not a defect — see #90 and #94.
+reports the agent `blocked`. So any cell that expects a run with no pause in
+it has to be pointed at a directory Claude Code has already been trusted in.
+Otherwise `agent start` refuses (Path A) or the detection wait stops (Path
+B), which is correct behaviour and not a defect — see #90 and #94.
+
+**Since #115 the popup does not fail on that; it waits.** The launch step
+goes to `…`, the footer says `answer the dialog in the pane`, and the moment
+you answer it the pipeline sends the prompt and closes itself — no keypress
+in the popup at all. So for a popup cell the trust prompt is now a *pause to
+resolve* rather than a stop to confirm, and the pass condition moved with it:
+the cell passes when the prompt lands, not when the failure screen appears.
+The old screen is still reachable two ways and both are worth knowing: let
+`[timeouts] trust_wait_ms` (five minutes) run out, or answer **"No, exit"**.
+
+**Headless `create` still fails immediately** — decision 2 of #115, since a
+script has nobody at the keyboard — so every Route A0 cell keeps its old
+expected result unchanged.
 
 Two things make this less obvious than it sounds:
 
@@ -89,8 +102,9 @@ Two things make this less obvious than it sounds:
 
 - **A worktree cell cannot be pre-trusted at all.** The checkout does not
   exist until the create makes it, so there is no directory to trust in
-  advance. Cells 1, 3 and 8 will stop on the trust prompt **every time**, on
-  every machine. That is their expected result, not a failure; each says so.
+  advance. Cells 1, 3 and 8 will meet the trust prompt **every time**, on
+  every machine — through the popup as a pause you answer, headlessly as a
+  failure. That is their expected result, not a defect; each says so.
 
 ### Somewhere isolated to run
 
@@ -455,18 +469,42 @@ teardown). `herdr[S] pane list` shows the new pane's agent as `claude` (or
 whatever kind you picked) once detection completes
 (`herdr[S] agent get <pane-id>`).
 
-**Expected on a fresh worktree with a prompt (normal, not a bug):** if you
-typed a prompt and this is Claude Code's first run in a brand-new worktree
-directory, Claude Code shows its own first-run trust dialog. herdr-draft's
-prompt-delivery dialog guard recognizes it and refuses to send the prompt.
-The pipeline stops on the failure screen: the stack stays, the failed row
-carries the reason in red, and under a second rule the keep/remove choice
-appears as buttons on the footer.
+**Expected on a fresh worktree, and this is the cell's real point (#115):**
+a brand-new worktree is a directory Claude Code has never been trusted in,
+so it shows its first-run trust dialog and herdr 0.9.0 reports the agent
+`blocked`. The popup does **not** fail on that. The launch row goes to `…`
+and the footer replaces the step counter with an instruction:
 
 ```
 ✓ worktree   <branch> from <base>
 ✓ workspace  smoke a wt
-✗ prompt     agent is waiting on a dialog ("<signature>") -- prompt not sent
+… claude     smoke-a-wt
+  prompt     queued
+───────────────────────────────────────────────────────────────────────────────
+answer the dialog in the pane — your prompt goes out as soon as you do
+```
+
+With a `here` placement herdr has already moved you to the agent's pane, so
+the dialog is in front of you. Answer it (`↓`, `↵` for "Yes, I trust this
+folder"). **Press nothing in the popup** — that is the whole of #115.
+
+**Then read the pane, not the report.** `herdr[S] pane read <pane-id>
+--source visible` must show your prompt as a **submitted turn above the `❯`
+with an empty input buffer**, with the agent's answer following it.
+`agent get` cannot answer this in either direction: a short successful turn
+is already `idle` by the time you look (Cell 10, learned by running it). The
+popup closes itself once the prompt is away.
+
+The last row of the footer hint is prompt-dependent: with no prompt typed it
+reads `answer the dialog in the pane — this carries on by itself once you
+do`, which is the honest wording for a plan that has nothing to deliver.
+
+**The old failure screen is still reachable, and worth seeing once.** Set
+`trust_wait_ms = 0` in `config.toml` (or answer **"No, exit"**, or just walk
+away for five minutes) and the run lands where it used to:
+
+```
+✗ claude     claude started; answer the dialog in the pane, then keep this ses…
 ...
 ───────────────────────────────────────────────────────────────────────────────
   prompt not sent — saved for manual paste:
@@ -475,12 +513,16 @@ appears as buttons on the footer.
                                                       k keep it    c remove it
 ```
 
-This is documented behavior (README's "Known limitations"), not a smoke
-failure — press `k`, confirm the agent process is still alive
-(`herdr[S] pane process-info --pane <pane-id>` should still show `claude`),
+Press `k`, confirm the agent process is still alive
+(`herdr[S] pane process-info --pane <pane-id>` should still show `claude`)
 and move on. Confirm the file the screen named actually holds your prompt.
+Answering "No, exit" instead gives a different message — *the agent is no
+longer running* — and no instruction to answer a dialog that is gone.
 
-> **Answer the gate BEFORE you go and look at the pane.** With a `here`
+> **On the fallback path, answer the gate BEFORE you go and look at the
+> pane.** This no longer applies to the ordinary run — since #115 the popup
+> waits and closes itself, and there is no gate to answer — but it still
+> applies whenever the wait ends in the failure screen. With a `here`
 > placement the agent's tab or split is created with `Focus: true`
 > (`placementOp`, build.go) — deliberately, since that is where the agent
 > lands — so herdr moves you to the new pane while the popup is still up
@@ -563,34 +605,51 @@ claude-only), then:
 **Expected:** the agent step reads `claude   under clauth <the profile you
 picked>`, followed by a `detection  waiting for the agent` step.
 
-**The detection step is expected to FAIL here, and that is the pass
-condition** — a worktree checkout is new, so it cannot have been pre-trusted
-(see "Claude Code's trust prompt is a precondition"). What the step must say
-is the instruction, not a timeout and not a raw error code:
+**The detection step is expected to PAUSE here, and answering it is the
+pass condition** — a worktree checkout is new, so it cannot have been
+pre-trusted (see "Claude Code's trust prompt is a precondition"). Since #115
+the row goes to `…` and the footer carries the instruction, exactly as Cell
+1 describes; Path B reaches that state through herdrc's own blocked verdict
+rather than through `agent start`'s refusal, and the whole point is that the
+difference does not reach the screen. **Check that it does not**: this row
+must look and read the same as Cell 1's.
+
+Do the three checks below **while the dialog is still up** — the popup is
+waiting, so there is no hurry and nothing to answer in it first. Then answer
+the dialog in the pane and confirm the prompt lands as a submitted turn
+(`herdr[S] pane read <pane-id> --source visible`), which is Cell 1's own
+verification.
+
+To see the old failure text instead, set `trust_wait_ms = 0` and re-run; the
+step must then say the instruction, not a timeout and not a raw error code:
 
 ```
 claude started; answer the dialog in the pane, then keep this session
 -- it is showing "Quick safety check": ...
 ```
 
-Then check the three things this cell exists for, all of which hold with the
-agent still sitting on its dialog:
+The three things this cell exists for, all of which hold with the agent
+still sitting on its dialog:
 
 - **The agent is alive.** `herdr[S] agent get <pane-id>` reports
   `agent_status: "blocked"`, not a dead pane. Until #94 this cell destroyed
   the agent — the prompt was typed into the dialog and its Enter answered
   "No, exit" — so a pane back at a shell prompt is a regression of that fix
   and the single most important thing on this page to notice.
-- **The prompt survived.** The failure screen names the file it was saved
-  to (or `--json` carries `prompt_sent: false` and `unsent_prompt`).
+- **The prompt survived.** On the waiting path it is still queued and goes
+  out when you answer. On the fallback path the failure screen names the
+  file it was saved to (or `--json` carries `prompt_sent: false` and
+  `unsent_prompt`).
 - **The launch really went through clauth.** `herdr[S] pane list` shows
   `agent: "claude"` and `tokens.clauth: "<the profile you picked>"`, and
   `herdr[S] pane process-info --pane <pane-id>` shows **both** `clauth`
   (parent) and `claude` (child).
 
 Finally, answer the dialog in the pane (`↓`, `↵`) and confirm the advice the
-message gave is true: `agent get` should move to `idle` and the session should
-be usable. A cell that ends here with a working session has passed.
+message gave is true: `agent get` should move to `idle`, the queued prompt
+should appear in the pane as a submitted turn, and the session should be
+usable. A cell that ends here with a working session that has the prompt in
+it has passed.
 
 **Teardown:** same as Cell 1.
 
@@ -770,8 +829,14 @@ more tab than before, and that tab's pane is running the agent. This is
 placement spec §5.3's disclosed cost — the idle shell in the worktree's
 own workspace is not a bug.
 
-Expect step 3 (starting the agent) to fail with `agent_not_ready` **every
-time you run this cell**, on every machine — not just the first. The
+Run this cell **headlessly** (Route A0) and expect step 3 (starting the
+agent) to fail with `agent_not_ready` **every time you run this cell**, on
+every machine — not just the first. #115 changed the popup and deliberately
+left `create` alone (its decision 2), so this cell's expected result is
+unchanged; the popup's version of the same moment is Cell 1's pause. If you
+walk this cell through the popup instead, expect Cell 1's waiting row here
+too, and check that the agent lands in the invoking workspace rather than
+the worktree's before you answer the dialog. The
 worktree checkout is created by the run itself, so it is always a path
 Claude Code has never seen and there is nothing to pre-trust in advance
 (see "Claude Code's trust prompt is a precondition"). Its first-run trust

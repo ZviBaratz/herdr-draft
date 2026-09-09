@@ -677,8 +677,15 @@ func TestAssembledForm_ClauthUnreadable(t *testing.T) {
 // TestAssembledSubmit_BlockedStartFrame is the state #90 made routine and
 // nothing pinned: herdr 0.9.0 detects Claude Code's first-run trust prompt,
 // reports the agent `blocked`, and `agent start` refuses -- so on 0.9.0
-// every submit into a fresh worktree stops at step 2, on a session that is
-// running fine and one keystroke from ready.
+// every submit into a fresh worktree stopped at step 2, on a session that
+// was running fine and one keystroke from ready.
+//
+// Since #115 the popup WAITS through that instead, so this is no longer the
+// ordinary outcome: it is what a `trust_wait_ms = 0` opt-out gets, which
+// the fixture reaches by leaving the config's budget unset. The screen is
+// still worth pinning -- it is the shape every launch failure takes, and
+// the neighbouring unanswered-dialog frame is the same screen arrived at
+// the other way.
 //
 // The frame is the point. It is easy to assert that an error string
 // contains the right words and still ship a screen where the popup has
@@ -737,5 +744,106 @@ func TestAssembledSubmit_BlockedStartFrame(t *testing.T) {
 	// ACTS on survives.
 	assertAppSubmitFrame(t, "submit-blocked-start-80x24", m, 80, 24)
 	assertAppSubmitFrame(t, fmt.Sprintf("submit-blocked-start-%dx%d", framePopupW, framePopupH),
+		m, framePopupW, framePopupH)
+}
+
+// TestAssembledSubmit_WaitingOnTheDialogFrame is the screen #115 adds, and
+// it is the one screen in the pipeline that a user can sit and look at for
+// minutes: the launch found Claude Code on its first-run trust prompt, so
+// the popup has stopped and is waiting for them to answer it in the pane.
+//
+// Driven through the real plan.Execute against a fake Runner, like the
+// blocked-start frame beside it, so the words in the fixture are the words
+// internal/plan and internal/form actually emit. Pinned at BOTH widths for
+// the reason #112 established: 80x24 is the pessimistic small terminal and
+// 101x30 is what the popup ACTUALLY ships at, and the instruction is the
+// half the user acts on -- if it truncates mid-word at either, this fixture
+// is where a reviewer sees it.
+func TestAssembledSubmit_WaitingOnTheDialogFrame(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt: "AgentStart",
+		failErr: errors.New("herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`),
+		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
+		dialogClears: true,
+	}
+	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 300000}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m.title.SetTitle("Fix login redirect loop", false)
+	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, resume := drainSubmitProgressUntil(t, m, cmd, func(p plan.Progress) bool {
+		return p.State == plan.StepWaiting
+	})
+
+	assertAppSubmitFrame(t, "submit-waiting-on-dialog-80x24", m, 80, 24)
+	assertAppSubmitFrame(t, fmt.Sprintf("submit-waiting-on-dialog-%dx%d", framePopupW, framePopupH),
+		m, framePopupW, framePopupH)
+
+	// Draining the rest is not tidiness: it is the assertion that this
+	// screen is a WAIT and not a failure. The dialog clears, the pipeline
+	// carries on by itself, and the prompt the user composed goes out.
+	m, _, done := drainSubmitProgress(t, m, resume)
+	if done.result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: the wait must resolve into a normal submit: %+v",
+			done.result.FailedIndex, done.result)
+	}
+	if done.result.PromptText != "" {
+		t.Errorf("PromptText = %q, want empty -- nothing left for the user to paste", done.result.PromptText)
+	}
+}
+
+// TestAssembledSubmit_UnansweredDialogFrame is #115's fallback, and the
+// screen a user gets by walking away: the popup waited the whole
+// trust_wait_ms and the dialog is still up, so the run lands on exactly the
+// failure it used to land on immediately -- the stack, the reason, the
+// saved prompt, the keep-or-remove gate.
+//
+// It is a DIFFERENT screen from submit-blocked-start beside it, which is
+// why it gets its own fixture rather than being assumed identical: the
+// error the row carries is now the wait's ("timed out after 5m0s"), not
+// herdr's `agent start` envelope, because by then the interesting fact is
+// that five minutes passed unanswered.
+func TestAssembledSubmit_UnansweredDialogFrame(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt: "AgentStart",
+		failErr: errors.New("herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`),
+		awaitErr: fmt.Errorf("await detection for pane pane-1: timed out after 5m0s: %w", herdrc.ErrAgentBlocked),
+		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
+	}
+	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 300000}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m.title.SetTitle("Fix login redirect loop", false)
+	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	if done.result.FailedIndex != 1 {
+		t.Fatalf("FailedIndex = %d, want 1 (the launch step): %+v", done.result.FailedIndex, done.result)
+	}
+
+	m, cleanCmd := m.handleSubmitDone(done)
+	if cleanCmd == nil {
+		t.Fatal("handleSubmitDone returned no cmd, want the CleanCheck and prompt-save batch")
+	}
+	m, _ = m.handleCleanCheckResult(cleanCheckMsg{
+		result:   done.result,
+		decision: plan.CleanCheck(context.Background(), m.submitInput, done.result),
+	})
+	// Supplied rather than taken from the real save, for the same reason
+	// the blocked-start frame supplies it: t.TempDir's name is
+	// run-specific and would move the golden bytes every run.
+	m.submitView.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
+
+	assertAppSubmitFrame(t, "submit-dialog-unanswered-80x24", m, 80, 24)
+	assertAppSubmitFrame(t, fmt.Sprintf("submit-dialog-unanswered-%dx%d", framePopupW, framePopupH),
 		m, framePopupW, framePopupH)
 }

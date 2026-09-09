@@ -557,7 +557,7 @@ func TestCLIRunnerAwaitDetectionRetriesUntilDetected(t *testing.T) {
 	bin, argvLog := fakeHerdrFlaky(t, 2, stdout)
 	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
 
-	if err := r.AwaitDetection(context.Background(), "w1:p2", time.Second); err != nil {
+	if err := r.AwaitDetection(context.Background(), "w1:p2", time.Second, 0); err != nil {
 		t.Fatalf("AwaitDetection: %v", err)
 	}
 
@@ -578,7 +578,7 @@ func TestCLIRunnerAwaitDetectionTimeout(t *testing.T) {
 	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
 
 	start := time.Now()
-	err := r.AwaitDetection(context.Background(), "w1:p2", 50*time.Millisecond)
+	err := r.AwaitDetection(context.Background(), "w1:p2", 50*time.Millisecond, 0)
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -600,7 +600,7 @@ func TestCLIRunnerAwaitDetectionTimeoutKillsHangingPoll(t *testing.T) {
 	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
 
 	start := time.Now()
-	err := r.AwaitDetection(context.Background(), "w1:p2", 50*time.Millisecond)
+	err := r.AwaitDetection(context.Background(), "w1:p2", 50*time.Millisecond, 0)
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -1160,7 +1160,7 @@ func TestCLIRunnerAwaitDetectionWaitsThroughUnknown(t *testing.T) {
 	bin, _ := fakeHerdr(t, agentGetJSON(`"agent_status":"unknown","launch_pending":true`))
 	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
 
-	err := r.AwaitDetection(context.Background(), "w1:p2", 60*time.Millisecond)
+	err := r.AwaitDetection(context.Background(), "w1:p2", 60*time.Millisecond, 0)
 	if err == nil {
 		t.Fatal("AwaitDetection returned success for an agent that never became ready")
 	}
@@ -1178,7 +1178,7 @@ func TestCLIRunnerAwaitDetectionReportsBlocked(t *testing.T) {
 	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
 
 	start := time.Now()
-	err := r.AwaitDetection(context.Background(), "w1:p2", 10*time.Second)
+	err := r.AwaitDetection(context.Background(), "w1:p2", 10*time.Second, 0)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, ErrAgentBlocked) {
@@ -1203,7 +1203,7 @@ func TestCLIRunnerAwaitDetectionAcceptsASettledAgent(t *testing.T) {
 	bin, _ := fakeHerdr(t, agentGetJSON(`"agent_status":"idle"`))
 	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
 
-	if err := r.AwaitDetection(context.Background(), "w1:p2", time.Second); err != nil {
+	if err := r.AwaitDetection(context.Background(), "w1:p2", time.Second, 0); err != nil {
 		t.Fatalf("AwaitDetection: %v, want success for a settled idle agent", err)
 	}
 }
@@ -1215,7 +1215,7 @@ func TestCLIRunnerAwaitDetectionUnparseableResponseKeepsWaiting(t *testing.T) {
 	bin, _ := fakeHerdr(t, "this is not json")
 	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
 
-	err := r.AwaitDetection(context.Background(), "w1:p2", 60*time.Millisecond)
+	err := r.AwaitDetection(context.Background(), "w1:p2", 60*time.Millisecond, 0)
 	if err == nil {
 		t.Fatal("AwaitDetection returned success against an unreadable response")
 	}
@@ -1300,5 +1300,145 @@ func TestCLIRunnerAgentPromptTimeoutIsNotSubstringMatched(t *testing.T) {
 	if errors.Is(err, ErrPromptWaitTimeout) {
 		t.Errorf("a prompt whose TEXT mentions the timeout envelope was classified as a wait "+
 			"timeout; only herdr's own stderr code may decide this\nerror: %s", err.Error())
+	}
+}
+
+// fakeHerdrStaged writes a disposable herdr that answers the first n
+// invocations with firstStdout and every later one with secondStdout --
+// or, when secondStdout is "", fails the way `agent get` fails once there
+// is no agent in the pane at all (exit 1, "not found" on stderr).
+//
+// It is fakeHerdrFlaky's mirror image. That one fails and then recovers,
+// which is what a poll waiting for something to APPEAR needs; this one
+// changes a settled answer, which is what a poll watching a state
+// TRANSITION needs -- an agent that is blocked and then becomes ready, or
+// blocked and then stops being reported at all (#115).
+func fakeHerdrStaged(t *testing.T, n int, firstStdout, secondStdout string) (bin, argvLog string) {
+	t.Helper()
+	dir := t.TempDir()
+	argvLog = filepath.Join(dir, "argv")
+	counter := filepath.Join(dir, "count")
+	bin = filepath.Join(dir, "herdr")
+	second := "cat <<'EOF'\n" + secondStdout + "\nEOF\n"
+	if secondStdout == "" {
+		second = "echo \"not found\" 1>&2\nexit 1\n"
+	}
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + argvLog + "\n" +
+		"n=$(cat " + counter + " 2>/dev/null || echo 0)\n" +
+		"n=$((n + 1))\n" +
+		"echo $n > " + counter + "\n" +
+		"if [ \"$n\" -le " + strconv.Itoa(n) + " ]; then\n" +
+		"  cat <<'EOF'\n" + firstStdout + "\nEOF\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		second
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, argvLog
+}
+
+// blockedAgentJSON/readyAgentJSON are the two `agent get` answers the
+// trust-dialog wait travels between: a claude sitting on its first-run
+// trust prompt, and the same claude once the user has answered it.
+func blockedAgentJSON() string { return agentGetJSON(`"agent_status":"blocked","launch_pending":true`) }
+func readyAgentJSON() string   { return agentGetJSON(`"agent_status":"idle"`) }
+
+// TestCLIRunnerAwaitDetectionWaitsThroughBlocked: given a blocked budget,
+// `blocked` is a WAIT rather than a verdict (#115). The agent is alive and
+// one keystroke from ready; the person at the keyboard is the thing being
+// waited on, and when they answer, the poll must simply carry on and
+// succeed.
+func TestCLIRunnerAwaitDetectionWaitsThroughBlocked(t *testing.T) {
+	bin, _ := fakeHerdrStaged(t, 3, blockedAgentJSON(), readyAgentJSON())
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	if err := r.AwaitDetection(context.Background(), "w1:p2", time.Second, 10*time.Second); err != nil {
+		t.Fatalf("AwaitDetection: %v, want success once the dialog is answered", err)
+	}
+}
+
+// TestCLIRunnerAwaitDetectionBlockedBudgetOutlivesTheBase: the blocked
+// budget REPLACES the base one for the rest of the wait, rather than
+// merely being consulted alongside it. A human reading a security prompt
+// is a different order of magnitude from a machine painting a status
+// transition, which is the whole reason there are two numbers.
+//
+// Asserted as a lower bound on elapsed time, never an upper one: the point
+// is that the wait outlived the base deadline, and pinning how far past it
+// went would be pinning the load on the machine running the test. The base
+// budget is likewise generous enough for one `agent get` to actually
+// COMPLETE -- an earlier draft used 20ms, which killed the first poll at
+// its own deadline and read as pending, so the test failed for a reason
+// that had nothing to do with what it is about.
+func TestCLIRunnerAwaitDetectionBlockedBudgetOutlivesTheBase(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, blockedAgentJSON())
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	start := time.Now()
+	err := r.AwaitDetection(context.Background(), "w1:p2", 100*time.Millisecond, 600*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("AwaitDetection returned success for an agent that stayed blocked")
+	}
+	if errors.Is(err, ErrAgentBlocked) {
+		t.Errorf("error = %v, want a timeout: with a blocked budget, blocked is pending and not a verdict", err)
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %q, want a timeout", err.Error())
+	}
+	if elapsed < 400*time.Millisecond {
+		t.Errorf("gave up after %v, want it to outlive the 100ms base deadline and run out the 600ms blocked budget", elapsed)
+	}
+	if polls := strings.Count(readArgvLog(t, argvLog), "\n"); polls < 2 {
+		t.Errorf("polled %d time(s); a blocked agent under a blocked budget is pending, so the poll must carry on", polls)
+	}
+}
+
+// TestCLIRunnerAwaitDetectionGivesUpWhenTheAgentStopsBeingReported is the
+// declined dialog: the user answers "No, exit", Claude Code exits, and
+// `agent get` stops reporting an agent in that pane at all -- which reads
+// as "not yet" (classifyAgent has deliberately no "exited" verdict, since
+// the call simply fails). Left alone that would burn the whole blocked
+// budget on a session that is already gone, so an agent that WAS blocked
+// and has since stopped being reported for a full base timeout ends the
+// wait with a sentinel of its own.
+func TestCLIRunnerAwaitDetectionGivesUpWhenTheAgentStopsBeingReported(t *testing.T) {
+	bin, _ := fakeHerdrStaged(t, 2, blockedAgentJSON(), "")
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	start := time.Now()
+	err := r.AwaitDetection(context.Background(), "w1:p2", 150*time.Millisecond, 30*time.Second)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrAgentGone) {
+		t.Fatalf("AwaitDetection error = %v, want it to wrap ErrAgentGone", err)
+	}
+	if !strings.Contains(err.Error(), "w1:p2") {
+		t.Errorf("error = %q, does not name the pane", err.Error())
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("took %v to notice the agent had gone, against a 30s blocked budget", elapsed)
+	}
+}
+
+// TestCLIRunnerAwaitDetectionNeverReportsGoneWithoutHavingSeenBlocked: an
+// agent that is simply slow to appear must still time out normally. The
+// gone verdict is evidence that something WAS there and stopped being
+// reported, so it may never fire for a pane that was never blocked at all
+// -- otherwise every ordinary detection timeout would rename itself.
+func TestCLIRunnerAwaitDetectionNeverReportsGoneWithoutHavingSeenBlocked(t *testing.T) {
+	bin := fakeHerdrFail(t, "not found")
+	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+
+	err := r.AwaitDetection(context.Background(), "w1:p2", 150*time.Millisecond, 30*time.Second)
+
+	if errors.Is(err, ErrAgentGone) {
+		t.Fatalf("error = %v, want a plain timeout: nothing was ever detected in that pane", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("error = %v, want a timeout", err)
 	}
 }

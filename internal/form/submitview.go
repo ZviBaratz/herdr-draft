@@ -122,6 +122,10 @@ type SubmitView struct {
 	// no clean was ever attempted).
 	cleanErr error
 
+	// waitingHint is SetWaitingHint's own footer instruction for a step
+	// waiting on the user, or "" for defaultWaitingHint.
+	waitingHint string
+
 	// unsentPromptPath/unsentPromptErr are SetUnsentPrompt's own recorded
 	// recovery location for a prompt that never reached the agent, and the
 	// error if it could not be written at all -- see unsentPromptLines.
@@ -422,8 +426,14 @@ func (v *SubmitView) stepRow(s Step, labelW, valueW int) string {
 
 // stepGlyph renders a step's state marker, padded to exactly the gutter's
 // width so the label column starts where the form's does regardless of
-// the glyph's own cell width: "✓" done, "›" running, "✗" failed, blank
-// for a step that has not started.
+// the glyph's own cell width: "✓" done, "›" running, "✗" failed, "…"
+// waiting on the user, blank for a step that has not started.
+//
+// The waiting glyph is deliberately not "›". A running step and a waiting
+// one differ in whose turn it is, and the gutter is the first thing anyone
+// reads: an accent chevron on a pipeline that has stopped for the user
+// would say the machine is still working, which is the one thing that is
+// not true (#115).
 func stepGlyph(state plan.StepState, p theme.Palette) string {
 	var glyph string
 	var fg theme.Color
@@ -434,6 +444,8 @@ func stepGlyph(state plan.StepState, p theme.Palette) string {
 		glyph, fg = "✓", p.Success
 	case plan.StepFailed:
 		glyph, fg = "✗", p.Danger
+	case plan.StepWaiting:
+		glyph, fg = "…", p.Warning
 	default: // StepPending: no marker at all, just the indent.
 		return strings.Repeat(" ", gutterWidth)
 	}
@@ -461,6 +473,11 @@ func (v *SubmitView) stepValue(s Step, width int) string {
 	case plan.StepRunning:
 		if text == "" {
 			text = "working…"
+		}
+	case plan.StepWaiting:
+		style = lipgloss.NewStyle().Foreground(v.palette.Warning)
+		if text == "" {
+			text = "waiting on you…"
 		}
 	case plan.StepDone:
 		if text == "" {
@@ -717,9 +734,66 @@ func (v *SubmitView) footerParts() (hint string, buttons []string) {
 		// advertises a working key, and this key does nothing (Update).
 		// The reason why is on the line directly above it.
 		return "", []string{keep, submitButton("", "remove it", buttonDisabled, v.palette)}
+	case v.waitingOnTheUser():
+		return lipgloss.NewStyle().Foreground(v.palette.Warning).Render(v.waitingHintOrDefault()), nil
 	default:
 		return dimText(v.palette).Render(v.stepCounter()), nil
 	}
+}
+
+// defaultWaitingHint is what the footer says while a step is waiting on the
+// person at the keyboard (#115) and nobody has pushed in something more
+// specific.
+//
+// It goes in the FOOTER rather than in the waiting row's value column for
+// two reasons. The footer is the widest line on the screen and the only one
+// whose job is already a hint, so the instruction survives at the 80-cell
+// pessimistic width where a row value would be truncated mid-word; and the
+// row keeps saying what the step IS, so the screen reads as one pipeline
+// paused rather than as a row that changed its mind.
+//
+// It says where to look rather than what the dialog is: with a `here`
+// placement herdr has already moved the user to the agent's pane, so "in
+// the pane" is where they are, and the popup is what is in their way.
+//
+// Both this and anything SetWaitingHint pushes in must fit the 78 cells an
+// 80-column popup leaves: footerLine truncates a hint with no visible
+// marker at all when there are no buttons beside it, so an over-long
+// instruction does not look truncated, it looks finished.
+const defaultWaitingHint = "answer the dialog in the pane — this carries on by itself once you do"
+
+// SetWaitingHint replaces the footer instruction shown while a step is
+// waiting on the user. "" restores defaultWaitingHint.
+//
+// A setter rather than a constant because the most useful thing this line
+// can say -- that the prompt the user typed will be delivered the moment
+// they answer -- is only TRUE for a plan that carries a prompt op, and
+// internal/form is deliberately not allowed to know which ops a plan has
+// (see this file's own doc comment). internal/app resolves it from
+// plan.Input, the same way it resolves every other row's words.
+func (v *SubmitView) SetWaitingHint(hint string) { v.waitingHint = hint }
+
+// waitingHintOrDefault is SetWaitingHint's value, or defaultWaitingHint
+// when nothing was pushed in -- this view's usual zero-value-safe posture.
+func (v *SubmitView) waitingHintOrDefault() string {
+	if v.waitingHint == "" {
+		return defaultWaitingHint
+	}
+	return v.waitingHint
+}
+
+// waitingOnTheUser reports whether any step has stopped for the person at
+// the keyboard. Any, not the active one: the active row is the LAST step
+// that has started, and nothing forbids a later step from having started
+// too -- reading the whole stack is what keeps the footer honest without
+// depending on that ordering.
+func (v *SubmitView) waitingOnTheUser() bool {
+	for _, s := range v.steps {
+		if s.State == plan.StepWaiting {
+			return true
+		}
+	}
+	return false
 }
 
 // stepCounter is the running pipeline's own footer hint, "step 2 of 4".

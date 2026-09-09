@@ -268,7 +268,12 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 		}
 	}
 
-	rep.result = plan.Execute(ctx, deps.Runner, ops, onProgress)
+	// No trust budget, deliberately (#115's decision 2). A script has
+	// nobody at the keyboard, so waiting five minutes for a dialog nobody
+	// will answer is worse than failing with the reason -- and there is no
+	// flag for it either, since every flag here has a form row behind it
+	// and no row offers this.
+	rep.result = plan.Execute(ctx, deps.Runner, ops, plan.ExecOpts{}, onProgress)
 
 	if rep.result.FailedIndex == -1 {
 		// Spec §10/§12's memory is written only by a successful create, the

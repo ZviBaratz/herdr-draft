@@ -1340,8 +1340,14 @@ func (m Model) startSubmit(ops []plan.Op, in plan.Input) (Model, tea.Cmd) {
 	// "repository · branch" line as this layer currently resolves (the
 	// form's own live context is wired separately).
 	m.submitView.SetHeader(submitHeaderName, submitHeaderContext(in))
+	m.submitView.SetWaitingHint(submitWaitingHint(in))
 	m.submitView.SetSteps(m.submitSteps)
-	return m, runSubmitCmd(context.Background(), m.deps.Runner, ops)
+	// TrustWait is the popup's alone (#115's decision 2): there is a person
+	// on the other side of this screen who can answer a dialog, which is
+	// exactly what headless `create` does not have.
+	return m, runSubmitCmd(context.Background(), m.deps.Runner, ops, plan.ExecOpts{
+		TrustWait: time.Duration(m.cfg.Timeouts.TrustWaitMS) * time.Millisecond,
+	})
 }
 
 // handleClearRequested implements form.ClearRequestedMsg (spec §6's ⌃R⌃R

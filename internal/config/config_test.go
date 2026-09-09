@@ -41,6 +41,7 @@ codex = []
 [timeouts]
 detection_ms = 30000
 prompt_wait_ms = 120000
+trust_wait_ms = 300000
 
 [worktree]
 trust_repository = true          # --trust-repository on worktree create
@@ -258,6 +259,9 @@ func TestLoad_MissingFile_Defaults(t *testing.T) {
 	if cfg.Timeouts.PromptWaitMS != 120000 {
 		t.Errorf("Timeouts.PromptWaitMS = %d, want 120000", cfg.Timeouts.PromptWaitMS)
 	}
+	if cfg.Timeouts.TrustWaitMS != 300000 {
+		t.Errorf("Timeouts.TrustWaitMS = %d, want 300000 -- five minutes for a person to read a security prompt", cfg.Timeouts.TrustWaitMS)
+	}
 }
 
 func TestLoad_FullConfig_ParsesEveryField(t *testing.T) {
@@ -319,6 +323,9 @@ func TestLoad_FullConfig_ParsesEveryField(t *testing.T) {
 	}
 	if cfg.Timeouts.PromptWaitMS != 120000 {
 		t.Errorf("Timeouts.PromptWaitMS = %d, want 120000", cfg.Timeouts.PromptWaitMS)
+	}
+	if cfg.Timeouts.TrustWaitMS != 300000 {
+		t.Errorf("Timeouts.TrustWaitMS = %d, want 300000 -- five minutes for a person to read a security prompt", cfg.Timeouts.TrustWaitMS)
 	}
 
 	if cfg.Palette == nil {

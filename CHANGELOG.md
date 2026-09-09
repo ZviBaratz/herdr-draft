@@ -132,6 +132,17 @@ without the popup. It drives herdr exclusively through the public CLI
   the executor reads the pane and checks it against known blocking-dialog
   signatures rather than trusting an "idle" report, and turns herdr's
   "blocked during startup" into an instruction the user can act on.
+- **A first-run trust dialog is a pause, not a failure.** Every worktree is
+  a directory the agent has never been trusted in, so its first launch there
+  meets a confirmation screen and herdr refuses to call the launch ready.
+  The popup waits through it — the launch row shows `…`, the footer says
+  what to answer and where, and the pipeline delivers the queued prompt and
+  closes by itself once the dialog clears. No keypress in the popup. How
+  long it waits is `[timeouts] trust_wait_ms`, five minutes by default; when
+  that runs out, or when the agent stops running because the dialog was
+  declined, it falls back to the failure screen with the prompt saved.
+  Headless `create` deliberately keeps failing fast, because a script has
+  nobody at the keyboard.
 - `herdr pane run` types its argv into a shell rather than exec'ing it, so
   the runner shell-quotes every element — and the argv path that has no
   shell deliberately does not.

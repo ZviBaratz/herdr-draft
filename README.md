@@ -511,6 +511,22 @@ two profiles exist (a static, startup-time check).
   `herdr agent get` after launch before giving up on detecting the agent.
 - `prompt_wait_ms` (default: `120000`) — timeout passed to
   `herdr agent prompt --wait` for step 3 of the submit pipeline.
+- `trust_wait_ms` (default: `300000`, five minutes) — how long the popup
+  waits for **you** to answer a blocking dialog that stopped the launch,
+  in practice Claude Code's first-run trust prompt in a fresh worktree.
+  The launch step shows `answer the dialog in the pane` and the pipeline
+  carries on by itself the moment you do; if the budget runs out, or if
+  the agent stops running because you declined, it falls back to the
+  failure screen with your prompt saved.
+
+  A separate number from `detection_ms` on purpose: that one is tuned for
+  a machine painting a status transition in tens of seconds, and raising
+  it to a person's timescale would make every ordinary detection failure
+  take five minutes to report. Set it to `0` to switch the wait off and
+  fail immediately instead.
+
+  Only the popup waits. Headless `create` has nobody at the keyboard, so
+  it keeps failing fast with the reason, and there is no flag for it.
 
 ### `[worktree]`
 
@@ -680,20 +696,27 @@ in README; nothing herdr-draft can fix locally.
 These are real, live-verified rough edges, not deferred features — read
 them before filing a bug against something documented here:
 
-- **A brand-new worktree's first launch stops on Claude Code's trust
+- **A brand-new worktree's first launch pauses on Claude Code's trust
   prompt.** Claude Code asks "Is this a project you created or one you
   trust?" the first time it runs in any directory, and every worktree
   herdr-draft creates is a directory it has never seen. herdr 0.9.0
   recognizes that screen and reports the agent as `blocked`, so `herdr agent
-  start` refuses to call the launch a success — which means your submit
-  stops at the launch step even though the agent is running fine.
+  start` refuses to call the launch a success — even though the agent is
+  running fine and is one keystroke from ready.
 
-  Nothing is lost. herdr-draft reads the pane, recognizes the dialog and
-  says so: *claude started; answer the dialog in the pane, then keep this
-  session*. Press `k` to keep, answer the prompt in the pane, and the
-  session is a normal one from there. Any prompt you had composed is saved
-  to a file, named on the failure screen, so you can paste it in once the
-  agent is ready. It happens once per directory.
+  In the popup this is a pause, not a failure. The launch step goes to
+  `…` and the footer reads *answer the dialog in the pane*; herdr has
+  already moved you to that pane, so answer it there and the pipeline
+  sends your prompt and closes by itself. You press nothing in the popup.
+  It happens once per directory. How long it will wait for you is
+  [`trust_wait_ms`](#timeouts).
+
+  If the wait runs out, or you answer "No, exit", you get the failure
+  screen instead: press `k` to keep the session, and any prompt you had
+  composed is saved to a file named on that screen so you can paste it in.
+
+  **Headless `create` still fails immediately** on the same dialog, with
+  the reason and exit code 1 — a script has nobody at the keyboard.
 
 - **Prompt-delivery dialog guard.** More generally, herdr-draft never sends
   a queued prompt into a pane it has not positively confirmed is safe to

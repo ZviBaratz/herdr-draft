@@ -104,7 +104,8 @@ func (k OpKind) String() string {
 // per Kind: Worktree for OpWorktreeCreate, Workspace for
 // OpWorkspaceCreate, Tab for OpTabCreate, Split for OpPaneSplit, Agent for
 // OpAgentStart, RunArgv for OpClauthLaunch, Prompt for OpAgentPrompt.
-// OpAwaitDetection populates only Timeout. Requests that depend on step-1
+// OpAwaitDetection populates only Timeout, which OpAgentStart also carries
+// for the trust-dialog wait (#115). Requests that depend on step-1
 // output (pane/workspace ids the topology-creation op returns) are left
 // with those fields empty -- the executor (Task 13) fills them in from the
 // step-1 result before running each op.
@@ -119,7 +120,7 @@ type Op struct {
 	Agent     *herdrc.AgentStartReq      // OpAgentStart
 	RunArgv   []string                   // OpClauthLaunch: argv for Runner.PaneRun
 	Prompt    *herdrc.AgentPromptReq     // OpAgentPrompt
-	Timeout   time.Duration              // OpAwaitDetection
+	Timeout   time.Duration              // OpAwaitDetection, and OpAgentStart's #115 fallback
 
 	// AgentKind is OpAwaitDetection's other field: the kind being waited
 	// for, carried for MESSAGES only and never for behaviour. Path B is
@@ -317,6 +318,14 @@ func launchOps(in Input) []Op {
 				Kind:      in.AgentKind,
 				ExtraArgs: in.ExtraArgs,
 			},
+			// Path A does its detection waiting server-side, so this
+			// budget is unused unless the start comes back BLOCKED and
+			// Execute waits through the dialog (#115) -- where it is the
+			// ordinary detection budget the wait falls back on once the
+			// dialog stops being reported. Set here rather than defaulted
+			// in Execute so both launch paths take their detection number
+			// from the same Input field.
+			Timeout: in.DetectionTimeout,
 		},
 	}
 }

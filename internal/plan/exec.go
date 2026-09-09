@@ -24,6 +24,16 @@ const (
 	StepRunning
 	StepDone
 	StepFailed
+	// StepWaiting is a step that has stopped making progress on its own
+	// and is waiting on the PERSON, not on herdr: the launch found the
+	// agent blocked on a dialog only they can answer (#115). It is a fifth
+	// state rather than a variant of StepRunning because the two differ in
+	// whose turn it is, which is the only thing a user watching a pipeline
+	// stall actually needs to know.
+	//
+	// Appended rather than inserted in state order: StepPending must stay
+	// the zero value, since that is what an unstarted row is seeded with.
+	StepWaiting
 )
 
 // String names a StepState for progress lines and test failure output.
@@ -37,9 +47,35 @@ func (s StepState) String() string {
 		return "StepDone"
 	case StepFailed:
 		return "StepFailed"
+	case StepWaiting:
+		return "StepWaiting"
 	default:
 		return fmt.Sprintf("StepState(%d)", int(s))
 	}
+}
+
+// ExecOpts are Execute's RUNTIME knobs -- the settings that describe the
+// caller rather than the plan.
+//
+// Deliberately a separate parameter and not a field on Input. Input is what
+// Build maps to ops, and internal/create's equivalence_test.go compares the
+// form's Input against the headless command's field for field with
+// reflect.DeepEqual: anything the two paths must disagree about therefore
+// cannot live there. TrustWait is exactly such a thing (#115's decision 2 --
+// only the popup waits), and putting it here is what lets the two paths
+// differ without the drift test losing its teeth.
+type ExecOpts struct {
+	// TrustWait is how long to wait for a person to answer a blocking
+	// dialog that stopped the launch -- `[timeouts] trust_wait_ms`, five
+	// minutes by default.
+	//
+	// Zero means do not wait at all, which is byte-for-byte the behaviour
+	// that shipped before #115: the blocked launch fails, the prompt comes
+	// back for manual paste, and the keep-or-clean gate is offered. That is
+	// what headless `create` passes, because a script has nobody at the
+	// keyboard and a five-minute wait for a dialog nobody will answer is
+	// worse than failing with the reason.
+	TrustWait time.Duration
 }
 
 // Progress reports one op's state transition to Execute's caller. Index is
@@ -318,6 +354,52 @@ func promptIfReady(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptR
 	return r.AgentPrompt(ctx, req)
 }
 
+// waitThroughDialog turns a blocked launch into a wait for the person at
+// the keyboard, and is the whole of #115.
+//
+// Both launch paths reach it holding the same fact by different routes --
+// Path A from `agent start`'s own agent_not_ready refusal, Path B from
+// herdrc's ErrAgentBlocked sentinel -- and neither needs a second `agent
+// start`: a blocked agent is running and addressable throughout, recorded
+// live in docs/manual-smoke.md's Cell 8. herdr refuses to CALL the launch
+// ready; it does not kill anything. So this is a poll.
+//
+// It emits StepWaiting first, because a wait nobody can see is a hang, and
+// because with a `here` placement herdr has already moved the user to the
+// agent's pane (placementOp's Focus: true) -- they answer the dialog there
+// while the popup polls behind it and closes itself. Zero keypresses in the
+// popup is the point, so nothing here asks for one.
+//
+// The error it returns is deliberately left for the CALLER's own explain
+// switch, which already knows how to turn a blocked verdict into an
+// instruction; the one case it handles itself is the agent going away,
+// since "answer the dialog in the pane" would then be advice about a pane
+// with nothing in it.
+func waitThroughDialog(ctx context.Context, r herdrc.Runner, onProgress func(Progress),
+	index, total int, label, paneID string, detection, trustWait time.Duration) error {
+	emitProgress(onProgress, index, total, label, StepWaiting, nil)
+	err := r.AwaitDetection(ctx, paneID, detection, trustWait)
+	if errors.Is(err, herdrc.ErrAgentGone) {
+		return explainAbandonedDialog(err)
+	}
+	return err
+}
+
+// explainAbandonedDialog says what an ErrAgentGone actually means to
+// somebody watching the popup: the session they were being asked about is
+// over. herdrc's own sentence describes the evidence ("stopped being
+// reported"), which is the right thing for it to say and the wrong thing to
+// put on a failure row.
+//
+// It names the likeliest cause without asserting it, because the evidence
+// cannot distinguish a declined dialog from a crash -- see ErrAgentGone's
+// own doc comment for why `agent get` can never tell them apart -- and the
+// action ("start it again") is the same either way.
+func explainAbandonedDialog(err error) error {
+	return fmt.Errorf("the agent is no longer running -- if you answered \"No, exit\" that is why; "+
+		"nothing was sent, and this session can be removed and started again: %w", err)
+}
+
 // explainUnconfirmedPrompt rewrites a prompt-wait timeout into the only
 // conclusion the evidence supports, and into an instruction.
 //
@@ -540,7 +622,7 @@ func topologyIndices(ops []Op) (space, agentPane int) {
 // exhausted. It never panics: an Op whose Kind requires a request field
 // that is nil (see malformedOpError) fails that op gracefully instead of
 // dereferencing nil.
-func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Progress)) ExecResult {
+func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onProgress func(Progress)) ExecResult {
 	result := ExecResult{FailedIndex: -1}
 	spaceIdx, agentPaneIdx := topologyIndices(ops)
 
@@ -672,6 +754,16 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 					req.PaneID = agentPane
 				}
 				err = startAgentWithDedupe(ctx, r, req)
+				if opts.TrustWait > 0 && isBlockedAgentError(err) {
+					// Not a failure but a wait (#115). If it comes back
+					// blocked anyway -- the budget ran out with the dialog
+					// still up -- explainBlockedStart below turns THAT
+					// error into the instruction instead, and herdr's own
+					// agent_not_ready envelope drops out of the message: by
+					// then the interesting fact is that five minutes passed
+					// unanswered, not that the launch was refused.
+					err = waitThroughDialog(ctx, r, onProgress, i, total, op.Label, req.PaneID, op.Timeout, opts.TrustWait)
+				}
 				// Runs AFTER the dedupe loop, so it sees the error the step
 				// actually failed with rather than an intermediate
 				// agent_name_taken, and returns everything that is not
@@ -689,7 +781,17 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 				if haveAgentPane {
 					paneID = agentPane
 				}
-				err = r.AwaitDetection(ctx, paneID, op.Timeout)
+				// The first poll deliberately runs with NO blocked budget,
+				// so blocked still comes back as a verdict rather than
+				// being absorbed silently inside herdrc. That is what lets
+				// this path emit StepWaiting at the same moment Path A does
+				// -- herdrc has no way to report "I have started waiting"
+				// mid-call, and one extra `agent get` is a cheap price for
+				// both paths running the same three lines.
+				err = r.AwaitDetection(ctx, paneID, op.Timeout, 0)
+				if opts.TrustWait > 0 && isBlockedAgentError(err) {
+					err = waitThroughDialog(ctx, r, onProgress, i, total, op.Label, paneID, op.Timeout, opts.TrustWait)
+				}
 				switch {
 				case err == nil:
 				case isBlockedAgentError(err):
@@ -697,6 +799,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 					// is up and waiting on a dialog, which is an instruction
 					// to give rather than a timeout to report.
 					err = explainBlockedStart(ctx, r, op.AgentKind, paneID, err)
+				case errors.Is(err, herdrc.ErrAgentGone):
+					// Already explained by waitThroughDialog, and the pane
+					// tail below would only quote a shell prompt.
 				default:
 					err = withPaneTail(ctx, r, paneID, err)
 				}

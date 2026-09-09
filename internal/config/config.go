@@ -92,6 +92,18 @@ type WorktreeConfig struct {
 type TimeoutsConfig struct {
 	DetectionMS  int `toml:"detection_ms"`
 	PromptWaitMS int `toml:"prompt_wait_ms"`
+	// TrustWaitMS is how long the popup waits for a PERSON to answer a
+	// blocking dialog that stopped the launch -- Claude Code's first-run
+	// trust prompt, in practice, which every worktree hits the first time
+	// (#115).
+	//
+	// A separate number from DetectionMS on purpose, and not a bigger
+	// DetectionMS: that one is tuned for a machine painting a status
+	// transition in tens of seconds, and raising it to a human's timescale
+	// would make every ordinary detection failure take five minutes to
+	// report. Only the popup consults it; headless `create` has nobody at
+	// the keyboard and keeps failing fast.
+	TrustWaitMS int `toml:"trust_wait_ms"`
 }
 
 // Config is herdr-draft's plugin configuration, mirroring spec §12's
@@ -144,6 +156,7 @@ func defaults() Config {
 		Timeouts: TimeoutsConfig{
 			DetectionMS:  30000,
 			PromptWaitMS: 120000,
+			TrustWaitMS:  300000,
 		},
 	}
 }

@@ -59,6 +59,24 @@ type submitFakeRunner struct {
 	// assumption, that the pane is a normal ready state, still holds).
 	readText string
 
+	// dialogClears makes AgentRead stop returning readText once
+	// AwaitDetection has succeeded: the pane as it looks after the person
+	// answered the dialog. Without it a wait ends against a screen that
+	// still shows a trust prompt, and promptIfReady's guard would
+	// correctly refuse the very prompt the wait exists to deliver.
+	dialogClears bool
+
+	// blockedTimeouts is every blocked budget AwaitDetection was handed,
+	// in order.
+	blockedTimeouts []time.Duration
+
+	// awaitErr, when non-nil, is what AwaitDetection fails with on every
+	// call -- independent of failAt, which names one method and so cannot
+	// express "the start was refused AND the wait that followed it also
+	// ended badly". That pair is #115's fallback: the dialog is never
+	// answered, and the run lands on the failure screen after all.
+	awaitErr error
+
 	calls []string
 }
 
@@ -125,9 +143,19 @@ func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 	return r.readText, nil
 }
 
-func (r *submitFakeRunner) AwaitDetection(context.Context, string, time.Duration) error {
+func (r *submitFakeRunner) AwaitDetection(_ context.Context, _ string, _, blockedTimeout time.Duration) error {
+	// Recorded rather than ignored: whether the popup hands down a trust
+	// budget at all is the whole of #115's app-layer wiring, and nothing
+	// else on this fake can see it.
+	r.blockedTimeouts = append(r.blockedTimeouts, blockedTimeout)
 	if r.shouldFail("AwaitDetection") {
 		return r.failErr
+	}
+	if r.awaitErr != nil {
+		return r.awaitErr
+	}
+	if r.dialogClears {
+		r.readText = ""
 	}
 	return nil
 }
@@ -229,6 +257,37 @@ func drainSubmitProgress(t *testing.T, m Model, cmd tea.Cmd) (Model, []plan.Prog
 		default:
 			t.Fatalf("unexpected message in submit progress chain: %#v", msg)
 		}
+	}
+}
+
+// drainSubmitProgressUntil runs the chain exactly as drainSubmitProgress
+// does but stops the moment stop(p) is true, returning the Model with that
+// event already applied plus the Cmd that resumes the chain.
+//
+// It exists because a frame of a TRANSIENT pipeline state -- one a run
+// passes THROUGH rather than ends on, which #115's wait is -- cannot be
+// taken any other way. Model is a value but SubmitView is a pointer inside
+// it, so a Model copied mid-chain and rendered afterwards would draw
+// whatever the LAST event left behind. The caller renders, then drains the
+// rest with the returned Cmd, which also keeps plan.Execute's producer
+// goroutine from being abandoned mid-send.
+func drainSubmitProgressUntil(t *testing.T, m Model, cmd tea.Cmd, stop func(plan.Progress) bool) (Model, tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("drainSubmitProgressUntil: nil cmd")
+	}
+	msg := cmd()
+	for {
+		pm, ok := msg.(submitProgressMsg)
+		if !ok {
+			t.Fatalf("submit chain ended without reaching the state under test: %#v", msg)
+		}
+		var next tea.Cmd
+		m, next = m.handleSubmitProgress(pm)
+		if stop(pm.progress) {
+			return m, next
+		}
+		msg = next()
 	}
 }
 
@@ -1258,4 +1317,107 @@ func findPromptSavedMsg(t *testing.T, cmd tea.Cmd) promptSavedMsg {
 	}
 	t.Fatal("no promptSavedMsg was produced for a failed prompt step")
 	return promptSavedMsg{}
+}
+
+// --- #115: the popup waits through a blocking dialog ---------------------
+
+// TestSubmit_PopupWaitsThroughTheTrustDialog is #115 end to end at the app
+// layer: `agent start` is refused because Claude Code is showing its
+// first-run trust prompt, the popup waits instead of failing, and the
+// prompt the user composed goes out on its own once the dialog clears.
+//
+// The submit must SUCCEED. Before this, the same run stopped at step 2 with
+// the prompt saved to a file for the user to paste by hand, which is the
+// workflow the issue exists to remove.
+func TestSubmit_PopupWaitsThroughTheTrustDialog(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt: "AgentStart",
+		failErr: errors.New("herdr agent start fix-pagination --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"agent fix-pagination is blocked during startup"},"id":"cli:agent:start"}`),
+		readText:     "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n",
+		dialogClears: true,
+	}
+	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 300000}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m.title.SetTitle("Fix pagination", false)
+	m.prompt.SetValue("implement the fix", false)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, log, done := drainSubmitProgress(t, m, cmd)
+
+	if done.result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: the dialog was answered and the prompt should have gone out: %+v",
+			done.result.FailedIndex, done.result)
+	}
+	if done.result.PromptText != "" {
+		t.Errorf("PromptText = %q, want empty -- nothing was left for the user to paste", done.result.PromptText)
+	}
+
+	// The wait is visible: one step reported StepWaiting, and the row the
+	// user is looking at ends up saying so rather than "working…".
+	var sawWaiting bool
+	for _, p := range log {
+		if p.State == plan.StepWaiting {
+			sawWaiting = true
+		}
+	}
+	if !sawWaiting {
+		t.Errorf("no StepWaiting event reached the view; a wait nobody can see is a hang: %+v", log)
+	}
+
+	if len(runner.blockedTimeouts) == 0 {
+		t.Fatal("AwaitDetection was never called; the blocked start was not waited on at all")
+	}
+}
+
+// TestSubmit_TrustWaitComesFromTheConfig: the number is a setting, not a
+// constant, so a config that names one must be what the popup waits under.
+func TestSubmit_TrustWaitComesFromTheConfig(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt: "AgentStart",
+		failErr: errors.New("herdr agent start x --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"blocked"},"id":"cli:agent:start"}`),
+		dialogClears: true,
+	}
+	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 90000}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m.title.SetTitle("Fix pagination", false)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, _ = drainSubmitProgress(t, m, cmd)
+
+	if len(runner.blockedTimeouts) == 0 {
+		t.Fatal("AwaitDetection was never called")
+	}
+	if got := runner.blockedTimeouts[0]; got != 90*time.Second {
+		t.Errorf("waited under %v, want the configured 90s", got)
+	}
+}
+
+// TestSubmit_WaitingHintPromisesAPromptOnlyWhenThereIsOne: the footer's
+// most useful sentence -- that the prompt goes out as soon as the dialog is
+// answered -- is only true for a plan that carries a prompt op. A submit
+// with no prompt must not be promised the delivery of one.
+func TestSubmit_WaitingHintPromisesAPromptOnlyWhenThereIsOne(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prompt  string
+		promise bool
+	}{
+		{"with a prompt", "implement the fix", true},
+		{"with no prompt", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := plan.Input{Prompt: tc.prompt}
+			hint := submitWaitingHint(in)
+			if got := strings.Contains(hint, "your prompt"); got != tc.promise {
+				t.Errorf("submitWaitingHint(%q) = %q, promises a prompt = %v, want %v",
+					tc.prompt, hint, got, tc.promise)
+			}
+		})
+	}
 }

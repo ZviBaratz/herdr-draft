@@ -59,14 +59,16 @@ func (r *fakeRunner) TabCreate(context.Context, herdrc.TabCreateReq) (herdrc.Cre
 func (r *fakeRunner) PaneSplit(context.Context, herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
 	return herdrc.CreatedTopology{}, nil
 }
-func (r *fakeRunner) AgentStart(context.Context, herdrc.AgentStartReq) error      { return nil }
-func (r *fakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) error    { return nil }
-func (r *fakeRunner) AgentRead(context.Context, string) (string, error)           { return "", nil }
-func (r *fakeRunner) AwaitDetection(context.Context, string, time.Duration) error { return nil }
-func (r *fakeRunner) PaneRun(context.Context, string, []string) error             { return nil }
-func (r *fakeRunner) PaneClose(context.Context, string) error                     { return nil }
-func (r *fakeRunner) WorktreeRemove(context.Context, string) error                { return nil }
-func (r *fakeRunner) WorkspaceClose(context.Context, string) error                { return nil }
+func (r *fakeRunner) AgentStart(context.Context, herdrc.AgentStartReq) error   { return nil }
+func (r *fakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) error { return nil }
+func (r *fakeRunner) AgentRead(context.Context, string) (string, error)        { return "", nil }
+func (r *fakeRunner) AwaitDetection(context.Context, string, time.Duration, time.Duration) error {
+	return nil
+}
+func (r *fakeRunner) PaneRun(context.Context, string, []string) error { return nil }
+func (r *fakeRunner) PaneClose(context.Context, string) error         { return nil }
+func (r *fakeRunner) WorktreeRemove(context.Context, string) error    { return nil }
+func (r *fakeRunner) WorkspaceClose(context.Context, string) error    { return nil }
 
 // fakeGit implements gitSource, defaulting to "a usable git repo with no
 // duplicate branch" so most tests only need to override what they care
