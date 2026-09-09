@@ -480,6 +480,26 @@ failure — press `k`, confirm the agent process is still alive
 (`herdr[S] pane process-info --pane <pane-id>` should still show `claude`),
 and move on. Confirm the file the screen named actually holds your prompt.
 
+> **Answer the gate BEFORE you go and look at the pane.** With a `here`
+> placement the agent's tab or split is created with `Focus: true`
+> (`placementOp`, build.go) — deliberately, since that is where the agent
+> lands — so herdr moves you to the new pane while the popup is still up
+> with its keep-or-remove choice unanswered. On the 2026-09-09 run that
+> produced a genuinely confusing artifact: a `k` pressed while looking at
+> the pane went to the **agent**, whose startup banner came out `kclaude:`,
+> and the gate was answered only by a second `k` after switching back.
+>
+> Nothing was harmed and nothing leaked, but two things follow. A stray
+> character typed at an agent sitting on a confirmation dialog is input to
+> a live selector — the trust prompt in that run showed `❯ Yes, I trust
+> this folder` rather than the preselected `No, exit`, which is what `k`
+> does to a vim-style two-row list (up, wrapping), so a following Enter
+> would have answered the row the stray key chose. And reading that pane's
+> scrollback afterwards makes it look exactly like the popup leaked a
+> keystroke, which is a false finding this document briefly recorded before
+> the person who ran it said what they had actually pressed. A report is
+> not evidence; the person at the keyboard is.
+
 Worth exercising deliberately at least once: with a **dirty** checkout,
 `remove` must go unavailable rather than silently refusing. The reason
 replaces the rationale line and the button loses its key glyph:
@@ -1044,7 +1064,7 @@ locally and not yet merged).
 
 | Cell | Result |
 |---|---|
-| 1 — Path A, worktree on | **pass, with a finding, and two sub-checks not exercised** — run in the real popup on 2026-09-09 at `87d2059`. The popup opened as a **card** with the terminal visible around it (not a wall); the submit painted the progress stack inside it with the same header, rule and label column; the settled failure screen carried the keep/remove buttons; `k` kept it and the agent survived. The failed step truncated to `claude started; answer the dialog in the pane, then keep this session -- it is showin…`, i.e. **the whole instruction survived and only the trailing rationale was cut** — byte-identical to `submit-blocked-start-101x30.txt`, which #112 added for exactly this. The trust-dialog stop at step 2 was the expected pass condition. **Finding: the `k` keypress leaked into the pane beneath** (see below). Not exercised: the opening state live (it is pinned at the shipped size by `assembled-opening-101x30.txt`), and the popup's unsent-prompt recovery line, because no prompt was typed. The run resolved placement to **`tab here`** from `last-used.json`, not the cell's nominal `new space`, so it also re-confirmed #99's divergence: the worktree's own space held a bare shell and the agent landed in the invoking workspace's new tab |
+| 1 — Path A, worktree on | **pass, with a finding, and two sub-checks not exercised** — run in the real popup on 2026-09-09 at `87d2059`. The popup opened as a **card** with the terminal visible around it (not a wall); the submit painted the progress stack inside it with the same header, rule and label column; the settled failure screen carried the keep/remove buttons; `k` kept it and the agent survived. The failed step truncated to `claude started; answer the dialog in the pane, then keep this session -- it is showin…`, i.e. **the whole instruction survived and only the trailing rationale was cut** — byte-identical to `submit-blocked-start-101x30.txt`, which #112 added for exactly this. The trust-dialog stop at step 2 was the expected pass condition. Not exercised: the opening state live (it is pinned at the shipped size by `assembled-opening-101x30.txt`), and the popup's unsent-prompt recovery line, because no prompt was typed. The run resolved placement to **`tab here`** from `last-used.json`, not the cell's nominal `new space`, so it also re-confirmed #99's divergence: the worktree's own space held a bare shell and the agent landed in the invoking workspace's new tab. See the boxed caution in the cell for the sequencing trap this exposed |
 | 2 — Path A, worktree off | **pass, with a finding** — `split here` produced exactly one new pane in the invoking tab, the progress stack's first row read `pane`, and the multi-line prompt really was delivered. But the agent could not run: `[agents.extra_args]`' quoted model id reaches Path A's argv exec unstripped, so `--model` was the literal `'claude-opus-5[1m]'`. All three steps reported success. **#72** |
 | 3 — Path B, worktree on | **pass**, after #94 — the blocked-detection path above. Reproduced the pre-fix failure first, then confirmed the agent survives and the dialog answers cleanly |
 | 4 — Path B, worktree off | **pass** — all four steps, prompt delivered and answered in the pane, `tokens.clauth` and `process-info` both as expected |
@@ -1055,26 +1075,7 @@ locally and not yet merged).
 | 9 — the reuse path | **pass, via a rewritten recipe** — not runnable as documented (refused by the form's duplicate check and by `worktree create` alike); reached through a stale workspace, see the cell. §5.2's correction claimed a fresh tab and left the first session's panes alone. The `--json` report named the wrong pane: **#99** |
 | 10 — a large multi-line prompt | **pass** — 6311 bytes, 120 lines, 22 blank lines, headless `--prompt -` into an already-trusted directory. Delivered **and submitted**: the whole payload above the `❯` as one turn, the agent's answer after it, the input buffer empty. #73's 0.8.2 silent failure does not reproduce on 0.9.0, so the floor bump is the fix. The form half of the cell is still unrun |
 
-Five findings, all live-only against a green `just check`:
-
-- **The popup's dismiss key reaches the pane underneath, and it is herdr's to
-  fix, not this plugin's.** Pressing `k` on the failure screen kept the
-  session correctly *and* typed a literal `k` into the pane that gained
-  focus: the pane's own startup banner, which prints `claude: account '<p>'
-  — N% used`, came out as **`kclaude:`**. herdr-draft's side is clean —
-  `SubmitView.Update` maps `k` to `KeepMsg` and the app answers `tea.Quit`,
-  so bubbletea consumes the key and nothing echoes or forwards it — which
-  puts the leak in herdr's popup teardown / input routing. Worth filing
-  upstream, because the pane that gains focus is frequently an agent sitting
-  on a confirmation dialog: in this very run the trust prompt's selection
-  was on `Yes, I trust this folder` rather than the `No, exit` this
-  document's own warning calls preselected, which is what `k` does to a
-  vim-style two-row selector (up, wrapping). One stray key cannot answer a
-  dialog on its own, but it can move which row an Enter would answer — the
-  hazard #94 exists for. NOT reproduced deliberately, and the exact
-  mechanism in herdr's input path was not read; the leaked character itself
-  is certain, since the banner's format is a `print -u2` with a fixed
-  `claude: ` prefix.
+Four findings, all live-only against a green `just check`:
 
 - **#72** (fixed) — the quoted-`extra_args` workaround this repo recommended
   *broke* Path A, because `agent start` execs an argv vector while `pane run`
