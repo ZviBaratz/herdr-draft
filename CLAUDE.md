@@ -224,6 +224,24 @@ Layering, outermost to innermost:
   (Until 2026-09-08 this convention said the opposite — leave the key
   unwired, because the 0.8.2 floor predated the flag. herdr 0.9.0 and the
   floor bump retired that.)
+- **The version is one fact in four files.** `herdr-plugin.toml`'s
+  `version`, `herdrc.Version`, `CHANGELOG.md`'s newest release heading and
+  the git tag `vX.Y.Z` move together. Three of them are a gate
+  (`TestVersionMatchesManifest`, `TestChangelogMatchesVersion`); **the tag
+  is the one no test can reach**, because a correct checkout can be tagless
+  — a tarball, a shallow CI clone, a fresh worktree — so nothing may assert
+  one exists. That is precisely what makes it the member to forget, and it
+  is not ceremony: herdr has no `plugin update` command, so `herdr plugin
+  install owner/repo --ref <tag>` is the documented way to pin or refresh
+  an install and needs something to point at, and `just build` stamps
+  `git describe --tags --always --dirty` into the binary, which degrades to
+  a bare hash — no version at all in `herdr-draft version`'s build line —
+  when no tag is in reach. The release date goes on **with** the tag, in
+  its own commit, never earlier: the heading must carry the date and the
+  tag must name a commit that already contains it, which only works in that
+  order. `CONTRIBUTING.md`'s "Releases" is the procedure; a heading reading
+  `unreleased` on `main` is a normal state, meaning the version is settled
+  and the release is held.
 - **`Row(w)` takes no height parameter, by design.** A section renders its
   row from its own state and the value column's width, and must not consult
   the window height in any way — that is precisely what makes "row i is

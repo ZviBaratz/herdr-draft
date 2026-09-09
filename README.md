@@ -829,7 +829,16 @@ before running `herdr-draft create` in a real session.
 
 Patches are welcome — [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the gate,
 the golden-frame workflow, the spec-citation convention, and the features
-that were explicitly declined. herdr does not sandbox plugin code, so
+that were explicitly declined.
+
+[`CHANGELOG.md`](CHANGELOG.md) records what a release contains, and
+CONTRIBUTING's [Releases](CONTRIBUTING.md#releases) section states the four
+places a version lives — the manifest, `herdrc.Version`, the changelog
+heading and the git tag — and the order they move in. A changelog heading
+that reads `unreleased` means the version is settled and the release is
+being held.
+
+herdr does not sandbox plugin code, so
 [`SECURITY.md`](SECURITY.md) states this plugin's actual surface (the
 command it runs for you, the credential it handles, and the trust boundary
 around a repository-committed `.herdr-draft.toml`) and how to report
