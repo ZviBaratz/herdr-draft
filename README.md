@@ -212,12 +212,32 @@ If the build fails, the install fails with it and nothing is registered; a
 build that edits `herdr-plugin.toml` on its way past is also refused, so the
 manifest you confirmed is the manifest you get.
 
-This route has not yet been exercised from a clean environment on a machine
-other than the author's (#39). Everything it depends on — the manifest, the
-build command, the platform list — is covered by CI on Linux and macOS, but
-a first-install report from a stranger is still the missing evidence. If it
-fails for you, please open an issue: the `[[build]]` step is precisely the
-part the development route below never runs.
+**This route has been run from clean.** On 2026-09-09, on a freshly
+provisioned Ubuntu 22.04 x86_64 machine that had never had herdr or this
+plugin on it: git, then herdr 0.9.0's own release binary and Go 1.25.14, and
+nothing else. `herdr plugin install ZviBaratz/herdr-draft -y` printed the
+preview, ran `[[build]]`, registered the plugin and left a working binary —
+`herdr plugin list` reported `zvibaratz.draft (herdr-draft) enabled`, and the
+installed `herdr-draft version` reported `0.1.0` with the resolved commit.
+The build wants no dev tooling: it is a plain `go build`, and it ran with no
+`staticcheck` anywhere on the machine.
+
+Three things that run did not settle:
+
+- **The popup was not exercised.** That needs an attached TUI client, and is
+  tracked separately (#45). Nor was a session created end to end, which also
+  needs a running herdr server and agent credentials on the machine.
+- **It was the author's own cloud instance, not a stranger's.** What it
+  proves is that the install works on a machine nobody had prepared for it,
+  which is the risk worth retiring; a genuine third-party first-install
+  report is still welcome. If it fails for you, please open an issue — the
+  `[[build]]` step is precisely the part the development route below never
+  runs.
+- **An installed plugin's `herdr-draft version` prints no `build` line**, and
+  that is correct rather than a stamping failure: herdr runs `[[build]]` as a
+  plain argv with no shell, so there is nowhere for `git describe` to run. A
+  `commit` line is still there, from the Go toolchain's own VCS stamp — which
+  a build from a git *worktree* would not produce either.
 
 ### Development: link a local checkout
 
