@@ -594,26 +594,82 @@ func (v *SubmitView) unsentPromptLines(width int) []string {
 		return nil
 	}
 
+	w := v.promptWording()
 	if v.unsentPromptErr != nil {
 		return []string{
 			indentedLine(lipgloss.NewStyle().Foreground(v.palette.Danger).Render(
-				"prompt not sent, and could not be saved: "+v.unsentPromptErr.Error()), width),
-			indentedLine(dimText(v.palette).Render("copy manually: "+v.result.PromptText), width),
+				w.saveFailed+v.unsentPromptErr.Error()), width),
+			indentedLine(dimText(v.palette).Render(w.copyLead+v.result.PromptText), width),
 		}
 	}
 	if v.unsentPromptPath == "" {
 		// The save is still in flight (its Cmd has not landed yet): say
 		// what happened without promising a path that may not exist.
-		return []string{indentedLine(dimText(v.palette).Render(
-			"prompt not sent — saving it for manual paste…"), width)}
+		return []string{indentedLine(dimText(v.palette).Render(w.saving), width)}
 	}
 	// The path gets a line to itself: a plugin state dir plus a filename
 	// routinely runs past 60 cells, and sharing a row with the explanation
 	// would clip the tail -- which is the half the user actually has to
 	// type.
 	return []string{
-		indentedLine(dimText(v.palette).Render("prompt not sent — saved for manual paste:"), width),
+		indentedLine(dimText(v.palette).Render(w.saved), width),
 		indentedLine(dimText(v.palette).Render(v.unsentPromptPath), width),
+	}
+}
+
+// promptWording is the three leads unsentPromptLines can need, chosen by
+// what is actually KNOWN about the prompt's fate rather than by what
+// failed.
+//
+// The not-sent set is #90's original wording, pinned byte-for-byte by two
+// golden frames, and it stays: the dialog guard's refusal really did not
+// deliver anything, and offering the text back is the right answer there.
+//
+// The unconfirmed set exists because #108 made "prompt not sent" a claim
+// the form cannot support. `herdr agent prompt --wait` completes only on
+// observed working-or-blocked activity, so a large prompt into an agent
+// slow to paint its status transition times out while running perfectly
+// well -- in the live case, several tool calls deep. Every line therefore
+// leads with what is actually known and carries the instruction that
+// replaces "paste this": read the pane first. Pasting is precisely how a
+// working agent gets its instructions twice.
+//
+// Room matters here. The popup is a fixed 104 cells and these lines are
+// indented inside a bordered panel, so each lead has to fit beside its
+// own suffix -- which is why "read the pane" rather than a sentence.
+type promptWording struct {
+	// saveFailed precedes the save error, with the text inline after it.
+	saveFailed string
+	// saving is shown while the save Cmd is still in flight.
+	saving string
+	// saved precedes the path, which gets a line of its own.
+	saved string
+	// copyLead precedes the prompt rendered INLINE, which only happens
+	// when the save itself failed and there is no path to point at. It
+	// needs its own wording rather than inheriting saveFailed's: this is
+	// the one line that puts the text in front of the user and implicitly
+	// tells them what to do with it, so on an unconfirmed delivery a bare
+	// "copy manually:" reinstates the double-paste directly under a lead
+	// that had just been corrected. #108's own mutation sweep found this
+	// branch unpinned, which is why all three now assert the property
+	// rather than the one that had a fixture.
+	copyLead string
+}
+
+func (v *SubmitView) promptWording() promptWording {
+	if v.result.PromptUnconfirmed {
+		return promptWording{
+			saveFailed: "delivery unconfirmed, and the prompt could not be saved: ",
+			saving:     "delivery unconfirmed — read the pane; saving the prompt…",
+			saved:      "delivery unconfirmed — read the pane, then paste from:",
+			copyLead:   "read the pane, then copy: ",
+		}
+	}
+	return promptWording{
+		saveFailed: "prompt not sent, and could not be saved: ",
+		saving:     "prompt not sent — saving it for manual paste…",
+		saved:      "prompt not sent — saved for manual paste:",
+		copyLead:   "copy manually: ",
 	}
 }
 

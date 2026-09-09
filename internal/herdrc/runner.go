@@ -268,11 +268,98 @@ func (r *CLIRunner) runText(ctx context.Context, args ...string) (string, error)
 // reason were there and got lost -- which is the opposite of what it
 // means. There is no reason; herdr said nothing.
 func cmdError(verb string, err error, stderr string) error {
-	if s := strings.TrimSpace(stderr); s != "" {
-		return fmt.Errorf("herdr %s: %w: %s", verb, err, s)
-	}
-	return fmt.Errorf("herdr %s: %w", verb, err)
+	return &cliError{verb: verb, stderr: stderr, code: herdrEnvelopeCode(stderr), err: err}
 }
+
+// cliError is a failed herdr CLI invocation.
+//
+// Its message is byte-for-byte what cmdError has always produced --
+// `herdr <verb>: <exit status>: <stderr>` -- and that is a requirement,
+// not an accident: isBusyPaneError, isNameTakenError and
+// isAgentNotReadyError all substring-match this text, so changing a byte
+// of it would retire three classifiers silently.
+//
+// What it adds is code, herdr's own `error.code`, parsed HERE where the
+// stderr envelope is still a discrete value. That is the whole difference
+// between reading herdr's verdict and grepping a string that also contains
+// the caller's prompt text and the flags this package chose -- see
+// ErrPromptWaitTimeout (#108).
+type cliError struct {
+	verb   string
+	stderr string
+	code   string
+	err    error
+}
+
+func (e *cliError) Error() string {
+	if s := strings.TrimSpace(e.stderr); s != "" {
+		return fmt.Sprintf("herdr %s: %v: %s", e.verb, e.err, s)
+	}
+	return fmt.Sprintf("herdr %s: %v", e.verb, e.err)
+}
+
+// Unwrap keeps the underlying exec error reachable, so an errors.Is
+// against something like exec.ErrNotFound still works through this type
+// exactly as it did through cmdError's old %w chain.
+func (e *cliError) Unwrap() error { return e.err }
+
+// herdrEnvelopeCode returns the `error.code` from a herdr JSON error
+// envelope, or "" when stderr is not one.
+//
+// A failed herdr request prints
+// `{"error":{"code":...,"message":...},"id":...}` to STDERR
+// (herdr:src/cli.rs's send_request / send_ok_request), which is how the
+// code reaches this package at all. Reading stderr and only stderr is the
+// point: the error's own message additionally contains the verb, and the
+// verb contains whatever text the caller asked to send.
+func herdrEnvelopeCode(stderr string) string {
+	s := strings.TrimSpace(stderr)
+	if !strings.HasPrefix(s, "{") {
+		return ""
+	}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(s), &envelope); err != nil {
+		return ""
+	}
+	return envelope.Error.Code
+}
+
+// herdrErrorCode returns the herdr error code err carries, or "" if it
+// carries none -- either because it is not a CLI failure at all, or
+// because herdr wrote something other than an envelope to stderr.
+func herdrErrorCode(err error) string {
+	var e *cliError
+	if errors.As(err, &e) {
+		return e.code
+	}
+	return ""
+}
+
+// promptWaitTimeoutCode is herdr's `error.code` for `agent prompt --wait`
+// giving up. Unlike the other codes named in this package it is a word
+// generic enough to appear in ordinary prose, which is precisely why it is
+// only ever compared against a PARSED envelope field and never matched
+// against an error's text.
+const promptWaitTimeoutCode = "timeout"
+
+// ErrPromptWaitTimeout reports that `herdr agent prompt --wait` stopped
+// waiting for the agent's status to change. It does NOT report that the
+// prompt failed to arrive, and conflating the two is the #108 defect:
+// herdr 0.9.0 completes this wait only on "observed working or blocked
+// activity" (its own note for #3506/#3685), so a large prompt into an
+// agent slow to PAINT a status transition can exceed the timeout while
+// being perfectly fine. The prompt was handed to herdr; what timed out is
+// the confirmation.
+//
+// A typed sentinel for the same reason ErrAgentBlocked is one: callers
+// must be able to tell this apart from every other prompt failure without
+// grepping prose. Here the reason is sharper still -- the prose in
+// question embeds the caller's own prompt text.
+var ErrPromptWaitTimeout = errors.New("timed out waiting for the agent's status to change, so delivery is unconfirmed")
 
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement
 // focus as two explicit mutually exclusive flags rather than a single
@@ -549,8 +636,13 @@ func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 			return err
 		}
 	}
-	_, err = r.runJSON(ctx, args...)
-	return err
+	if _, err = r.runJSON(ctx, args...); err != nil {
+		if herdrErrorCode(err) == promptWaitTimeoutCode {
+			return fmt.Errorf("%w: %w", ErrPromptWaitTimeout, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // AgentRead runs `herdr agent read <target> --source detection --format

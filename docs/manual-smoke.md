@@ -946,6 +946,55 @@ the text **was typed** and the submission did not complete. "Prompt not sent
 — saved for manual paste" is subtly wrong for that code, and a user who
 believes it pastes the prompt a second time.
 
+### Cell 10b — the same question from the other side (#108)
+
+#73 is a report of success for a prompt that never landed. **#108 is the
+inverse**, found live on 0.9.0 with a 3005-byte prompt into a `split-here`
+pane: `agent prompt --wait` returned the `timeout` code, `create` reported
+exit 1 and `prompt_sent: false` with the whole prompt back under
+`unsent_prompt` — and the agent was already several tool calls into it.
+
+`--wait` completes only on *observed* working-or-blocked activity (herdr's
+own note for #3506/#3685), so an agent slow to paint its status transition
+exceeds the prompt timeout while being perfectly healthy. The wait timing
+out says nothing about delivery.
+
+**How to provoke it.** Raise the odds rather than engineer it: a large
+prompt into a slow-to-paint agent, with the prompt timeout cut short.
+
+```bash
+# from the scratch pane, with [timeouts] prompt_ms lowered in config.toml
+herdr-draft create --title "smoke unconfirmed" --no-worktree   --placement split-here --prompt - --json < /tmp/smoke-prompt.txt
+```
+
+**Expected on 0.1.0 and later:** exit **1** (something did go wrong — the
+confirmation), and then
+
+- `"prompt_status": "unconfirmed"`,
+- **no** `prompt_sent` key at all — neither value is knowable,
+- the text under `"unconfirmed_prompt"`, never `"unsent_prompt"`,
+- and if `--on-failure clean` was passed: `"cleaned"` absent, with
+  `"clean_refused"` explaining that an agent may be working in there.
+
+The stderr line must not say "the prompt was not sent", and must tell you
+to read the pane.
+
+**Then read the pane**, exactly as Cell 10 does — `pane read --source
+visible` — and confirm which of the two it actually was. That is the point
+of the cell: the report deliberately does not decide, so this step is the
+only thing that does.
+
+**The failure signature is the old behaviour**: exit 1 with
+`prompt_sent: false` and `unsent_prompt` carrying text the pane shows
+already submitted. Doing the documented thing with that field sends the
+agent its instructions twice, and `--on-failure clean` would have removed
+the session mid-turn.
+
+**Unrun.** The fix is unit- and mutation-tested; provoking a real
+`timeout` from herdr needs an agent that genuinely paints slowly, so this
+cell is written from the code and the one live capture in #108 — a
+hypothesis until someone runs it.
+
 **Passed on 0.9.0**, headlessly, with 6311 bytes over 120 lines and 22 blank
 lines — a superset of the payload that failed on 0.8.2. The whole thing
 arrived above the `❯` as one submitted turn and the agent answered it; the

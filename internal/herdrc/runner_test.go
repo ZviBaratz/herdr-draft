@@ -3,6 +3,7 @@ package herdrc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1220,5 +1221,84 @@ func TestCLIRunnerAwaitDetectionUnparseableResponseKeepsWaiting(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("error = %q, want a timeout", err.Error())
+	}
+}
+
+// fakeHerdrFailEnvelope writes a disposable herdr that fails the way the
+// REAL binary fails: a compact JSON error envelope on stderr, exit 1.
+//
+// fakeHerdrFail cannot do this. It interpolates its stderr straight into a
+// double-quoted shell `echo`, so any `"` in the text breaks the script --
+// which is why the only failure fixture in this file until now was the
+// bare word `agent_blocked`, a string herdr never prints on its own. That
+// was harmless while every consumer substring-matched the whole error
+// text, and stopped being harmless the moment one needed the error CODE:
+// a fixture that models the wrong stderr shape cannot fail the way the
+// real thing does (CLAUDE.md's standing convention, hit here for the
+// seventh time). The heredoc is what makes the quotes survive.
+func fakeHerdrFailEnvelope(t *testing.T, code, message string) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr")
+	envelope := fmt.Sprintf(`{"error":{"code":%q,"message":%q},"id":"cli:agent:prompt"}`, code, message)
+	script := "#!/bin/sh\ncat 1>&2 <<'HERDR_EOF'\n" + envelope + "\nHERDR_EOF\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// TestCLIRunnerAgentPromptWaitTimeout pins the #108 conclusion: herdr's
+// `timeout` code on `agent prompt --wait` means the WAIT gave up, not that
+// the prompt failed to arrive, so it reaches callers as a typed sentinel
+// they can tell apart from every other prompt failure.
+func TestCLIRunnerAgentPromptWaitTimeout(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "timeout", "timed out waiting for agent status")
+	r := &CLIRunner{Bin: bin}
+
+	err := r.AgentPrompt(context.Background(), AgentPromptReq{
+		Target: "w1:p1", Text: "hi", WaitTimeout: 120 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !errors.Is(err, ErrPromptWaitTimeout) {
+		t.Errorf("error %q is not ErrPromptWaitTimeout", err.Error())
+	}
+	// The underlying detail has to survive: the message is what a user
+	// reads, and "timed out waiting for agent status" is herdr's own.
+	if !strings.Contains(err.Error(), "timed out waiting for agent status") {
+		t.Errorf("error %q dropped herdr's own message", err.Error())
+	}
+}
+
+// TestCLIRunnerAgentPromptTimeoutIsNotSubstringMatched is the test that
+// rules out the obvious implementation of the above.
+//
+// AgentPrompt puts the prompt TEXT in its argv, and cmdError formats
+// `herdr <joined argv>: <exit>: <stderr>` -- so the error string for ANY
+// prompt failure contains both the echoed `--timeout 120000` flag and the
+// user's entire prompt, verbatim. A `strings.Contains(err, "timeout")`
+// classifier therefore fires on a prompt that merely mentions the word,
+// and #108's own issue text is such a prompt: it quotes the envelope this
+// package is matching on. Only herdr's structured stderr may decide it.
+func TestCLIRunnerAgentPromptTimeoutIsNotSubstringMatched(t *testing.T) {
+	// A real failure that is NOT a wait timeout, for a prompt whose text
+	// discusses timeouts and even quotes the envelope.
+	bin := fakeHerdrFailEnvelope(t, "agent_blocked", "agent is blocked")
+	r := &CLIRunner{Bin: bin}
+
+	err := r.AgentPrompt(context.Background(), AgentPromptReq{
+		Target: "w1:p1",
+		Text:   `investigate: {"error":{"code":"timeout","message":"timed out waiting for agent status"}}`,
+		// A set WaitTimeout also puts `--timeout 120000` in the argv.
+		WaitTimeout: 120 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if errors.Is(err, ErrPromptWaitTimeout) {
+		t.Errorf("a prompt whose TEXT mentions the timeout envelope was classified as a wait "+
+			"timeout; only herdr's own stderr code may decide this\nerror: %s", err.Error())
 	}
 }
