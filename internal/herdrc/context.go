@@ -33,8 +33,10 @@ const PluginID = "zvibaratz.draft"
 // thing that installed it disagree about what is running.
 //
 // Bump this and the manifest together; TestVersionMatchesManifest fails
-// otherwise. The git tag is the third member of that set and the one no
-// test can reach -- see CHANGELOG/release process.
+// otherwise, and TestChangelogMatchesVersion holds CHANGELOG.md's newest
+// release heading to it as well. The git tag is the fourth member of that
+// set and the only one no test can reach -- see CONTRIBUTING.md's
+// "Releases" for why, and for the order the four move in.
 const Version = "0.1.0"
 
 // ErrContextUnset reports that $HERDR_PLUGIN_CONTEXT_JSON was empty rather

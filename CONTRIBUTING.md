@@ -119,6 +119,66 @@ If you disagree with something a comment asserts, say so in the PR rather
 than deleting the comment. Several of them record findings that cost a live
 debugging session to obtain.
 
+## Releases
+
+**Four things carry the version, and they move together.**
+
+| Where | Why it exists |
+|---|---|
+| `herdr-plugin.toml` `version` | what herdr reads at install time and displays for the installed plugin |
+| `herdrc.Version` | what the binary reports as itself, in `herdr-draft version` |
+| `CHANGELOG.md`'s newest release heading | what a human reads to find out what changed |
+| the git tag `vX.Y.Z` | what `herdr plugin install --ref` pins, and what `just build` stamps |
+
+The first three are a gate: `TestVersionMatchesManifest` holds the manifest
+and the constant to each other, and `TestChangelogMatchesVersion` holds the
+changelog's newest *released* heading to the constant (a bare
+`## Unreleased` section is skipped, so work can accumulate under one). Get
+any of the three wrong and `just check` fails.
+
+**The tag is the fourth and no test can reach it.** A correct checkout can
+have no tags at all — a tarball, a shallow clone, a fresh worktree — so
+nothing may assert one exists. That makes it the member to forget, which is
+the reason this section exists rather than a comment somewhere.
+
+It is load-bearing rather than ceremony. herdr has no `plugin update`
+command — its verbs are `install`, `uninstall`, `link`, `list`,
+`config-dir`, `unlink`, `enable`, `disable`, `action`, `log` and `pane`
+([`herdr:src/cli/plugin.rs`](https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/plugin.rs#L26))
+— so `herdr plugin install owner/repo --ref <tag>` is the documented way to
+pin or refresh an install, and it needs something to point at. And
+`just build` stamps `git describe --tags --always --dirty` into the binary:
+with no tag in reach that degrades to a bare hash, and `herdr-draft
+version`'s build line stops naming a version at all.
+
+### Cutting one
+
+The date is the awkward part: the heading should carry the release date, the
+tag should name a commit that already contains the changelog, and you do not
+know the date until you are ready. So the date goes on **with** the tag, in
+its own commit, and never earlier:
+
+1. **One PR** bumps `herdr-plugin.toml`'s `version` and `herdrc.Version`,
+   and adds the `CHANGELOG.md` section headed `## X.Y.Z — unreleased`.
+   `just check`, review, squash merge. A release whose section still says
+   `unreleased` on `main` is a normal state — it means the version is
+   settled and the release is held, usually pending a verification.
+2. **When you are actually releasing**, on `main`: replace `unreleased` with
+   the date, commit it alone (`release: date X.Y.Z`), and tag *that* commit
+   `vX.Y.Z`. Push the commit and the tag. The tagged tree then carries the
+   right date, which it cannot if you date it before the tag exists or amend
+   it after.
+3. **Cut the GitHub release** from the tag: what the thing is, the install
+   command with `--ref vX.Y.Z`, the `min_herdr_version` and platform
+   constraints, and a pointer to `CHANGELOG.md`. Not a commit list — the
+   changelog is the commit list, edited.
+4. **Open the next `## Unreleased`** in the changelog when the first change
+   after a release lands, not before. An empty one is noise.
+
+Do not tag a commit that is not on `main`, and do not move a published tag.
+A wrong release is a new patch version, not a rewritten one — someone may
+already have installed `--ref` against it.
+
 ## What not to propose
 
 Some features were considered and explicitly declined, and re-proposing one

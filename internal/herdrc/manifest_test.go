@@ -3,6 +3,7 @@ package herdrc
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -112,11 +113,12 @@ func TestManifestDeclaresOnlySupportedPlatforms(t *testing.T) {
 // is running -- which is worse than having no version at all, since the
 // whole reason to add one was so a bug report could state it.
 //
-// The git tag is the third member of this set and the one no test can
-// reach: a tag lives in the repository, not in the tree being tested, and
-// asserting on `git describe` would fail in every shallow CI checkout and
-// every `go install` from a module cache. Keeping the tag in step is the
-// release process's job; keeping these two in step is this test's.
+// The git tag is the fourth member of this set (with CHANGELOG.md, see
+// TestChangelogMatchesVersion) and the one no test can reach: a tag lives
+// in the repository, not in the tree being tested, and asserting on
+// `git describe` would fail in every shallow CI checkout and every
+// `go install` from a module cache. Keeping the tag in step is the release
+// process's job; keeping these two in step is this test's.
 func TestVersionMatchesManifest(t *testing.T) {
 	m := readManifest(t)
 	if m.Version == "" {
@@ -126,5 +128,73 @@ func TestVersionMatchesManifest(t *testing.T) {
 		t.Errorf("herdr-plugin.toml version = %q, herdrc.Version = %q; bump them together -- "+
 			"herdr shows the manifest's value for an installed plugin, so a drift makes the "+
 			"binary and herdr disagree about what is running", m.Version, Version)
+	}
+}
+
+// changelogVersion returns the version named by CHANGELOG.md's newest
+// RELEASED heading, and the heading it came from.
+//
+// A bare `## Unreleased` is skipped rather than matched: Keep a Changelog
+// accumulates the next release's notes under one, so it is present for most
+// of a release cycle and is not a version claim. A released heading is
+// `## X.Y.Z <separator> <date-or-unreleased>`, and only the first token
+// after the marker is read -- the separator is an em dash today and the
+// date is deliberately the word `unreleased` while a release is held (see
+// CONTRIBUTING.md's Releases section), so parsing either would make this
+// test fail on a formatting choice instead of on a version drift.
+func changelogVersion(t *testing.T) (version, heading string) {
+	t.Helper()
+	path := filepath.Join("..", "..", "CHANGELOG.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		rest, ok := strings.CutPrefix(line, "## ")
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		if strings.EqualFold(strings.Trim(rest, "[]"), "unreleased") {
+			continue
+		}
+		return strings.Fields(rest)[0], line
+	}
+	t.Fatalf("%s has no released `## X.Y.Z` heading", path)
+	return "", ""
+}
+
+// TestChangelogMatchesVersion holds CHANGELOG.md's newest released heading
+// to the Version constant, making the changelog the third member of the
+// version set that `just check` can actually enforce.
+//
+// It guards the realistic mistake, which is not a typo. Bumping the version
+// touches two files that a test already ties together, so the compiler and
+// TestVersionMatchesManifest cover each other; the changelog is a third
+// file, in a different language, that nothing referenced -- so "bumped the
+// version, forgot the notes" was the one drift in the set that shipped
+// silently. It is also the drift that matters to a stranger, since the
+// changelog is what they read to find out what they installed.
+//
+// The tag is still outside reach, for the reason
+// TestVersionMatchesManifest gives.
+func TestChangelogMatchesVersion(t *testing.T) {
+	got, heading := changelogVersion(t)
+	// One assertion, not two. A `v0.1.0` heading is the plausible slip
+	// here -- the tag carries that prefix and the heading must not, so
+	// that it compares byte-for-byte with Version -- but a separate
+	// HasPrefix check for it can never fire, because this pattern
+	// rejects the same string first. The mutation sweep that added this
+	// comment is what caught it.
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+`).MatchString(got) {
+		t.Fatalf("CHANGELOG.md's newest release heading does not name a bare version: %q\n"+
+			"expected `## X.Y.Z <separator> <date or unreleased>` -- no `v` prefix, which "+
+			"belongs to the git tag alone", heading)
+	}
+	if got != Version {
+		t.Errorf("CHANGELOG.md newest release = %q, herdrc.Version = %q; move them together -- "+
+			"the changelog is what a reader consults to find out what the version they "+
+			"installed contains, so a drift makes it name the wrong release\nheading: %s",
+			got, Version, heading)
 	}
 }
