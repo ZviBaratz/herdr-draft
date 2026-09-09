@@ -178,8 +178,11 @@ there, not the workspace the popup was opened from.
   clauth is entirely optional: without it, herdr-draft still works for
   manual/Linear-seeded session creation (Path A), it just has no `account`
   row to pin a profile on.
-- Go 1.25+ to build from source (`herdr-plugin.toml`'s `[[build]]` runs
-  `go build -o bin/herdr-draft ./cmd/herdr-draft` for you).
+- Go 1.25+ on the machine doing the installing. `herdr plugin install` runs
+  `herdr-plugin.toml`'s `[[build]]` — `go build -o bin/herdr-draft
+  ./cmd/herdr-draft` — there and then; `herdr plugin link` does not build at
+  all, so a linked checkout needs `just build` first. See
+  [Install](#install).
 - Linux or macOS. The manifest declares `platforms = ["linux", "macos"]`,
   so herdr refuses the install on Windows rather than registering a plugin
   that cannot launch: the action entrypoint is `sh -c`, and the build
@@ -188,26 +191,58 @@ there, not the workspace the popup was opened from.
 
 ## Install
 
-Not yet published to a registry. For now, link a local checkout:
-
-```bash
-herdr plugin link <path-to-this-repo>
-```
-
-`<path-to-this-repo>` is a positional argument (a plugin directory
-containing `herdr-plugin.toml`, or a direct manifest path) — not `--path`.
-herdr runs the manifest's build command and registers the plugin globally
-for the current user; every herdr session sees it immediately.
-
-Once published, the intended route is:
-
 ```bash
 herdr plugin install ZviBaratz/herdr-draft
 ```
 
-(this is aspirational — herdr-draft has not been published yet; see the
-v1 design spec §16, "marketplace publication," for why it's deferred until the
-tool has proven itself in daily use).
+herdr clones the repository into a temporary checkout, prints an install
+preview, asks you to confirm, and only then runs the manifest's `[[build]]`
+command — `go build -o bin/herdr-draft ./cmd/herdr-draft`, with the plugin
+root as its working directory — before moving the checkout into place. The
+build runs on **your** machine, which is why [Requirements](#requirements)
+asks for Go 1.25+ and why this repository pins no dev tool that would raise
+that floor.
+
+`--ref <tag-or-branch>` pins a version. `-y` / `--yes` skips the
+confirmation, and is **required** rather than optional when stdin is not a
+terminal, so a scripted install that omits it exits 2 with a message rather
+than hanging.
+
+If the build fails, the install fails with it and nothing is registered; a
+build that edits `herdr-plugin.toml` on its way past is also refused, so the
+manifest you confirmed is the manifest you get.
+
+This route has not yet been exercised from a clean environment on a machine
+other than the author's (#39). Everything it depends on — the manifest, the
+build command, the platform list — is covered by CI on Linux and macOS, but
+a first-install report from a stranger is still the missing evidence. If it
+fails for you, please open an issue: the `[[build]]` step is precisely the
+part the development route below never runs.
+
+### Development: link a local checkout
+
+```bash
+just build && herdr plugin link "$PWD"
+```
+
+`<path>` is a positional argument (a plugin directory containing
+`herdr-plugin.toml`, or a direct manifest path) — not `--path`. herdr
+registers the plugin globally for the current user and every session sees it
+immediately, without restarting anything.
+
+**`link` does not build, and that is the one thing to remember about it.**
+herdr runs `[[build]]` from `install` only —
+[`run_plugin_build_commands` has a single call site, inside
+`plugin_install`](https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/plugin.rs#L210).
+Linking a tree with no `bin/herdr-draft` in it registers an action that
+launches nothing, which is why the command above builds first.
+
+The two routes do not stack: `install` refuses outright while a local link
+with the same plugin id is registered — *"plugin zvibaratz.draft is already
+linked from a local path; uninstall/unlink it before installing from
+GitHub"* (`herdr:src/cli/plugin.rs`, `ensure_replacement_allowed`). Moving
+from a development link to a released install means removing the link
+first.
 
 ## Keybinding
 
