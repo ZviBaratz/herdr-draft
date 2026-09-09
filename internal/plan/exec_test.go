@@ -319,8 +319,8 @@ func TestExecute_WorktreeNotReused(t *testing.T) {
 	if result.SpaceReused {
 		t.Error("SpaceReused = true, want false -- w9 was not in the before-list")
 	}
-	if result.AgentPane != "pane-1" {
-		t.Errorf("AgentPane = %q, want %q", result.AgentPane, "pane-1")
+	if agentPaneID(result) != "pane-1" {
+		t.Errorf("AgentAt.PaneID = %q, want %q", agentPaneID(result), "pane-1")
 	}
 	if result.Created == nil || result.Created.PaneID != "pane-1" {
 		t.Fatalf("Created = %+v, want PaneID pane-1", result.Created)
@@ -333,6 +333,16 @@ func TestExecute_WorktreeNotReused(t *testing.T) {
 	if !reflect.DeepEqual(m.calls, want) {
 		t.Fatalf("calls = %v, want %v", m.calls, want)
 	}
+}
+
+// agentPaneID is result.AgentAt.PaneID with the nil case folded in, since
+// "no pane was ever claimed" and "the claimed pane is p" are the two
+// answers these assertions distinguish between.
+func agentPaneID(r ExecResult) string {
+	if r.AgentAt == nil {
+		return ""
+	}
+	return r.AgentAt.PaneID
 }
 
 func TestExecute_WorktreeReusedClaimsAFreshTab(t *testing.T) {
@@ -369,11 +379,11 @@ func TestExecute_WorktreeReusedClaimsAFreshTab(t *testing.T) {
 	if result.Created == nil || result.Created.WorkspaceID != "w9" {
 		t.Fatalf("Created = %+v, want the reused workspace w9 -- CleanCheck/Clean still need to act on the real space", result.Created)
 	}
-	if result.AgentPane == "stranger-pane" {
-		t.Fatal("AgentPane == the pane WorktreeCreate returned -- the whole point of the correction is to NOT trust it")
+	if agentPaneID(result) == "stranger-pane" {
+		t.Fatal("AgentAt.PaneID == the pane WorktreeCreate returned -- the whole point of the correction is to NOT trust it")
 	}
-	if result.AgentPane != "claimed-pane" {
-		t.Errorf("AgentPane = %q, want %q (the claimed tab's own pane)", result.AgentPane, "claimed-pane")
+	if agentPaneID(result) != "claimed-pane" {
+		t.Errorf("AgentAt.PaneID = %q, want %q (the claimed tab's own pane)", agentPaneID(result), "claimed-pane")
 	}
 	want := []string{
 		"WorkspaceList()",
@@ -423,8 +433,88 @@ func TestExecute_WorktreeReusedWithAPlacementOpClaimsNoTab(t *testing.T) {
 	if !reflect.DeepEqual(m.calls, want) {
 		t.Fatalf("calls = %v, want %v", m.calls, want)
 	}
-	if result.AgentPane != m.topo.PaneID {
-		t.Errorf("AgentPane = %q, want %q (the placement op's own pane)", result.AgentPane, m.topo.PaneID)
+	if agentPaneID(result) != m.topo.PaneID {
+		t.Errorf("AgentAt.PaneID = %q, want %q (the placement op's own pane)", agentPaneID(result), m.topo.PaneID)
+	}
+}
+
+// TestExecute_AgentAtCarriesTheWholeLocationNotJustThePane is #99 at the
+// layer that knows the answer. A placement op moves the agent's WORKSPACE
+// and TAB as well as its pane, because placementOp always targets
+// Input.Ctx: with a worktree the checkout gets a brand-new space of its
+// own while `tab here` puts the agent back in the invoking workspace. A
+// reader that only had the pane id could not say which tab or workspace to
+// address, and the only consumer that reports an id to a caller
+// (internal/create) reported the SPACE's three instead.
+func TestExecute_AgentAtCarriesTheWholeLocationNotJustThePane(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Placement = PlacementTabHere
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Three ids apart, all of them: the worktree's own new space versus a
+	// tab in the invoking workspace. A mock sharing one topo across both
+	// creations could not tell these two answers apart at all.
+	m := &mockRunner{
+		topo:    herdrc.CreatedTopology{WorkspaceID: "wWT", TabID: "tWT", PaneID: "pWT", CheckoutPath: "/checkout/x"},
+		tabTopo: &herdrc.CreatedTopology{WorkspaceID: in.Ctx.WorkspaceID, TabID: "tHERE", PaneID: "pHERE"},
+	}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1", result.FailedIndex)
+	}
+	if result.AgentAt == nil {
+		t.Fatal("AgentAt = nil, want the placement op's own topology")
+	}
+	if *result.AgentAt != *m.tabTopo {
+		t.Errorf("AgentAt = %+v, want %+v (the placement op's own workspace/tab/pane)", *result.AgentAt, *m.tabTopo)
+	}
+	// And the space is untouched by it -- the other half of the same
+	// separation, which Clean depends on.
+	if result.Created == nil || result.Created.WorkspaceID != "wWT" || result.Created.PaneID != "pWT" {
+		t.Errorf("Created = %+v, want the worktree's own space", result.Created)
+	}
+}
+
+// TestExecute_AgentAtIsTheClaimedTabWhenTheSpaceWasReused is the same
+// claim for §5.2's correction, the other way the two diverge. Here the
+// workspace agrees (the claim opens a tab INSIDE the reused space) and the
+// tab and pane do not, which is precisely the case a pane-only AgentAt
+// could half-answer and a caller could half-believe: #99's live evidence
+// had the report naming another session's pane in the right workspace.
+func TestExecute_AgentAtIsTheClaimedTabWhenTheSpaceWasReused(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		workspacesBeforeCreate: []herdrc.WorkspaceInfo{{WorkspaceID: "w9", Label: "somebody-else"}},
+		topo:                   herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "t1", PaneID: "stranger-pane", CheckoutPath: "/tmp/wt"},
+		tabTopo:                &herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "t2", PaneID: "claimed-pane", CheckoutPath: "/tmp/wt"},
+	}
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1", result.FailedIndex)
+	}
+	if result.AgentAt == nil {
+		t.Fatal("AgentAt = nil, want the claimed tab's own topology")
+	}
+	if result.AgentAt.TabID != "t2" {
+		t.Errorf("AgentAt.TabID = %q, want %q -- the claimed tab, not the one the reused workspace already had", result.AgentAt.TabID, "t2")
+	}
+	if result.AgentAt.PaneID != "claimed-pane" {
+		t.Errorf("AgentAt.PaneID = %q, want %q", result.AgentAt.PaneID, "claimed-pane")
+	}
+	if result.AgentAt.WorkspaceID != "w9" {
+		t.Errorf("AgentAt.WorkspaceID = %q, want %q -- the claim opens a tab inside the reused space", result.AgentAt.WorkspaceID, "w9")
 	}
 }
 
@@ -493,8 +583,8 @@ func TestExecute_CheckoutPathSurvivesAPlacementOp(t *testing.T) {
 		t.Errorf("Created.WorkspaceID = %q, want %q (the worktree's own space)", result.Created.WorkspaceID, "wH")
 	}
 	// The AGENT PANE is the split's, not the worktree's.
-	if result.AgentPane != "split-pane" {
-		t.Errorf("AgentPane = %q, want %q (the placement op's own pane)", result.AgentPane, "split-pane")
+	if agentPaneID(result) != "split-pane" {
+		t.Errorf("AgentAt.PaneID = %q, want %q (the placement op's own pane)", agentPaneID(result), "split-pane")
 	}
 	// And the cwd threading itself, which is a DIFFERENT mechanism from the
 	// clobber above and worth keeping pinned separately.
@@ -546,8 +636,8 @@ func TestExecute_ReuseClaimFailureStillReportsTheSpaceItCreated(t *testing.T) {
 	if !result.SpaceReused || result.SpaceLabel != "somebody-else" {
 		t.Errorf("SpaceReused/SpaceLabel = %v/%q, want true/%q -- CleanCheck must still refuse to remove a workspace the user owns", result.SpaceReused, result.SpaceLabel, "somebody-else")
 	}
-	if result.AgentPane != "" {
-		t.Errorf("AgentPane = %q, want empty -- no pane was ever claimed, so Clean must have nothing to close", result.AgentPane)
+	if agentPaneID(result) != "" {
+		t.Errorf("AgentAt.PaneID = %q, want empty -- no pane was ever claimed, so Clean must have nothing to close", agentPaneID(result))
 	}
 }
 
@@ -933,7 +1023,7 @@ func TestCleanWorktreeCallsWorktreeRemove(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
-	result := ExecResult{Created: &created, AgentPane: created.PaneID}
+	result := ExecResult{Created: &created, AgentAt: &created}
 
 	if err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
@@ -949,7 +1039,7 @@ func TestCleanNonWorktreeCallsWorkspaceClose(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = false
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-2"}
-	result := ExecResult{Created: &created, AgentPane: created.PaneID}
+	result := ExecResult{Created: &created, AgentAt: &created}
 
 	if err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
@@ -965,7 +1055,7 @@ func TestCleanPropagatesRunnerError(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
-	result := ExecResult{Created: &created, AgentPane: created.PaneID}
+	result := ExecResult{Created: &created, AgentAt: &created}
 
 	err := Clean(context.Background(), m, in, result)
 	if !errors.Is(err, m.failErr) {
@@ -990,7 +1080,7 @@ func TestCleanCheckAllowsCleanWorktree(t *testing.T) {
 	in.UseWorktree = true
 	in.BaseRef = "main"
 	created := herdrc.CreatedTopology{CheckoutPath: repo}
-	result := ExecResult{Created: &created, AgentPane: created.PaneID}
+	result := ExecResult{Created: &created, AgentAt: &created}
 
 	decision := CleanCheck(context.Background(), in, result)
 	if !decision.Allowed {
@@ -1008,7 +1098,7 @@ func TestCleanCheckDeniesDirtyWorktree(t *testing.T) {
 	in.UseWorktree = true
 	in.BaseRef = "main"
 	created := herdrc.CreatedTopology{CheckoutPath: repo}
-	result := ExecResult{Created: &created, AgentPane: created.PaneID}
+	result := ExecResult{Created: &created, AgentAt: &created}
 
 	decision := CleanCheck(context.Background(), in, result)
 	if decision.Allowed {
@@ -1029,7 +1119,7 @@ func TestCleanCheckDeniesOnDisposableError(t *testing.T) {
 	in.UseWorktree = true
 	in.BaseRef = "this-ref-does-not-exist"
 	created := herdrc.CreatedTopology{CheckoutPath: repo}
-	result := ExecResult{Created: &created, AgentPane: created.PaneID}
+	result := ExecResult{Created: &created, AgentAt: &created}
 
 	decision := CleanCheck(context.Background(), in, result)
 	if decision.Allowed {
@@ -1044,7 +1134,7 @@ func TestCleanCheckRefusesAReusedSpace(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	created := herdrc.CreatedTopology{WorkspaceID: "w9", CheckoutPath: "/tmp/wt"}
-	result := ExecResult{Created: &created, AgentPane: "claimed-pane", SpaceReused: true, SpaceLabel: "somebody-else"}
+	result := ExecResult{Created: &created, AgentAt: &herdrc.CreatedTopology{PaneID: "claimed-pane"}, SpaceReused: true, SpaceLabel: "somebody-else"}
 
 	decision := CleanCheck(context.Background(), in, result)
 	if decision.Allowed {
@@ -1080,7 +1170,7 @@ func TestCleanCheckRefusesAReusedSpaceEvenWhenTheWorktreeItselfIsPristine(t *tes
 
 // TestClean_ClosesTheClaimedPaneBeforeRemovingTheWorktree gives created a
 // real, different PaneID ("worktree-pane") rather than leaving it at its
-// zero value: with PaneID == "" an implementation keying off AgentPane !=
+// zero value: with PaneID == "" an implementation keying off AgentAt.PaneID !=
 // "" alone (or almost anything else) would also make this assertion pass,
 // which is exactly the "same assertion for two different mechanisms" shape
 // this plan has been bitten by three times already (see mockRunner's
@@ -1091,7 +1181,7 @@ func TestClean_ClosesTheClaimedPaneBeforeRemovingTheWorktree(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	created := herdrc.CreatedTopology{WorkspaceID: "w9", PaneID: "worktree-pane"}
-	result := ExecResult{Created: &created, AgentPane: "claimed-pane"} // != created.PaneID ("worktree-pane")
+	result := ExecResult{Created: &created, AgentAt: &herdrc.CreatedTopology{PaneID: "claimed-pane"}} // != created.PaneID ("worktree-pane")
 
 	if err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
@@ -1107,7 +1197,7 @@ func TestClean_NoPaneCloseWhenAgentPaneMatchesTheSpace(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "p1"}
-	result := ExecResult{Created: &created, AgentPane: "p1"} // == created.PaneID
+	result := ExecResult{Created: &created, AgentAt: &herdrc.CreatedTopology{PaneID: "p1"}} // == created.PaneID
 
 	if err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
@@ -1258,7 +1348,7 @@ func TestCleanCheckDeniesCommitsBeyondTheDefaultHeadBase(t *testing.T) {
 	in.BaseRef = "" // WorktreeField.Base()'s own "" == HEAD sentinel
 	in.ProjectDir = repo
 	created := herdrc.CreatedTopology{CheckoutPath: wt}
-	result := ExecResult{Created: &created, AgentPane: created.PaneID}
+	result := ExecResult{Created: &created, AgentAt: &created}
 
 	if decision := CleanCheck(context.Background(), in, result); !decision.Allowed {
 		t.Fatalf("a pristine worktree at the default HEAD base was denied: %q", decision.Reason)

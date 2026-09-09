@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,8 +30,24 @@ import (
 type fakeRunner struct {
 	calls []string
 
+	// t is only for reporting a test's own mistake (splitting a pane this
+	// fake never handed out); nil is fine for a runner no test drives
+	// through PaneSplit.
+	t *testing.T
+
 	topo    herdrc.CreatedTopology
 	listErr error
+	// created counts the creation calls this fake has answered, and panes
+	// records which workspace/tab each pane it handed out belongs to.
+	// Both exist so a SECOND creation in one run gets ids of its own:
+	// herdr allocates a fresh workspace/tab/pane per creation call, and a
+	// fake that answers every one of them with the same three ids cannot
+	// produce the divergence between the SPACE and the AGENT'S PANE at
+	// all (#99) -- the shape CLAUDE.md's "a fake that cannot fail the way
+	// the real thing does" convention is about. internal/plan's own
+	// mockRunner learned the same lesson earlier, as tabTopo/splitTopo.
+	created int
+	panes   map[string]herdrc.CreatedTopology
 	// workspaces is what WorkspaceList reports as already open -- nil
 	// (the zero value) for every test that does not care, so a
 	// WorktreeCreate that returns r.topo's own WorkspaceID is never read
@@ -51,9 +68,65 @@ type fakeRunner struct {
 var _ herdrc.Runner = (*fakeRunner)(nil)
 
 func newFakeRunner() *fakeRunner {
-	return &fakeRunner{topo: herdrc.CreatedTopology{
-		WorkspaceID: "wS1", TabID: "tT1", PaneID: "pP1",
-	}}
+	return &fakeRunner{
+		topo:  herdrc.CreatedTopology{WorkspaceID: "wS1", TabID: "tT1", PaneID: "pP1"},
+		panes: map[string]herdrc.CreatedTopology{},
+	}
+}
+
+// registerPane teaches the fake that paneID already exists in ws/tab, so a
+// PaneSplit of it can answer with that tab rather than inventing one. The
+// harness seeds the INVOKING pane this way before every run; creations
+// register their own.
+func (r *fakeRunner) registerPane(ws, tab, pane string) {
+	if pane == "" {
+		return
+	}
+	r.panes[pane] = herdrc.CreatedTopology{WorkspaceID: ws, TabID: tab, PaneID: pane}
+}
+
+// nextSpace is one whole new workspace: what worktree create and workspace
+// create return. The FIRST one is r.topo, so every single-creation test
+// keeps reading wS1/tT1/pP1; later ones are numbered from there.
+func (r *fakeRunner) nextSpace() herdrc.CreatedTopology {
+	r.created++
+	t := r.topo
+	if r.created > 1 {
+		n := strconv.Itoa(r.created)
+		t = herdrc.CreatedTopology{WorkspaceID: "wS" + n, TabID: "tT" + n, PaneID: "pP" + n}
+	}
+	r.registerPane(t.WorkspaceID, t.TabID, t.PaneID)
+	return t
+}
+
+// nextTabIn is a new tab inside an EXISTING workspace: the workspace id is
+// the caller's, the tab and pane are fresh. That asymmetry is the whole
+// point -- it is what makes a placement op's pane sit in a workspace the
+// space op never named.
+func (r *fakeRunner) nextTabIn(ws string) herdrc.CreatedTopology {
+	t := r.nextSpace()
+	if ws != "" {
+		t.WorkspaceID = ws
+		t.CheckoutPath = ""
+		r.registerPane(t.WorkspaceID, t.TabID, t.PaneID)
+	}
+	return t
+}
+
+// nextPaneBeside is a split: same workspace and same TAB as the pane it
+// splits, a new pane. An unregistered pane means a test split something
+// this fake never handed out, which is a test bug rather than a herdr
+// behaviour to model.
+func (r *fakeRunner) nextPaneBeside(paneID string) herdrc.CreatedTopology {
+	host, ok := r.panes[paneID]
+	if !ok && r.t != nil {
+		r.t.Helper()
+		r.t.Fatalf("fakeRunner: PaneSplit(%q): no such pane -- register it with registerPane first", paneID)
+	}
+	fresh := r.nextSpace()
+	out := herdrc.CreatedTopology{WorkspaceID: host.WorkspaceID, TabID: host.TabID, PaneID: fresh.PaneID}
+	r.registerPane(out.WorkspaceID, out.TabID, out.PaneID)
+	return out
 }
 
 func (r *fakeRunner) record(name string, args ...string) error {
@@ -85,7 +158,7 @@ func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreate
 	if err := r.record("WorktreeCreate", req.Cwd, req.Branch, req.Base); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
-	topo := r.topo
+	topo := r.nextSpace()
 	topo.CheckoutPath = "/checkouts/" + req.Branch
 	return topo, nil
 }
@@ -94,21 +167,21 @@ func (r *fakeRunner) WorkspaceCreate(_ context.Context, req herdrc.WorkspaceCrea
 	if err := r.record("WorkspaceCreate", req.Cwd, req.Label); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
-	return r.topo, nil
+	return r.nextSpace(), nil
 }
 
 func (r *fakeRunner) TabCreate(_ context.Context, req herdrc.TabCreateReq) (herdrc.CreatedTopology, error) {
 	if err := r.record("TabCreate", req.Workspace, req.Cwd); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
-	return r.topo, nil
+	return r.nextTabIn(req.Workspace), nil
 }
 
 func (r *fakeRunner) PaneSplit(_ context.Context, req herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
 	if err := r.record("PaneSplit", req.PaneID, req.Direction); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
-	return r.topo, nil
+	return r.nextPaneBeside(req.PaneID), nil
 }
 
 func (r *fakeRunner) AgentStart(_ context.Context, req herdrc.AgentStartReq) error {
@@ -195,6 +268,7 @@ func newHarness(t *testing.T) *harness {
 	// reach the network by accident.
 	t.Setenv("LINEAR_API_KEY", "")
 	runner := newFakeRunner()
+	runner.t = t
 	git := newFakeGit()
 	h := &harness{
 		env: Env{
@@ -231,6 +305,10 @@ func newHarness(t *testing.T) *harness {
 }
 
 func (h *harness) run(args ...string) int {
+	// The invoking pane exists before this command runs, so the fake has
+	// to know it: a split-here placement splits it, and herdr answers
+	// that with a pane in the invoking pane's own tab.
+	h.runner.registerPane(h.env.WorkspaceID, h.env.TabID, h.env.PaneID)
 	return Run(context.Background(), args, h.env, h.deps)
 }
 
@@ -715,8 +793,11 @@ default_placement = "tab-here"
 	if out.Title != "Fix Login" || out.ProjectDir != "/projects/thing" {
 		t.Errorf("title/project_dir = %q/%q", out.Title, out.ProjectDir)
 	}
-	if out.PaneID != "pP1" || out.WorkspaceID != "wS1" || out.TabID != "tT1" {
-		t.Errorf("topology = %q/%q/%q, want the created ids", out.WorkspaceID, out.TabID, out.PaneID)
+	// wS9, not a workspace of its own: tab-here opens a tab in the
+	// INVOKING workspace, and herdr's `tab create --workspace wS9`
+	// answers with wS9's own id. The tab and the pane are new.
+	if out.PaneID != "pP1" || out.WorkspaceID != "wS9" || out.TabID != "tT1" {
+		t.Errorf("topology = %q/%q/%q, want wS9/tT1/pP1", out.WorkspaceID, out.TabID, out.PaneID)
 	}
 	if out.Placement != "tab-here" {
 		t.Errorf("placement = %q, want the resolved tab-here", out.Placement)
@@ -729,6 +810,144 @@ default_placement = "tab-here"
 	}
 	if got := out.Provenance["worktree"]; got != "flag" {
 		t.Errorf("provenance[worktree] = %q, want flag (--no-worktree was given)", got)
+	}
+}
+
+// TestReportedIDsNameTheAgentNotTheSpace is #99. A worktree plus a `here`
+// placement is the one combination that separates the two -- placement
+// spec §6.1's headline case, and Cell 8's. The worktree op opens a whole
+// new space for the checkout; the placement op then puts the agent's pane
+// in a NEW TAB OF THE INVOKING WORKSPACE (build.go's placementOp always
+// targets Input.Ctx), so the agent shares none of the space's three ids.
+//
+// With the worktree off the placement op IS the topology op, and with
+// new-space there is no placement op, so those two agree and cannot show
+// this. Nor can equivalence_test.go, which compares plan.Inputs: this is
+// downstream of the plan entirely.
+//
+// What a caller does with the answer is the reason it matters: the id it
+// greps out of a create is the one it sends the next keystroke to. Before
+// this, that was the worktree's own idle shell -- or, when the workspace
+// was reused, another session's pane (#99's live evidence, #91's family).
+func TestReportedIDsNameTheAgentNotTheSpace(t *testing.T) {
+	h := newHarness(t)
+	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
+
+	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main",
+		"--placement", "tab-here", "--json"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	// The fake's own arithmetic: creation 1 is the worktree's space
+	// (wS1/tT1/pP1), creation 2 the claimed tab, which herdr opens inside
+	// the invoking workspace and so answers with wS9 (tT2/pP2).
+	if out.WorkspaceID != "wS9" || out.TabID != "tT2" || out.PaneID != "pP2" {
+		t.Errorf("agent ids = %q/%q/%q, want wS9/tT2/pP2 -- where the agent actually is",
+			out.WorkspaceID, out.TabID, out.PaneID)
+	}
+	if out.SpaceWorkspaceID != "wS1" || out.SpaceTabID != "tT1" || out.SpacePaneID != "pP1" {
+		t.Errorf("space ids = %q/%q/%q, want wS1/tT1/pP1 -- the space Clean acts on, still reported",
+			out.SpaceWorkspaceID, out.SpaceTabID, out.SpacePaneID)
+	}
+	if out.CheckoutPath != "/checkouts/zvi/x" {
+		t.Errorf("checkout_path = %q, want the worktree's own checkout", out.CheckoutPath)
+	}
+	// And the pane the agent was actually launched into is the one
+	// reported, which is the whole claim -- read from the calls rather
+	// than from the report, so the two have to agree.
+	if !h.runner.called("AgentStart") || !strings.Contains(strings.Join(h.runner.calls, " "), ",pP2)") {
+		t.Errorf("calls = %v, want the agent started in pP2", h.runner.calls)
+	}
+}
+
+// TestHumanLineNamesTheAgentsPane is #99 for the caller that did not ask
+// for --json. The line's whole reason to be key=value is that a shell
+// greps `pane=` out of it, so it is the spelling the issue's failing
+// script actually reads.
+func TestHumanLineNamesTheAgentsPane(t *testing.T) {
+	h := newHarness(t)
+	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
+
+	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main",
+		"--placement", "tab-here"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	got := strings.TrimSpace(h.stdout.String())
+	for _, want := range []string{"workspace=wS9", "tab=tT2", "pane=pP2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stdout = %q, want it to contain %q", got, want)
+		}
+	}
+	// The space's pane must not be what `pane=` names -- the exact
+	// substring a grep would pick up.
+	if strings.Contains(got, "pane=pP1") {
+		t.Errorf("stdout = %q, still names the SPACE's pane", got)
+	}
+}
+
+// TestFailureBeforeAnyAgentPaneReportsOnlyTheSpace pins the honest answer
+// for a run that died between the two: the worktree's space exists, no
+// pane was ever claimed for the agent, and so the agent triple is ABSENT
+// rather than quietly filled in from the space. Filling it in is the
+// tempting mistake -- the object looks more complete -- and it re-creates
+// exactly the confusion #99 is about, one failure mode further along:
+// three ids that claim to say where the agent is when there is no agent.
+//
+// Found by mutation: the fallback passed every other test in the package.
+func TestFailureBeforeAnyAgentPaneReportsOnlyTheSpace(t *testing.T) {
+	h := newHarness(t)
+	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
+	h.runner.failAt = "TabCreate" // the placement op, after the worktree's space exists
+
+	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main",
+		"--placement", "tab-here", "--json"); code != ExitFailed {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+	}
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if out.WorkspaceID != "" || out.TabID != "" || out.PaneID != "" {
+		t.Errorf("agent ids = %q/%q/%q, want all absent -- no pane was ever claimed for an agent",
+			out.WorkspaceID, out.TabID, out.PaneID)
+	}
+	if out.SpaceWorkspaceID != "wS1" || out.SpacePaneID != "pP1" {
+		t.Errorf("space ids = %q/%q, want wS1/pP1 -- the space that DOES exist and may need cleaning",
+			out.SpaceWorkspaceID, out.SpacePaneID)
+	}
+}
+
+// TestFailureLineNamesTheSpaceNotTheAgent is the other side of #99, and
+// the reason it is a test rather than a comment: when the agent's ids and
+// the space's diverge, the keep-or-clean line must keep naming the SPACE.
+// It is the thing --on-failure clean would have removed and the thing a
+// person has to go close by hand, so an agent pane id there would send
+// them after the wrong container -- and docs/manual-smoke.md's Cell 8
+// reads this exact line as its evidence ("naming the SPACE (not an agent
+// pane) is the same evidence read a different way").
+//
+// Found by mutation: switching this line to AgentAt left every other test
+// green, which is precisely how the opposite change gets made by someone
+// tidying #99 up later.
+func TestFailureLineNamesTheSpaceNotTheAgent(t *testing.T) {
+	h := newHarness(t)
+	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
+	h.runner.failAt = "AgentStart" // after both the space and the agent's pane exist
+
+	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main",
+		"--placement", "tab-here", "--on-failure", "keep"); code != ExitFailed {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+	}
+	stderr := h.stderr.String()
+	if !strings.Contains(stderr, "workspace wS1, pane pP1") {
+		t.Errorf("stderr = %q, want the SPACE's ids (wS1/pP1) in the kept-session line", stderr)
+	}
+	if strings.Contains(stderr, "pane pP2") {
+		t.Errorf("stderr = %q, names the AGENT's pane -- Clean acts on the space, and Cell 8 reads this line", stderr)
 	}
 }
 

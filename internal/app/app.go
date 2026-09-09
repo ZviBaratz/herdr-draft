@@ -728,7 +728,7 @@ type Model struct {
 	// -- see async.go's runSubmitCmd/runCleanCheckCmd/runCleanCmd.
 	// submitResult carries plan.ExecResult (placement spec §5.1/§5.4)
 	// rather than a bare herdrc.CreatedTopology, because a reused space's
-	// Clean/CleanCheck now need SpaceReused/SpaceLabel/AgentPane too, not
+	// Clean/CleanCheck now need SpaceReused/SpaceLabel/AgentAt too, not
 	// just the space's own workspace id.
 	submitInput         plan.Input
 	submitResult        plan.ExecResult
