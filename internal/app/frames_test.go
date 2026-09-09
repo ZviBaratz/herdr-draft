@@ -725,5 +725,17 @@ func TestAssembledSubmit_BlockedStartFrame(t *testing.T) {
 	// what the popup does with a path once it has one.
 	m.submitView.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
 
+	// Both widths, and the pair is the point. 80x24 is the pessimistic
+	// case -- a small terminal, where herdr clamps the popup to the
+	// screen -- and it truncates this instruction mid-word. 101x30 is
+	// what the popup ACTUALLY ships at (framePopupW/H: the manifest's
+	// 104x32 minus herdr's chrome), and until now no failure screen was
+	// pinned there at all, while every form state was. A failed step's
+	// message truncated to the popup's column is the one thing only the
+	// popup shows, so the width it ships at is the width that most needs
+	// a fixture: it is where a reviewer can see whether the half the user
+	// ACTS on survives.
 	assertAppSubmitFrame(t, "submit-blocked-start-80x24", m, 80, 24)
+	assertAppSubmitFrame(t, fmt.Sprintf("submit-blocked-start-%dx%d", framePopupW, framePopupH),
+		m, framePopupW, framePopupH)
 }

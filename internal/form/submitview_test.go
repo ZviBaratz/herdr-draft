@@ -169,6 +169,12 @@ func TestFrames_FailureUnconfirmedPrompt(t *testing.T) {
 	)
 	v.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
 	assertSubmitFrame(t, "failure-unconfirmed-prompt-80x24", v, 80, 24)
+	// And at the width the popup actually ships at. Every failure frame in
+	// this package was pinned at 80x24 only, while every form frame was
+	// pinned at the shipped 101x30 -- so the screen whose whole risk is
+	// "the message is truncated to the column" had no fixture at the
+	// column it ships in. 80x24 stays as the pessimistic clamp.
+	assertSubmitFrame(t, "failure-unconfirmed-prompt-101x30", v, 101, 30)
 }
 
 // --- v2 spec §12: the same chrome as the form ------------------------------
