@@ -270,6 +270,16 @@ ones you passed). It never prompts. Exit codes:
 | 2 | bad usage, or a request that cannot be resolved |
 | 3 | herdr is unreachable |
 
+**The reported ids name the agent, not the worktree.**
+`workspace_id`/`tab_id`/`pane_id` — and `workspace=`/`tab=`/`pane=` on the
+plain line — are where the agent ended up, which is what a script sends its
+next keystroke to. With `--worktree` and `--placement tab-here` or
+`split-here` the checkout gets a space of its own that the agent does *not*
+run in, so `--json` carries `space_workspace_id`/`space_tab_id`/
+`space_pane_id` alongside: the session `--on-failure clean` removes, and the
+one a failure message names. Both triples are always present when known, so
+comparing them tells you whether the agent is inside the space.
+
 `--placement tab-here` and `split-here` need to know where "here" is, and
 read `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID`, which herdr
 sets in every pane's shell — regardless of `--worktree`, since placement

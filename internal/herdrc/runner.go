@@ -111,7 +111,7 @@ type Runner interface {
 	// when Execute claimed a fresh pane for the agent in a workspace it did
 	// not create (a reuse correction, §5.2), Clean must close THAT pane
 	// before removing the space, so nothing is left running an agent in a
-	// directory about to be deleted. Never called when AgentPane ==
+	// directory about to be deleted. Never called when AgentAt.PaneID ==
 	// Created.PaneID -- the common case, where there is nothing extra to
 	// close.
 	PaneClose(ctx context.Context, paneID string) error

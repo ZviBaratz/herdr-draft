@@ -522,7 +522,7 @@ func TestSubmit_CleanMsgOnDeniedCheckDoesNothing(t *testing.T) {
 	m.submitCleanDecision = plan.CleanDecision{Allowed: false, Reason: "uncommitted changes"}
 	m.submitInput = plan.Input{UseWorktree: true, BaseRef: "main"}
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1", CheckoutPath: "/does/not/matter"}
-	m.submitResult = plan.ExecResult{Created: &created, AgentPane: created.PaneID}
+	m.submitResult = plan.ExecResult{Created: &created, AgentAt: &created}
 
 	next, cmd := m.Update(form.CleanMsg{})
 	if cmd != nil {
@@ -557,7 +557,7 @@ func TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd(t *testing.T) {
 			name: "waiting on CleanCheck",
 			setup: func(m *Model) {
 				created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
-				m.submitResult = plan.ExecResult{Created: &created, AgentPane: created.PaneID}
+				m.submitResult = plan.ExecResult{Created: &created, AgentAt: &created}
 			},
 		},
 		{
@@ -762,7 +762,7 @@ func TestSubmit_CleanAllowedCallsPlanCleanAndQuits(t *testing.T) {
 	m.submitCleanDecision = plan.CleanDecision{Allowed: true}
 	m.submitInput = plan.Input{UseWorktree: false}
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
-	m.submitResult = plan.ExecResult{Created: &created, AgentPane: created.PaneID}
+	m.submitResult = plan.ExecResult{Created: &created, AgentAt: &created}
 
 	next, cmd := m.Update(form.CleanMsg{})
 	m = next.(Model)
@@ -802,7 +802,7 @@ func TestSubmit_CleanFailureSurfacesErrorAndStaysInPrompt(t *testing.T) {
 	m.submitCleanDecision = plan.CleanDecision{Allowed: true}
 	m.submitInput = plan.Input{UseWorktree: false}
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
-	m.submitResult = plan.ExecResult{Created: &created, AgentPane: created.PaneID}
+	m.submitResult = plan.ExecResult{Created: &created, AgentAt: &created}
 	m.submitView = form.NewSubmitView(m.palette)
 	m.submitView.SetFailure(plan.ExecResult{FailedIndex: 0}, m.submitCleanDecision)
 
