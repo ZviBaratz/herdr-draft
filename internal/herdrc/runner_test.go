@@ -646,6 +646,110 @@ func TestCLIRunnerPaneRunToleratesNonEmptyStdout(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerPaneRunQuotesForTheShell is #72. `herdr pane run` does not
+// exec an argv vector: it joins args[1..] with single spaces and TYPES the
+// result into the pane's interactive shell, then sends Enter
+// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/pane.rs#L1047).
+// So every element is re-parsed by that shell, and an element carrying a
+// glob, a space or a quote no longer means what the caller said.
+//
+// Found live: an `[agents.extra_args]` model id containing brackets became
+// `zsh: no matches found: claude-opus-5[1m]`, the agent never started, and
+// `pane run` still reported success because its exit code covers the typing
+// (runOK). PaneRun therefore quotes, so a caller can hand it a plain argv
+// and mean it -- and so that the same argv can go to AgentStart unaltered,
+// which is the half the old config-side workaround could not satisfy at the
+// same time.
+func TestCLIRunnerPaneRunQuotesForTheShell(t *testing.T) {
+	bin, argvLog := fakeHerdrOK(t)
+	r := &CLIRunner{Bin: bin}
+
+	argv := []string{"clauth", "start", "personal", "--", "--model", "claude-opus-5[1m]", "--effort", "xhigh"}
+	if err := r.PaneRun(context.Background(), "w9:p1", argv); err != nil {
+		t.Fatalf("PaneRun: %v", err)
+	}
+
+	// What the pane's shell will see, which is what this test is really
+	// about: herdr space-joins whatever we pass, so the logged argv line is
+	// the command line verbatim.
+	wantArgv := "pane run w9:p1 clauth start personal -- --model 'claude-opus-5[1m]' --effort xhigh"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv  = %q\nwant   = %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerPaneRunQuotesSpacesAndQuotes covers the two metacharacters
+// the glob case does not: an element containing a space must stay ONE word,
+// and an element containing a single quote must not end the quoting early.
+func TestCLIRunnerPaneRunQuotesSpacesAndQuotes(t *testing.T) {
+	bin, argvLog := fakeHerdrOK(t)
+	r := &CLIRunner{Bin: bin}
+
+	argv := []string{"clauth", "start", "p", "--", "--append-system-prompt", "be terse", "--tag", "it's"}
+	if err := r.PaneRun(context.Background(), "w9:p1", argv); err != nil {
+		t.Fatalf("PaneRun: %v", err)
+	}
+
+	wantArgv := `pane run w9:p1 clauth start p -- --append-system-prompt 'be terse' --tag 'it'\''s'`
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv  = %q\nwant   = %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerAgentStartPassesExtraArgsRaw is the other half of #72, and
+// the reason the quoting lives in PaneRun rather than in the value the
+// caller supplies: `herdr agent start` hands its post-`--` arguments to the
+// agent as an argv VECTOR, with no shell anywhere, so the same value must
+// arrive unquoted here. Quoting it -- which is what the retired
+// config.toml workaround did -- made claude receive a model name that
+// literally began with an apostrophe.
+func TestCLIRunnerAgentStartPassesExtraArgsRaw(t *testing.T) {
+	stdout := `{"id":"cli:agent:start","result":{"type":"agent_started","agent":{"agent":"claude"},"argv":["claude"]}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	req := AgentStartReq{
+		Name: "probe", Kind: "claude", PaneID: "w1:p1",
+		ExtraArgs: []string{"--model", "claude-opus-5[1m]", "--effort", "xhigh"},
+	}
+	if err := r.AgentStart(context.Background(), req); err != nil {
+		t.Fatalf("AgentStart: %v", err)
+	}
+
+	wantArgv := "agent start probe --kind claude --pane w1:p1 -- --model claude-opus-5[1m] --effort xhigh"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv  = %q\nwant   = %q", got, wantArgv)
+	}
+}
+
+// TestShellQuote pins the quoting rule itself: leave alone what a POSIX
+// shell cannot misread, and wrap everything else in single quotes, closing
+// and reopening around an embedded one. The safe set is deliberately
+// conservative -- it is cheaper to over-quote a rare character than to
+// reason about every shell's expansions -- but it does cover the ordinary
+// flag/value shapes, so the command a user sees typed into their own pane
+// stays readable.
+func TestShellQuote(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", "''"},
+		{"clauth", "clauth"},
+		{"--effort", "--effort"},
+		{"a_b.c-d/e:f@g%h+i,j=k", "a_b.c-d/e:f@g%h+i,j=k"},
+		{"claude-opus-5[1m]", "'claude-opus-5[1m]'"},
+		{"two words", "'two words'"},
+		{"it's", `'it'\''s'`},
+		{"$HOME", "'$HOME'"},
+		{"a;b", "'a;b'"},
+		{"*", "'*'"},
+		{"~/x", "'~/x'"},
+	}
+	for _, c := range cases {
+		if got := shellQuote(c.in); got != c.want {
+			t.Errorf("shellQuote(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestCLIRunnerPaneRunNonZeroExit(t *testing.T) {
 	bin := fakeHerdrFail(t, "no such pane w1:p2")
 	r := &CLIRunner{Bin: bin}

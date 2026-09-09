@@ -273,7 +273,13 @@ func placementOp(in Input, cwd string, cwdFromCheckout bool) (Op, bool) {
 // launchOps returns the op(s) that start the agent. A pinned claude
 // account launches through clauth (a plain shell command herdr types into
 // the pane) and, unlike `herdr agent start`, does not itself wait for
-// detection -- so it is followed by an explicit OpAwaitDetection. Every
+// detection -- so it is followed by an explicit OpAwaitDetection.
+//
+// RunArgv is a plain, UNQUOTED argv, exactly like AgentStartReq.ExtraArgs
+// beside it: CLIRunner.PaneRun quotes for the pane's shell, since it is
+// the layer that knows herdr types this rather than exec'ing it (#72).
+// Quoting here instead would put transport knowledge in a pure builder and
+// would corrupt the value for the other path. Every
 // other case starts the agent directly via `herdr agent start`, which
 // performs its own detection wait server-side.
 func launchOps(in Input) []Op {
@@ -281,8 +287,17 @@ func launchOps(in Input) []Op {
 		runArgv := append([]string{"clauth", "start", in.AccountPin, "--"}, in.ExtraArgs...)
 		return []Op{
 			{
-				Kind:    OpClauthLaunch,
-				Label:   "launching claude via clauth",
+				Kind: OpClauthLaunch,
+				// "typing", not "launching", and that is the whole of #72's
+				// first item: this op only puts a command line into the
+				// pane's shell, and its success means the text was sent
+				// (runOK covers the typing, not the command). A shell can
+				// still refuse what it was handed -- an unquoted glob used
+				// to do exactly that -- so a step labelled "launching
+				// claude" reporting ok was claiming something it cannot
+				// know. The OpAwaitDetection that always follows is what
+				// confirms an agent; read the two rows as one launch.
+				Label:   "typing the clauth launch",
 				RunArgv: runArgv,
 			},
 			{

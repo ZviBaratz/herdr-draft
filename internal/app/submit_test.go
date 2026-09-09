@@ -273,7 +273,7 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 	// op, matching Task 12's first matrix case exactly -- as v2 spec
 	// §12's short nouns, which is what the submit view's label column
 	// holds (see async.go's submitStepLabel).
-	wantLabels := []string{"creating worktree", "launching claude via clauth", "waiting for agent detection", "sending prompt"}
+	wantLabels := []string{"creating worktree", "typing the clauth launch", "waiting for agent detection", "sending prompt"}
 	wantRows := []string{"worktree", "claude", "detection", "prompt"}
 	if len(m.submitSteps) != len(wantRows) {
 		t.Fatalf("seeded submitSteps = %d entries, want %d: %+v", len(m.submitSteps), len(wantRows), m.submitSteps)

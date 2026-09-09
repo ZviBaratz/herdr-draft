@@ -167,6 +167,19 @@ Layering, outermost to innermost:
   parser is a real bug this codebase hit once already (`PaneRun` via
   `runJSON` failed every real invocation) — check which shape a new
   subcommand uses before wiring it up.
+- **`herdr pane run` types, it does not exec — so `PaneRun` quotes.**
+  `pane run` joins its argv with single spaces and sends the string as pane
+  input plus Enter (`herdr:src/cli/pane.rs`), so the argv structure is gone
+  before anything runs and the pane's own shell re-parses the result.
+  `CLIRunner.PaneRun` therefore shell-quotes every element, and callers
+  (`plan.Build`'s `RunArgv`) pass a plain argv. This is the third distinct
+  way `pane run` has misled this codebase, after `runJSON` vs `runOK` and
+  the exit code that covers the typing rather than the command: an unquoted
+  `[agents.extra_args]` model id became `zsh: no matches found` with the
+  launch step still reporting ok (#72). Note where the quoting may NOT go:
+  `AgentStart` hands the same values to herdr as an argv vector with no
+  shell anywhere, so quoting them there corrupts them — which is why the
+  old config-side workaround could not be right for both paths at once.
 - **Screen detection is evidence-based, not trusted blindly.** herdr's own
   agent detection can report a pane "idle"/ready while it is actually
   showing a blocking dialog. `plan.Execute` always calls `Runner.AgentRead`
