@@ -122,8 +122,26 @@ func (r report) writeUnsentPrompt(w io.Writer) {
 	if r.result.PromptText == "" {
 		return
 	}
+	if r.result.PromptUnconfirmed {
+		// Deliberately not "was not sent". This is the wording that caused
+		// #108's double-paste: the old line asserted a delivery failure
+		// for a prompt the agent was already several tool calls into, and
+		// the documented thing to do with the text below is paste it.
+		fmt.Fprintf(w, "delivery of the prompt could not be confirmed -- read the pane before "+
+			"resending it, since the agent may already be working on it:\n%s\n", r.result.PromptText)
+		return
+	}
 	fmt.Fprintf(w, "the prompt was not sent -- reproduced here so it is not lost:\n%s\n", r.result.PromptText)
 }
+
+// The three values of jsonReport.PromptStatus. Constants because two of
+// them are written in one place and read in another, and a typo in a
+// snake_case string literal is not a compile error.
+const (
+	promptStatusSent        = "sent"
+	promptStatusUnsent      = "unsent"
+	promptStatusUnconfirmed = "unconfirmed"
+)
 
 // jsonReport is --json's single object. Field names are snake_case and
 // stable; anything absent (no worktree, no prompt, no failure) is omitted
@@ -165,10 +183,27 @@ type jsonReport struct {
 	SpaceTabID       string `json:"space_tab_id,omitempty"`
 	SpacePaneID      string `json:"space_pane_id,omitempty"`
 
-	// PromptSent is absent when there was no prompt at all, so "false"
-	// always means "there was one and it did not land".
-	PromptSent   *bool  `json:"prompt_sent,omitempty"`
-	UnsentPrompt string `json:"unsent_prompt,omitempty"`
+	// PromptSent is absent when there was no prompt at all, and also when
+	// there WAS one whose fate is unknown -- a prompt-wait timeout (#108),
+	// where neither true nor false is a statement this command can make.
+	// It stays a *bool so a consumer already branching on true/false is
+	// unaffected; PromptStatus is where the third state lives.
+	//
+	// PromptStatus names the outcome in words -- "sent", "unsent" or
+	// "unconfirmed" -- and is present whenever the plan carried a prompt.
+	// The successful case is named rather than inferred from an absence,
+	// because "field missing" already means two different things above.
+	//
+	// The text comes back under exactly one of the two remaining keys, and
+	// which one is the point. UnsentPrompt means "this failure destroyed
+	// your work, here it is back", which is why a caller pastes it into
+	// the pane; on an unconfirmed delivery that is how a working agent
+	// gets its instructions twice, so that case uses UnconfirmedPrompt and
+	// the accompanying message says to read the pane first.
+	PromptSent        *bool  `json:"prompt_sent,omitempty"`
+	PromptStatus      string `json:"prompt_status,omitempty"`
+	UnsentPrompt      string `json:"unsent_prompt,omitempty"`
+	UnconfirmedPrompt string `json:"unconfirmed_prompt,omitempty"`
 
 	OnFailure    string `json:"on_failure,omitempty"`
 	Cleaned      bool   `json:"cleaned,omitempty"`
@@ -202,9 +237,19 @@ func (r report) writeJSON(w io.Writer) {
 		out.WorkspaceID, out.TabID, out.PaneID = a.WorkspaceID, a.TabID, a.PaneID
 	}
 	if r.input.Prompt != "" {
-		sent := r.result.PromptText == ""
-		out.PromptSent = &sent
-		out.UnsentPrompt = r.result.PromptText
+		if r.result.PromptUnconfirmed {
+			// PromptSent deliberately left nil: see its doc comment.
+			out.PromptStatus = promptStatusUnconfirmed
+			out.UnconfirmedPrompt = r.result.PromptText
+		} else {
+			sent := r.result.PromptText == ""
+			out.PromptSent = &sent
+			out.PromptStatus = promptStatusUnsent
+			if sent {
+				out.PromptStatus = promptStatusSent
+			}
+			out.UnsentPrompt = r.result.PromptText
+		}
 	}
 	if !out.OK {
 		out.FailedStep = r.failedLabel

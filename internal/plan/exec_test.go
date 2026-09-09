@@ -1896,3 +1896,140 @@ func TestBuildPathBCarriesTheAgentKindForMessages(t *testing.T) {
 	}
 	t.Fatal("Build emitted no OpAwaitDetection for an account-pinned launch")
 }
+
+// TestExecutePromptWaitTimeoutIsUnconfirmed is #108's core: herdr's
+// `agent prompt --wait` timing out means the CONFIRMATION timed out, not
+// that the prompt failed to arrive, so the result has to say "unconfirmed"
+// rather than assert a delivery failure it cannot know about.
+//
+// The step still fails -- exit 1 and a visible failed step, because the
+// prompt genuinely may not have landed -- but PromptUnconfirmed is what
+// stops the two harms the issue names: text offered back as `unsent`
+// (inviting a double-paste into a working agent) and `--on-failure clean`
+// tearing down a session that is mid-turn.
+func TestExecutePromptWaitTimeoutIsUnconfirmed(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the thing"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt: "AgentPrompt",
+		// Shaped like the real thing: herdrc wraps its sentinel around
+		// the CLI error, so callers see both.
+		failErr:   fmt.Errorf("%w: herdr agent prompt w1:p1 ...", herdrc.ErrPromptWaitTimeout),
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+	}
+
+	var last Progress
+	result := Execute(context.Background(), m, ops, func(p Progress) {
+		if p.State == StepFailed {
+			last = p
+		}
+	})
+
+	if !result.PromptUnconfirmed {
+		t.Error("PromptUnconfirmed = false, want true -- a wait timeout cannot prove the prompt was not delivered")
+	}
+	if result.FailedIndex != 2 {
+		t.Errorf("FailedIndex = %d, want 2 -- the step still failed", result.FailedIndex)
+	}
+	// The text is still carried: losing the caller's prompt is the worse
+	// error of the two, so it survives and only its LABEL changes.
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want %q", result.PromptText, in.Prompt)
+	}
+	if last.Err == nil {
+		t.Fatal("no failed-step progress reported")
+	}
+	// The message a user acts on must not claim the prompt was not sent,
+	// and must say what to do instead of resending blindly.
+	msg := last.Err.Error()
+	if strings.Contains(msg, "not sent") {
+		t.Errorf("failure message claims the prompt was not sent:\n%s", msg)
+	}
+	if !strings.Contains(msg, "read the pane") {
+		t.Errorf("failure message does not tell the user to read the pane:\n%s", msg)
+	}
+	// errors.Is must survive the rewording, or nothing downstream can
+	// classify it either.
+	if !errors.Is(last.Err, herdrc.ErrPromptWaitTimeout) {
+		t.Errorf("reworded failure no longer matches ErrPromptWaitTimeout:\n%s", msg)
+	}
+}
+
+// TestExecuteOtherPromptFailureIsNotUnconfirmed is the negative half: the
+// unconfirmed state is reserved for the wait timeout, and every other
+// prompt failure keeps meaning exactly what it meant before -- including
+// the dialog guard's deliberate refusal, where the text really was never
+// typed and offering it back is the correct behaviour.
+func TestExecuteOtherPromptFailureIsNotUnconfirmed(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the thing"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt:    "AgentPrompt",
+		failErr:   errors.New("agent_prompt_stalled"),
+		failCount: 1,
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+	}
+
+	result := Execute(context.Background(), m, ops, nil)
+
+	if result.PromptUnconfirmed {
+		t.Error("PromptUnconfirmed = true for a non-timeout prompt failure; the unconfirmed " +
+			"state must not swallow failures that really did not deliver")
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want %q", result.PromptText, in.Prompt)
+	}
+}
+
+// TestCleanCheckRefusesWhenPromptUnconfirmed pins the second harm shut at
+// the chokepoint both callers share. `--on-failure clean` and the form's
+// keep-or-clean gate both go through CleanCheck, so refusing here covers
+// both without either having to remember to.
+//
+// It is checked BEFORE the reuse and worktree branches deliberately: those
+// ask "is this space safe to remove", and this asks "might something be
+// running in it right now", which outranks them.
+func TestCleanCheckRefusesWhenPromptUnconfirmed(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = false // the branch that would otherwise allow a clean
+
+	result := ExecResult{
+		FailedIndex:       2,
+		PromptUnconfirmed: true,
+		Created:           &herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+	}
+
+	decision := CleanCheck(context.Background(), in, result)
+	if decision.Allowed {
+		t.Fatal("CleanCheck allowed a clean while prompt delivery was unconfirmed -- " +
+			"this is the case that tears down a healthy agent mid-turn")
+	}
+	if !strings.Contains(decision.Reason, "may already have been delivered") {
+		t.Errorf("refusal reason does not explain why:\n%s", decision.Reason)
+	}
+}
+
+// TestCleanCheckStillAllowsWithoutUnconfirmedPrompt is the control: the
+// new gate must not have made every clean a refusal.
+func TestCleanCheckStillAllowsWithoutUnconfirmedPrompt(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = false
+
+	decision := CleanCheck(context.Background(), in, ExecResult{FailedIndex: 1})
+	if !decision.Allowed {
+		t.Fatalf("CleanCheck refused an ordinary no-worktree clean: %s", decision.Reason)
+	}
+}

@@ -91,6 +91,35 @@ type ExecResult struct {
 	// Clean must never remove a space the user, not herdr-draft, opened.
 	SpaceReused bool
 	SpaceLabel  string
+
+	// PromptUnconfirmed reports that the prompt op failed with herdrc's
+	// ErrPromptWaitTimeout -- `herdr agent prompt --wait` gave up waiting
+	// for the agent's status to change -- so whether the prompt arrived is
+	// UNKNOWN rather than known to be false (#108).
+	//
+	// It never travels alone: it is only ever set on a failed prompt op,
+	// which is exactly the case that also sets PromptText, so
+	// PromptUnconfirmed implies PromptText != "". What it changes is what
+	// callers may say and do about that text:
+	//
+	//   - it must not be labelled "unsent". The field means "this is the
+	//     one piece of your work this failure destroyed, here it is back",
+	//     and a caller that does the documented thing with it -- paste it
+	//     into the pane -- sends a working agent its instructions twice.
+	//   - CleanCheck refuses a clean outright. `--on-failure clean` is the
+	//     documented way to avoid litter from a failed create, and on this
+	//     failure it would destroy an agent that is mid-turn.
+	//
+	// Deliberately NOT a "did it arrive?" heuristic. Nothing available
+	// here can answer that: a large prompt is wrapped and scrolled by the
+	// agent's own TUI so it appears verbatim nowhere on the screen, and
+	// `agent get`'s status cannot answer it in either direction because a
+	// short successful turn is already idle by the time anyone looks
+	// (docs/manual-smoke.md's Cell 10, learned by running it). A guess
+	// here would be wrong in the direction that DESTROYS the prompt --
+	// suppressing the text on a run that really failed to deliver -- so
+	// this reports what is known and leaves the pane to the human.
+	PromptUnconfirmed bool
 }
 
 // busyRetryInterval, busyRetryBudget, and busyRetryNow implement the busy
@@ -287,6 +316,23 @@ func promptIfReady(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptR
 		return fmt.Errorf("agent is waiting on a dialog (%q) -- prompt not sent", sig)
 	}
 	return r.AgentPrompt(ctx, req)
+}
+
+// explainUnconfirmedPrompt rewrites a prompt-wait timeout into the only
+// conclusion the evidence supports, and into an instruction.
+//
+// herdr's own message is "timed out waiting for agent status", which is
+// true and reads as "the prompt failed". The step's old wording then
+// compounded it -- "the prompt was not sent" -- for a prompt that in the
+// live #108 case had been delivered and was already several tool calls
+// deep. So the text says three things: what actually timed out, that
+// delivery is unknown rather than failed, and what to do instead of
+// resending (read the pane). The sentinel is wrapped rather than replaced
+// so `errors.Is` still classifies it downstream.
+func explainUnconfirmedPrompt(err error) error {
+	return fmt.Errorf("the prompt was handed to herdr, but the wait for the agent to change "+
+		"status timed out, so delivery could not be confirmed -- read the pane before "+
+		"resending it, since the agent may already be working on it: %w", err)
 }
 
 // withPaneTail appends what the pane is actually showing to a detection
@@ -663,6 +709,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 					req.Target = agentPane
 				}
 				err = promptIfReady(ctx, r, req)
+				if errors.Is(err, herdrc.ErrPromptWaitTimeout) {
+					err = explainUnconfirmedPrompt(err)
+				}
 			default:
 				err = fmt.Errorf("plan: execute: unknown op kind %v", op.Kind)
 			}
@@ -690,6 +739,11 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, onProgress func(Pro
 			emitProgress(onProgress, i, total, op.Label, StepFailed, wrapped)
 			result.FailedIndex = i
 			result.PromptText = unsentPromptText(ops, i)
+			// Set here rather than inside the retried closure above: a
+			// busy-retry that eventually succeeds must not leave the flag
+			// behind, and by this point runErr is the error that actually
+			// ended the run.
+			result.PromptUnconfirmed = errors.Is(runErr, herdrc.ErrPromptWaitTimeout)
 			return result
 		}
 
@@ -745,6 +799,20 @@ type CleanDecision struct {
 // only pane content herdr-draft itself created -- so they are always
 // allowed.
 func CleanCheck(ctx context.Context, in Input, result ExecResult) CleanDecision {
+	// Checked before every other branch on purpose. The branches below ask
+	// whether this SPACE is safe to remove -- uncommitted work, a workspace
+	// somebody else opened. This one asks whether something is running in
+	// it right now, which outranks all of them: on a prompt-wait timeout
+	// the agent may be mid-turn on the very prompt that appeared to fail,
+	// and `clean` would kill it (#108).
+	if result.PromptUnconfirmed {
+		return CleanDecision{
+			Allowed: false,
+			Reason: "the prompt may already have been delivered -- the wait for the agent's status " +
+				"timed out, which is not proof it failed -- so this session may have an agent " +
+				"working in it right now. Read the pane and remove it yourself if it really is idle.",
+		}
+	}
 	if result.SpaceReused {
 		checkout := ""
 		if result.Created != nil {

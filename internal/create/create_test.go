@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1281,5 +1282,138 @@ func writeConfig(t *testing.T, dir, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write config.toml: %v", err)
+	}
+}
+
+// TestPromptWaitTimeoutReportsUnconfirmed is #108 as a headless caller
+// sees it. The wait timed out; the prompt may well have been delivered.
+//
+// Three things this pins, one per harm the issue names:
+//
+//   - `prompt_sent` is ABSENT rather than false. It is a *bool, and false
+//     is an assertion this run cannot make. A consumer that branches on
+//     true/false keeps working; one that wants the third state reads
+//     prompt_status.
+//   - the text comes back under `unconfirmed_prompt`, never
+//     `unsent_prompt`. The name is the whole trap: `unsent_prompt` means
+//     "this failure destroyed your work, here it is back", and pasting it
+//     into a working agent sends the instructions twice.
+//   - `clean_refused` is set even though the caller asked for `clean`, and
+//     nothing was removed.
+func TestPromptWaitTimeoutReportsUnconfirmed(t *testing.T) {
+	h := newHarness(t)
+	h.runner.failAt = "AgentPrompt"
+	h.runner.failErr = fmt.Errorf("%w: herdr agent prompt pP1 ...: exit status 1: "+
+		`{"error":{"code":"timeout","message":"timed out waiting for agent status"},"id":"cli:agent:prompt"}`,
+		herdrc.ErrPromptWaitTimeout)
+
+	code := h.run("--title", "t", "--no-worktree", "--prompt", "a large handoff prompt",
+		"--on-failure", "clean", "--json")
+	if code != ExitFailed {
+		t.Fatalf("exit = %d, want %d", code, ExitFailed)
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if out.PromptSent != nil {
+		t.Errorf("prompt_sent = %v, want it absent -- neither true nor false is knowable here", *out.PromptSent)
+	}
+	if out.PromptStatus != "unconfirmed" {
+		t.Errorf("prompt_status = %q, want %q", out.PromptStatus, "unconfirmed")
+	}
+	if out.UnsentPrompt != "" {
+		t.Errorf("unsent_prompt = %q, want it absent -- the prompt may have been delivered", out.UnsentPrompt)
+	}
+	if out.UnconfirmedPrompt != "a large handoff prompt" {
+		t.Errorf("unconfirmed_prompt = %q, want the prompt text back", out.UnconfirmedPrompt)
+	}
+	if out.Cleaned {
+		t.Error("cleaned = true -- --on-failure clean tore down a session that may be mid-turn")
+	}
+	if out.CleanRefused == "" {
+		t.Error("clean_refused is empty; a refused clean has to say why")
+	}
+	if h.runner.called("WorkspaceClose") || h.runner.called("WorktreeRemove") {
+		t.Errorf("something was removed anyway: %v", h.runner.calls)
+	}
+}
+
+// TestPromptWaitTimeoutHumanOutputDoesNotClaimItWasNotSent is the same run
+// without --json, because the human wording is what actually caused the
+// double-paste: a caller reads "the prompt was not sent -- reproduced here
+// so it is not lost" and does the obvious thing with it.
+func TestPromptWaitTimeoutHumanOutputDoesNotClaimItWasNotSent(t *testing.T) {
+	h := newHarness(t)
+	h.runner.failAt = "AgentPrompt"
+	h.runner.failErr = fmt.Errorf("%w: exit status 1", herdrc.ErrPromptWaitTimeout)
+
+	if code := h.run("--title", "t", "--no-worktree", "--prompt", "the handoff"); code != ExitFailed {
+		t.Fatalf("exit = %d, want %d", code, ExitFailed)
+	}
+
+	all := h.stdout.String() + h.stderr.String()
+	if strings.Contains(all, "the prompt was not sent") {
+		t.Errorf("output asserts the prompt was not sent:\n%s", all)
+	}
+	if !strings.Contains(all, "read the pane") {
+		t.Errorf("output does not tell the caller to read the pane:\n%s", all)
+	}
+	// The text still has to be recoverable -- losing it is the worse error.
+	if !strings.Contains(all, "the handoff") {
+		t.Errorf("output dropped the prompt text entirely:\n%s", all)
+	}
+}
+
+// TestOrdinaryUnsentPromptStillSaysUnsent is the control. The dialog
+// guard's refusal really did not deliver the prompt, so that path must
+// keep its old wording, its `prompt_sent: false` and its `unsent_prompt`
+// -- the new state must not have swallowed the honest failure.
+func TestOrdinaryUnsentPromptStillSaysUnsent(t *testing.T) {
+	h := newHarness(t)
+	h.runner.readText = "Quick safety check\nDo you trust this folder?"
+
+	if code := h.run("--title", "t", "--no-worktree", "--prompt", "p", "--json"); code != ExitFailed {
+		t.Fatalf("exit = %d, want %d", code, ExitFailed)
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if out.PromptSent == nil || *out.PromptSent {
+		t.Errorf("prompt_sent = %v, want false", out.PromptSent)
+	}
+	if out.PromptStatus != "unsent" {
+		t.Errorf("prompt_status = %q, want %q", out.PromptStatus, "unsent")
+	}
+	if out.UnsentPrompt != "p" {
+		t.Errorf("unsent_prompt = %q, want the prompt back", out.UnsentPrompt)
+	}
+	if out.UnconfirmedPrompt != "" {
+		t.Errorf("unconfirmed_prompt = %q, want it absent", out.UnconfirmedPrompt)
+	}
+}
+
+// TestSuccessfulPromptStatusIsSent keeps the happy path honest: three
+// states means the successful one is named too, not left to be inferred
+// from a field's absence.
+func TestSuccessfulPromptStatusIsSent(t *testing.T) {
+	h := newHarness(t)
+
+	if code := h.run("--title", "t", "--no-worktree", "--prompt", "p", "--json"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\n%s", code, ExitOK, h.stderr)
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if out.PromptSent == nil || !*out.PromptSent {
+		t.Errorf("prompt_sent = %v, want true", out.PromptSent)
+	}
+	if out.PromptStatus != "sent" {
+		t.Errorf("prompt_status = %q, want %q", out.PromptStatus, "sent")
 	}
 }

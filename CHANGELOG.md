@@ -65,6 +65,12 @@ without the popup. It drives herdr exclusively through the public CLI
   tier each value came from.
 - Exit codes: `0` created, `1` the plan started and failed (`--on-failure`
   applied), `2` bad usage or an unresolvable request, `3` herdr unreachable.
+- **A prompt has three fates, not two**: `prompt_status` is `sent`,
+  `unsent` or `unconfirmed`. The third is `agent prompt --wait` giving up
+  before the agent's status changed, which is not proof the prompt failed
+  to arrive — so the text comes back as `unconfirmed_prompt` rather than
+  `unsent_prompt`, and `--on-failure clean` is refused, because the session
+  may have an agent working in it right now.
 - **The reported ids name the agent, not the worktree.** Under `--worktree`
   with `tab-here` or `split-here` the checkout gets a space the agent does
   not run in, so `--json` carries the space's triple alongside the agent's.
@@ -116,6 +122,12 @@ without the popup. It drives herdr exclusively through the public CLI
   unreachable herdr or a broken `config.toml` refuse to open. A broken
   Linear key or an unloadable clauth degrades that one row to "unavailable,
   with a reason".
+- **A report is not evidence; the pane is.** Neither direction of the
+  prompt-delivery question is answered by what herdr reports: a wait that
+  times out has not proved a failure, and an agent's `idle` status has not
+  proved one either way. Where the answer cannot be known, the output says
+  so and names the pane to look at, rather than asserting the tidier
+  answer.
 - **Screen detection is evidence-based.** Before sending a queued prompt
   the executor reads the pane and checks it against known blocking-dialog
   signatures rather than trusting an "idle" report, and turns herdr's

@@ -325,6 +325,33 @@ ones you passed). It never prompts. Exit codes:
 | 2 | bad usage, or a request that cannot be resolved |
 | 3 | herdr is unreachable |
 
+**A prompt has three fates, not two.** `prompt_status` names which:
+`sent`, `unsent`, or `unconfirmed`. The third is `herdr agent prompt
+--wait` giving up before the agent's status changed, which is *not* proof
+the prompt failed to arrive — herdr 0.9.0 completes that wait only on
+observed working-or-blocked activity, so a large prompt into an agent slow
+to paint its transition times out while running perfectly well.
+
+Read `prompt_status` rather than inferring from the other fields:
+
+| `prompt_status` | `prompt_sent` | the text comes back as | what to do |
+|---|---|---|---|
+| `sent` | `true` | — | nothing |
+| `unsent` | `false` | `unsent_prompt` | resend it; it never arrived |
+| `unconfirmed` | *absent* | `unconfirmed_prompt` | **read the pane first** |
+
+`prompt_sent` is absent for `unconfirmed` because neither `true` nor
+`false` is a statement this command can make. And the text comes back
+under a different key on purpose: `unsent_prompt` means "this failure
+destroyed your work, here it is back", so a caller that does the
+documented thing with it — paste it into the pane — is how a working agent
+gets its instructions twice. On `unconfirmed`, check the pane before
+resending anything.
+
+`--on-failure clean` is **refused** for an `unconfirmed` prompt, with the
+reason in `clean_refused`: the session may have an agent working in it
+right now, and cleaning up would kill it mid-turn.
+
 **The reported ids name the agent, not the worktree.**
 `workspace_id`/`tab_id`/`pane_id` — and `workspace=`/`tab=`/`pane=` on the
 plain line — are where the agent ended up, which is what a script sends its

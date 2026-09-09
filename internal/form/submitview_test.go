@@ -136,6 +136,41 @@ func TestFrames_DeadEndWithUnsentPrompt(t *testing.T) {
 	assertSubmitFrame(t, "failure-dead-end-prompt-80x24", v, 80, 24)
 }
 
+// TestFrames_FailureUnconfirmedPrompt is #108's state, and it exists
+// because a green suite proves only the states someone thought to
+// fixture: the two frames that pinned this region both carried the
+// not-sent wording, so the whole unconfirmed branch would have rendered
+// unseen.
+//
+// What the frame is actually for is the two things a screenshot can check
+// and an assertion cannot. The lead must not read "prompt not sent" -- the
+// claim #108 is about -- and the instruction that replaces "paste this"
+// has to survive the width: these lines are indented inside a bordered
+// panel, so a lead that fits in isolation can still push "read the pane"
+// off the end, which is the half the user acts on.
+//
+// SetFailure rather than SetDeadEnd: a prompt-wait timeout happens at the
+// LAST step, so a session exists and the keep-or-remove choice is live --
+// and `clean` is the choice CleanCheck now refuses, whose reason shows
+// here.
+func TestFrames_FailureUnconfirmedPrompt(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsFailed())
+	v.SetFailure(
+		plan.ExecResult{
+			FailedIndex:       2,
+			PromptText:        "Work on ENG-101: Fix login redirect loop",
+			PromptUnconfirmed: true,
+		},
+		plan.CleanDecision{
+			Allowed: false,
+			Reason:  "the prompt may already have been delivered",
+		},
+	)
+	v.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
+	assertSubmitFrame(t, "failure-unconfirmed-prompt-80x24", v, 80, 24)
+}
+
 // --- v2 spec §12: the same chrome as the form ------------------------------
 
 // TestSubmitView_LabelColumnMatchesTheForm is the whole point of v2 spec
@@ -742,5 +777,52 @@ func TestSubmitView_EveryLineIsExactlyOneRow(t *testing.T) {
 				t.Errorf("ViewAt(%d,%d) line %d is %d cells wide, want %d: %q", w, h, i, got, w, l)
 			}
 		}
+	}
+}
+
+// TestSubmitView_UnconfirmedPromptNeverInvitesABlindPaste is the gap #108's
+// own mutation sweep turned up, and it is the whole defect in miniature.
+//
+// unsentPromptLines has three branches -- the save still in flight, the
+// save landed, the save failed -- and only the middle one was frame-pinned.
+// The third renders the prompt INLINE with "copy manually:", as a
+// last-resort better-than-nothing when there is no file to point at. On an
+// unconfirmed delivery that line is exactly the double-paste invitation the
+// issue is about, printed directly under a lead that had been corrected.
+//
+// So the property is asserted across all three rather than the one that
+// happened to have a fixture: no branch may claim the prompt was not sent,
+// and every branch must carry the instruction that replaces "paste this".
+func TestSubmitView_UnconfirmedPromptNeverInvitesABlindPaste(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*SubmitView)
+	}{
+		{"save still in flight", func(*SubmitView) {}},
+		{"save landed", func(v *SubmitView) { v.SetUnsentPrompt("/state/unsent-prompt.txt", nil) }},
+		{"save failed", func(v *SubmitView) { v.SetUnsentPrompt("", errors.New("permission denied")) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newSubmitTestView()
+			v.SetSteps(sampleStepsFailed())
+			v.SetFailure(
+				plan.ExecResult{
+					FailedIndex:       2,
+					PromptText:        multiParagraphPrompt,
+					PromptUnconfirmed: true,
+				},
+				plan.CleanDecision{Allowed: false, Reason: "the prompt may already have been delivered"},
+			)
+			tc.setup(v)
+
+			frame := strippedFrame(v, 80, 24)
+			if strings.Contains(frame, "prompt not sent") {
+				t.Errorf("frame claims the prompt was not sent:\n%s", frame)
+			}
+			if !strings.Contains(frame, "read the pane") {
+				t.Errorf("frame does not tell the user to read the pane before resending:\n%s", frame)
+			}
+		})
 	}
 }
