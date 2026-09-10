@@ -110,6 +110,20 @@ without the popup. It drives herdr exclusively through the public CLI
 - `[worktree] trust_repository` is deliberately `config.toml`-only: it
   waives git's ownership check for one request, so a cloned repository must
   not be able to assert its own trustworthiness.
+- An optional **account picker protocol**: herdr-draft can hand "which Claude
+  account should this session use?" to any executable implementing a small
+  documented contract (`--dir <path> --json [--strict] [--dry-run]`, one JSON
+  object out, six documented exit codes). It ships no picker and hard-codes
+  none, which is what keeps this feature from making a public plugin depend
+  on one machine's private toolchain. `[clauth] picker` names one —
+  explicitly; a picker is never discovered on `PATH` — and it is probed once
+  before it is trusted. With it configured, the `account` row grows an `auto`
+  selection and `create` accepts `--account auto`.
+- `[clauth] launch` selects how a pinned account is launched, defaulting to
+  `clauth start <profile> --`. The opt-in `"wrapper"` mode types
+  `CLAUDE_CONFIG_DIR=<dir> claude` instead, which is only worth setting on a
+  machine whose shell defines `claude` as a function; everywhere else it
+  silently means less, which is why it is not the default.
 - `[palette]` overrides individual theme fields when herdr's own theme
   cannot be resolved from a static config file. Every region that marks
   something — rules, the focused row's fill, input backgrounds — has a
