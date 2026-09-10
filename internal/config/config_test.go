@@ -598,3 +598,91 @@ func TestLoad_TrustRepositoryExplicitFalseIsNotNil(t *testing.T) {
 		t.Error("Worktree.TrustRepository = *true, want *false")
 	}
 }
+
+// writeConfigBody writes body verbatim as the config.toml in a fresh temp
+// directory and returns it. A sibling of writeConfig above rather than a
+// change to it: that one exists to escape one key's value, and these tests
+// need whole TOML tables.
+func writeConfigBody(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	return dir
+}
+
+// The launch mode is a TRUST decision, not a preference: "wrapper" types a
+// bare `claude` into the pane and depends on the user's shell resolving it to
+// a wrapper function. On every machine that has no such function it is the
+// plain binary, which still isolates the credential but silently drops
+// whatever the wrapper was doing. So the default must be the mode that means
+// the same thing everywhere.
+func TestClauthLaunchDefaultsToClauthStart(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\npicker = \"claude-pick\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchStart {
+		t.Fatalf("Launch = %q, want %q", cfg.Clauth.Launch, ClauthLaunchStart)
+	}
+	if cfg.Clauth.Picker != "claude-pick" {
+		t.Fatalf("Picker = %q", cfg.Clauth.Picker)
+	}
+	if cfg.ClauthLaunchWarning != "" {
+		t.Fatalf("unexpected warning %q", cfg.ClauthLaunchWarning)
+	}
+}
+
+// No config file at all must reach the same default, not the zero value.
+func TestClauthLaunchDefaultsWithNoConfigFile(t *testing.T) {
+	cfg, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchStart {
+		t.Fatalf("Launch = %q, want %q", cfg.Clauth.Launch, ClauthLaunchStart)
+	}
+}
+
+func TestClauthLaunchAcceptsWrapper(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlaunch = \"wrapper\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchWrapper {
+		t.Fatalf("Launch = %q, want %q", cfg.Clauth.Launch, ClauthLaunchWrapper)
+	}
+}
+
+// An unusable value degrades to the default WITH A REASON, exactly like
+// branch_prefix: a typo in an optional key is not a reason to refuse to open,
+// and a value silently ignored is a value the user will spend an afternoon
+// on.
+func TestClauthLaunchDegradesWithAReason(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlaunch = \"wraper\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchStart {
+		t.Fatalf("Launch = %q, want the default %q", cfg.Clauth.Launch, ClauthLaunchStart)
+	}
+	for _, want := range []string{"wraper", "start", "wrapper"} {
+		if !strings.Contains(cfg.ClauthLaunchWarning, want) {
+			t.Fatalf("warning %q should name %q", cfg.ClauthLaunchWarning, want)
+		}
+	}
+}
+
+// No picker unless one is named. The absence of this test is the shape the
+// spec's amendment refused: a plugin that finds a program called claude-pick
+// on PATH and starts routing account credentials through it.
+func TestPickerIsEmptyUnlessNamed(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\ndefault = \"alpha-1\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Picker != "" {
+		t.Fatalf("Picker = %q, want empty: a picker is named, never discovered", cfg.Clauth.Picker)
+	}
+}
