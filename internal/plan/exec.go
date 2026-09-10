@@ -1177,7 +1177,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				if haveAgentPane {
 					paneID = agentPane
 				}
-				err = r.PaneRun(ctx, paneID, op.RunArgv)
+				err = r.PaneRun(ctx, paneID, op.RunEnv, op.RunArgv)
 			case OpAwaitDetection:
 				paneID := ""
 				if haveAgentPane {

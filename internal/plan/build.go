@@ -119,6 +119,7 @@ type Op struct {
 	Split     *herdrc.PaneSplitReq       // OpPaneSplit
 	Agent     *herdrc.AgentStartReq      // OpAgentStart
 	RunArgv   []string                   // OpClauthLaunch: argv for Runner.PaneRun
+	RunEnv    []herdrc.EnvVar            // OpClauthLaunch: shell assignment prefix for Runner.PaneRun
 	Prompt    *herdrc.AgentPromptReq     // OpAgentPrompt
 	Timeout   time.Duration              // OpAwaitDetection, and OpAgentStart's #115 fallback
 

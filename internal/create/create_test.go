@@ -217,8 +217,12 @@ func (r *fakeRunner) AwaitDetection(_ context.Context, paneID string, _, blocked
 	return r.record("AwaitDetection", paneID+" blocked="+blockedTimeout.String())
 }
 
-func (r *fakeRunner) PaneRun(_ context.Context, paneID string, argv []string) error {
-	return r.record("PaneRun", append([]string{paneID}, argv...)...)
+func (r *fakeRunner) PaneRun(_ context.Context, paneID string, env []herdrc.EnvVar, argv []string) error {
+	rec := []string{paneID}
+	for _, e := range env {
+		rec = append(rec, e.Name+"="+e.Value)
+	}
+	return r.record("PaneRun", append(rec, argv...)...)
 }
 
 func (r *fakeRunner) PaneClose(_ context.Context, paneID string) error {

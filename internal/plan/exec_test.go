@@ -259,8 +259,12 @@ func (m *mockRunner) AwaitDetection(ctx context.Context, paneID string, timeout,
 	return nil
 }
 
-func (m *mockRunner) PaneRun(ctx context.Context, paneID string, argv []string) error {
-	m.record("PaneRun", append([]string{paneID}, argv...)...)
+func (m *mockRunner) PaneRun(ctx context.Context, paneID string, env []herdrc.EnvVar, argv []string) error {
+	rec := []string{paneID}
+	for _, e := range env {
+		rec = append(rec, e.Name+"="+e.Value)
+	}
+	m.record("PaneRun", append(rec, argv...)...)
 	if m.shouldFail("PaneRun") {
 		return m.failErr
 	}
