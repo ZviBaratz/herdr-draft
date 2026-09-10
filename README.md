@@ -58,7 +58,7 @@ below the title needs your attention unless you want to change it.
 A herdr plugin: a single-screen dialog, opened in a herdr popup, that
 creates a fully configured agent session in one submit — git worktree,
 placement, agent kind, Claude account (via
-[clauth](https://github.com/clauth/clauth)), an initial prompt, and
+[clauth](https://github.com/uwuclxdy/clauth)), an initial prompt, and
 optionally a Linear issue to seed all three from. The same binary also
 creates one [without the popup](#headless-create).
 
@@ -173,7 +173,7 @@ there, not the workspace the popup was opened from.
   to install or link a plugin whose minimum is newer than the running binary,
   so an older herdr gets a clean refusal rather than a plugin that loads and
   then misbehaves.
-- [clauth](https://github.com/clauth/clauth) ≥ 0.14.1 for account-pinned
+- [clauth](https://github.com/uwuclxdy/clauth) ≥ 0.14.1 for account-pinned
   (Path B) launches — see [clauth integration](#clauth-integration) below.
   clauth is entirely optional: without it, herdr-draft still works for
   manual/Linear-seeded session creation (Path A), it just has no `account`

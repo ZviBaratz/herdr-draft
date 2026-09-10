@@ -3176,6 +3176,14 @@ func TestUnsafeScreenErrorsExcludeASwallowedPrompt(t *testing.T) {
 // window is closed. It is confirmPromptLanded, after the send, that covers
 // this. A test asserting the comfortable thing here would be worse than no
 // test, because the whole defect was a fixture agreeing with a defect.
+//
+// The profile, tenant and account-directory names in `banner` are
+// GENERICISED. The bytes were captured off one developer's machine, and a
+// fixture is a bad place to publish an account roster: the names carry no
+// weight here (the assertions are "not blank" and "no dialog signature
+// matched", neither of which reads them) and a real name additionally goes
+// stale -- the profiles this capture named were renamed within a day of it
+// being taken. Keep them fictional.
 func TestPromptGuardOnTheMeasuredStartupWindow(t *testing.T) {
 	// \x1b[200~ / \x1b[201~ are the bracketed-paste markers around the
 	// command `herdr pane run` typed, kept verbatim: they are part of what
@@ -3184,8 +3192,8 @@ func TestPromptGuardOnTheMeasuredStartupWindow(t *testing.T) {
 		echoOnly = "\x1b[200~claude\x1b[201~"
 		echoPlus = "\x1b[200~claude\x1b[201~\n❯ claude"
 		banner   = "\x1b[200~claude\x1b[201~\n❯ claude\n" +
-			"claude: account 'personal-1' — 4% used · tenant 'personal' (isolate\n" +
-			"d: ~/.local/state/claude-account-dirs/personal-1)"
+			"claude: account 'alpha-1' — 4% used · tenant 'alpha' (isolate\n" +
+			"d: ~/.local/state/claude-config-dirs/alpha-1)"
 		painted = " Quick safety check: Is this a project you created or one you trust?\n\n" +
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n"
 	)
