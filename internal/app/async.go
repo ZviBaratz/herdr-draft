@@ -782,11 +782,11 @@ type submitDoneMsg struct{ result plan.ExecResult }
 // runSubmitCmd starts ops running against r in a background goroutine and
 // returns the first Cmd of waitForSubmitProgress's self-re-arming chain
 // -- see this section's own file-doc comment for why.
-func runSubmitCmd(ctx context.Context, r herdrc.Runner, ops []plan.Op) tea.Cmd {
+func runSubmitCmd(ctx context.Context, r herdrc.Runner, ops []plan.Op, opts plan.ExecOpts) tea.Cmd {
 	progressCh := make(chan plan.Progress)
 	resultCh := make(chan plan.ExecResult, 1)
 	go func() {
-		res := plan.Execute(ctx, r, ops, func(p plan.Progress) { progressCh <- p })
+		res := plan.Execute(ctx, r, ops, opts, func(p plan.Progress) { progressCh <- p })
 		close(progressCh)
 		resultCh <- res
 	}()
@@ -857,6 +857,25 @@ func submitHeaderContext(in plan.Input) string {
 		return ""
 	}
 	return filepath.Base(in.ProjectDir)
+}
+
+// submitWaitingHint is the footer instruction for a step that has stopped
+// for the user (#115) -- one more thing internal/app resolves from
+// plan.Input because internal/form is not allowed to know what a prompt op
+// is (submitview.go's SetWaitingHint).
+//
+// The distinction is not decoration. The whole point of waiting rather than
+// failing is that the prompt the user composed still gets delivered, so
+// saying so is the most useful thing this line can do -- and saying it on a
+// plan that carries no prompt would be promising to deliver nothing.
+//
+// Both strings must fit the 78 cells an 80-column popup leaves; see
+// defaultWaitingHint for what happens to one that does not.
+func submitWaitingHint(in plan.Input) string {
+	if in.Prompt == "" {
+		return ""
+	}
+	return "answer the dialog in the pane — your prompt goes out as soon as you do"
 }
 
 // submitSteps maps a built plan to the submit view's rows, one per op,

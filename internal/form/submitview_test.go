@@ -54,6 +54,15 @@ func sampleStepsRunning() []Step {
 	}
 }
 
+// sampleStepsWaiting is the same stack with the agent step waiting on the
+// person at the keyboard -- #115's new state, where the launch found the
+// agent on a dialog only they can answer.
+func sampleStepsWaiting() []Step {
+	steps := sampleStepsRunning()
+	steps[2] = Step{Label: "claude", Detail: "fix-login-redirect-loop", State: plan.StepWaiting}
+	return steps
+}
+
 // sampleStepsFailed is the same stack with the agent step failed, which
 // is the state both failure frames below are taken from.
 func sampleStepsFailed() []Step {
@@ -830,5 +839,130 @@ func TestSubmitView_UnconfirmedPromptNeverInvitesABlindPaste(t *testing.T) {
 				t.Errorf("frame does not tell the user to read the pane before resending:\n%s", frame)
 			}
 		})
+	}
+}
+
+// --- #115: the step that is waiting on the person at the keyboard --------
+
+// TestSubmitView_WaitingStepHasItsOwnGlyph: a wait is neither running nor
+// failed, and the gutter is the first thing anyone reads. Sharing "›" with
+// a running step would say the machine is still working, which is the one
+// thing that is not true.
+func TestSubmitView_WaitingStepHasItsOwnGlyph(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsWaiting())
+
+	lines := strippedFrameLines(v, 80, 24)
+	var row string
+	for _, l := range lines {
+		if strings.Contains(l, "claude") {
+			row = l
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("no claude row in\n%s", strings.Join(lines, "\n"))
+	}
+	glyph := strings.TrimSpace(row[:strings.Index(row, "claude")])
+	if glyph == "" {
+		t.Fatal("waiting row has no glyph at all -- a pending row already looks like that")
+	}
+	for _, taken := range []string{"✓", "›", "✗"} {
+		if glyph == taken {
+			t.Errorf("waiting row carries %q, the glyph for another state", glyph)
+		}
+	}
+}
+
+// TestSubmitView_WaitingStepWithNoDetailSaysSo mirrors the "queued" rule
+// for the fifth state: a row with nothing of its own to say prints its
+// state's word.
+func TestSubmitView_WaitingStepWithNoDetailSaysSo(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps([]Step{{Label: "claude", State: plan.StepWaiting}})
+	if frame := strippedFrame(v, 80, 24); !strings.Contains(frame, "waiting on you") {
+		t.Errorf("ViewAt(80,24) = %q, want the waiting row to say whose turn it is", frame)
+	}
+}
+
+// TestSubmitView_WaitingReplacesTheStepCounterWithTheInstruction: the
+// footer is the widest line on the screen and the only one designed to
+// carry a hint, so it is where the thing the user has to DO belongs. A
+// step counter is the right footer for a pipeline that is progressing on
+// its own and the wrong one for a pipeline that has stopped for them.
+func TestSubmitView_WaitingReplacesTheStepCounterWithTheInstruction(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsWaiting())
+
+	frame := strippedFrame(v, 80, 24)
+	if !strings.Contains(frame, "answer the dialog in the pane") {
+		t.Errorf("ViewAt(80,24) = %q, want the footer to say what to do", frame)
+	}
+	if strings.Contains(frame, "step 3 of 4") {
+		t.Errorf("ViewAt(80,24) = %q, want the instruction INSTEAD of the step counter", frame)
+	}
+}
+
+// TestSubmitView_WaitingHintSurvivesTheNarrowestPopup: footerLine
+// truncates a hint with no visible marker when there are no buttons beside
+// it, so an instruction that overflows does not look cut off -- it looks
+// like a different, shorter sentence. Both the default and anything pushed
+// in have to fit the pessimistic width whole.
+func TestSubmitView_WaitingHintSurvivesTheNarrowestPopup(t *testing.T) {
+	for _, hint := range []string{"", appPushedWaitingHint} {
+		v := newSubmitTestView()
+		v.SetWaitingHint(hint)
+		v.SetSteps(sampleStepsWaiting())
+
+		want := hint
+		if want == "" {
+			want = defaultWaitingHint
+		}
+		if frame := strippedFrame(v, 80, 24); !strings.Contains(frame, want) {
+			t.Errorf("ViewAt(80,24) does not carry %q whole:\n%s", want, frame)
+		}
+	}
+}
+
+// appPushedWaitingHint is the longest thing internal/app actually pushes
+// in (async.go's submitWaitingHint). Copied rather than imported:
+// internal/form cannot import internal/app, and the point of the test is
+// that THIS package's footer can hold it.
+const appPushedWaitingHint = "answer the dialog in the pane — your prompt goes out as soon as you do"
+
+// TestSubmitView_PushedWaitingHintReplacesTheDefault: the setter is what
+// lets the app say the true thing (there IS a prompt waiting) without this
+// package knowing what a prompt op is.
+func TestSubmitView_PushedWaitingHintReplacesTheDefault(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetWaitingHint(appPushedWaitingHint)
+	v.SetSteps(sampleStepsWaiting())
+
+	frame := strippedFrame(v, 80, 24)
+	if !strings.Contains(frame, appPushedWaitingHint) {
+		t.Errorf("ViewAt(80,24) = %q, want the pushed-in hint", frame)
+	}
+	if strings.Contains(frame, defaultWaitingHint) {
+		t.Errorf("ViewAt(80,24) = %q, want the default REPLACED, not shown beside it", frame)
+	}
+}
+
+// TestSubmitView_StepCounterReturnsOnceTheDialogIsAnswered: the
+// instruction is a property of the waiting STATE, not a latch. Once the
+// step moves on, the footer goes back to the counter -- otherwise the
+// screen would keep telling the user to answer a dialog they have already
+// answered.
+func TestSubmitView_StepCounterReturnsOnceTheDialogIsAnswered(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsWaiting())
+	_ = strippedFrame(v, 80, 24)
+	v.SetSteps(sampleStepsRunning())
+
+	frame := strippedFrame(v, 80, 24)
+	if strings.Contains(frame, "answer the dialog in the pane") {
+		t.Errorf("ViewAt(80,24) = %q, want the instruction gone once no step is waiting", frame)
+	}
+	if !strings.Contains(frame, "step 3 of 4") {
+		t.Errorf("ViewAt(80,24) = %q, want the step counter back", frame)
 	}
 }

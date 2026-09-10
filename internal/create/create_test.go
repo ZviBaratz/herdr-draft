@@ -200,8 +200,11 @@ func (r *fakeRunner) AgentRead(_ context.Context, target string) (string, error)
 	return r.readText, nil
 }
 
-func (r *fakeRunner) AwaitDetection(_ context.Context, paneID string, _ time.Duration) error {
-	return r.record("AwaitDetection", paneID)
+func (r *fakeRunner) AwaitDetection(_ context.Context, paneID string, _, blockedTimeout time.Duration) error {
+	// The blocked budget is part of the record on purpose: headless
+	// `create` must never wait for a dialog nobody is there to answer
+	// (#115's decision 2), and a zero here is what proves it.
+	return r.record("AwaitDetection", paneID+" blocked="+blockedTimeout.String())
 }
 
 func (r *fakeRunner) PaneRun(_ context.Context, paneID string, argv []string) error {
