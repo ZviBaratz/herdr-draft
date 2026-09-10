@@ -397,3 +397,50 @@ func buildAgentPanelForm(palette theme.Palette) Model {
 func TestFrames_AgentPanel(t *testing.T) {
 	assertFrame(t, "agent-panel-80x24", buildAgentPanelForm(theme.Default()), 80, 24)
 }
+
+// buildAccountAutoForm is the account panel on a machine that has configured
+// AND probed an account picker: the `auto` row exists, sits first, and is the
+// resting selection. preview is what the picker last answered.
+//
+// The cursor is deliberately left where it starts -- on `auto` -- rather than
+// stepped down as buildAccountPanelForm does, because the whole point of these
+// three frames is the row the form OPENS on. v2 shipped a defect in its
+// opening state through fifteen green commits precisely because every fixture
+// had already moved past it.
+func buildAccountAutoForm(palette theme.Palette, preview AccountPickerPreview) Model {
+	f := NewAccountField(palette)
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow())
+	f.SetPickerAvailable(true)
+	f.SetPickerPreview(preview)
+	f.Focus()
+	return fieldFrame(palette, f)
+}
+
+// TestFrames_AccountAutoPending is the state between a project change and the
+// picker's answer -- the one a user sees most often and the one with the least
+// to show, which is why it is worth a frame of its own.
+func TestFrames_AccountAutoPending(t *testing.T) {
+	assertFrame(t, "account-auto-pending-101x30",
+		buildAccountAutoForm(theme.Default(), AccountPickerPreview{Pending: true}), 101, 30)
+}
+
+// TestFrames_AccountAutoPicked pins the answered row: `auto → alpha`, the
+// picker's own gauges in the panel, and the ✓ on the auto row rather than on
+// the profile it named -- two different rows, which is the distinction the
+// whole `auto` design rests on.
+func TestFrames_AccountAutoPicked(t *testing.T) {
+	assertFrame(t, "account-auto-picked-101x30",
+		buildAccountAutoForm(theme.Default(), AccountPickerPreview{
+			Profile: "alpha", Tier: "Max", FiveHourPct: pct(3), WeeklyPct: pct(11),
+		}), 101, 30)
+}
+
+// TestFrames_AccountAutoRefused is the state this row exists for: the picker
+// ran, said no, and said why. Nothing here may read "unavailable".
+func TestFrames_AccountAutoRefused(t *testing.T) {
+	assertFrame(t, "account-auto-refused-101x30",
+		buildAccountAutoForm(theme.Default(), AccountPickerPreview{
+			Refusal: "pool exhausted (resets 22:49)",
+		}), 101, 30)
+}

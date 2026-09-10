@@ -259,8 +259,12 @@ func (m *mockRunner) AwaitDetection(ctx context.Context, paneID string, timeout,
 	return nil
 }
 
-func (m *mockRunner) PaneRun(ctx context.Context, paneID string, argv []string) error {
-	m.record("PaneRun", append([]string{paneID}, argv...)...)
+func (m *mockRunner) PaneRun(ctx context.Context, paneID string, env []herdrc.EnvVar, argv []string) error {
+	rec := []string{paneID}
+	for _, e := range env {
+		rec = append(rec, e.Name+"="+e.Value)
+	}
+	m.record("PaneRun", append(rec, argv...)...)
 	if m.shouldFail("PaneRun") {
 		return m.failErr
 	}
@@ -3176,6 +3180,14 @@ func TestUnsafeScreenErrorsExcludeASwallowedPrompt(t *testing.T) {
 // window is closed. It is confirmPromptLanded, after the send, that covers
 // this. A test asserting the comfortable thing here would be worse than no
 // test, because the whole defect was a fixture agreeing with a defect.
+//
+// The profile, tenant and account-directory names in `banner` are
+// GENERICISED. The bytes were captured off one developer's machine, and a
+// fixture is a bad place to publish an account roster: the names carry no
+// weight here (the assertions are "not blank" and "no dialog signature
+// matched", neither of which reads them) and a real name additionally goes
+// stale -- the profiles this capture named were renamed within a day of it
+// being taken. Keep them fictional.
 func TestPromptGuardOnTheMeasuredStartupWindow(t *testing.T) {
 	// \x1b[200~ / \x1b[201~ are the bracketed-paste markers around the
 	// command `herdr pane run` typed, kept verbatim: they are part of what
@@ -3184,8 +3196,8 @@ func TestPromptGuardOnTheMeasuredStartupWindow(t *testing.T) {
 		echoOnly = "\x1b[200~claude\x1b[201~"
 		echoPlus = "\x1b[200~claude\x1b[201~\n❯ claude"
 		banner   = "\x1b[200~claude\x1b[201~\n❯ claude\n" +
-			"claude: account 'personal-1' — 4% used · tenant 'personal' (isolate\n" +
-			"d: ~/.local/state/claude-account-dirs/personal-1)"
+			"claude: account 'alpha-1' — 4% used · tenant 'alpha' (isolate\n" +
+			"d: ~/.local/state/claude-config-dirs/alpha-1)"
 		painted = " Quick safety check: Is this a project you created or one you trust?\n\n" +
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n"
 	)
@@ -3222,5 +3234,40 @@ func TestPromptGuardOnTheMeasuredStartupWindow(t *testing.T) {
 				t.Errorf("at %s: guard would send = %v, want %v", tc.at, wouldSend, wantSend)
 			}
 		})
+	}
+}
+
+// TestExecuteWrapperLaunchThreadsPaneIDAndConfigDir is
+// TestExecuteClauthLaunchThreadsPaneID's wrapper-mode twin. The two are
+// spelled out separately rather than table-driven on purpose: the whole
+// point is that BOTH command lines are pinned by name, so a change to
+// either one has to be written down here before it can be green.
+func TestExecuteWrapperLaunchThreadsPaneIDAndConfigDir(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.AccountPin = "work"
+	in.AccountLaunch = LaunchWrapper
+	in.AccountConfigDir = "/dirs/work"
+	in.ExtraArgs = []string{"--model", "opus"}
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+	if result.FailedIndex != -1 {
+		t.Fatalf("unexpected failure: %+v", result)
+	}
+
+	wantCalls := []string{
+		"WorkspaceList()",
+		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"PaneRun(pane-1,CLAUDE_CONFIG_DIR=/dirs/work,claude,--model,opus)",
+		"AwaitDetection(pane-1," + in.DetectionTimeout.String() + ",0s)",
+	}
+	if !reflect.DeepEqual(m.calls, wantCalls) {
+		t.Fatalf("calls = %v, want %v", m.calls, wantCalls)
 	}
 }

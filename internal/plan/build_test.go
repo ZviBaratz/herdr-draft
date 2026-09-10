@@ -444,3 +444,97 @@ func TestAgentNameAlwaysMatchesHerdrPattern(t *testing.T) {
 		}
 	}
 }
+
+// findOp returns the single op of kind in ops, failing when there is none.
+func findOp(t *testing.T, ops []Op, kind OpKind) Op {
+	t.Helper()
+	for _, op := range ops {
+		if op.Kind == kind {
+			return op
+		}
+	}
+	t.Fatalf("no %v in %v", kind, ops)
+	return Op{}
+}
+
+// The zero LaunchMode must be today's behaviour, byte for byte. That is what
+// lets every existing caller -- and every test written before this field
+// existed -- go on meaning what it meant.
+func TestBuildDefaultLaunchIsClauthStart(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.ExtraArgs = []string{"--model", "opus[1m]"}
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "clauth start alpha-1 -- --model opus[1m]"; got != want {
+		t.Fatalf("RunArgv = %q, want %q", got, want)
+	}
+	if len(op.RunEnv) != 0 {
+		t.Fatalf("RunEnv = %v, want none", op.RunEnv)
+	}
+}
+
+// Wrapper mode types a bare `claude` under a CLAUDE_CONFIG_DIR assignment, so
+// the pane's login shell resolves `claude` itself -- to a function, where the
+// user has one.
+func TestBuildWrapperLaunchTypesClaudeUnderAConfigDir(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.AccountLaunch = LaunchWrapper
+	in.AccountConfigDir = "/home/a/dirs/alpha-1"
+	in.ExtraArgs = []string{"--model", "opus[1m]"}
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "claude --model opus[1m]"; got != want {
+		t.Fatalf("RunArgv = %q, want %q", got, want)
+	}
+	want := []herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: "/home/a/dirs/alpha-1"}}
+	if !reflect.DeepEqual(op.RunEnv, want) {
+		t.Fatalf("RunEnv = %v, want %v", op.RunEnv, want)
+	}
+}
+
+// Wrapper mode with no config dir has nothing to isolate WITH. A bare
+// `claude` there would launch under whatever credential happened to be
+// machine-global -- the opposite of a pin -- so the pin falls back to the
+// mode that can honour it. Build is pure and cannot say so out loud; the
+// caller reports it.
+func TestBuildWrapperWithoutAConfigDirFallsBackToClauthStart(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.AccountLaunch = LaunchWrapper
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "clauth start alpha-1 --"; got != want {
+		t.Fatalf("RunArgv = %q, want %q", got, want)
+	}
+	if len(op.RunEnv) != 0 {
+		t.Fatalf("RunEnv = %v, want none", op.RunEnv)
+	}
+}
+
+// A config dir with no pin is not a launch instruction. Unpinned means
+// "whatever clauth has live", and there is no clauth launch op at all.
+func TestBuildIgnoresAConfigDirWithNoPin(t *testing.T) {
+	in := validInput()
+	in.AccountLaunch = LaunchWrapper
+	in.AccountConfigDir = "/home/a/dirs/alpha-1"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, op := range ops {
+		if op.Kind == OpClauthLaunch {
+			t.Fatal("an unpinned account must not produce a clauth launch op")
+		}
+	}
+}

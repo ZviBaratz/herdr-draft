@@ -41,12 +41,49 @@ type LinearConfig struct {
 	PromptTemplate string `toml:"prompt_template"`
 }
 
+// Launch modes for `[clauth] launch`.
+//
+// ClauthLaunchStart is the DEFAULT, and that is a decision rather than an
+// ordering: `clauth start <profile> --` means the same thing on every machine
+// that has clauth. The wrapper mode types a bare `claude` into the pane and
+// depends on the user's login shell resolving it to a function of their own
+// -- where such a function exists it can register a session holder and launch
+// through a team-lead helper, and where it does not (which is everywhere by
+// default) `claude` is the plain binary: the credential is still isolated by
+// CLAUDE_CONFIG_DIR, but everything the wrapper was for is silently gone. A
+// default that quietly means something weaker on every machine but its
+// author's is the wrong default.
+const (
+	ClauthLaunchStart   = "start"
+	ClauthLaunchWrapper = "wrapper"
+)
+
 // ClauthConfig is the optional `[clauth]` table (spec §12).
 type ClauthConfig struct {
 	// Enabled is a pointer because omitting this key means "auto-detect",
 	// which is distinct from explicitly disabling clauth integration.
 	Enabled *bool  `toml:"enabled"`
 	Default string `toml:"default"`
+
+	// Picker names an executable implementing herdr-draft's account-picker
+	// protocol (see internal/picker) -- a command resolved on PATH, or an
+	// absolute path. Empty means no picker, which is the default and the
+	// normal case.
+	//
+	// It must be NAMED. herdr-draft never goes looking for one, because
+	// finding a program with the expected name is not the same as finding the
+	// program that was meant, and a plugin that silently adopted a same-named
+	// stranger to route account credentials through would be worse than a
+	// plugin with no picker at all. Even a named one is probed once before it
+	// is trusted (app.Bootstrap).
+	Picker string `toml:"picker"`
+
+	// Launch selects how a pinned account is launched: ClauthLaunchStart (the
+	// default) or ClauthLaunchWrapper. See the constants.
+	//
+	// An unrecognised value falls back to the default with the reason on
+	// Config.ClauthLaunchWarning; it never makes Load fail.
+	Launch string `toml:"launch"`
 }
 
 // AgentsConfig is the optional `[agents]` table (spec §12).
@@ -130,6 +167,13 @@ type Config struct {
 	// A bad branch_prefix is a typo, not a reason to refuse startup.
 	BranchPrefixWarning string `toml:"-"`
 
+	// ClauthLaunchWarning is non-empty when `[clauth] launch` named a mode
+	// this binary does not know and ClauthLaunchStart was used instead: the
+	// short reason, naming both. Never decoded from the file -- Load's own
+	// output, in the same degrade-with-a-reason shape BranchPrefixWarning
+	// documents above.
+	ClauthLaunchWarning string `toml:"-"`
+
 	Linear   LinearConfig   `toml:"linear"`
 	Clauth   ClauthConfig   `toml:"clauth"`
 	Agents   AgentsConfig   `toml:"agents"`
@@ -150,6 +194,7 @@ func defaults() Config {
 		BranchPrefix:     defaultBranchPrefix(),
 		DefaultWorktree:  true,
 		DefaultPlacement: "new-space",
+		Clauth:           ClauthConfig{Launch: ClauthLaunchStart},
 		Agents: AgentsConfig{
 			Favorites: []string{"claude"},
 		},
@@ -241,6 +286,23 @@ func Load(configDir string) (Config, error) {
 		cfg.BranchPrefixWarning = fmt.Sprintf("ignoring branch_prefix %q: %v; using %q",
 			cfg.BranchPrefix, verr, defaultPrefix)
 		cfg.BranchPrefix = defaultPrefix
+	}
+
+	// `[clauth] launch` is validated here, at the point it is first trusted,
+	// for the same reason branch_prefix is: it decides what gets TYPED into a
+	// pane's shell, and an unknown mode must resolve to the conservative one
+	// rather than to whatever the zero value happens to be. An empty value is
+	// the file omitting the key -- toml.Decode leaves a key the file does not
+	// mention untouched, so this arm also covers a [clauth] table with no
+	// launch in it -- not an error.
+	switch cfg.Clauth.Launch {
+	case "":
+		cfg.Clauth.Launch = ClauthLaunchStart
+	case ClauthLaunchStart, ClauthLaunchWrapper:
+	default:
+		cfg.ClauthLaunchWarning = fmt.Sprintf("ignoring [clauth] launch %q: expected %q or %q; using %q",
+			cfg.Clauth.Launch, ClauthLaunchStart, ClauthLaunchWrapper, ClauthLaunchStart)
+		cfg.Clauth.Launch = ClauthLaunchStart
 	}
 	return cfg, nil
 }

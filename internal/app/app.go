@@ -32,6 +32,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/pathx"
+	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
@@ -110,6 +111,13 @@ type linearSource interface {
 // clauthSource is the subset of clauth access Model needs -- satisfied by
 // clauthLoader (wrapping clauth.Load, see NewClauthSource) in production
 // and a fake in tests.
+// pickerSource is the account-picker access Model needs -- satisfied by
+// picker.CLI in production (see NewPickerSource) and by a fake in tests, so no
+// test in this package ever runs a subprocess.
+type pickerSource interface {
+	Pick(ctx context.Context, dir string, opts picker.Options) (picker.Result, error)
+}
+
 type clauthSource interface {
 	Status(ctx context.Context) (clauth.Status, error)
 }
@@ -147,6 +155,11 @@ type Deps struct {
 	// see Bootstrap.
 	Linear linearSource
 	Clauth clauthSource
+	// Picker is nil when `[clauth] picker` names no executable -- the normal
+	// case -- OR when the one it named failed its probe. Non-nil means an
+	// executable was named AND answered the account-picker protocol; only
+	// then does the account row grow an `auto` selection. See Bootstrap.
+	Picker pickerSource
 	Git    gitSource
 	Clock  Clock
 	// RepoConfig reads spec §11's committed .herdr-draft.toml from a
@@ -221,6 +234,16 @@ type Setup struct {
 	// When set, the account row renders present-but-inert carrying this
 	// reason, exactly as LinearUnavailable does for the issue row.
 	ClauthUnavailable string
+
+	// PickerUnavailable is non-empty when `[clauth] picker` NAMED an
+	// executable that could not be trusted: it would not run, or its one probe
+	// answer did not implement the protocol. Distinct from no picker being
+	// configured, which is the common case and renders no auto row.
+	//
+	// When set, the account row still renders and carries this reason, which
+	// is the whole point: a picker that was configured and is not working must
+	// not look identical to one that was never configured.
+	PickerUnavailable string
 }
 
 // Bootstrap performs spec §9's pre-open refusal plus every other piece of
@@ -325,7 +348,28 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		}
 	}
 
-	deps := Deps{Runner: runner, Linear: linearSrc, Clauth: clauthSrc, Git: gitSrc, Clock: clock}
+	// A named picker is PROBED before it is trusted (spec §5.6 as amended).
+	// Naming one is the user's explicit consent to run it; the probe is what
+	// checks that the thing under that name implements the protocol, because
+	// a same-named stranger routing account credentials is worse than no
+	// picker at all. herdr-draft never goes looking for one on PATH, which is
+	// why there is no discovery step here to read.
+	//
+	// One --dry-run, against the directory the form will open on: by contract
+	// it writes no ledger entry and builds no account directory for a session
+	// nobody has asked for.
+	var pickerSrc pickerSource
+	var pickerUnavailable string
+	if bin := strings.TrimSpace(cfg.Clauth.Picker); bin != "" && clauthEnabled {
+		cli := picker.CLI{Bin: bin}
+		if perr := cli.Probe(bg, defaultProjectDir(ctx)); perr != nil {
+			pickerUnavailable = flattenReason(perr.Error())
+		} else {
+			pickerSrc = cli
+		}
+	}
+
+	deps := Deps{Runner: runner, Linear: linearSrc, Clauth: clauthSrc, Picker: pickerSrc, Git: gitSrc, Clock: clock}
 	return New(Setup{
 		Deps:              deps,
 		Ctx:               ctx,
@@ -339,6 +383,7 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		LinearCache:       linearCache,
 		LinearUnavailable: linearUnavailable,
 		ClauthUnavailable: clauthUnavailable,
+		PickerUnavailable: pickerUnavailable,
 		HomeDir:           pathx.Home(),
 	}), nil
 }
@@ -436,6 +481,15 @@ func clauthUnavailableReason(err error) string {
 	return strings.Join(strings.Fields(msg), " ")
 }
 
+// flattenReason collapses a multi-line failure to one line.
+//
+// clauthUnavailableReason above also strips that package's own error prefixes;
+// this one does not, because a picker is somebody else's program and its
+// message is its own -- there is no prefix herdr-draft is entitled to assume.
+// Both exist for the same reason: every row this lands on has exactly one
+// line, and a picker's stderr can be a paragraph.
+func flattenReason(s string) string { return strings.Join(strings.Fields(s), " ") }
+
 // linearRefreshReason turns an AssignedIssues error into the single line
 // IssueField.SetRefreshError puts on the panel's status row. Same reasoning
 // as linearUnavailableReason for dropping the package's own prefix, plus
@@ -499,6 +553,13 @@ type Model struct {
 	// handleClearRequested reuses it to reseed a rebuilt AccountField
 	// without a real clauth reload.
 	clauthStatus clauth.Status
+
+	// autoPick is the picker's commit-time answer for an `auto` account,
+	// recorded by WithAccount just before the plan is built. It lives on the
+	// model rather than being threaded through buildPlanInput's arguments so
+	// that PlanInput() -- which internal/create's equivalence test compares
+	// against the headless command's -- stays a pure read of state.
+	autoPick picker.Result
 
 	// linearIssues is the last Linear issue list this Model has seen --
 	// New's own Setup.LinearCache, refreshed by handleLinearResult
@@ -579,6 +640,11 @@ type Model struct {
 	// by handleClauthResult (fix round 1: closes a rapid-refocus staleness
 	// gap -- see clauthResultMsg's own doc comment in async.go).
 	clauthReqVersion int
+
+	// pickerReqVersion is the account picker's preview version counter, the
+	// same staleness guard dirReqVersion is: a preview for a project the user
+	// has navigated away from must not overwrite the current one.
+	pickerReqVersion int
 
 	// baseItemsVersion/issueItemsVersion are the monotonic version
 	// parameters WorktreeField.SetBaseItems/IssueField.SetIssues expect
@@ -876,6 +942,21 @@ func New(s Setup) Model {
 		// are relative (v3 spec §10.2) and internal/form has no clock of
 		// its own -- see Clock.Now.
 		m.account.SetProfiles(s.ClauthStatus, s.Deps.Clock.now())
+		// The auto row, and it goes on BEFORE SetPin below: SetPickerAvailable
+		// makes auto the resting selection when nothing else is pinned, and a
+		// `[clauth] default` naming a real profile has to be able to beat it
+		// (AccountField.SetPin clears auto). Swapping these two lines silently
+		// makes the configured default lose to the picker.
+		if s.Deps.Picker != nil {
+			m.account.SetPickerAvailable(true)
+		} else if s.PickerUnavailable != "" {
+			// Not SetUnavailable: clauth itself is fine and its profile rows
+			// are still usable. Only the auto row is missing, and the verdict
+			// line is the one place that can say why. Keyed on "" -- the pin
+			// this model rests on, since no auto row exists to select --
+			// so it renders rather than being filtered out as stale.
+			m.account.SetVerdict("", s.PickerUnavailable)
+		}
 		// [clauth] default (spec §12), when set to a real profile name --
 		// "" and the config's own documented "active" sentinel are both
 		// no-ops (AccountField.SetPin's own doc comment): the picker
@@ -946,7 +1027,22 @@ func New(s Setup) Model {
 	m.syncDerivedInertness()
 	m.snapshotAppliedDefaults()
 
+	// The picker preview is scheduled for the OPENING directory here, beside
+	// the dir and base checks, and not only from reactToChanges: that one
+	// fires on a project CHANGE, and the form's first project has not changed
+	// from anything. Without this line the account row opens reading a bare
+	// `auto` and stays that way until the user touches the project row --
+	// found by running the real form rather than by any test, which is the
+	// opening-state trap this repository has fallen into before.
+	//
+	// Appended only when non-nil: schedulePickerPreview returns nil with no
+	// picker configured, which is the common case, and initCmds is a slice
+	// tests iterate and INVOKE -- a nil in it is a panic, not a no-op, even
+	// though tea.Batch itself would drop one.
 	m.initCmds = []tea.Cmd{m.scheduleDirCheck(m.lastDir), m.scheduleBaseCheck(m.lastDir)}
+	if preview := m.schedulePickerPreview(m.lastDir); preview != nil {
+		m.initCmds = append(m.initCmds, preview)
+	}
 	if m.issue != nil && s.Deps.Linear != nil {
 		m.initCmds = append(m.initCmds, m.refreshLinearCmd())
 	}
@@ -1016,6 +1112,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLinearResult(msg)
 	case clauthResultMsg:
 		return m.handleClauthResult(msg)
+	case pickerDebounceMsg:
+		return m.handlePickerDebounce(msg)
+	case pickerPreviewMsg:
+		return m.handlePickerPreview(msg)
+	case pickerCommitMsg:
+		return m.handlePickerCommit(msg)
 	default:
 		return m.routeToForm(msg)
 	}
@@ -1116,7 +1218,23 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 	if cmd, blocked := m.checkSubmitValidation(); blocked {
 		return m, cmd
 	}
+	// An `auto` account is resolved HERE, after every blocking check and
+	// before anything is created: the pick writes a ledger entry, and spending
+	// one on a submit that a duplicate title was about to refuse would hand
+	// out an account to a session that never exists.
+	if m.deps.Picker != nil && m.account != nil && m.account.IsAuto() && m.autoPick.Profile == "" {
+		m.account.SetPickerPreview(form.AccountPickerPreview{Pending: true})
+		return m, m.pickerCommitCmd()
+	}
+	return m.beginSubmit()
+}
 
+// beginSubmit is handleSubmit's second half: build the plan and start it.
+//
+// Separate because an `auto` account has to make a round trip through a
+// tea.Cmd first, and re-running the validation list on the way back would
+// re-report verdicts the user has already seen.
+func (m Model) beginSubmit() (Model, tea.Cmd) {
 	in := m.buildPlanInput()
 	ops, err := plan.Build(in)
 	if err != nil {
@@ -1234,11 +1352,62 @@ func titleSessions(workspaces []herdrc.WorkspaceInfo, invokingID string) []form.
 // kind changed (AccountField's present-but-inert state, driven by
 // SetAgentIsClaude, does not reset the underlying picker selection, only
 // its own visibility).
+// The picker's commit-time answer wins when there is one: `auto` is a promise
+// to resolve at submit, and WithAccount is what fulfils it. With no answer
+// recorded, this is the field's own pin exactly as before.
 func (m Model) accountPin() string {
 	if m.account == nil || m.agent.Value() != claudeKind {
 		return ""
 	}
+	if m.autoPick.Profile != "" {
+		return m.autoPick.Profile
+	}
 	return m.account.Pin()
+}
+
+// accountLaunch is `[clauth] launch`, mapped to plan's own enum.
+//
+// config.toml is the ONLY source: the mode is a property of the machine's
+// shell, not of the session being created, so no row offers it and no memory
+// tier remembers it -- the same reasoning `[worktree] trust_repository` is
+// confined to config.toml by.
+func (m Model) accountLaunch() plan.LaunchMode {
+	if m.cfg.Clauth.Launch == config.ClauthLaunchWrapper {
+		return plan.LaunchWrapper
+	}
+	return plan.LaunchClauthStart
+}
+
+// ResolveAccount runs the configured picker for an `auto` selection and
+// returns its answer. It is a no-op returning a zero Result and a nil error
+// for every other selection -- an `active` row, a hand-pinned profile, a
+// non-claude agent, or no picker at all -- so callers may call it
+// unconditionally.
+//
+// This is the COMMIT call, and it deliberately does not pass --dry-run: the
+// protocol's ledger write is what stops two sessions opened a second apart
+// from being handed the same account, and a preview that wrote one would
+// register intent for every keystroke in the project field.
+//
+// It is exported because both callers of it are real: the submit pipeline
+// (async.go's pickerCommitCmd) and internal/create's equivalence test, which
+// has to drive the form all the way to a comparable plan.Input. Pairing it
+// with WithAccount rather than mutating in place is what lets the I/O happen
+// inside a tea.Cmd, which runs off-model by construction.
+func (m Model) ResolveAccount(ctx context.Context) (picker.Result, error) {
+	if m.deps.Picker == nil || m.account == nil || !m.account.IsAuto() || m.agent.Value() != claudeKind {
+		return picker.Result{}, nil
+	}
+	return m.deps.Picker.Pick(ctx, pathx.ExpandTilde(m.dir.Value()), picker.Options{})
+}
+
+// WithAccount records a ResolveAccount answer so buildPlanInput can stay a
+// pure read of field state. A zero Result clears any previous answer, which is
+// what makes a second submit after a failed first one ask again rather than
+// reuse an account the picker has since ledgered elsewhere.
+func (m Model) WithAccount(r picker.Result) Model {
+	m.autoPick = r
+	return m
 }
 
 // accountAuthBlocked reports whether the currently pinned profile (see
@@ -1306,6 +1475,8 @@ func (m Model) buildPlanInput() plan.Input {
 		AgentKind:        m.agent.Value(),
 		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],
 		AccountPin:       m.accountPin(),
+		AccountLaunch:    m.accountLaunch(),
+		AccountConfigDir: m.autoPick.ConfigDir,
 		Prompt:           m.prompt.Value(),
 		Ctx:              m.ctx,
 		DetectionTimeout: time.Duration(m.cfg.Timeouts.DetectionMS) * time.Millisecond,
@@ -1454,7 +1625,7 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	dirVal := m.dir.Value()
 	if dirVal != m.lastDir {
 		m.lastDir = dirVal
-		cmds = append(cmds, m.scheduleDirCheck(dirVal), m.scheduleBaseCheck(dirVal))
+		cmds = append(cmds, m.scheduleDirCheck(dirVal), m.scheduleBaseCheck(dirVal), m.schedulePickerPreview(dirVal))
 	}
 
 	titleVal := m.title.Value()

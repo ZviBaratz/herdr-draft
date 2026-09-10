@@ -542,3 +542,115 @@ func TestAccountField_PanelDropsTheResetColumnRatherThanEliding(t *testing.T) {
 		}
 	}
 }
+
+// pct is one utilisation percentage as AccountPickerPreview carries it --
+// a pointer, because 0% and "not reported" are opposite facts.
+func pct(v float64) *float64 { return &v }
+
+// accountFieldWithPicker is the account field as it stands on a machine that
+// has configured AND probed an account picker: two profiles, claude selected,
+// the auto row present.
+func accountFieldWithPicker(t *testing.T) *AccountField {
+	t.Helper()
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(clauth.Status{Schema: 1, ActiveProfile: "alpha-1", Profiles: []clauth.Profile{
+		{Name: "alpha-1", Tier: "Max", AuthStatus: "ok"},
+		{Name: "alpha-2", Tier: "Max", AuthStatus: "ok"},
+	}}, sampleNow())
+	f.SetPickerAvailable(true)
+	return f
+}
+
+// With no picker there is no auto row at all -- the normal case for everyone
+// who has not configured one, and the state every existing frame pins.
+func TestAccountNoAutoRowWithoutAPicker(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	if f.IsAuto() {
+		t.Fatal("IsAuto() must be false with no picker configured")
+	}
+	if strings.Contains(ansi.Strip(f.Panel(80, 10)), AccountAutoLabel) {
+		t.Fatalf("panel should carry no auto row:\n%s", ansi.Strip(f.Panel(80, 10)))
+	}
+}
+
+// With a picker, auto is the first row AND the resting selection: the user
+// configured a picker in order to be picked for.
+func TestAccountAutoIsFirstAndCurrentWhenAPickerExists(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	if !f.IsAuto() {
+		t.Fatal("IsAuto() must be true when a picker exists and nothing else is pinned")
+	}
+	if f.Pin() != "" {
+		t.Fatalf("Pin() = %q; auto is not itself a pin -- the app resolves it", f.Pin())
+	}
+	panel := ansi.Strip(f.Panel(80, 10))
+	autoAt := strings.Index(panel, AccountAutoLabel)
+	activeAt := strings.Index(panel, accountActiveLabel)
+	if autoAt < 0 || activeAt < 0 || autoAt > activeAt {
+		t.Fatalf("auto must be the first row:\n%s", panel)
+	}
+}
+
+// A configured [clauth] default beats auto: naming a profile is a stronger
+// statement than configuring a picker, and SetPin is what carries it.
+func TestAccountSetPinBeatsAuto(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	f.SetPin("alpha-2")
+	if f.IsAuto() {
+		t.Fatal("a named pin must clear auto")
+	}
+	if f.Pin() != "alpha-2" {
+		t.Fatalf("Pin() = %q", f.Pin())
+	}
+}
+
+func TestAccountAutoRowShowsThePickersAnswer(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	f.SetPickerPreview(AccountPickerPreview{Profile: "alpha-1", Tier: "Max", FiveHourPct: pct(3), WeeklyPct: pct(11)})
+	row := ansi.Strip(f.Row(72))
+	for _, want := range []string{"auto", "alpha-1", "5h 3%", "7d 11%"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("row %q should contain %q", row, want)
+		}
+	}
+}
+
+// A refusal is the state this row exists to make visible. It must say what the
+// picker said, not "unavailable".
+func TestAccountAutoRowShowsARefusal(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	f.SetPickerPreview(AccountPickerPreview{Refusal: "pool exhausted (resets 22:49)"})
+	if got := ansi.Strip(f.Row(72)); !strings.Contains(got, "pool exhausted (resets 22:49)") {
+		t.Fatalf("row %q should carry the picker's own reason", got)
+	}
+}
+
+func TestAccountAutoRowSaysItIsAsking(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	f.SetPickerPreview(AccountPickerPreview{Pending: true})
+	if got := ansi.Strip(f.Row(72)); !strings.Contains(got, accountAutoPending) {
+		t.Fatalf("row %q should say the picker is being asked", got)
+	}
+}
+
+// Row(w) must not consult the window height -- the contract that makes "row i
+// is always at row i" hold. Same shape as field_rows_test.go's own two-height
+// comparison, restated here for the states only this file builds.
+func TestAccountAutoRowIsWidthOnly(t *testing.T) {
+	for _, p := range []AccountPickerPreview{
+		{Pending: true},
+		{Profile: "alpha-1", Tier: "Max", FiveHourPct: pct(3)},
+		{Refusal: "pool exhausted"},
+	} {
+		f := accountFieldWithPicker(t)
+		f.SetPickerPreview(p)
+		_ = f.Panel(80, 6)
+		first := f.Row(72)
+		_ = f.Panel(80, 24)
+		if second := f.Row(72); first != second {
+			t.Fatalf("Row changed with panel height:\n %q\n %q", first, second)
+		}
+	}
+}

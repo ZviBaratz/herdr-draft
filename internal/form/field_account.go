@@ -41,6 +41,34 @@ import (
 // contract.
 const accountActiveID = "\x00active"
 
+// accountAutoID is the picker row's widgets.PickerItem.ID -- the same
+// leading-NUL sentinel discipline accountActiveID documents, for the same
+// reason: no clauth profile name can collide with it.
+const accountAutoID = "\x00auto"
+
+const (
+	// AccountAutoLabel is the picker row's word. Exported because the app
+	// layer names the same row in its own messages, and two spellings of one
+	// row's name is one more than there should be.
+	AccountAutoLabel = "auto"
+	// accountAutoTierCell fills the PLAN column on the auto row: the row has
+	// no plan of its own until the picker answers, and this says whose answer
+	// is being shown.
+	accountAutoTierCell = "picker"
+	// accountAutoPending is what the row says between the project changing and
+	// the picker answering. Not blank: a row that empties and refills reads as
+	// a glitch, where a row that says it is asking reads as work.
+	accountAutoPending = "asking the picker…"
+	// accountAutoArrow separates the row's own name from the profile the
+	// picker would choose: `auto → alpha-1`. The picked profile is not the
+	// row's VALUE (the value is "let the picker choose"), which is why it is
+	// shown as a consequence rather than substituted for the name.
+	accountAutoArrow = " → "
+	// accountAutoLegend is the panel status line's explanation of the row, the
+	// same shape accountActiveLegend has for the row below it.
+	accountAutoLegend = AccountAutoLabel + "  let the account picker choose, per project"
+)
+
 const (
 	// accountActiveLabel is the picker's own first row. Lowercase, and
 	// therefore the same word accountRowActive puts in the row: the two
@@ -222,7 +250,84 @@ type AccountField struct {
 	// separate Clear call needed.
 	verdictKey  string
 	verdictText string
+
+	// pickerAvailable is whether an account picker was configured AND probed
+	// successfully (app.Bootstrap). False -- the normal case -- means the auto
+	// row does not exist at all, not that it is disabled: a row offering a
+	// feature nobody has set up is a row that has to explain itself forever.
+	pickerAvailable bool
+
+	// auto is whether the picker row is the committed selection. A THIRD state
+	// beside pinned=="" (active) and pinned!="" (a named profile), because
+	// "let something choose at submit time" is not a pin and must not be
+	// mistaken for one: Pin() answers "" for it, and IsAuto() is what the app
+	// layer branches on.
+	auto bool
+
+	// preview is the picker's last --dry-run answer for the current project,
+	// pushed in by the app layer. internal/form runs no subprocesses; see
+	// SetPickerPreview.
+	preview AccountPickerPreview
 }
+
+// AccountPickerPreview is an account picker's last answer for the current
+// project, as the account row needs it: already reduced to plain values, so
+// this package needs to know nothing about the picker protocol, JSON, or
+// subprocesses. The app layer pushes it in -- the same discipline SetProfiles
+// follows for clauth's own feed.
+//
+// The zero value means "no answer yet and none pending", which is what the row
+// shows before the first project has been resolved.
+type AccountPickerPreview struct {
+	// Profile is the profile the picker would choose; "" when it refused or
+	// has not answered.
+	Profile string
+	// Tier is that profile's plan, e.g. "Max".
+	Tier string
+	// FiveHourPct and WeeklyPct are utilisation percentages, nil when the
+	// picker reported none. Pointers for the reason picker.Usage documents:
+	// 0% and "unknown" are opposite facts about an account.
+	FiveHourPct, WeeklyPct *float64
+	// Refusal is the picker's own one-line reason, already flattened, when it
+	// refused.
+	Refusal string
+	// Pending is true while a call is in flight with no answer yet.
+	Pending bool
+}
+
+// SetPickerAvailable records whether an account picker is configured and has
+// been probed. It adds or removes the auto row, and -- when it is the first
+// thing to arrive and nothing else is pinned -- makes auto the resting
+// selection: someone who configured a picker configured it to be used.
+func (f *AccountField) SetPickerAvailable(available bool) {
+	f.pickerAvailable = available
+	if !available {
+		f.auto = false
+	} else if f.pinned == "" {
+		f.auto = true
+	}
+	f.refreshItems()
+}
+
+// SetPickerPreview records the picker's latest answer for the current project.
+// Purely presentational: the value this field COMMITS is still "auto", and
+// what the picker will actually answer at submit time is a separate call the
+// app layer makes then (a preview is a --dry-run, which by contract writes no
+// ledger entry and builds no account directory).
+func (f *AccountField) SetPickerPreview(p AccountPickerPreview) {
+	f.preview = p
+	f.refreshItems()
+}
+
+// IsAuto reports whether the picker row is the committed selection -- the
+// third state beside Pin()=="" (active) and Pin()!="" (a named profile).
+//
+// Pin() deliberately answers "" here rather than the previewed profile. The
+// preview is a --dry-run taken at some earlier moment against a possibly
+// different project directory, and treating it as the pin would launch under
+// an account nothing had committed to. The commit-time pick is the app layer's
+// (app.Model.ResolveAccount).
+func (f *AccountField) IsAuto() bool { return f.auto && f.pickerAvailable }
 
 // NewAccountField returns an AccountField with only the "active" sentinel
 // row (no profiles yet -- see SetProfiles), inert by default (agent kind
@@ -393,13 +498,28 @@ func (f *AccountField) commitPin() bool {
 	if !ok {
 		return false
 	}
+	// The auto sentinel is a THIRD state, not a pin: it commits to "let the
+	// picker choose at submit time" and leaves f.pinned empty. Handled ahead
+	// of the pin == f.pinned early return below, which would otherwise treat
+	// moving from `active` to `auto` -- both of which have an empty pin -- as
+	// no change at all, and leave the ✓ on the wrong row.
+	if sel.ID == accountAutoID {
+		if f.auto {
+			return false
+		}
+		f.auto, f.pinned = true, ""
+		f.refreshItems()
+		return true
+	}
+
 	pin := sel.ID
 	if pin == accountActiveID {
 		pin = ""
 	}
-	if pin == f.pinned {
+	if pin == f.pinned && !f.auto {
 		return false
 	}
+	f.auto = false
 	f.pinned = pin
 	// Re-feed at the SAME version so the ✓ moves while the cursor stays
 	// exactly where the user left it -- widgets.Picker.SetItems' own
@@ -482,7 +602,10 @@ func (f *AccountField) refreshItems() {
 // an identical seen map, and field_issue.go's refreshItems guards against
 // for issues with an empty Identifier.
 func (f *AccountField) buildItems() []widgets.PickerItem {
-	items := make([]widgets.PickerItem, 0, len(f.profiles)+1)
+	items := make([]widgets.PickerItem, 0, len(f.profiles)+2)
+	if f.pickerAvailable {
+		items = append(items, f.autoItem())
+	}
 	// The sentinel carries only the word: v3 spec §8.1 measures every
 	// column over the whole set, so a sentence in cell 1 would set the
 	// PLAN column's width for every profile row beneath it and blow the
@@ -497,9 +620,9 @@ func (f *AccountField) buildItems() []widgets.PickerItem {
 	items = append(items, widgets.PickerItem{
 		ID:      accountActiveID,
 		Cells:   []string{accountActiveLabel},
-		Current: f.pinned == "",
+		Current: !f.auto && f.pinned == "",
 	})
-	seen := map[string]bool{accountActiveID: true}
+	seen := map[string]bool{accountActiveID: true, accountAutoID: true}
 	for _, p := range f.profiles {
 		if p.Name == "" || seen[p.Name] {
 			continue
@@ -508,6 +631,72 @@ func (f *AccountField) buildItems() []widgets.PickerItem {
 		items = append(items, f.profileItem(p))
 	}
 	return items
+}
+
+// autoItem is the picker row, built with profileItem's exact cell layout so
+// the table's columns measure across it -- name, plan, then a gauge and a
+// labelled percentage per window, then the reset cell. A row with a different
+// arity would set every column's width against a shape no other row has.
+//
+// All three of its states put their text in the BADGE and leave the name cell
+// reading exactly `auto`, which is a decision the first draft got wrong: v3
+// spec §8.1 measures every column over the whole set, so a name cell reading
+// `auto → alpha-1` set the NAME column's width for every profile row beneath
+// it and slid the entire table eight cells sideways the moment the picker
+// answered. The one-line Row does spell the arrow out (autoRow) -- it has no
+// column to disturb.
+func (f *AccountField) autoItem() widgets.PickerItem {
+	badge, marker := "", ""
+
+	switch {
+	case f.preview.Refusal != "":
+		badge, marker = f.preview.Refusal, markerWarning
+	case f.preview.Pending:
+		badge = accountAutoPending
+	case f.preview.Profile != "":
+		badge = accountAutoArrow[1:] + f.preview.Profile // "→ alpha-1", no leading pad: the badge column supplies its own.
+	}
+
+	cells := make([]string, 0, 3+2*len(accountWindowLabels))
+	cells = append(cells, AccountAutoLabel, accountAutoTierCell)
+	for i, label := range accountWindowLabels {
+		pct := f.autoWindowPct(i)
+		if pct == nil {
+			// Two empty cells rather than a placeholder, exactly as
+			// profileItem does for a window clauth did not report.
+			cells = append(cells, "", "")
+			continue
+		}
+		cells = append(cells, gaugeBar(*pct/100, gaugeWidth), accountWindowPercent(label, *pct))
+	}
+
+	return widgets.PickerItem{
+		ID:        accountAutoID,
+		Cells:     append(cells, ""),
+		Badge:     badge,
+		BadgeTone: widgets.ToneWarning,
+		Marker:    marker,
+		Current:   f.auto,
+	}
+}
+
+// autoWindowPct maps an accountWindowLabels index onto the preview's own two
+// percentages, or nil for a window the preview does not carry.
+//
+// Index-keyed rather than label-keyed because AccountPickerPreview models the
+// picker protocol's `usage`, which names exactly two windows and does not
+// promise they are spelled the way clauth spells its own. Adding a third
+// window to accountWindowLabels therefore leaves this row's third pair empty
+// rather than silently mislabelling one of these two.
+func (f *AccountField) autoWindowPct(i int) *float64 {
+	switch i {
+	case 0:
+		return f.preview.FiveHourPct
+	case 1:
+		return f.preview.WeeklyPct
+	default:
+		return nil
+	}
 }
 
 // profileItem builds one profile's picker row (v3 spec §10.2): the name --
@@ -687,12 +876,23 @@ func accountResetText(resetsAt, now time.Time) string {
 // this class of gap: a config-derived default value with no way to
 // pre-select the field it configures.
 func (f *AccountField) SetPin(pin string) {
-	if pin == "" || pin == "active" {
+	// "auto" joins the two no-op sentinels for the same reason they are here:
+	// it is a config value naming a MODE, not a profile, and the mode is
+	// already selected by SetPickerAvailable. Without this it would still
+	// no-op -- SelectID finds no row called "auto", since the real id is
+	// accountAutoID -- but by accident rather than by decision, and a reader
+	// checking whether `[clauth] default = "auto"` works should not have to
+	// derive the answer from a sentinel's byte value.
+	if pin == "" || pin == "active" || pin == AccountAutoLabel {
 		return
 	}
 	if !f.picker.SelectID(pin) {
 		return
 	}
+	// Naming a profile is a stronger statement than configuring a picker, so
+	// a `[clauth] default` that names one beats the auto row SetPickerAvailable
+	// may have just selected. New calls the two in that order for this reason.
+	f.auto = false
 	f.pinned = pin
 	f.refreshItems()
 }
@@ -769,6 +969,13 @@ func (f *AccountField) Row(w int) string {
 	if !f.agentIsClaude {
 		return fitLine(dimHint(f.palette).Render(keepHead(accountInertPlaceholder, w)), w)
 	}
+	// Below the two guards above -- a clauth that cannot be read, and an agent
+	// that is not claude, both of which outrank this row's own value for the
+	// reasons their own comments give -- and above the pin/active branch,
+	// because `auto` is neither.
+	if f.IsAuto() {
+		return fitLine(f.autoRow(w), w)
+	}
 
 	name := accountRowActive
 	lookup := f.activeProfile
@@ -800,6 +1007,48 @@ func (f *AccountField) Row(w int) string {
 		b.WriteString(part.style.Render(part.text))
 	}
 	return fitLine(b.String(), w)
+}
+
+// autoRow is the stack row for the picker selection: `auto → alpha-1 · Max ·
+// 5h 3% · 7d 11%` once the picker has answered, `auto · pool exhausted
+// (resets 22:49)` in Warning when it refused, `auto · asking the picker…`
+// while a call is in flight.
+//
+// It builds its tail from f.preview alone and never from f.profiles: the
+// picker's answer is about a project directory, and the profile it names may
+// not be one clauth currently reports (a picker is free to know about accounts
+// this plugin's clauth feed does not).
+func (f *AccountField) autoRow(w int) string {
+	text := lipgloss.NewStyle().Foreground(f.palette.Text)
+	warn := lipgloss.NewStyle().Foreground(f.palette.Warning)
+
+	switch {
+	case f.preview.Refusal != "":
+		return text.Render(keepHead(AccountAutoLabel+accountRowSep, w)) +
+			warn.Render(keepHead(f.preview.Refusal, w))
+	case f.preview.Pending:
+		return text.Render(keepHead(AccountAutoLabel+accountRowSep+accountAutoPending, w))
+	case f.preview.Profile == "":
+		return text.Render(keepHead(AccountAutoLabel, w))
+	}
+
+	head := AccountAutoLabel + accountAutoArrow + f.preview.Profile
+	var tail strings.Builder
+	if f.preview.Tier != "" {
+		tail.WriteString(accountRowSep + f.preview.Tier)
+	}
+	for i, label := range accountWindowLabels {
+		if pct := f.autoWindowPct(i); pct != nil {
+			tail.WriteString(accountRowSep + accountWindowPercent(label, *pct))
+		}
+	}
+	// The name half is the one that can run long, so it is the one that gives
+	// up cells -- Row's own rule, applied to this row's own head.
+	budget := w - lipgloss.Width(tail.String())
+	if budget < 1 {
+		return text.Render(keepHead(head+tail.String(), w))
+	}
+	return text.Render(keepHead(head, budget)) + text.Render(tail.String())
 }
 
 // accountRowPart is one `·`-separated piece of the stack row past the
@@ -946,6 +1195,14 @@ func (f *AccountField) panelStatus(inner int) string {
 // here rather than shared because that one is crossed with a constant tail
 // this line has no equivalent of.
 func (f *AccountField) panelLegend(inner int) string {
+	// The auto row's legend outranks the `●` one while auto is the selection:
+	// it explains the row the ✓ is actually sitting on, which is what a legend
+	// is for. It has no short rung -- there is no shorter honest way to say
+	// what "auto" means -- so it falls straight through to accountActiveLegend
+	// on a panel too narrow for it.
+	if f.IsAuto() && lipgloss.Width(accountAutoLegend) <= inner {
+		return accountAutoLegend
+	}
 	if _, live := f.profileByName(f.activeProfile); live {
 		for _, rung := range []string{accountLiveLegend, accountLiveLegendShort} {
 			if lipgloss.Width(rung) <= inner {
@@ -956,13 +1213,17 @@ func (f *AccountField) panelLegend(inner int) string {
 	return accountActiveLegend
 }
 
-// PanelRows is the "active" row, one row per profile, and the status
-// line, capped at accountPanelMaxRows.
+// PanelRows is the "active" row, the "auto" row when a picker exists, one row
+// per profile, and the status line, capped at accountPanelMaxRows.
 func (f *AccountField) PanelRows() int {
 	// An inert field wants only the status line, which is all Panel draws
 	// for it -- the same accounting IssueField.PanelRows does.
 	if f.unavailable != "" {
 		return 1
 	}
-	return capRows(2+len(f.profiles), accountPanelMaxRows)
+	rows := 2 + len(f.profiles)
+	if f.pickerAvailable {
+		rows++
+	}
+	return capRows(rows, accountPanelMaxRows)
 }

@@ -201,7 +201,7 @@ func (r *submitFakeRunner) AwaitDetection(_ context.Context, _ string, _, blocke
 	return nil
 }
 
-func (r *submitFakeRunner) PaneRun(context.Context, string, []string) error {
+func (r *submitFakeRunner) PaneRun(context.Context, string, []herdrc.EnvVar, []string) error {
 	if r.shouldFail("PaneRun") {
 		return r.failErr
 	}

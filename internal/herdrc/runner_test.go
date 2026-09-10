@@ -621,7 +621,7 @@ func TestCLIRunnerPaneRun(t *testing.T) {
 	bin, argvLog := fakeHerdrOK(t)
 	r := &CLIRunner{Bin: bin}
 
-	err := r.PaneRun(context.Background(), "w1:p2", []string{"clauth", "start", "alpha", "--"})
+	err := r.PaneRun(context.Background(), "w1:p2", nil, []string{"clauth", "start", "alpha", "--"})
 	if err != nil {
 		t.Fatalf("PaneRun: %v", err)
 	}
@@ -642,7 +642,7 @@ func TestCLIRunnerPaneRunToleratesNonEmptyStdout(t *testing.T) {
 	bin, _ := fakeHerdr(t, stdout)
 	r := &CLIRunner{Bin: bin}
 
-	if err := r.PaneRun(context.Background(), "w1:p2", []string{"echo", "hi"}); err != nil {
+	if err := r.PaneRun(context.Background(), "w1:p2", nil, []string{"echo", "hi"}); err != nil {
 		t.Fatalf("PaneRun: %v", err)
 	}
 }
@@ -666,7 +666,7 @@ func TestCLIRunnerPaneRunQuotesForTheShell(t *testing.T) {
 	r := &CLIRunner{Bin: bin}
 
 	argv := []string{"clauth", "start", "personal", "--", "--model", "claude-opus-5[1m]", "--effort", "xhigh"}
-	if err := r.PaneRun(context.Background(), "w9:p1", argv); err != nil {
+	if err := r.PaneRun(context.Background(), "w9:p1", nil, argv); err != nil {
 		t.Fatalf("PaneRun: %v", err)
 	}
 
@@ -687,7 +687,7 @@ func TestCLIRunnerPaneRunQuotesSpacesAndQuotes(t *testing.T) {
 	r := &CLIRunner{Bin: bin}
 
 	argv := []string{"clauth", "start", "p", "--", "--append-system-prompt", "be terse", "--tag", "it's"}
-	if err := r.PaneRun(context.Background(), "w9:p1", argv); err != nil {
+	if err := r.PaneRun(context.Background(), "w9:p1", nil, argv); err != nil {
 		t.Fatalf("PaneRun: %v", err)
 	}
 
@@ -755,7 +755,7 @@ func TestCLIRunnerPaneRunNonZeroExit(t *testing.T) {
 	bin := fakeHerdrFail(t, "no such pane w1:p2")
 	r := &CLIRunner{Bin: bin}
 
-	err := r.PaneRun(context.Background(), "w1:p2", []string{"echo", "hi"})
+	err := r.PaneRun(context.Background(), "w1:p2", nil, []string{"echo", "hi"})
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -1469,5 +1469,66 @@ func TestCLIRunnerAgentPromptStalled(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "agent_prompt_stalled") {
 		t.Errorf("error %q drops herdr's own code", err)
+	}
+}
+
+// TestCLIRunnerPaneRunEmitsAnEnvPrefixAsAShellAssignment: an environment
+// prefix must reach the pane as a SHELL ASSIGNMENT -- unquoted name, `=`,
+// quoted value. This is the one place #72's quote-everything rule cannot
+// apply verbatim: `'CLAUDE_CONFIG_DIR=/x' claude` makes the pane's shell look
+// for a command called `CLAUDE_CONFIG_DIR=/x`.
+//
+// It also may not go through env(1). `env VAR=x claude` execs the binary,
+// which is precisely what `[clauth] launch = "wrapper"` exists NOT to do: the
+// mode is for a login shell whose `claude` is a function, and env would step
+// over it.
+func TestCLIRunnerPaneRunEmitsAnEnvPrefixAsAShellAssignment(t *testing.T) {
+	bin, argvLog := fakeHerdrOK(t)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.PaneRun(context.Background(), "w1:p2",
+		[]EnvVar{{Name: "CLAUDE_CONFIG_DIR", Value: "/home/a b/dirs/alpha-1"}},
+		[]string{"claude", "--model", "opus[1m]"})
+	if err != nil {
+		t.Fatalf("PaneRun: %v", err)
+	}
+
+	wantArgv := `pane run w1:p2 CLAUDE_CONFIG_DIR='/home/a b/dirs/alpha-1' claude --model 'opus[1m]'`
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv:\n got %s\nwant %s", got, wantArgv)
+	}
+}
+
+// No prefix, no change: the default launch path must produce byte-for-byte
+// what it produced before this parameter existed.
+func TestCLIRunnerPaneRunWithNoEnvIsUnchanged(t *testing.T) {
+	bin, argvLog := fakeHerdrOK(t)
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.PaneRun(context.Background(), "w1:p2", nil, []string{"clauth", "start", "alpha", "--"}); err != nil {
+		t.Fatalf("PaneRun: %v", err)
+	}
+	if got, want := readArgvLog(t, argvLog), "pane run w1:p2 clauth start alpha --"; got != want {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+}
+
+// A name that is not a shell identifier is refused rather than typed. The
+// value is quoted and therefore inert; the NAME is not, so it is the half
+// that has to be validated instead.
+func TestCLIRunnerPaneRunRefusesAnUnusableEnvName(t *testing.T) {
+	bin, argvLog := fakeHerdrOK(t)
+	r := &CLIRunner{Bin: bin}
+
+	for _, bad := range []string{"", "2FOO", "FOO BAR", "FOO=BAR", "FOO;rm -rf /"} {
+		err := r.PaneRun(context.Background(), "w1:p2", []EnvVar{{Name: bad, Value: "x"}}, []string{"claude"})
+		if err == nil {
+			t.Fatalf("PaneRun with env name %q should have been refused", bad)
+		}
+	}
+	// The log file is only created by the fake herdr's first run, so its
+	// absence is the assertion: nothing was typed into any pane.
+	if _, err := os.Stat(argvLog); err == nil {
+		t.Fatalf("a refused env name must type nothing, got %q", readArgvLog(t, argvLog))
 	}
 }

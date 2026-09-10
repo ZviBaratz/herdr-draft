@@ -49,7 +49,7 @@ func sampleStepsRunning() []Step {
 	return []Step{
 		{Label: "worktree", Detail: "zvi/fix-login-redirect-loop from main", State: plan.StepDone},
 		{Label: "workspace", Detail: "fix login redirect loop", State: plan.StepDone},
-		{Label: "claude", Detail: "starting under clauth quantivly-2", State: plan.StepRunning},
+		{Label: "claude", Detail: "starting under clauth alpha-2", State: plan.StepRunning},
 		{Label: "prompt", State: plan.StepPending},
 	}
 }
