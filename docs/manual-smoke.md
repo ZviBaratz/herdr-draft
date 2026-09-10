@@ -1194,6 +1194,14 @@ into fresh worktrees of one throwaway repo.
   no turn**. A stalled send is now retried once, after a short settle and
   through the same guard; a send whose confirmation merely timed out is
   still never retried, since that one means the agent was working.
+- **Fifth submit, with everything in place: pass, and it is Cell 1's own
+  pass condition.** `… claude  final-check` with the footer instruction; the
+  dialog answered in the pane and **nothing pressed in the popup**; the
+  launch row went `✓`, the prompt row `working…`, the popup persisted its
+  state and closed itself. The pane then held `❯ Reply with exactly one
+  word: pineapple` as a **submitted turn**, `● pineapple` under it, and an
+  **empty input buffer** — one copy of the prompt, not two. That is #115
+  met, read off the pane rather than the report.
 - Not a finding: `agent read --source detection` on a blocked pane does carry
   both `dialog.go` signatures verbatim, so the guard's *matching* is sound.
   What it cannot do is match a screen that has not painted yet.
