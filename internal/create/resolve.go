@@ -16,6 +16,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/pathx"
+	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
@@ -28,6 +29,12 @@ const claudeKind = "claude"
 // "whatever account is active", which is not a pin at all. AccountField
 // treats it as a no-op; so does this.
 const clauthActive = "active"
+
+// clauthAuto is the `[clauth] default` / `--account` sentinel meaning "ask the
+// configured account picker". Unlike clauthActive it is not a no-op: it names
+// a resolution strategy, and an install with no `[clauth] picker` does not
+// have it.
+const clauthAuto = "auto"
 
 // tiers is every source spec §10's resolver consumes, already loaded, plus
 // the two facts about the project directory that decide which of them
@@ -128,6 +135,19 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		return resolution{}, err
 	}
 	if err := requireContext(hctx, in); err != nil {
+		return resolution{}, err
+	}
+
+	// An `auto` account is turned into a real profile HERE, inside the
+	// resolution the equivalence test compares against the form's -- which is
+	// the point: a plan.Input field only one path can fill is exactly the
+	// drift that test exists to catch, and `auto` adds two of them.
+	//
+	// It is also before anything is created, so a refusal costs no worktree,
+	// no workspace and no pane: the whole of the contract the spec states for
+	// the picker's exit 2/3/4.
+	in, err = resolveAccount(ctx, in, accountPicker(cfg, deps))
+	if err != nil {
 		return resolution{}, err
 	}
 	return resolution{input: in, tiers: t, provenance: prov, env: env}, nil
@@ -385,18 +405,19 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	}
 
 	return plan.Input{
-		ProjectDir:  t.projectDir,
-		Title:       title,
-		Branch:      branch,
-		BaseRef:     base,
-		UseWorktree: useWorktree,
-		IsGitRepo:   t.isGitRepo,
-		Placement:   placement,
-		AgentKind:   kind,
-		ExtraArgs:   t.cfg.Agents.ExtraArgs[kind],
-		AccountPin:  accountPin(req, t.cfg, kind),
-		Prompt:      promptText(prompt, issue, t.cfg),
-		Ctx:         hctx,
+		ProjectDir:    t.projectDir,
+		Title:         title,
+		Branch:        branch,
+		BaseRef:       base,
+		UseWorktree:   useWorktree,
+		IsGitRepo:     t.isGitRepo,
+		Placement:     placement,
+		AgentKind:     kind,
+		ExtraArgs:     t.cfg.Agents.ExtraArgs[kind],
+		AccountPin:    accountPin(req, t.cfg, kind),
+		AccountLaunch: accountLaunch(t.cfg),
+		Prompt:        promptText(prompt, issue, t.cfg),
+		Ctx:           hctx,
 
 		DetectionTimeout: time.Duration(t.cfg.Timeouts.DetectionMS) * time.Millisecond,
 		PromptTimeout:    time.Duration(t.cfg.Timeouts.PromptWaitMS) * time.Millisecond,
@@ -443,6 +464,11 @@ func agentKind(req request, res defaults.Resolved, kinds []string, prov map[stri
 // An explicit --account is passed through even for a non-claude kind,
 // deliberately: plan.Build's own refusal names the rule, which is more
 // useful than silently dropping the flag.
+//
+// `auto` is returned UNRESOLVED, as the sentinel: resolving it runs a
+// subprocess, and this function is pure so that every precedence rule stays
+// readable in one place. resolveAccount below is what turns it into a profile
+// name, once, at the point the request is otherwise complete.
 func accountPin(req request, cfg config.Config, kind string) string {
 	if req.set["account"] {
 		return req.account
@@ -457,6 +483,66 @@ func accountPin(req request, cfg config.Config, kind string) string {
 		return ""
 	}
 	return cfg.Clauth.Default
+}
+
+// resolveAccount turns an `auto` pin into a real profile and its config dir.
+//
+// --strict, and not --dry-run. Strict because this verb has nobody at the
+// keyboard: a picker that would have prompted must refuse instead. Not dry-run
+// because this is the real launch, and the protocol's ledger write is what
+// keeps two concurrent creates off one account.
+// accountPicker is the picker `--account auto` resolves through: whatever a
+// test injected, else one built from `[clauth] picker`, else nil.
+//
+// The nil-means-production shape every other collaborator in Deps has (Git,
+// Linear, RepoConfig), and for the same reason: this package's tests must
+// never run a subprocess, and production must never need a caller to have
+// loaded the config twice to hand it one.
+//
+// Note what is NOT here: any search of PATH. A picker is named or there is
+// none -- see config.ClauthConfig.Picker.
+//
+// Unlike the popup, this does not PROBE the named executable first. The popup
+// probes because it is about to offer a row that has to work later, silently,
+// on a submit; here the very next thing that happens is the real call, and its
+// failure is reported in full to a person reading stderr. A probe would only
+// double the work and halve the error message.
+func accountPicker(cfg config.Config, deps Deps) picker.Source {
+	if deps.Picker != nil {
+		return deps.Picker
+	}
+	if bin := strings.TrimSpace(cfg.Clauth.Picker); bin != "" {
+		return picker.CLI{Bin: bin}
+	}
+	return nil
+}
+
+func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan.Input, error) {
+	if in.AccountPin != clauthAuto {
+		return in, nil
+	}
+	if src == nil {
+		return in, fmt.Errorf("--account auto needs an account picker: set `[clauth] picker` in config.toml to an executable implementing the picker protocol")
+	}
+	res, err := src.Pick(ctx, in.ProjectDir, picker.Options{Strict: true})
+	if err != nil {
+		return in, err
+	}
+	in.AccountPin = res.Profile
+	in.AccountConfigDir = res.ConfigDir
+	return in, nil
+}
+
+// accountLaunch is `[clauth] launch`, mapped to plan's enum -- the same
+// mapping app.Model.accountLaunch performs, and deliberately the same
+// duplicated two-line body rather than a shared helper: equivalence_test.go
+// compares the two paths' plan.Input, and a shared helper would make it unable
+// to catch the two drifting.
+func accountLaunch(cfg config.Config) plan.LaunchMode {
+	if cfg.Clauth.Launch == config.ClauthLaunchWrapper {
+		return plan.LaunchWrapper
+	}
+	return plan.LaunchClauthStart
 }
 
 // explicitPrompt is --prompt's already-resolved value: the text, and

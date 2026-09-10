@@ -37,6 +37,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
@@ -139,6 +140,12 @@ type Deps struct {
 	Linear IssueSource
 	// RepoConfig is nil for config.LoadRepoConfig.
 	RepoConfig func(repoRoot string) config.RepoConfig
+	// Picker is the account picker `--account auto` resolves through, or nil
+	// for "no picker configured" -- which makes `auto` a usage error rather
+	// than a silent fallback. Production is picker.CLI over `[clauth] picker`;
+	// every test in this package hands in a fake, so no test here ever runs a
+	// subprocess.
+	Picker picker.Source
 
 	Stdin  io.Reader
 	Stdout io.Writer

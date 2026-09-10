@@ -1080,6 +1080,16 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 		}
 		return ""
 	case plan.OpClauthLaunch:
+		// The two launch modes get different words, because they type
+		// different command lines and the step's whole job is to say which.
+		// It reads off op.RunEnv rather than off in.AccountLaunch on purpose:
+		// plan.Build silently falls back to `clauth start` when wrapper mode
+		// has no config dir to isolate with, and a step that named the mode
+		// the user ASKED for would then be describing a command that was not
+		// typed.
+		if len(op.RunEnv) > 0 {
+			return "as " + in.AccountPin + ", through your shell's claude"
+		}
 		if in.AccountPin != "" {
 			return "under clauth " + in.AccountPin
 		}

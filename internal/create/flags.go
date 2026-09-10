@@ -82,7 +82,8 @@ flags:
   --placement WHERE  new-space | tab-here | split-here; where the agent's
                      pane lands (a worktree still gets its own new space too)
   --agent KIND       agent kind to start, e.g. claude
-  --account NAME     clauth account to pin (claude only)
+  --account NAME     clauth account to pin (claude only); "auto" asks the
+                     configured [clauth] picker to choose
   --issue ID         seed title, branch and prompt from a Linear issue
   --json             print one JSON object instead of a human line
   --on-failure WHAT  keep | clean -- what to do with a session that failed

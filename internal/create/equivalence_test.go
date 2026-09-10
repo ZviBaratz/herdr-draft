@@ -13,8 +13,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/ZviBaratz/herdr-draft/internal/app"
+	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
+	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
@@ -216,6 +218,7 @@ type commandCase struct {
 	projectDir          string
 	repoConfig          func(string) config.RepoConfig
 	args                []string
+	picker              picker.Source
 }
 
 func commandPlanInput(t *testing.T, c commandCase) plan.Input {
@@ -244,6 +247,7 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 		Stdout:     &strings.Builder{},
 		Stderr:     &strings.Builder{},
 		Workdir:    func() (string, error) { return c.projectDir, nil },
+		Picker:     c.picker,
 	})
 	if err != nil {
 		t.Fatalf("resolveRequest: %v", err)
@@ -266,9 +270,25 @@ type formCase struct {
 	contextJSON         string
 	repoConfig          func(string) config.RepoConfig
 	title               string
+	picker              picker.Source
+	// clauthStatus is what makes the account row exist at all (app.New's own
+	// ">= 2 profiles" gate). The command path never consults clauth, so this
+	// has no counterpart on the other side -- it is scaffolding for the row,
+	// not a tier under comparison.
+	clauthStatus clauth.Status
 }
 
 func formPlanInput(t *testing.T, c formCase) plan.Input {
+	t.Helper()
+	return formModel(t, c).PlanInput()
+}
+
+// formModel is formPlanInput's first half: a real, settled app.Model with the
+// title typed. Split out so a scenario that has to do something MORE with the
+// model before reading its plan.Input -- resolving an `auto` account, which
+// the submit pipeline does between validation and plan.Build -- can, without
+// every other scenario growing a step it does not use.
+func formModel(t *testing.T, c formCase) app.Model {
 	t.Helper()
 
 	cfg, err := config.Load(c.configDir)
@@ -288,13 +308,19 @@ func formPlanInput(t *testing.T, c formCase) plan.Input {
 			Git:        &formGit{},
 			Clock:      app.Clock{Sleep: func(time.Duration) {}},
 			RepoConfig: c.repoConfig,
+			Picker:     c.picker,
+			// Non-nil purely to satisfy app.New's construction gate; nothing
+			// in this test focuses the account row, which is the only thing
+			// that would ever call it.
+			Clauth: app.NewClauthSource(clauth.LoadOpts{}),
 		},
-		Ctx:      hctx,
-		Config:   cfg,
-		State:    state,
-		Projects: projects,
-		Palette:  theme.Default(),
-		StateDir: c.stateDir,
+		Ctx:          hctx,
+		Config:       cfg,
+		State:        state,
+		Projects:     projects,
+		Palette:      theme.Default(),
+		StateDir:     c.stateDir,
+		ClauthStatus: c.clauthStatus,
 	})
 
 	// A real terminal size first: several fields only lay out (and the
@@ -314,7 +340,7 @@ func formPlanInput(t *testing.T, c formCase) plan.Input {
 	for _, r := range c.title {
 		m = send(m, tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	return m.PlanInput()
+	return m
 }
 
 // send routes one message and discards whatever it scheduled.
@@ -467,4 +493,98 @@ func showInput(in plan.Input) string {
 		return "<unencodable>"
 	}
 	return string(b)
+}
+
+// TestFormAndCommandResolveAutoTheSameWay extends the promise above to the
+// account picker. A plan.Input field only ONE path can fill is exactly the
+// drift TestFormAndCommandProduceTheSamePlan exists to catch, and `auto` adds
+// two of them: the picked profile and its config dir.
+//
+// Both sides are driven over one stub picker. The form side reaches its answer
+// through the same exported pair the submit pipeline uses -- ResolveAccount
+// then WithAccount -- rather than through a test-only hook, which is what
+// makes the comparison meaningful: a divergence here is a divergence in
+// production code.
+//
+// It is a separate test from the table above rather than another row in it
+// because the form side needs two things no other scenario does: a clauth feed
+// (or there is no account row to select `auto` on) and a settled picker
+// preview. Bolting those onto every row would make the common case harder to
+// read in order to spare fifteen lines here.
+func TestFormAndCommandResolveAutoTheSameWay(t *testing.T) {
+	const projectDir = "/projects/thing"
+	const title = "fix login redirect loop"
+	const configTOML = `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+[clauth]
+picker = "stub"
+default = "auto"
+launch = "wrapper"
+`
+	contextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + projectDir +
+		`","tab_id":"tT0","focused_pane_id":"pP0"}`
+
+	newStub := func() picker.Source {
+		return &fakePicker{res: picker.Result{Profile: "alpha-1", Tier: "Max", ConfigDir: "/dirs/alpha-1"}}
+	}
+
+	configDir, stateDir := t.TempDir(), t.TempDir()
+	writeConfig(t, configDir, configTOML)
+	repoConfig := func(string) config.RepoConfig { return config.RepoConfig{} }
+
+	fromCommand := commandPlanInput(t, commandCase{
+		configDir:   configDir,
+		stateDir:    stateDir,
+		contextJSON: contextJSON,
+		projectDir:  projectDir,
+		repoConfig:  repoConfig,
+		args:        []string{"--title", title},
+		picker:      newStub(),
+	})
+
+	fromForm := formPlanInputAuto(t, formCase{
+		configDir:   configDir,
+		stateDir:    stateDir,
+		contextJSON: contextJSON,
+		repoConfig:  repoConfig,
+		title:       title,
+		picker:      newStub(),
+		clauthStatus: clauth.Status{Schema: 1, ActiveProfile: "alpha-1", Profiles: []clauth.Profile{
+			{Name: "alpha-1", Tier: "Max", AuthStatus: "ok"},
+			{Name: "alpha-2", Tier: "Max", AuthStatus: "ok"},
+		}},
+	})
+
+	if !reflect.DeepEqual(fromCommand, fromForm) {
+		t.Fatalf("the command and the form disagree.\ncommand: %s\nform:    %s",
+			showInput(fromCommand), showInput(fromForm))
+	}
+
+	// ... and both agree on the RIGHT thing. Two sides that agreed on nothing
+	// in particular would satisfy DeepEqual just as well.
+	if fromCommand.AccountPin != "alpha-1" {
+		t.Errorf("AccountPin = %q, want the picker's answer", fromCommand.AccountPin)
+	}
+	if fromCommand.AccountConfigDir != "/dirs/alpha-1" {
+		t.Errorf("AccountConfigDir = %q, want the picker's answer", fromCommand.AccountConfigDir)
+	}
+	if fromCommand.AccountLaunch != plan.LaunchWrapper {
+		t.Errorf("AccountLaunch = %v, want LaunchWrapper from config.toml", fromCommand.AccountLaunch)
+	}
+}
+
+// formPlanInputAuto is formPlanInput plus the commit-time account pick the
+// submit pipeline performs. Kept separate rather than folded in, because every
+// other scenario has no picker and calling ResolveAccount there would assert
+// nothing while making the common path harder to read.
+func formPlanInputAuto(t *testing.T, c formCase) plan.Input {
+	t.Helper()
+	m := formModel(t, c)
+	res, err := m.ResolveAccount(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveAccount: %v", err)
+	}
+	return m.WithAccount(res).PlanInput()
 }

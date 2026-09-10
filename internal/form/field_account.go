@@ -876,7 +876,14 @@ func accountResetText(resetsAt, now time.Time) string {
 // this class of gap: a config-derived default value with no way to
 // pre-select the field it configures.
 func (f *AccountField) SetPin(pin string) {
-	if pin == "" || pin == "active" {
+	// "auto" joins the two no-op sentinels for the same reason they are here:
+	// it is a config value naming a MODE, not a profile, and the mode is
+	// already selected by SetPickerAvailable. Without this it would still
+	// no-op -- SelectID finds no row called "auto", since the real id is
+	// accountAutoID -- but by accident rather than by decision, and a reader
+	// checking whether `[clauth] default = "auto"` works should not have to
+	// derive the answer from a sentinel's byte value.
+	if pin == "" || pin == "active" || pin == AccountAutoLabel {
 		return
 	}
 	if !f.picker.SelectID(pin) {
