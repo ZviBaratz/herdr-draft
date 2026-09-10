@@ -1442,3 +1442,32 @@ func TestCLIRunnerAwaitDetectionNeverReportsGoneWithoutHavingSeenBlocked(t *test
 		t.Fatalf("error = %v, want a timeout", err)
 	}
 }
+
+// TestCLIRunnerAgentPromptStalled: herdr's `agent_prompt_stalled` is a
+// different fact from its `timeout`, and conflating them would repeat #108
+// with the signs reversed.
+//
+// `timeout` means the wait gave up while something WAS happening -- delivery
+// unconfirmed. `agent_prompt_stalled` means herdr observed no working or
+// blocked state at all within five seconds, which is positive evidence that
+// nothing was processed. Recorded live on 2026-09-09: for the ~seconds after
+// a trust dialog is answered, `agent get` reports idle and interactive_ready
+// while Claude Code is not yet accepting input, and the pane afterwards holds
+// an empty buffer and no turn.
+func TestCLIRunnerAgentPromptStalled(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "agent_prompt_stalled",
+		"agent prompt produced no observed working or blocked state within 5000 ms; current status is idle")
+	r := &CLIRunner{Bin: bin}
+
+	err := r.AgentPrompt(context.Background(), AgentPromptReq{Target: "w1:p2", Text: "hi", WaitTimeout: time.Second})
+
+	if !errors.Is(err, ErrPromptStalled) {
+		t.Fatalf("error %q is not ErrPromptStalled", err)
+	}
+	if errors.Is(err, ErrPromptWaitTimeout) {
+		t.Errorf("error %q is ALSO ErrPromptWaitTimeout; the two mean opposite things about delivery", err)
+	}
+	if !strings.Contains(err.Error(), "agent_prompt_stalled") {
+		t.Errorf("error %q drops herdr's own code", err)
+	}
+}

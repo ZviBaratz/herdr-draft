@@ -1183,6 +1183,17 @@ into fresh worktrees of one throwaway repo.
   returning through a timing window rather than through a classifier gap, and
   it is independent of #115 (the wait is not in that path). Read the pane
   before believing a success. **#116**
+- **And the wait was not enough on its own.** With the prompt-step wait in
+  place a fourth submit reached `… claude`, the footer read `answer the
+  dialog in the pane — your prompt goes out as soon as you do`, and the wait
+  resolved the moment the dialog was answered — then the prompt failed
+  anyway. Reproduced by hand: 0.5s after the dialog clears `agent get`
+  reports `idle` with `interactive_ready: true`, but Claude Code is not yet
+  accepting input, so herdr types, observes nothing, and returns
+  `agent_prompt_stalled` — leaving the pane with an **empty input buffer and
+  no turn**. A stalled send is now retried once, after a short settle and
+  through the same guard; a send whose confirmation merely timed out is
+  still never retried, since that one means the agent was working.
 - Not a finding: `agent read --source detection` on a blocked pane does carry
   both `dialog.go` signatures verbatim, so the guard's *matching* is sound.
   What it cannot do is match a screen that has not painted yet.

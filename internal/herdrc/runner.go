@@ -365,6 +365,32 @@ const promptWaitTimeoutCode = "timeout"
 // question embeds the caller's own prompt text.
 var ErrPromptWaitTimeout = errors.New("timed out waiting for the agent's status to change, so delivery is unconfirmed")
 
+// promptStalledCode is herdr's `error.code` for `agent prompt` observing no
+// lifecycle change at all within its five-second window
+// (herdr:src/app/api/agents.rs). Unlike promptWaitTimeoutCode beside it this
+// one is specific enough to be unmistakable, but it is read from the parsed
+// envelope for the same reason: the error's own text carries the caller's
+// prompt.
+const promptStalledCode = "agent_prompt_stalled"
+
+// ErrPromptStalled reports that herdr sent the prompt and then saw the agent
+// do NOTHING -- no working state, no blocked state -- within its five-second
+// window.
+//
+// It is the opposite conclusion from ErrPromptWaitTimeout above, and keeping
+// the two apart is the whole reason it exists. That one means a wait gave up
+// while the agent was demonstrably busy, so delivery is UNKNOWN and must not
+// be re-attempted. This one means herdr observed no reaction at all, which is
+// the positive evidence that nothing was processed.
+//
+// Live on herdr 0.9.0 (docs/manual-smoke.md, 2026-09-09) it has one dominant
+// cause: for a second or so after Claude Code's trust dialog is answered,
+// `agent get` reports the agent idle and interactive_ready while its TUI is
+// not yet accepting input. herdr types, nothing happens, and the pane is left
+// with an empty buffer and no turn -- so a caller that waits a moment and
+// sends again delivers the prompt exactly once rather than not at all.
+var ErrPromptStalled = errors.New("the agent was not accepting input yet, so nothing was delivered")
+
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement
 // focus as two explicit mutually exclusive flags rather than a single
 // toggle, so every creation call must pass exactly one.
@@ -641,8 +667,11 @@ func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 		}
 	}
 	if _, err = r.runJSON(ctx, args...); err != nil {
-		if herdrErrorCode(err) == promptWaitTimeoutCode {
+		switch herdrErrorCode(err) {
+		case promptWaitTimeoutCode:
 			return fmt.Errorf("%w: %w", ErrPromptWaitTimeout, err)
+		case promptStalledCode:
+			return fmt.Errorf("%w: %w", ErrPromptStalled, err)
 		}
 		return err
 	}

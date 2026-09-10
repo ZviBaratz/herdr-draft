@@ -151,6 +151,15 @@ without the popup. It drives herdr exclusively through the public CLI
   herdr's status, the prompt-step wait polls the pane's own screen — herdr
   being wrong about that pane is the reason the second wait exists, so it
   does not ask herdr again.
+
+  A prompt that herdr reports as *stalled* — it saw the agent do nothing at
+  all — is sent once more after a short pause, through the same dialog
+  guard. That is the one prompt failure which is positive evidence nothing
+  was delivered, and for about a second after a trust dialog clears it is
+  the ordinary outcome: herdr calls the agent ready while its interface is
+  still coming up. It is deliberately not the same as a prompt whose
+  confirmation merely timed out, which means the agent *was* working and is
+  never resent.
 - `herdr pane run` types its argv into a shell rather than exec'ing it, so
   the runner shell-quotes every element — and the argv path that has no
   shell deliberately does not.

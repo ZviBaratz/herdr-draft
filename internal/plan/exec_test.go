@@ -256,6 +256,15 @@ func (m *mockRunner) WorkspaceClose(ctx context.Context, workspaceID string) err
 // withDialogPollInterval shrinks the prompt-step dialog wait's poll cadence
 // so a test runs its loop instantly instead of sleeping out real seconds --
 // the same trick withBusyRetryOverrides plays, and for the same reason.
+// withPromptRetrySettle shrinks the pause before a stalled prompt is sent
+// again, so a test runs the retry instantly instead of sleeping it out.
+func withPromptRetrySettle(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := promptRetrySettle
+	promptRetrySettle = d
+	t.Cleanup(func() { promptRetrySettle = orig })
+}
+
 func withDialogPollInterval(t *testing.T, interval time.Duration) {
 	t.Helper()
 	orig := dialogPollInterval
@@ -2640,5 +2649,166 @@ func TestExecuteToleratesAnUnreadablePaneWhileWaiting(t *testing.T) {
 	}
 	if !containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
 		t.Errorf("calls = %v, want the prompt sent once the dialog cleared", m.calls)
+	}
+}
+
+// --- #115: the prompt that arrives a second too early --------------------
+//
+// Live on 2026-09-09, the launch-step wait resolved correctly and then the
+// prompt failed anyway: for about a second after the trust dialog is
+// answered, `agent get` reports the agent idle and interactive_ready while
+// Claude Code is not yet accepting input. herdr types, sees nothing happen,
+// and returns agent_prompt_stalled with the pane left holding an empty
+// buffer and no turn. Without a retry the wait ends exactly where it began
+// -- a failure screen and a prompt to paste by hand.
+
+// stalledPromptErr is herdr's own refusal, as herdrc types it.
+func stalledPromptErr() error {
+	return fmt.Errorf("%w: herdr agent prompt w1:p2 ...: exit status 1: "+
+		`{"error":{"code":"agent_prompt_stalled","message":"agent prompt produced no observed working or blocked state within 5000 ms; current status is idle"},"id":"cli:agent:prompt"}`,
+		herdrc.ErrPromptStalled)
+}
+
+// TestExecuteRetriesAPromptThatStalled: one more attempt, and the prompt the
+// user typed is delivered instead of handed back.
+func TestExecuteRetriesAPromptThatStalled(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:    "AgentPrompt",
+		failErr:   stalledPromptErr(),
+		failCount: 1,
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: a stalled send is the agent not being ready yet: %+v",
+			result.FailedIndex, result)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
+		t.Errorf("AgentPrompt called %d times, want exactly 2 -- one stall, one retry", n)
+	}
+	// The guard runs again before the retry, so the second send can no more
+	// type into a dialog than the first could.
+	if n := countCallsWithPrefix(m.calls, "AgentRead"); n != 2 {
+		t.Errorf("AgentRead called %d times, want 2 -- promptIfReady must gate the retry too", n)
+	}
+	if result.PromptText != "" {
+		t.Errorf("PromptText = %q, want empty", result.PromptText)
+	}
+}
+
+// TestExecuteRetriesAStalledPromptOnlyOnce: bounded, so a Claude Code that
+// buffers keystrokes it received while starting cannot be handed the same
+// prompt over and over. Two stalls is where the evidence stops supporting
+// another attempt.
+func TestExecuteRetriesAStalledPromptOnlyOnce(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:    "AgentPrompt",
+		failErr:   stalledPromptErr(),
+		failCount: 99,
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if result.FailedIndex != 2 {
+		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", result.FailedIndex, result)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
+		t.Errorf("AgentPrompt called %d times, want exactly 2 -- the retry is bounded", n)
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want the prompt handed back for paste", result.PromptText)
+	}
+	// Two sends have now been attempted, so "not sent" is a stronger claim
+	// than the evidence supports: the message must send the user to the pane
+	// before they paste, the same posture #108 established.
+	msg := progressed[len(progressed)-1].Err.Error()
+	if !strings.Contains(msg, "read the pane") {
+		t.Errorf("stalled twice = %q, want it to send the user to the pane before pasting", msg)
+	}
+	if strings.ContainsAny(msg, "\n\r") {
+		t.Errorf("stalled twice = %q, want a single line", msg)
+	}
+}
+
+// TestExecuteWithoutATrustBudgetDoesNotRetryAStalledPrompt: decision 2 once
+// more. `create` gets herdr's own refusal, on the first attempt, unchanged.
+func TestExecuteWithoutATrustBudgetDoesNotRetryAStalledPrompt(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:    "AgentPrompt",
+		failErr:   stalledPromptErr(),
+		failCount: 99,
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if result.FailedIndex != 2 {
+		t.Fatalf("FailedIndex = %d, want 2: %+v", result.FailedIndex, result)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Errorf("AgentPrompt called %d times, want exactly 1 -- no budget, no retry", n)
+	}
+}
+
+// TestExecuteDoesNotRetryAnUnconfirmedPrompt is the line between the two
+// sentinels, and it is the one that must not blur: #108's timeout means the
+// agent WAS working, so a resend would give a busy agent its instructions
+// twice. Only a stall is retried.
+func TestExecuteDoesNotRetryAnUnconfirmedPrompt(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:    "AgentPrompt",
+		failErr:   fmt.Errorf("%w: herdr agent prompt ...", herdrc.ErrPromptWaitTimeout),
+		failCount: 99,
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute}, nil)
+
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Fatalf("AgentPrompt called %d times, want exactly 1 -- an unconfirmed prompt is never resent", n)
+	}
+	if !result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = false, want true -- #108's classification must survive the retry logic")
 	}
 }

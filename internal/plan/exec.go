@@ -340,6 +340,17 @@ func emitProgress(onProgress func(Progress), index, total int, label string, sta
 // produced, so the sentence a user sees is byte-for-byte what it was.
 var errAgentOnDialog = errors.New("agent is waiting on a dialog")
 
+// promptRetrySettle is how long to wait before sending a stalled prompt
+// again. A package var so tests can zero it, exactly as busyRetryInterval
+// and dialogPollInterval beside it are.
+//
+// Two seconds because the window it covers is short and its cause is a TUI
+// finishing its first paint: measured live, `agent get` reported the agent
+// ready 0.5s after the trust dialog cleared and the send stalled, while the
+// same agent took prompts normally moments later. Long enough to be past it,
+// short enough that a user watching the popup does not read it as a hang.
+var promptRetrySettle = 2 * time.Second
+
 // dialogPollInterval is how often the prompt-step wait re-reads the pane
 // looking for the dialog to clear. A package var rather than a parameter so
 // tests can shrink it to zero and run the loop instantly, exactly as
@@ -508,6 +519,21 @@ func awaitDialogCleared(ctx context.Context, r herdrc.Runner, paneID string, det
 func explainAbandonedDialog(err error) error {
 	return fmt.Errorf("the agent is no longer running -- if you answered \"No, exit\" that is why; "+
 		"nothing was sent, and this session can be removed and started again: %w", err)
+}
+
+// explainStalledPrompt says what is left after a prompt stalled TWICE.
+//
+// One stall is evidence the agent was not accepting input yet, and Execute
+// answers it by trying again. Two is where that evidence stops carrying the
+// conclusion: something is wrong that another attempt will not fix, and two
+// sends have now been made, so "the prompt was not sent" is a stronger claim
+// than what is known. The instruction is therefore the same one #108
+// established for the opposite sentinel -- read the pane before pasting --
+// because the failure mode that costs the user most here is a double-paste
+// into an agent that did eventually receive it.
+func explainStalledPrompt(err error) error {
+	return fmt.Errorf("the agent was still not accepting input, so the prompt was probably not delivered -- "+
+		"read the pane before pasting it, in case a copy arrived late: %w", err)
 }
 
 // explainUnconfirmedPrompt rewrites a prompt-wait timeout into the only
@@ -935,8 +961,29 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 						err = promptIfReady(ctx, r, req)
 					}
 				}
-				if errors.Is(err, herdrc.ErrPromptWaitTimeout) {
+				// A stalled send means herdr saw the agent do NOTHING, which
+				// is the one prompt failure that is positive evidence
+				// nothing was delivered -- so it is the one worth sending
+				// again. Deliberately not ErrPromptWaitTimeout beside it:
+				// that one means the agent WAS working, and resending would
+				// give a busy agent its instructions twice (#108).
+				//
+				// Exactly one extra attempt, and through promptIfReady, so
+				// the guard gates the retry as it gates the first send and a
+				// TUI that buffered the keystrokes it was handed while
+				// starting cannot be fed the same prompt repeatedly.
+				if opts.TrustWait > 0 && errors.Is(err, herdrc.ErrPromptStalled) {
+					select {
+					case <-ctx.Done():
+					case <-time.After(promptRetrySettle):
+					}
+					err = promptIfReady(ctx, r, req)
+				}
+				switch {
+				case errors.Is(err, herdrc.ErrPromptWaitTimeout):
 					err = explainUnconfirmedPrompt(err)
+				case errors.Is(err, herdrc.ErrPromptStalled):
+					err = explainStalledPrompt(err)
 				}
 			default:
 				err = fmt.Errorf("plan: execute: unknown op kind %v", op.Kind)
