@@ -36,6 +36,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -52,6 +53,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/pathx"
+	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
@@ -684,6 +686,139 @@ func (m Model) handleLinearResult(msg linearResultMsg) (Model, tea.Cmd) {
 	m.linearIssues = msg.issues                  // see Model.linearIssues' own doc comment (handleClearRequested's reseed source).
 	_ = linear.SaveCache(m.stateDir, msg.issues) // best-effort; state is loss-tolerant (spec §12).
 	return m, nil
+}
+
+// --- account picker: debounced preview on project change -------------------
+
+// pickerDebounceMsg and pickerPreviewMsg are versioned like every other async
+// source in this file: a slow preview for an old project directory must not
+// overwrite a fast one for the current directory.
+type pickerDebounceMsg struct{ req request }
+
+type pickerPreviewMsg struct {
+	req request
+	res picker.Result
+	err error
+}
+
+// schedulePickerPreview debounces a preview call for path, and puts the row
+// into its pending state right away so the wait reads as work rather than as
+// a glitch.
+//
+// Returns nil when no picker is configured -- the normal case -- so nothing is
+// scheduled at all rather than scheduled and discarded.
+func (m *Model) schedulePickerPreview(path string) tea.Cmd {
+	if m.deps.Picker == nil || m.account == nil {
+		return nil
+	}
+	m.pickerReqVersion++
+	v := m.pickerReqVersion
+	clock := m.deps.Clock
+	m.account.SetPickerPreview(form.AccountPickerPreview{Pending: true})
+	return func() tea.Msg {
+		clock.sleep(debounceDelay)
+		return pickerDebounceMsg{req: request{version: v, key: path}}
+	}
+}
+
+// handlePickerDebounce drops a superseded debounce and runs a current one --
+// the same two lines handleDirDebounce is.
+func (m Model) handlePickerDebounce(msg pickerDebounceMsg) (Model, tea.Cmd) {
+	if msg.req.version != m.pickerReqVersion {
+		return m, nil // superseded by a newer project directory
+	}
+	return m, m.runPickerPreview(msg.req)
+}
+
+// runPickerPreview asks the picker what it WOULD choose for this project.
+//
+// --dry-run is the whole contract of a preview: by protocol it writes no
+// ledger entry and builds no account directory, so the row can be refreshed on
+// every project change without registering intent for sessions that will never
+// exist. The commit-time call (Model.ResolveAccount) is the one that does not
+// pass it.
+func (m Model) runPickerPreview(req request) tea.Cmd {
+	src := m.deps.Picker
+	if src == nil {
+		return nil
+	}
+	path := pathx.ExpandTilde(req.key)
+	return func() tea.Msg {
+		res, err := src.Pick(context.Background(), path, picker.Options{DryRun: true})
+		return pickerPreviewMsg{req: req, res: res, err: err}
+	}
+}
+
+// handlePickerPreview applies a CURRENT preview to the account row.
+func (m Model) handlePickerPreview(msg pickerPreviewMsg) (Model, tea.Cmd) {
+	if msg.req.version != m.pickerReqVersion || m.account == nil {
+		return m, nil
+	}
+	m.account.SetPickerPreview(previewFrom(msg.res, msg.err))
+	return m, nil
+}
+
+// previewFrom reduces a picker answer to the plain values the form needs.
+//
+// A REFUSAL becomes a reason the row shows; anything else -- the picker could
+// not be run at all -- becomes one too, because a row that just goes blank has
+// told the user nothing.
+func previewFrom(res picker.Result, err error) form.AccountPickerPreview {
+	if err != nil {
+		var refusal *picker.RefusalError
+		if errors.As(err, &refusal) {
+			return form.AccountPickerPreview{Refusal: refusal.Short()}
+		}
+		return form.AccountPickerPreview{Refusal: flattenReason(err.Error())}
+	}
+	return form.AccountPickerPreview{
+		Profile:     res.Profile,
+		Tier:        res.Tier,
+		FiveHourPct: res.Usage.FiveHour,
+		WeeklyPct:   res.Usage.Weekly,
+	}
+}
+
+// --- account picker: the commit-time pick ----------------------------------
+
+// pickerCommitMsg carries the commit-time pick back to the submit pipeline.
+// Unversioned, unlike the preview: there is exactly one of these in flight per
+// submit, and the submit is already blocked waiting for it.
+type pickerCommitMsg struct {
+	res picker.Result
+	err error
+}
+
+// pickerCommitCmd runs Model.ResolveAccount off-model, which is the only place
+// the real (non---dry-run) pick may happen: it writes the picker's ledger.
+func (m Model) pickerCommitCmd() tea.Cmd {
+	src := m
+	return func() tea.Msg {
+		res, err := src.ResolveAccount(context.Background())
+		return pickerCommitMsg{res: res, err: err}
+	}
+}
+
+// handlePickerCommit resumes -- or refuses -- the submit the commit pick was
+// blocking.
+//
+// A refusal does NOT fall through to an unpinned launch. `auto` is a request
+// to be picked for, and quietly launching under whatever account happened to
+// be live, having said nothing, is the exact silent degradation this feature's
+// design was amended to forbid. Focus moves to the account row so the manual
+// choices are one keystroke away.
+func (m Model) handlePickerCommit(msg pickerCommitMsg) (Model, tea.Cmd) {
+	if m.account == nil {
+		return m, nil
+	}
+	if msg.err != nil {
+		p := previewFrom(picker.Result{}, msg.err)
+		m.account.SetPickerPreview(p)
+		m.account.SetVerdict("", "picker: "+p.Refusal)
+		return m, m.form.FocusByID("account")
+	}
+	m.account.SetPickerPreview(previewFrom(msg.res, nil))
+	return m.WithAccount(msg.res).beginSubmit()
 }
 
 // --- clauth: reload on account focus (spec §11) ---------------------------

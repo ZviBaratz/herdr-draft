@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,8 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/form"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/picker"
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -268,6 +271,14 @@ type testSetup struct {
 	// see repoConfigModel and TestRepoConfig_ProductionLoaderReadsTheFile
 	// in repoconfig_test.go.
 	RepoConfig func(repoRoot string) config.RepoConfig
+	// Picker stands in for a configured-and-probed account picker, so a test
+	// reaches the auto row through New's real construction path rather than
+	// by poking the field. nil is "no picker configured", the normal case.
+	Picker pickerSource
+	// PickerUnavailable stands in for Bootstrap's own "a picker was named and
+	// could not be trusted" outcome, the same way ClauthUnavailable does for
+	// clauth.
+	PickerUnavailable string
 }
 
 // testHomeDir is the home every test model collapses paths against. It is
@@ -306,6 +317,7 @@ func newTestModel(t *testing.T, s testSetup) Model {
 			Git:        git,
 			Clock:      noSleep,
 			RepoConfig: s.RepoConfig,
+			Picker:     s.Picker,
 		},
 		Ctx:               s.Ctx,
 		Config:            cfg,
@@ -316,6 +328,7 @@ func newTestModel(t *testing.T, s testSetup) Model {
 		Workspaces:        s.Workspaces,
 		ClauthStatus:      s.ClauthStatus,
 		ClauthUnavailable: s.ClauthUnavailable,
+		PickerUnavailable: s.PickerUnavailable,
 		LinearCache:       s.LinearCache,
 		HomeDir:           testHomeDir,
 	})
@@ -2460,5 +2473,223 @@ func TestClauthUnavailableReason(t *testing.T) {
 	}
 	if !strings.Contains(got, "exit status 1") {
 		t.Errorf("clauthUnavailableReason = %q, want it to keep the actual failure", got)
+	}
+}
+
+// --- account picker --------------------------------------------------------
+
+// fakePicker records the options it was called with, because the two calls a
+// session makes differ in exactly one flag and that flag is what keeps a
+// preview from writing a ledger entry for a session nobody has created.
+type fakePicker struct {
+	res   picker.Result
+	err   error
+	calls []picker.Options
+	dirs  []string
+}
+
+func (p *fakePicker) Pick(_ context.Context, dir string, opts picker.Options) (picker.Result, error) {
+	p.calls = append(p.calls, opts)
+	p.dirs = append(p.dirs, dir)
+	return p.res, p.err
+}
+
+// twoProfileStatus is the minimum clauth feed that makes an account row exist
+// at all (New's own >= 2 profiles gate).
+func twoProfileStatus() clauth.Status {
+	return clauth.Status{Schema: 1, ActiveProfile: "alpha-1", Profiles: []clauth.Profile{
+		{Name: "alpha-1", Tier: "Max", AuthStatus: "ok"},
+		{Name: "alpha-2", Tier: "Max", AuthStatus: "ok"},
+	}}
+}
+
+// modelWithPicker is a settled model whose account row carries a working
+// picker, built through New rather than by poking the field.
+func modelWithPicker(t *testing.T, p *fakePicker, cfg config.Config) Model {
+	t.Helper()
+	cfg.Clauth.Picker = "stub"
+	return newTestModel(t, testSetup{
+		Clauth:       &fakeClauth{status: twoProfileStatus()},
+		ClauthStatus: twoProfileStatus(),
+		Picker:       p,
+		Config:       cfg,
+	})
+}
+
+// runPreview drives one debounced preview end to end, the same way this
+// package's dir-check tests drive theirs.
+func runPreview(t *testing.T, m Model, path string) Model {
+	t.Helper()
+	cmd := m.schedulePickerPreview(path)
+	if cmd == nil {
+		t.Fatal("schedulePickerPreview returned no command")
+	}
+	msg, ok := cmd().(pickerDebounceMsg)
+	if !ok {
+		t.Fatalf("schedulePickerPreview produced %T, want pickerDebounceMsg", cmd())
+	}
+	m, run := m.handlePickerDebounce(msg)
+	if run == nil {
+		t.Fatal("handlePickerDebounce returned no command")
+	}
+	res, ok := run().(pickerPreviewMsg)
+	if !ok {
+		t.Fatalf("runPickerPreview produced %T, want pickerPreviewMsg", run())
+	}
+	m, _ = m.handlePickerPreview(res)
+	return m
+}
+
+// A picker that is configured but does not answer the protocol degrades
+// VISIBLY -- the account row is there, saying why -- rather than silently.
+// This is the whole difference between "no picker configured" (the common
+// case, which shows nothing) and "your picker is broken".
+func TestBootstrapDegradesAnUnprobeablePicker(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-a-picker")
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"),
+		[]byte("[clauth]\npicker = "+strconv.Quote(missing)+"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	env := Env{ConfigDir: configDir, StateDir: t.TempDir(), ContextJSON: `{"workspace_cwd":"/repo"}`}
+	cl := &fakeClauth{status: twoProfileStatus()}
+	m, err := Bootstrap(env, &fakeRunner{}, cl, newFakeGit(), noSleep)
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	if m.account == nil {
+		t.Fatal("a broken picker must still leave an account row to say so on")
+	}
+	if m.account.IsAuto() {
+		t.Fatal("an unprobeable picker must not produce an auto selection")
+	}
+	if got := fieldText(m.account, 100); !strings.Contains(got, missing) {
+		t.Fatalf("the account row should name the picker that failed:\n%s", got)
+	}
+}
+
+// The preview is a --dry-run and the commit is not. One ledger entry per
+// session created, not one per keystroke in the project field.
+func TestPreviewIsDryRunAndCommitIsNot(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}}
+	m := modelWithPicker(t, p, config.Config{})
+
+	m = runPreview(t, m, "/p/thing")
+	if len(p.calls) != 1 || !p.calls[0].DryRun {
+		t.Fatalf("the preview call must be a --dry-run, got %+v", p.calls)
+	}
+	if p.dirs[0] != "/p/thing" {
+		t.Fatalf("preview dir = %q", p.dirs[0])
+	}
+
+	res, err := m.ResolveAccount(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveAccount: %v", err)
+	}
+	if len(p.calls) != 2 || p.calls[1].DryRun {
+		t.Fatalf("the commit call must NOT be a --dry-run: it is what writes the ledger; got %+v", p.calls)
+	}
+	if res.Profile != "alpha-1" {
+		t.Fatalf("ResolveAccount = %+v", res)
+	}
+}
+
+// The picked profile and its config dir reach plan.Input, and the launch mode
+// comes from config -- start by default.
+func TestWithAccountFeedsPlanInput(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}}
+	m := modelWithPicker(t, p, config.Config{})
+	m = m.WithAccount(picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"})
+
+	in := m.PlanInput()
+	if in.AccountPin != "alpha-1" {
+		t.Fatalf("AccountPin = %q", in.AccountPin)
+	}
+	if in.AccountConfigDir != "/dirs/alpha-1" {
+		t.Fatalf("AccountConfigDir = %q", in.AccountConfigDir)
+	}
+	if in.AccountLaunch != plan.LaunchClauthStart {
+		t.Fatalf("AccountLaunch = %v, want the default clauth start", in.AccountLaunch)
+	}
+}
+
+func TestWrapperLaunchReachesPlanInput(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}}
+	cfg := config.Config{}
+	cfg.Clauth.Launch = config.ClauthLaunchWrapper
+	m := modelWithPicker(t, p, cfg)
+	m = m.WithAccount(picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"})
+
+	if got := m.PlanInput().AccountLaunch; got != plan.LaunchWrapper {
+		t.Fatalf("AccountLaunch = %v, want LaunchWrapper", got)
+	}
+}
+
+// A refusal must not silently fall back to an unpinned launch. Auto means the
+// user asked to be picked for; launching under whatever is live instead, with
+// no word said, is the silent degradation this design was amended to avoid.
+func TestResolveAccountSurfacesARefusal(t *testing.T) {
+	p := &fakePicker{err: &picker.RefusalError{Code: picker.ExitExhausted, Reason: "pool exhausted (resets 22:49)"}}
+	m := modelWithPicker(t, p, config.Config{})
+	if _, err := m.ResolveAccount(context.Background()); err == nil {
+		t.Fatal("a refusal must reach the caller")
+	}
+}
+
+// The refusal reaches the ROW too, in the picker's own words.
+func TestPreviewRefusalReachesTheRow(t *testing.T) {
+	p := &fakePicker{err: &picker.RefusalError{Code: picker.ExitExhausted, Reason: "pool exhausted (resets 22:49)"}}
+	m := modelWithPicker(t, p, config.Config{})
+	m = runPreview(t, m, "/p/thing")
+	if got := fieldText(m.account, 100); !strings.Contains(got, "pool exhausted (resets 22:49)") {
+		t.Fatalf("the account row should carry the picker's own reason:\n%s", got)
+	}
+}
+
+// Not auto: no picker call at all. Someone who pinned a profile by hand has
+// already answered the question the picker exists to answer.
+func TestResolveAccountIsANoOpWhenNotAuto(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1"}}
+	m := modelWithPicker(t, p, config.Config{})
+	m.account.SetPin("alpha-2")
+
+	res, err := m.ResolveAccount(context.Background())
+	if err != nil || res.Profile != "" {
+		t.Fatalf("ResolveAccount = %+v, %v; want a no-op", res, err)
+	}
+	if len(p.calls) != 0 {
+		t.Fatal("a hand-pinned account must not consult the picker")
+	}
+}
+
+// A preview for a project the user has since navigated away from must not
+// overwrite the current one -- the same staleness rule every other async
+// source in async.go follows.
+func TestStalePreviewIsDiscarded(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1"}}
+	m := modelWithPicker(t, p, config.Config{})
+
+	cmd1 := m.schedulePickerPreview("old")
+	cmd2 := m.schedulePickerPreview("new")
+	v1 := cmd1().(pickerDebounceMsg).req.version
+	v2 := cmd2().(pickerDebounceMsg).req.version
+	if v1 == v2 {
+		t.Fatalf("two schedule calls produced the same version %d", v1)
+	}
+
+	// The current request lands first.
+	m, _ = m.handlePickerPreview(pickerPreviewMsg{
+		req: request{version: v2, key: "new"}, res: picker.Result{Profile: "current"}})
+	// Then the stale one, which must change nothing.
+	m, _ = m.handlePickerPreview(pickerPreviewMsg{
+		req: request{version: v1, key: "old"}, res: picker.Result{Profile: "stale"}})
+
+	got := fieldText(m.account, 100)
+	if !strings.Contains(got, "current") {
+		t.Fatalf("the current preview should still be on the row:\n%s", got)
+	}
+	if strings.Contains(got, "stale") {
+		t.Fatalf("a superseded preview must not overwrite the current one:\n%s", got)
 	}
 }
