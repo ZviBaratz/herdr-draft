@@ -197,8 +197,18 @@ func (r *fakeRunner) AgentRead(_ context.Context, target string) (string, error)
 	if err := r.record("AgentRead", target); err != nil {
 		return "", err
 	}
+	if r.readText == "" {
+		// A painted, dialog-free pane. The zero value cannot be the empty
+		// screen any more: after #116 that is what a pane looks like
+		// before it has drawn the dialog that eats the prompt, and
+		// promptIfReady refuses it (headless `create` refuses outright,
+		// having no one at the keyboard to wait for).
+		return paintedIdleScreen, nil
+	}
 	return r.readText, nil
 }
+
+const paintedIdleScreen = "> Sonnet 5 · claude-code\n  Type your message...\n"
 
 func (r *fakeRunner) AwaitDetection(_ context.Context, paneID string, _, blockedTimeout time.Duration) error {
 	// The blocked budget is part of the record on purpose: headless

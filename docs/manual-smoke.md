@@ -1206,6 +1206,37 @@ into fresh worktrees of one throwaway repo.
   both `dialog.go` signatures verbatim, so the guard's *matching* is sound.
   What it cannot do is match a screen that has not painted yet.
 
+**#116, fixed on 2026-09-10 — and the fix has two rules because the defect
+has two halves.** The sitting above is the whole of its evidence, so it is
+recorded here rather than in a new entry. Before the send, an empty read is
+now a refusal in its own right (`errPaneUnpainted`): the guard's rule used
+to be negative — "no signature matched, therefore safe" — and a screen with
+nothing on it answered it the wrong way. In the popup that refusal enters
+#115's prompt-step wait, which had the same hole and no longer treats a
+blank poll as a cleared one; headless `create`, with nobody to wait for,
+refuses outright with the prompt saved. After the send, the pane is read
+again and the create is only reported clean once it says the prompt landed
+— an agent that has stopped answering, or a dialog still up with no trace of
+the prompt on it, is a failure. **It never resends** (#108): the second read
+decides what to tell the user, never whether to type again.
+
+Prevention alone would not have been enough, and this is the reasoning worth
+keeping: narrowing the window the guard misses does not make the report
+honest when it is missed anyway, and only the post-send read catches a race
+nobody predicted. The reverse is also true — the post-send read cannot stop
+the agent from dying, only stop the popup from calling that a success.
+
+Two limits to know before trusting it. The trace test is skipped for a
+prompt over ~400 characters or 10 lines, because Cell 10 already measured
+that a large prompt is wrapped and scrolled by the agent's own TUI and
+appears verbatim nowhere; those fall back to the "agent stopped answering"
+verdict alone. And "Enter to confirm" is Claude Code's own permission-prompt
+footer, so a *delivered* prompt whose agent immediately asks to act on it
+sits on a matching screen — which is why the check looks for the prompt
+rather than for the absence of a dialog. **Not yet re-verified live**: the
+sitting above is what it was built from, and a run that reproduces the race
+with the fix in place has not been done.
+
 Four findings from the first sitting, all live-only against a green
 `just check`:
 

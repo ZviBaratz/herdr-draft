@@ -206,10 +206,33 @@ Layering, outermost to innermost:
   not ours to control. So the two upstream codes are a race rather than a
   guarantee, and `dialog.go`'s guard is the only thing standing between a
   queued prompt and a confirmation dialog. It can lose that race too, which
-  is **#116** and is open: the guard reads a screen that has not painted,
-  the prompt's Enter answers the preselected "No, exit", and the pipeline
-  reports a clean create over a dead agent. Anything new that trusts a
-  successful launch step is trusting a coin flip.
+  was **#116**: the guard read a screen that had not painted, the prompt's
+  Enter answered the preselected "No, exit", and the pipeline reported a
+  clean create over a dead agent. Anything new that trusts a successful
+  launch step is trusting a coin flip.
+- **The prompt guard's rule is positive, and it brackets the send.** #116's
+  fix is two rules because its defect had two halves, and neither subsumes
+  the other. Before the send, a read must come back with *something* on it:
+  "no dialog signature matched" was the old rule and an unpainted screen
+  satisfies it, so `promptIfReady` refuses an empty read as
+  `errPaneUnpainted` and `awaitDialogCleared` no longer counts a blank poll
+  as a cleared one. After the send, `confirmPromptLanded` reads the pane
+  again, because prevention can only narrow a window — it cannot make the
+  report honest when the window is missed anyway, and a create that lies is
+  the half that costs the most. It **reports and never resends**, which is
+  what `isUnsafeScreenError` exists to say in one place: every other screen
+  refusal happens before any text is sent, which is what makes waiting and
+  retrying safe, and `errPromptSwallowed` is deliberately not in that set.
+  Its two verdicts rest on different evidence and are worth keeping
+  straight — a pane that stops answering means the agent is gone, which is
+  size-independent and unarguable; a dialog still up with no trace of the
+  prompt is weaker and is gated by `promptIsVerifiable`, because
+  `ExecResult.PromptUnconfirmed`'s own doc comment already recorded that a
+  large prompt is reflowed and scrolled by the agent's TUI and appears
+  verbatim nowhere. Note also what does *not* separate the two panes: a
+  dialog. "Enter to confirm" is Claude Code's own permission-prompt footer,
+  so an agent that received the prompt and immediately asked to act on it
+  is sitting on a matching screen with the prompt delivered.
 - **Only the popup waits for a person; `create` never does — and that
   difference may not live in `plan.Input`.** `internal/create`'s
   `equivalence_test.go` compares the form's `plan.Input` against the headless

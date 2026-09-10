@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
@@ -340,6 +341,50 @@ func emitProgress(onProgress func(Progress), index, total int, label string, sta
 // produced, so the sentence a user sees is byte-for-byte what it was.
 var errAgentOnDialog = errors.New("agent is waiting on a dialog")
 
+// errPaneUnpainted reports a pane whose detection screen came back EMPTY:
+// readable, answered, and carrying nothing at all.
+//
+// This is #116's mechanism, and the reason promptIfReady's rule had to
+// become a positive one. The guard used to ask only "does this screen
+// match a dialog signature?", so a screen with no text on it answered no
+// and was treated as safe to type into. Measured live on 2026-09-09
+// (docs/manual-smoke.md): `agent start` returns ok while Claude Code's
+// first-run trust dialog is still painting, the read lands inside that
+// window, and the prompt's trailing Enter answers the preselected
+// "No, exit". A blank detection buffer is not evidence that a pane is
+// ready -- it is evidence there is nothing yet to judge.
+//
+// A separate sentinel rather than a reuse of errAgentOnDialog, because the
+// two are different claims about the world: one screen showed a dialog,
+// the other showed nothing. What they share is only what a caller should
+// do next, and isUnsafeScreenError is where that is said once.
+var errPaneUnpainted = errors.New("the agent's screen has not painted yet, so it is not safe to type into")
+
+// errPromptSwallowed reports a send that herdr called successful and that
+// the pane says did not land: still on a dialog, with no trace of the
+// prompt text anywhere on it.
+//
+// Deliberately NOT matched by isUnsafeScreenError, and that exclusion is
+// load-bearing rather than an oversight. Every other screen refusal in
+// this file happens BEFORE any text is sent, which is what makes waiting
+// and trying again safe. This one happens after, so a retry would be a
+// second copy of the prompt into an agent that may have taken the first --
+// the injury #108 exists to prevent, arriving through the front door. The
+// post-send check reports; it never resends.
+var errPromptSwallowed = errors.New("the prompt did not reach the agent")
+
+// isUnsafeScreenError reports whether err is one of promptIfReady's
+// BEFORE-the-send refusals -- the two states a person at the keyboard can
+// resolve, and that #115's prompt-step wait therefore waits out.
+//
+// One predicate rather than two errors.Is calls at the call site because
+// the set is a claim in its own right: these are the refusals it is safe
+// to retry, because no text has been sent. errPromptSwallowed is the
+// counter-example that makes the distinction worth naming.
+func isUnsafeScreenError(err error) bool {
+	return errors.Is(err, errAgentOnDialog) || errors.Is(err, errPaneUnpainted)
+}
+
 // promptRetrySettle is how long to wait before sending a stalled prompt
 // again. A package var so tests can zero it, exactly as busyRetryInterval
 // and dialogPollInterval beside it are.
@@ -380,10 +425,174 @@ func promptIfReady(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptR
 	if err != nil {
 		return fmt.Errorf("could not confirm the agent is ready for a prompt: %w", err)
 	}
+	if strings.TrimSpace(screen) == "" {
+		// #116: the rule is positive now. A screen with nothing on it is
+		// not one that failed to match a signature -- it is one there was
+		// nothing to match against.
+		return fmt.Errorf("%w -- prompt not sent", errPaneUnpainted)
+	}
 	if sig := blockingDialogSignature(screen); sig != "" {
 		return fmt.Errorf("%w (%q) -- prompt not sent", errAgentOnDialog, sig)
 	}
-	return r.AgentPrompt(ctx, req)
+	if err := r.AgentPrompt(ctx, req); err != nil {
+		return err
+	}
+	return confirmPromptLanded(ctx, r, req)
+}
+
+// promptVerifyReads is how many times confirmPromptLanded will try to read
+// a pane before concluding the agent behind it has gone.
+//
+// A small fixed count rather than awaitDialogCleared's elapsed-time budget
+// because this loop only ever runs when something is already wrong: on
+// every ordinary send the first read succeeds and the other two never
+// happen, so the cost of being generous here is paid by nobody. Three is
+// enough to ride out a repaint and few enough that a genuinely dead agent
+// is reported in well under a second.
+const promptVerifyReads = 3
+
+// confirmPromptLanded is #116's post-send half: proof that a send herdr
+// called successful actually reached the agent.
+//
+// Nothing used to check. `agent prompt --wait` returning ok was the end of
+// it, and measured live on 2026-09-09 that return value survived the
+// prompt being swallowed by a dialog, its Enter answering "No, exit", and
+// the agent exiting -- Execute reported FailedIndex == -1 over a dead
+// pane, so the popup persisted its state, wrote no unsent-prompt.txt and
+// closed. Prevention alone cannot fix that half: narrowing the window the
+// pre-send guard misses does not make the report honest when it is missed
+// anyway, and this is the only one of #116's three directions that catches
+// a race nobody predicted.
+//
+// It reports; it NEVER resends. See errPromptSwallowed.
+//
+// Two verdicts, and they rest on different strength of evidence:
+//
+//   - A pane that cannot be read at all, three tries running, means the
+//     agent is gone. Size-independent, no way to be wrong about it, and it
+//     is what the observed failure actually looks like.
+//   - A pane still showing a dialog with no trace of the prompt on it
+//     means the dialog ate the text. Weaker, and gated by
+//     promptIsVerifiable, because the absence of a dialog is NOT what
+//     separates a swallowed prompt from a delivered one: "Enter to
+//     confirm" is Claude Code's own permission-prompt footer, so an agent
+//     that received the prompt and immediately asked to act on it is
+//     sitting on a matching screen with the prompt delivered. Only the
+//     prompt's own presence tells those two panes apart.
+//
+// A screen that reads back blank is deliberately a PASS. Post-send it is
+// no longer the unpainted-startup state errPaneUnpainted refuses -- the
+// pane answered a moment ago -- and this check only ever turns a success
+// into a failure, so anything short of evidence has to leave it alone.
+func confirmPromptLanded(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptReq) error {
+	screen, err := readAfterSend(ctx, r, req.Target)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("could not confirm the prompt reached the agent: %w", ctxErr)
+		}
+		return explainPromptKilledAgent(err)
+	}
+	sig := blockingDialogSignature(screen)
+	if sig == "" {
+		return nil
+	}
+	if !promptIsVerifiable(req.Text) || promptOnScreen(screen, req.Text) {
+		return nil
+	}
+	return fmt.Errorf("keep this session, answer the dialog in the pane, then paste the prompt -- "+
+		"the agent is showing %q and none of the prompt reached it: %w", sig, errPromptSwallowed)
+}
+
+// readAfterSend reads paneID, retrying a failed read up to
+// promptVerifyReads times, and returns the last error if every attempt
+// failed.
+//
+// One failed read is not evidence of anything: a pane can be briefly
+// unreadable mid-repaint, and a send is exactly when a repaint is likely.
+// It is a RUN of failures that carries the conclusion, which is the same
+// distinction awaitDialogCleared draws with its detection budget and
+// herdrc.AwaitDetection draws from `agent get` falling silent.
+func readAfterSend(ctx context.Context, r herdrc.Runner, paneID string) (string, error) {
+	var err error
+	for i := 0; i < promptVerifyReads; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(dialogPollInterval):
+			}
+		}
+		var screen string
+		if screen, err = r.AgentRead(ctx, paneID); err == nil {
+			return screen, nil
+		}
+	}
+	return "", err
+}
+
+// promptTraceMaxRunes and promptTraceMaxLines bound the prompts
+// confirmPromptLanded is willing to look for on a screen.
+//
+// They exist because ExecResult.PromptUnconfirmed's doc comment already
+// recorded the finding that makes an unbounded version of this check
+// wrong: a large prompt is wrapped and scrolled by the agent's own TUI, so
+// it appears verbatim nowhere -- measured on a 6311-byte, 120-line prompt
+// (docs/manual-smoke.md's Cell 10). Searching for one of those and not
+// finding it is not evidence of anything, and acting on it would tell a
+// user to re-paste a prompt an agent is already working on.
+//
+// So the trace test applies only to a prompt small enough that a delivered
+// copy would still be on the screen next to the dialog, and a bigger one
+// falls back to the read-failure verdict alone. A screenful is the honest
+// bound; these are its two dimensions, deliberately generous in neither.
+const (
+	promptTraceMaxRunes = 400
+	promptTraceMaxLines = 10
+)
+
+// promptIsVerifiable reports whether text is small enough that its absence
+// from a screen means something.
+func promptIsVerifiable(text string) bool {
+	return len([]rune(text)) <= promptTraceMaxRunes &&
+		strings.Count(text, "\n") < promptTraceMaxLines
+}
+
+// promptProbeRunes is how much of a prompt has to be found for it to count
+// as present. Long enough not to collide with the dialog's own prose,
+// short enough to survive the agent's TUI reflowing the turn it landed in.
+const promptProbeRunes = 24
+
+// promptOnScreen reports whether screen carries a trace of text.
+//
+// Both sides have their whitespace REMOVED rather than normalised, which
+// is what makes the match survive the pane wrapping a line: a turn broken
+// across a column boundary can split a word without leaving a space
+// behind, so collapsing runs to a single space would not put it back
+// together and dropping them entirely does.
+//
+// Its errors run one way on purpose. A probe short enough to collide with
+// unrelated text makes this return true for a prompt that never landed --
+// a missed detection, which is where this check started. Nothing here can
+// make it return false for a prompt that did.
+func promptOnScreen(screen, text string) bool {
+	probe := []rune(squeezeSpace(text))
+	if len(probe) == 0 {
+		return true
+	}
+	if len(probe) > promptProbeRunes {
+		probe = probe[:promptProbeRunes]
+	}
+	return strings.Contains(squeezeSpace(screen), string(probe))
+}
+
+// squeezeSpace returns s with every whitespace rune removed.
+func squeezeSpace(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // waitThroughDialog turns a blocked launch into a wait for the person at
@@ -478,6 +687,16 @@ func awaitDialogCleared(ctx context.Context, r herdrc.Runner, paneID string, det
 			}
 		default:
 			lastSeen = time.Now()
+			if strings.TrimSpace(screen) == "" {
+				// #116: a screen with nothing on it is not a cleared one.
+				// The dialog this loop waits for spends its first moments
+				// looking exactly like this, so returning here would hand
+				// promptIfReady back the very pane the wait was entered
+				// for -- and its own refusal is what got us here, so the
+				// two would agree to send the prompt into an unpainted
+				// pane one retry later.
+				break
+			}
 			sig := blockingDialogSignature(screen)
 			if sig == "" {
 				return nil
@@ -491,6 +710,13 @@ func awaitDialogCleared(ctx context.Context, r herdrc.Runner, paneID string, det
 			// popup only the opening clause survives (v2 spec §7's
 			// head-keeping truncation), and the action is what the user with
 			// the narrowest window still has to be told.
+			if lastSig == "" {
+				// Readable throughout and never once carrying anything.
+				// There is no dialog to tell anyone to answer, so the
+				// instruction cannot be the one below it.
+				return fmt.Errorf("keep this session and paste the prompt into the pane yourself -- "+
+					"the agent's screen was still blank after %s: %w", trustWait, errPaneUnpainted)
+			}
 			return fmt.Errorf("answer the dialog in the pane, then keep this session and paste the prompt -- "+
 				"it is still showing %q after %s: %w", lastSig, trustWait, errAgentOnDialog)
 		}
@@ -519,6 +745,22 @@ func awaitDialogCleared(ctx context.Context, r herdrc.Runner, paneID string, det
 func explainAbandonedDialog(err error) error {
 	return fmt.Errorf("the agent is no longer running -- if you answered \"No, exit\" that is why; "+
 		"nothing was sent, and this session can be removed and started again: %w", err)
+}
+
+// explainPromptKilledAgent says what a pane that stopped being readable
+// immediately after a send actually means.
+//
+// Deliberately not explainAbandonedDialog beside it, whose "nothing was
+// sent" is the one thing that is NOT true here: a prompt went out, and it
+// is the likeliest reason the agent is gone. The distinction matters to
+// the user, because it is the difference between a session that failed and
+// one their own composed text destroyed -- and it is the sentence that
+// tells them to look at a pane the popup would otherwise have called
+// clean. The action is the same either way, so it comes last.
+func explainPromptKilledAgent(err error) error {
+	return fmt.Errorf("the agent exited as the prompt was sent -- most likely a dialog that had not "+
+		"painted yet, answered by the prompt's own Enter; nothing was delivered, and this session "+
+		"can be removed and started again: %w", err)
 }
 
 // explainStalledPrompt says what is left after a prompt stalled TWICE.
@@ -950,10 +1192,16 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 					req.Target = agentPane
 				}
 				err = promptIfReady(ctx, r, req)
-				if opts.TrustWait > 0 && errors.Is(err, errAgentOnDialog) {
+				if opts.TrustWait > 0 && isUnsafeScreenError(err) {
 					// One retry, never a loop: the wait already ran until
 					// the screen was clear, so a second refusal is a
 					// different dialog and a real refusal.
+					//
+					// isUnsafeScreenError rather than errAgentOnDialog
+					// alone because #116 gave the wait a second thing to
+					// wait out -- a pane that has not painted -- and
+					// deliberately excludes errPromptSwallowed, which is
+					// the one refusal that arrives with text already sent.
 					if waitErr := waitThroughPromptDialog(ctx, r, onProgress, i, total,
 						op.Label, req.Target, op.Timeout, opts.TrustWait); waitErr != nil {
 						err = waitErr

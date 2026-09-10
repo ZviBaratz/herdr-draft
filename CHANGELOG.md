@@ -132,6 +132,17 @@ without the popup. It drives herdr exclusively through the public CLI
   the executor reads the pane and checks it against known blocking-dialog
   signatures rather than trusting an "idle" report, and turns herdr's
   "blocked during startup" into an instruction the user can act on.
+- **A pane with nothing on it is not a ready one, and a send that reported
+  success is not a delivery.** The read before a prompt has to come back
+  with something on it: a screen that has not painted matches no dialog
+  signature, and treating that as safe is how a prompt's own Enter used to
+  answer a trust dialog that drew a moment later — killing the agent while
+  the run reported a clean create. So the pane is read again *after* the
+  send, and a create is only called clean once the pane says the prompt
+  landed. An agent that has stopped answering, or a dialog still up with no
+  trace of the prompt on it, is a failure with the prompt saved. It never
+  resends: the prompt goes out once, and everything after that only decides
+  what to tell you.
 - **A first-run trust dialog is a pause, not a failure.** Every worktree is
   a directory the agent has never been trusted in, so its first launch there
   meets a confirmation screen and herdr refuses to call the launch ready.

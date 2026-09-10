@@ -61,7 +61,11 @@ func (r *fakeRunner) PaneSplit(context.Context, herdrc.PaneSplitReq) (herdrc.Cre
 }
 func (r *fakeRunner) AgentStart(context.Context, herdrc.AgentStartReq) error   { return nil }
 func (r *fakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) error { return nil }
-func (r *fakeRunner) AgentRead(context.Context, string) (string, error)        { return "", nil }
+func (r *fakeRunner) AgentRead(context.Context, string) (string, error) {
+	// A painted, dialog-free pane. Not "" -- after #116 that is a refusal
+	// rather than a ready state, and this fake exists to be uninteresting.
+	return paintedIdleScreen, nil
+}
 func (r *fakeRunner) AwaitDetection(context.Context, string, time.Duration, time.Duration) error {
 	return nil
 }

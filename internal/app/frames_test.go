@@ -890,3 +890,57 @@ func TestAssembledSubmit_WaitingOnThePromptDialogFrame(t *testing.T) {
 		t.Errorf("PromptText = %q, want empty -- nothing left for the user to paste", done.result.PromptText)
 	}
 }
+
+// TestAssembledSubmit_PromptKilledTheAgentFrame is the screen #116 makes
+// exist, and the one the defect it fixes did not have.
+//
+// Everything above the failing row is green -- the worktree, the launch,
+// and `agent prompt --wait` itself, which returned ok while the prompt's
+// trailing Enter was answering a dialog that painted between the guard's
+// read and the send. Before the post-send check there was no screen at
+// all: the popup persisted its state and closed over a dead agent, and the
+// user's only evidence was a pane they had no reason to look at.
+//
+// Pinned at both widths for #112's reason, and this message is the one
+// that most needs it: it is the longest of the three the prompt step can
+// produce, so it is where head-keeping truncation (v2 spec §7) is most
+// likely to cut something the user needs. The clause that has to survive
+// is the first one -- that the agent exited AS the prompt was sent, which
+// is the fact that sends them to the pane.
+func TestAssembledSubmit_PromptKilledTheAgentFrame(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		postPromptErr: errors.New("herdr agent read pane-1 --source detection --format text: " +
+			"exit status 1: no agent detected in pane pane-1"),
+	}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.title.SetTitle("Fix login redirect loop", false)
+	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	if done.result.FailedIndex != 2 {
+		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", done.result.FailedIndex, done.result)
+	}
+	if done.result.PromptText == "" {
+		t.Fatal("PromptText is empty, want the composed prompt back for a manual paste")
+	}
+
+	m, cleanCmd := m.handleSubmitDone(done)
+	if cleanCmd == nil {
+		t.Fatal("handleSubmitDone returned no cmd, want the CleanCheck and prompt-save batch")
+	}
+	m, _ = m.handleCleanCheckResult(cleanCheckMsg{
+		result:   done.result,
+		decision: plan.CleanCheck(context.Background(), m.submitInput, done.result),
+	})
+	// Supplied rather than taken from the real save, for the same reason
+	// the blocked-start frame supplies it: t.TempDir's name is
+	// run-specific and would move the golden bytes every run.
+	m.submitView.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
+
+	assertAppSubmitFrame(t, "submit-prompt-killed-agent-80x24", m, 80, 24)
+	assertAppSubmitFrame(t, fmt.Sprintf("submit-prompt-killed-agent-%dx%d", framePopupW, framePopupH),
+		m, framePopupW, framePopupH)
+}
