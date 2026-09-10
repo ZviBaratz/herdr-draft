@@ -945,10 +945,22 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 		}
 		return ""
 	case plan.OpClauthLaunch:
-		if in.AccountPin != "" {
-			return "under clauth " + in.AccountPin
+		// The PROGRAM comes off the argv, not from the word "clauth":
+		// [clauth] launcher makes that argv configurable, so a hardcoded
+		// "under clauth" states something untrue for a session launched
+		// with `["claude-as","{account}"]` -- nothing about clauth runs
+		// there. Found by independent review.
+		//
+		// For the default launcher RunArgv[0] IS "clauth", so every
+		// existing string and the progress golden frame are unchanged.
+		prog := "clauth"
+		if len(op.RunArgv) > 0 && op.RunArgv[0] != "" {
+			prog = op.RunArgv[0]
 		}
-		return "under clauth"
+		if in.AccountPin != "" {
+			return "under " + prog + " " + in.AccountPin
+		}
+		return "under " + prog
 	case plan.OpAwaitDetection:
 		return "waiting for the agent"
 	default:

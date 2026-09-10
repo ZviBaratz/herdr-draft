@@ -1430,3 +1430,41 @@ func TestSuccessfulPromptStatusIsSent(t *testing.T) {
 		t.Errorf("prompt_status = %q, want %q", out.PromptStatus, "sent")
 	}
 }
+
+// A launcher that fell back has to SAY so on stderr. The fallback itself is
+// safe -- the default pins the account correctly -- but silence would leave
+// the user believing their own template ran, and the whole reason the
+// template is validated is that one with no {account} launches on whichever
+// profile clauth has live. `create` has no panel to put a reason in, so
+// this line is the only place it can appear.
+func TestCreate_ReportsARejectedClauthLauncher(t *testing.T) {
+	h := newHarness(t)
+	body := "[clauth]\nlauncher = [\"claude-as\"]\n"
+	if err := os.WriteFile(filepath.Join(h.env.ConfigDir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d -- a bad launcher must not fail the create\nstderr: %s",
+			code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	for _, want := range []string{"launcher", "{account}", "clauth"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr does not mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// The mirror image, and the one that keeps the line from becoming noise: a
+// config that names no launcher at all is the overwhelmingly common case
+// and must produce no warning.
+func TestCreate_SaysNothingAboutAnAbsentClauthLauncher(t *testing.T) {
+	h := newHarness(t)
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if strings.Contains(h.stderr.String(), "launcher") {
+		t.Errorf("warned about a launcher nobody configured:\n%s", h.stderr)
+	}
+}
