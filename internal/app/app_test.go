@@ -2693,3 +2693,37 @@ func TestStalePreviewIsDiscarded(t *testing.T) {
 		t.Fatalf("a superseded preview must not overwrite the current one:\n%s", got)
 	}
 }
+
+// The account row must not open reading a bare `auto`. The preview fires on a
+// project CHANGE, and the form's first project has not changed from anything,
+// so New has to schedule the opening one itself.
+//
+// This test exists because the defect it pins was invisible to every other
+// test in this package and to every golden frame: it is a state nothing
+// fixtures, found only by running the real form.
+func TestTheOpeningStateAsksThePicker(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", Tier: "Max"}}
+	m := modelWithPicker(t, p, config.Config{})
+
+	var scheduled bool
+	for _, cmd := range m.initCmds {
+		if _, ok := cmd().(pickerDebounceMsg); ok {
+			scheduled = true
+		}
+	}
+	if !scheduled {
+		t.Fatal("New must schedule a picker preview for the directory the form OPENS on")
+	}
+}
+
+// ... and with no picker there is nothing to schedule, so nothing is.
+func TestTheOpeningStateSchedulesNoPreviewWithoutAPicker(t *testing.T) {
+	m := newTestModel(t, testSetup{})
+	for _, cmd := range m.initCmds {
+		// No nil check, deliberately: initCmds must never carry one, because
+		// this is exactly how it is consumed. See New.
+		if _, ok := cmd().(pickerDebounceMsg); ok {
+			t.Fatal("no picker is configured; nothing may ask one")
+		}
+	}
+}

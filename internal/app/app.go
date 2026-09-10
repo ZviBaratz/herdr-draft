@@ -1027,7 +1027,22 @@ func New(s Setup) Model {
 	m.syncDerivedInertness()
 	m.snapshotAppliedDefaults()
 
+	// The picker preview is scheduled for the OPENING directory here, beside
+	// the dir and base checks, and not only from reactToChanges: that one
+	// fires on a project CHANGE, and the form's first project has not changed
+	// from anything. Without this line the account row opens reading a bare
+	// `auto` and stays that way until the user touches the project row --
+	// found by running the real form rather than by any test, which is the
+	// opening-state trap this repository has fallen into before.
+	//
+	// Appended only when non-nil: schedulePickerPreview returns nil with no
+	// picker configured, which is the common case, and initCmds is a slice
+	// tests iterate and INVOKE -- a nil in it is a panic, not a no-op, even
+	// though tea.Batch itself would drop one.
 	m.initCmds = []tea.Cmd{m.scheduleDirCheck(m.lastDir), m.scheduleBaseCheck(m.lastDir)}
+	if preview := m.schedulePickerPreview(m.lastDir); preview != nil {
+		m.initCmds = append(m.initCmds, preview)
+	}
 	if m.issue != nil && s.Deps.Linear != nil {
 		m.initCmds = append(m.initCmds, m.refreshLinearCmd())
 	}
