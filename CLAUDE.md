@@ -195,6 +195,48 @@ Layering, outermost to innermost:
   earns its second keep: `explainBlockedStart` matches the same signature
   list to turn herdr's "blocked during startup" into an instruction the
   user can act on (#90).
+- **A green launch step is not proof the pane is safe to type into.** The
+  convention above assumes herdr tells us when it sees a dialog. It does,
+  *sometimes*. Measured live on 0.9.0 (docs/manual-smoke.md, 2026-09-10):
+  `herdr agent start` returned **ok** on three consecutive popup submits
+  into one throwaway repo while the trust prompt was on screen — and a
+  headless `create` into **that same repo**, minutes later, refused the same
+  screen with `agent_not_ready`. Its readiness verdict and its manifest's
+  classification of that screen are two clocks, and which one lands first is
+  not ours to control. So the two upstream codes are a race rather than a
+  guarantee, and `dialog.go`'s guard is the only thing standing between a
+  queued prompt and a confirmation dialog. It can lose that race too, which
+  is **#116** and is open: the guard reads a screen that has not painted,
+  the prompt's Enter answers the preselected "No, exit", and the pipeline
+  reports a clean create over a dead agent. Anything new that trusts a
+  successful launch step is trusting a coin flip.
+- **Only the popup waits for a person; `create` never does — and that
+  difference may not live in `plan.Input`.** `internal/create`'s
+  `equivalence_test.go` compares the form's `plan.Input` against the headless
+  command's field for field with `reflect.DeepEqual`, so a field the two
+  paths must disagree about would break the one test that keeps them from
+  drifting. Runtime differences go in `plan.ExecOpts`, passed to `Execute`
+  beside the ops. `TrustWait` (#115) is the first: five minutes of waiting
+  for a human to answer a dialog is right for a popup and wrong for a script
+  with nobody at the keyboard. Zero means "behave exactly as this did before
+  the option existed", which is what lets `create` opt out by passing an
+  empty `ExecOpts` rather than by carrying a branch of its own.
+- **A prompt has four fates, and three of them are not "it failed".**
+  `herdr agent prompt` can succeed; time out its confirmation
+  (`ErrPromptWaitTimeout`, herdr's `timeout`); stall
+  (`ErrPromptStalled`, herdr's `agent_prompt_stalled`); or fail outright.
+  The middle two look alike and mean opposite things, which is why each is a
+  typed sentinel rather than a substring match. A **timeout** means the wait
+  gave up while the agent was demonstrably busy, so delivery is UNKNOWN: the
+  text must never be relabelled "unsent", never resent (#108), and
+  `CleanCheck` refuses the clean. A **stall** means herdr observed no
+  working or blocked state at all, which is positive evidence nothing was
+  processed — so it is the one failure worth sending again, exactly once,
+  through `promptIfReady` so the guard gates the retry. Its dominant cause is
+  measured: for about a second after a trust dialog clears, `agent get`
+  reports `idle` and `interactive_ready` while the agent's TUI is not yet
+  accepting input. Collapsing the two would either strand a delivered prompt
+  or double-paste into a working agent.
 - **Citations into herdr's source name a pinned commit, never a local
   path.** Two spellings, both anchored to
   `b1ff4582e9688f52ffb943cfa8bee4871ae122e4`: the `herdr:src/cli.rs`
