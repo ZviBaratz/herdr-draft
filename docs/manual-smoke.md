@@ -1095,6 +1095,87 @@ arrived above the `❯` as one submitted turn and the agent answered it; the
 input buffer was empty. #73's silent failure does not survive the floor bump.
 The form half of the cell is still unrun.
 
+## What the account picker added
+
+### Cell 11 — the account picker protocol, and the wrapper launch
+
+**Needs a picker.** Any executable satisfying the [account picker
+protocol](../README.md#account-picker-protocol) will do; the cell below was run
+against one that exists on the author's machine, named through
+`[clauth] picker` in the plugin's own `config.toml`. Without one, herdr-draft
+has no `auto` row and this cell has nothing to run.
+
+`[clauth] launch = "wrapper"` is the other half, and it is **only meaningful
+where the pane's login shell defines `claude` as a FUNCTION**. On a machine
+where `claude` is the plain binary the mode still isolates the credential and
+silently does nothing else, so a pass there proves the launch and not the
+wrapper. Say which you had.
+
+1. **The protocol, against the real picker.** Not a stub:
+
+   ```bash
+   HERDR_DRAFT_PICKER=$(command -v <your-picker>) go test ./internal/picker/ -run Real -v
+   ```
+
+   It probes, then picks with `--dry-run`, and asserts `config_dir` came back
+   null. Skipped, not failed, when the variable is unset — no particular
+   picker may become a prerequisite for a green tree.
+
+2. **The same invocation `create` makes**, without the ledger write:
+
+   ```bash
+   <your-picker> --dir "$PWD" --json --strict --dry-run | jq -c '{profile,config_dir,class,usage}'
+   ```
+
+3. **The form's OPENING state**, via Route B. This is the step worth the
+   trouble: the preview fires on a project change, and the form's first
+   project has not changed from anything, so the opening state is its own
+   case. The `account` row must already name a profile.
+
+4. **The panel**, six `tab`s from the title row. The `✓` belongs on the `auto`
+   row, not on the profile it named — they are two different rows, and that
+   distinction is what the whole `auto` design rests on.
+
+5. **A real launch**, and read all three facts off the pane rather than
+   inferring any of them:
+
+   ```bash
+   herdr pane list      # tokens.acct on the new pane
+   herdr pane process-info --pane <id>
+   ```
+
+**Passed on 0.9.0, 2026-09-10**, on a machine whose shell does define
+`claude` as a function.
+
+- Step 1: probe ok; picked `personal-1` (tenant `personal`, tier `Max`),
+  `config_dir` null under `--dry-run`.
+- Step 2: exit 0, `{"profile":"personal-1","tenant":"personal",`
+  `"config_dir":null,"class":"eligible","usage":{"five_hour":8,"weekly":12,`
+  `"cache_age_s":66}}`.
+- Step 3: the row opened reading
+  `account  auto → personal-1 · Max · 5h 9% · 7d 12%`. **It did not on the
+  first attempt** — the opening state showed a bare `auto`, which is the
+  defect this step exists to catch and was fixed before the run was recorded.
+- Step 4: `✓ auto  picker  [gauges]  → personal-1` first, `active` second,
+  then five profiles; legend `auto  let the account picker choose, per
+  project`. Four of the five profiles were at `7d 100%` and marked
+  `rate limited`; the picker chose the one that was not.
+- Step 5: `tokens.acct = "personal-1"` on the launched pane, and
+  `process-info` reported
+  `claude --settings {"teammateMode":"tmux"} --model claude-opus-5[1m] --effort xhigh`.
+  The `--settings` argument is the whole point of wrapper mode: `clauth start`
+  has never produced it, because only the shell function can.
+
+**Read this before repeating step 5.** The launch that produced the evidence
+above was **accidental**: a `herdr pane run` aimed at a pane that still had
+the form open typed the command into the title field and submitted it, which
+created a worktree and a session named after a temp-file path. Everything the
+step needed was in that session, and it was torn down immediately
+(`worktree remove --workspace`, then `git branch -D`), but it is worth knowing
+that a `pane run` into a pane running a TUI is a submit, not a shell command.
+Send `esc` and confirm the form is gone before running anything into that
+pane.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:
