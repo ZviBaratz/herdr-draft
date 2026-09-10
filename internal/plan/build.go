@@ -305,8 +305,19 @@ const accountPlaceholder = "{account}"
 // previous account baked into it -- so the second launch of a session would
 // silently reuse the first one's account. Substitution is textual and
 // per element so a placeholder may share an element with other text
-// (`sh -c "exec claude-as {account}"`), which is the only way to name a
-// shell function that takes more than the account.
+// (`sh -c "exec claude-as {account}"` is accepted).
+//
+// That shape is accepted, not recommended, and the reason is worth stating
+// because an earlier version of this comment recommended it: ExtraArgs are
+// appended AFTER the whole template, so with `["sh","-c","exec claude-as
+// {account}"]` and `[agents.extra_args]` of `--model opus`, the argv becomes
+// `sh -c "exec claude-as work" --model opus` and those two words land as the
+// inner shell's $0 and $1 -- silently never reaching the agent, while the
+// launch step still reports ok (#72's shape again: the step covers the
+// typing, not the command). Pinned by
+// TestLaunchOps_ShCLauncherStrandsExtraArgs. A wrapper that must receive
+// ExtraArgs has to be a plain program or a function name, not an `sh -c`
+// string.
 //
 // A template reaching here has been validated by config.Load, which
 // guarantees exactly one placeholder. An UNVALIDATED one -- a caller

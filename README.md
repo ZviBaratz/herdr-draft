@@ -476,10 +476,23 @@ else in the form still works.
   its trailing `--` and another launcher may not want one, so nothing is
   appended on your behalf except the agent's own extra args.
 
-  Exactly one `{account}` is required. Any other shape — none, two, an empty
-  list, a blank element — is ignored with a line on stderr and the default
-  used instead, because a template with no `{account}` would launch on
-  whichever profile clauth has live and quietly spend the wrong budget.
+  Exactly one `{account}` is required. Any other *shape* — none, two, an
+  empty list, a blank element — is ignored with a line on stderr and the
+  default used instead, because a template with no `{account}` would launch
+  on whichever profile clauth has live and quietly spend the wrong budget.
+
+  A wrong *type* is not that case and does not degrade: `launcher = "clauth
+  start {account} --"` — a string, which is what a command line looks like —
+  fails at parse time and the plugin refuses to open, naming the line and the
+  key. That is how this file treats a wrong type on every key, but `launcher`
+  is the first list-typed one, so it is worth stating: it takes a **list of
+  arguments**, not a command line.
+
+  Your agent's `[agents.extra_args]` are appended *after* the whole template,
+  so a launcher must be a program or function that accepts them. An `sh -c
+  "…"` wrapper is accepted by the validator but will not receive them — they
+  land as the inner shell's `$0` and `$1` and never reach the agent, while the
+  launch step still reports success.
 
   The reason to change it: `clauth start` costs the session its herdmates
   team lead, since it bypasses the shell function that sets

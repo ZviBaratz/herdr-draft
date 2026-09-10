@@ -140,6 +140,35 @@ favorites = ["claude"]
 			},
 		},
 		{
+			// `[clauth] launcher` has no flag on the command and no row in
+			// the form either: config.toml is its only source, and both
+			// paths must carry it into plan.Input or one config puts them
+			// on different accounts.
+			//
+			// This scenario exists because BOTH halves of the feature were
+			// pinned and the SEAM between them was not: internal/config
+			// tests stop at cfg.Clauth.Launcher and internal/plan tests
+			// inject Input.Launcher by hand, so replacing either
+			// construction site with the built-in default left the key
+			// entirely inert under a 14/14 green `go test ./...` -- a user
+			// setting `launcher` would still get `clauth start`, which is
+			// the mis-billing this key exists to remove. Found by
+			// independent review, not by the suite.
+			name: "the clauth launcher reaches both paths from config.toml",
+			configTOML: `
+branch_prefix = "zvi/"
+[clauth]
+launcher = ["claude-as", "{account}"]
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				Launcher:         []string{"claude-as", "{account}"},
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
 			// `[worktree] trust_repository` has no flag on the command and
 			// no row in the form: config.toml is its only source, so this
 			// is the one scenario where the two paths agree by BOTH

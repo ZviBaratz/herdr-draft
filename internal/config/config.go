@@ -313,11 +313,26 @@ func Load(configDir string) (Config, error) {
 
 	// Validated here, beside branch_prefix, for the same reason: this argv
 	// reaches a command line herdr types into a pane, so it is checked at
-	// the point it is first trusted. It degrades with a reason rather than
-	// failing Load -- a malformed optional key must never be what stops
-	// the form opening (config/repo.go's Notes doc) -- but it must never
-	// degrade SILENTLY either, since a template with no {account} would
-	// bill a session to whichever account was already active.
+	// the point it is first trusted. A bad SHAPE degrades with a reason
+	// rather than failing Load, and must never degrade SILENTLY either,
+	// since a template with no {account} would bill a session to whichever
+	// account was already active.
+	//
+	// A bad TYPE is different and is NOT handled here: `launcher = "clauth
+	// start {account} --"` -- a string, which is what a command line looks
+	// like, and the most plausible way to mistype an argv key -- fails in
+	// toml.Decode above, so Load returns an error and app.Bootstrap turns
+	// it into spec §9's pre-open refusal. That is this loader's behaviour
+	// for a wrong type on EVERY key (`branch_prefix = 5` does the same),
+	// not something this key introduces, and the refusal names the line
+	// and the key. An earlier version of this comment claimed a malformed
+	// optional key can never stop the form opening; that is true of a bad
+	// value and false of a bad type, and the over-claim is recorded here
+	// rather than quietly corrected. Making this one key tolerate a wrong
+	// type (decode through `any`, as config/repo.go does for the
+	// repository file) would be a real improvement and is deliberately
+	// left as its own change, since it belongs to the loader, not to this
+	// key.
 	if verr := validateClauthLauncher(cfg.Clauth.Launcher); verr != "" {
 		def := DefaultClauthLauncher()
 		cfg.Clauth.LauncherWarning = fmt.Sprintf("ignoring [clauth] launcher %v: %s; using %v",

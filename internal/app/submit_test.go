@@ -1464,3 +1464,28 @@ func TestSubmit_WaitingHintPromisesAPromptOnlyWhenThereIsOne(t *testing.T) {
 		})
 	}
 }
+
+// The progress row names the PROGRAM that runs, read off the argv, because
+// [clauth] launcher makes it configurable: "under clauth" is untrue for a
+// session started with `["claude-as","{account}"]`, where nothing about
+// clauth runs. The default launcher's argv[0] IS "clauth", which is why the
+// assertion above and the progress golden frame are unchanged.
+func TestSubmitStepDetail_NamesTheLauncherProgram(t *testing.T) {
+	for _, tc := range []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"clauth", "start", "work", "--"}, "under clauth work"},
+		{[]string{"claude-as", "work"}, "under claude-as work"},
+		{nil, "under clauth work"},
+		{[]string{""}, "under clauth work"},
+	} {
+		got := submitStepDetail(
+			plan.Op{Kind: plan.OpClauthLaunch, RunArgv: tc.argv},
+			plan.Input{AccountPin: "work"},
+		)
+		if got != tc.want {
+			t.Errorf("argv %v -> %q, want %q", tc.argv, got, tc.want)
+		}
+	}
+}

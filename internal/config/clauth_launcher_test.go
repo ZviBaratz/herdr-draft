@@ -64,11 +64,22 @@ func TestLoad_ClauthLauncherRejectedShapesFallBackWithAReason(t *testing.T) {
 	def := []string{"clauth", "start", "{account}", "--"}
 	cases := []struct {
 		name, body, mentions string
+		// rejected is a substring of the value the file supplied that
+		// appears in NO default, so the assertion cannot be satisfied by
+		// the replacement's own rendering.
+		rejected string
 	}{
-		{"no placeholder", "[clauth]\nlauncher = [\"claude-as\"]\n", "{account}"},
-		{"two placeholders", "[clauth]\nlauncher = [\"x\", \"{account}\", \"{account}\"]\n", "{account}"},
-		{"empty list", "[clauth]\nlauncher = []\n", "empty"},
-		{"blank first element", "[clauth]\nlauncher = [\"\", \"{account}\"]\n", "empty"},
+		{"no placeholder", "[clauth]\nlauncher = [\"claude-as\"]\n", "{account}", "claude-as"},
+		{"two placeholders", "[clauth]\nlauncher = [\"xyzzy\", \"{account}\", \"{account}\"]\n", "{account}", "xyzzy"},
+		{"empty list", "[clauth]\nlauncher = []\n", "empty", ""},
+		{"blank first element", "[clauth]\nlauncher = [\"\", \"{account}\"]\n", "empty", ""},
+		// A blank element MID-argv is the case the validator's own doc
+		// comment justifies specifically, and nothing fed it one: mutating
+		// the check to `i == 0 && ...` survived the whole suite.
+		{"blank middle element", "[clauth]\nlauncher = [\"claude-as\", \"\", \"{account}\"]\n", "empty", "claude-as"},
+		// Whitespace-only is why the check trims. Mutating TrimSpace(a) to
+		// a bare `a == ""` also survived.
+		{"whitespace-only element", "[clauth]\nlauncher = [\" \", \"{account}\"]\n", "empty", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -84,6 +95,21 @@ func TestLoad_ClauthLauncherRejectedShapesFallBackWithAReason(t *testing.T) {
 			}
 			if !strings.Contains(cfg.Clauth.LauncherWarning, c.mentions) {
 				t.Errorf("warning %q does not mention %q", cfg.Clauth.LauncherWarning, c.mentions)
+			}
+			// The warning must name what it REJECTED, not only what it
+			// used instead. Every probe above is satisfied by the rendered
+			// default on its own, so deleting the rejected value from the
+			// message survived -- while LauncherWarning's doc comment
+			// claims it names that value. `config_test.go` already holds
+			// BranchPrefixWarning to both halves; this carries the pair
+			// across. "claude-as" appears in no default.
+			if c.rejected != "" && !strings.Contains(cfg.Clauth.LauncherWarning, c.rejected) {
+				t.Errorf("warning %q does not name the rejected value %q",
+					cfg.Clauth.LauncherWarning, c.rejected)
+			}
+			if !strings.Contains(cfg.Clauth.LauncherWarning, "clauth start") {
+				t.Errorf("warning %q does not name the replacement it used",
+					cfg.Clauth.LauncherWarning)
 			}
 		})
 	}
@@ -104,5 +130,49 @@ func TestLoad_ClauthLauncherPlaceholderNeedNotBeItsOwnElement(t *testing.T) {
 	want := []string{"sh", "-c", "exec claude-as {account}"}
 	if got := cfg.Clauth.Launcher; !reflect.DeepEqual(got, want) {
 		t.Errorf("Clauth.Launcher = %v, want %v", got, want)
+	}
+}
+
+// A wrong TYPE fails Load rather than degrading, unlike a wrong shape. That
+// is this loader's behaviour for every key, but `launcher` is the first
+// list-typed one and a string is the most plausible way to mistype it -- and
+// a comment here once claimed a malformed optional key can never stop the
+// form opening. This row holds the corrected claim to the code.
+func TestLoad_ClauthLauncherWrongTypeFailsLoad(t *testing.T) {
+	for _, body := range []string{
+		"[clauth]\nlauncher = \"clauth start {account} --\"\n",
+		"[clauth]\nlauncher = [1, 2]\n",
+		"[clauth]\nlauncher = true\n",
+	} {
+		cfg, err := Load(writeConfigBody(t, body))
+		if err == nil {
+			t.Errorf("Load accepted %q; expected a parse error", body)
+			continue
+		}
+		if cfg.Clauth.LauncherWarning != "" {
+			t.Errorf("a type error also set a warning (%q); the two paths are distinct",
+				cfg.Clauth.LauncherWarning)
+		}
+	}
+}
+
+// A launcher that is ONLY the placeholder passes validation -- one placeholder,
+// no empty element -- so the account name becomes argv[0] and herdr types it
+// into the pane as the program. That is almost certainly a mistake, but the
+// validator's rule is about the placeholder count and not about argv[0] being a
+// plausible program, and widening it at review time would be scope this key
+// does not own. Pinned as ACCEPTED so the behaviour is deliberate rather than
+// accidental: if a future version starts rejecting it, this row is where the
+// decision gets recorded.
+func TestLoad_ClauthLauncherBarePlaceholderIsAccepted(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlauncher = [\"{account}\"]\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.LauncherWarning != "" {
+		t.Errorf("rejected a bare-placeholder launcher: %q", cfg.Clauth.LauncherWarning)
+	}
+	if want := []string{"{account}"}; !reflect.DeepEqual(cfg.Clauth.Launcher, want) {
+		t.Errorf("Clauth.Launcher = %v, want %v", cfg.Clauth.Launcher, want)
 	}
 }
