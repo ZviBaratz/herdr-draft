@@ -221,7 +221,7 @@ Layering, outermost to innermost:
   with nobody at the keyboard. Zero means "behave exactly as this did before
   the option existed", which is what lets `create` opt out by passing an
   empty `ExecOpts` rather than by carrying a branch of its own.
-- **A prompt has four fates, and three of them are not "it failed".**
+- **A prompt has four fates, and "it failed" is only one of them.**
   `herdr agent prompt` can succeed; time out its confirmation
   (`ErrPromptWaitTimeout`, herdr's `timeout`); stall
   (`ErrPromptStalled`, herdr's `agent_prompt_stalled`); or fail outright.
