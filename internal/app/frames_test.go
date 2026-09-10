@@ -847,3 +847,46 @@ func TestAssembledSubmit_UnansweredDialogFrame(t *testing.T) {
 	assertAppSubmitFrame(t, fmt.Sprintf("submit-dialog-unanswered-%dx%d", framePopupW, framePopupH),
 		m, framePopupW, framePopupH)
 }
+
+// TestAssembledSubmit_WaitingOnThePromptDialogFrame is the SAME wait, one
+// step further down, and it is the one a user actually meets: live on herdr
+// 0.9.0 `agent start` usually returns ok with the trust dialog still up, so
+// the launch row goes green and the refusal comes from promptIfReady's own
+// guard (docs/manual-smoke.md, 2026-09-09).
+//
+// Worth its own fixture rather than assumed identical to the launch-step
+// one: the row that carries `…` is a different row, the rows above it are
+// all green, and the footer instruction has to still be there. If a reviewer
+// only ever sees the launch-step frame they have not seen the screen that
+// actually ships.
+func TestAssembledSubmit_WaitingOnThePromptDialogFrame(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
+		readClearsAfter: 1,
+	}
+	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 300000}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m.title.SetTitle("Fix login redirect loop", false)
+	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, resume := drainSubmitProgressUntil(t, m, cmd, func(p plan.Progress) bool {
+		return p.State == plan.StepWaiting
+	})
+
+	assertAppSubmitFrame(t, "submit-waiting-on-prompt-dialog-80x24", m, 80, 24)
+	assertAppSubmitFrame(t, fmt.Sprintf("submit-waiting-on-prompt-dialog-%dx%d", framePopupW, framePopupH),
+		m, framePopupW, framePopupH)
+
+	m, _, done := drainSubmitProgress(t, m, resume)
+	if done.result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: the wait must resolve into a delivered prompt: %+v",
+			done.result.FailedIndex, done.result)
+	}
+	if done.result.PromptText != "" {
+		t.Errorf("PromptText = %q, want empty -- nothing left for the user to paste", done.result.PromptText)
+	}
+}

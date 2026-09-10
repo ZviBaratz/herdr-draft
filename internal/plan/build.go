@@ -172,6 +172,13 @@ func Build(in Input) ([]Op, error) {
 				Text:        in.Prompt,
 				WaitTimeout: in.PromptTimeout,
 			},
+			// Not the prompt's own wait (that is WaitTimeout above): this is
+			// the DETECTION budget, used only when the send is refused
+			// because the pane is showing a dialog and Execute waits for it
+			// to clear (#115). It is how long an unreadable pane may stay
+			// unreadable before the agent behind it counts as gone, and how
+			// long readiness gets once the screen is clear.
+			Timeout: in.DetectionTimeout,
 		})
 	}
 	return ops, nil

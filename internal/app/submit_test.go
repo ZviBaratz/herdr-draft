@@ -66,6 +66,13 @@ type submitFakeRunner struct {
 	// correctly refuse the very prompt the wait exists to deliver.
 	dialogClears bool
 
+	// readClearsAfter, when > 0, makes AgentRead return readText for that
+	// many calls and "" after that -- the dialog as the person answers it.
+	// The prompt-step wait polls the SCREEN, so a fake whose screen never
+	// changes can only ever express a dialog nobody answers.
+	readClearsAfter int
+	readCalls       int
+
 	// blockedTimeouts is every blocked budget AwaitDetection was handed,
 	// in order.
 	blockedTimeouts []time.Duration
@@ -139,6 +146,10 @@ func (r *submitFakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) e
 func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 	if r.shouldFail("AgentRead") {
 		return "", r.failErr
+	}
+	r.readCalls++
+	if r.readClearsAfter > 0 && r.readCalls > r.readClearsAfter {
+		return "", nil
 	}
 	return r.readText, nil
 }

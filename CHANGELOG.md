@@ -143,6 +143,14 @@ without the popup. It drives herdr exclusively through the public CLI
   declined, it falls back to the failure screen with the prompt saved.
   Headless `create` deliberately keeps failing fast, because a script has
   nobody at the keyboard.
+
+  The wait covers the dialog wherever it stops the run. herdr may recognise
+  the screen and refuse the launch, or it may call the agent ready and leave
+  the dialog for herdr-draft's own prompt guard to catch one step later;
+  live, the second is what the popup meets. The launch-step wait polls
+  herdr's status, the prompt-step wait polls the pane's own screen — herdr
+  being wrong about that pane is the reason the second wait exists, so it
+  does not ask herdr again.
 - `herdr pane run` types its argv into a shell rather than exec'ing it, so
   the runner shell-quotes every element — and the argv path that has no
   shell deliberately does not.

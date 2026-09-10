@@ -471,18 +471,27 @@ whatever kind you picked) once detection completes
 
 **Expected on a fresh worktree, and this is the cell's real point (#115):**
 a brand-new worktree is a directory Claude Code has never been trusted in,
-so it shows its first-run trust dialog and herdr 0.9.0 reports the agent
-`blocked`. The popup does **not** fail on that. The launch row goes to `…`
-and the footer replaces the step counter with an instruction:
+so it shows its first-run trust dialog. The popup does **not** fail on that.
+A row goes to `…` and the footer replaces the step counter with an
+instruction:
 
 ```
 ✓ worktree   <branch> from <base>
 ✓ workspace  smoke a wt
-… claude     smoke-a-wt
-  prompt     queued
+✓ claude     smoke-a-wt
+… prompt     waiting on you…
 ───────────────────────────────────────────────────────────────────────────────
 answer the dialog in the pane — your prompt goes out as soon as you do
 ```
+
+**Which row waits is not fixed, and both are correct.** herdr may report the
+agent `blocked` and refuse `agent start`, in which case the **launch** row
+waits and the prompt row is still `queued`; or `agent start` may return ok
+with the dialog still up, in which case the launch row goes green and the
+**prompt** row waits, refused by herdr-draft's own dialog guard. On the
+2026-09-09 pass the second happened every time through the popup and the
+first only through headless probes, so expect the shape above — but a `…` on
+the launch row is the same feature, not a different result.
 
 With a `here` placement herdr has already moved you to the agent's pane, so
 the dialog is in front of you. Answer it (`↓`, `↵` for "Yes, I trust this
@@ -1140,7 +1149,46 @@ locally and not yet merged).
 | 9 — the reuse path | **pass, via a rewritten recipe** — not runnable as documented (refused by the form's duplicate check and by `worktree create` alike); reached through a stale workspace, see the cell. §5.2's correction claimed a fresh tab and left the first session's panes alone. The `--json` report named the wrong pane: **#99** |
 | 10 — a large multi-line prompt | **pass** — 6311 bytes, 120 lines, 22 blank lines, headless `--prompt -` into an already-trusted directory. Delivered **and submitted**: the whole payload above the `❯` as one turn, the agent's answer after it, the input buffer empty. #73's 0.8.2 silent failure does not reproduce on 0.9.0, so the floor bump is the fix. The form half of the cell is still unrun |
 
-Four findings, all live-only against a green `just check`:
+**2026-09-09, second sitting — #115's own verification, at `437629d`.** Run
+via Route B (the real form in an addressable pane), state dir redirected to a
+temp directory so the user's own `recents.json`/`projects.json` were not
+written; teardown left no workspace, checkout or process behind. Four launches
+into fresh worktrees of one throwaway repo.
+
+- **The mechanism #115 rests on is confirmed, end to end.** An agent sitting
+  on the trust dialog reports `agent_status: "blocked"`; the instant the
+  dialog is answered `agent get` reports `done` with `interactive_ready:
+  true` — which is exactly the verdict `classifyAgent` maps to ready — on the
+  *same* agent, with no re-launch. A prompt sent at that point lands as a
+  **submitted turn above the `❯` with an empty input buffer** (`❯ Reply with
+  exactly one word: pineapple`, then `● pineapple`). That is the issue's own
+  pass condition, met.
+- **But #115's wait never engaged through the popup, because `agent start`
+  did not refuse.** In all three form submits the launch row went `›` → `✓`
+  with no `…` in between: herdr returned success while the pane was showing
+  the trust dialog. The `agent_not_ready` refusal #115 waits on DID occur,
+  twice, but only from probes launching into an ordinary split pane
+  (headless `create`, and a hand-driven `herdr agent start`). So on this
+  machine the popup's failure lands one step later, on the **prompt** op,
+  refused by herdr-draft's own `promptIfReady` guard. #115's first
+  implementation did not wait on that path at all; it now waits on both, and
+  the prompt-step wait polls the SCREEN rather than herdr's status, because
+  herdr is the thing that was wrong about this pane.
+- **Worse: that guard is racy, and when it loses, the agent dies and the run
+  reports success.** In two of the three form submits the guard did not fire
+  — the dialog painted after its read — so `agent prompt` sent the text and
+  its trailing Enter answered the **preselected `❯ No, exit`**. The agent
+  exited, and the pipeline reported a clean create: state persisted, no
+  `unsent-prompt.txt`, no failure screen. This is #94's failure mode
+  returning through a timing window rather than through a classifier gap, and
+  it is independent of #115 (the wait is not in that path). Read the pane
+  before believing a success. **#116**
+- Not a finding: `agent read --source detection` on a blocked pane does carry
+  both `dialog.go` signatures verbatim, so the guard's *matching* is sound.
+  What it cannot do is match a screen that has not painted yet.
+
+Four findings from the first sitting, all live-only against a green
+`just check`:
 
 - **#72** (fixed) — the quoted-`extra_args` workaround this repo recommended
   *broke* Path A, because `agent start` execs an argv vector while `pane run`

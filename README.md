@@ -512,12 +512,17 @@ two profiles exist (a static, startup-time check).
 - `prompt_wait_ms` (default: `120000`) — timeout passed to
   `herdr agent prompt --wait` for step 3 of the submit pipeline.
 - `trust_wait_ms` (default: `300000`, five minutes) — how long the popup
-  waits for **you** to answer a blocking dialog that stopped the launch,
-  in practice Claude Code's first-run trust prompt in a fresh worktree.
-  The launch step shows `answer the dialog in the pane` and the pipeline
-  carries on by itself the moment you do; if the budget runs out, or if
-  the agent stops running because you declined, it falls back to the
-  failure screen with your prompt saved.
+  waits for **you** to answer a blocking dialog, in practice Claude Code's
+  first-run trust prompt in a fresh worktree. The step shows `…`, the
+  footer says `answer the dialog in the pane`, and the pipeline carries on
+  by itself the moment you do; if the budget runs out, or if the agent
+  stops running because you declined, it falls back to the failure screen
+  with your prompt saved.
+
+  It covers the dialog wherever it stops the run: at the launch step, when
+  herdr refuses to call the agent ready, and at the prompt step, when
+  herdr-draft's own guard sees the dialog on a pane herdr already called
+  ready.
 
   A separate number from `detection_ms` on purpose: that one is tuned for
   a machine painting a status transition in tens of seconds, and raising
@@ -704,12 +709,16 @@ them before filing a bug against something documented here:
   start` refuses to call the launch a success — even though the agent is
   running fine and is one keystroke from ready.
 
-  In the popup this is a pause, not a failure. The launch step goes to
-  `…` and the footer reads *answer the dialog in the pane*; herdr has
-  already moved you to that pane, so answer it there and the pipeline
-  sends your prompt and closes by itself. You press nothing in the popup.
-  It happens once per directory. How long it will wait for you is
+  In the popup this is a pause, not a failure. A step goes to `…` and the
+  footer reads *answer the dialog in the pane*; herdr has already moved you
+  to that pane, so answer it there and the pipeline sends your prompt and
+  closes by itself. You press nothing in the popup. It happens once per
+  directory. How long it will wait for you is
   [`trust_wait_ms`](#timeouts).
+
+  Which step pauses depends on whether herdr recognised the dialog before
+  or after it called the agent ready — the launch step if before, the
+  prompt step if after. Both are the same pause.
 
   If the wait runs out, or you answer "No, exit", you get the failure
   screen instead: press `k` to keep the session, and any prompt you had

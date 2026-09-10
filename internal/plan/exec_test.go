@@ -41,6 +41,28 @@ type mockRunner struct {
 	// start whose pane cannot be read), so it needs a second dial.
 	readErr error
 
+	// readTextClearsAfter, when > 0, makes AgentRead return readText for
+	// that many calls and "" from then on -- the dialog as the person at
+	// the keyboard answers it, several polls into a wait. A screen that
+	// never changes cannot express the thing #115's prompt-step wait is
+	// about.
+	readTextClearsAfter int
+	readCalls           int
+
+	// readErrAfter/readErrToGive make AgentRead succeed for that many
+	// calls and then fail with readErrToGive from then on -- the pane as
+	// it looks once the agent behind it has exited, which is what a
+	// declined dialog leaves behind.
+	readErrAfter  int
+	readErrToGive error
+
+	// readErrCount bounds that run of failures: 0 means "from readErrAfter
+	// on, forever" (an agent that has gone), a positive n means exactly n
+	// failed reads and then normal service (a pane briefly unreadable
+	// mid-repaint). The two must not be confused, which is why a test can
+	// ask for either.
+	readErrCount int
+
 	// readTextClearsOnReady makes AgentRead stop returning readText once
 	// AwaitDetection has succeeded: the pane as it looks AFTER the person
 	// answered the dialog. A mock whose screen never changes is not the
@@ -165,7 +187,15 @@ func (m *mockRunner) AgentRead(ctx context.Context, target string) (string, erro
 	if m.shouldFail("AgentRead") {
 		return "", m.failErr
 	}
+	m.readCalls++
+	if m.readErrToGive != nil && m.readCalls > m.readErrAfter &&
+		(m.readErrCount == 0 || m.readCalls <= m.readErrAfter+m.readErrCount) {
+		return "", m.readErrToGive
+	}
 	if m.dialogAnswered {
+		return "", nil
+	}
+	if m.readTextClearsAfter > 0 && m.readCalls > m.readTextClearsAfter {
 		return "", nil
 	}
 	return m.readText, nil
@@ -223,6 +253,16 @@ func (m *mockRunner) WorkspaceClose(ctx context.Context, workspaceID string) err
 // leaves busyRetryNow at its current value (real time.Now is fine when a
 // test's interval is already 0 -- see time.Sleep's documented "zero or
 // negative duration returns immediately").
+// withDialogPollInterval shrinks the prompt-step dialog wait's poll cadence
+// so a test runs its loop instantly instead of sleeping out real seconds --
+// the same trick withBusyRetryOverrides plays, and for the same reason.
+func withDialogPollInterval(t *testing.T, interval time.Duration) {
+	t.Helper()
+	orig := dialogPollInterval
+	dialogPollInterval = interval
+	t.Cleanup(func() { dialogPollInterval = orig })
+}
+
 func withBusyRetryOverrides(t *testing.T, interval time.Duration, now func() time.Time) {
 	t.Helper()
 	origInterval, origNow := busyRetryInterval, busyRetryNow
@@ -2390,5 +2430,215 @@ func TestExecuteGoneAgentReadsTheSameOnBothPaths(t *testing.T) {
 	}
 	if strings.Contains(msg, "the pane shows") {
 		t.Errorf("gone agent = %q, want no pane quoted: it is a shell prompt, and Path A quotes nothing here either", msg)
+	}
+}
+
+// --- #115, second trigger: the dialog that stops the PROMPT step ---------
+//
+// Live on herdr 0.9.0, `agent start` frequently returns ok while the trust
+// dialog is up -- herdr's readiness verdict lands before it classifies that
+// screen -- so the popup's refusal arrives one step later, from
+// promptIfReady's own guard, and the launch-step wait above never runs.
+// That is the path a user actually meets (docs/manual-smoke.md, 2026-09-09),
+// so it waits too. The signal here is the SCREEN rather than herdr's status:
+// herdr is the thing that was wrong about this pane, and dialog.go's
+// signatures are the evidence promptIfReady already trusts.
+
+// TestExecuteWaitsForThePromptDialogToClear: the guard refuses, the person
+// answers, and the prompt goes out by itself.
+func TestExecuteWaitsForThePromptDialogToClear(t *testing.T) {
+	withDialogPollInterval(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	in.DetectionTimeout = 30 * time.Second
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:                herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:            trustDialogScreen,
+		readTextClearsAfter: 3,
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: the dialog cleared and the prompt should have gone out: %+v",
+			result.FailedIndex, result)
+	}
+	if !containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
+		t.Fatalf("calls = %v, want the prompt sent once the dialog cleared", m.calls)
+	}
+	// Once the screen is clear it defers to herdr for readiness, under the
+	// real detection budget and with NO blocked budget: the dialog is gone,
+	// so a blocked verdict now means a different dialog and a real refusal.
+	if !containsCall(m.calls, "AwaitDetection(pane-1,30s,0s)") {
+		t.Fatalf("calls = %v, want a readiness check carrying the detection budget", m.calls)
+	}
+	if result.PromptText != "" {
+		t.Errorf("PromptText = %q, want empty", result.PromptText)
+	}
+	var waiting int
+	for _, p := range progressed {
+		if p.State == StepWaiting {
+			waiting++
+		}
+	}
+	if waiting != 1 {
+		t.Errorf("got %d StepWaiting events, want exactly 1: %+v", waiting, progressed)
+	}
+}
+
+// TestExecuteWithoutATrustBudgetDoesNotWaitForThePromptDialog: decision 2
+// again, one step further down. Headless `create` must still get today's
+// refusal the moment the guard matches.
+func TestExecuteWithoutATrustBudgetDoesNotWaitForThePromptDialog(t *testing.T) {
+	withDialogPollInterval(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:                herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:            trustDialogScreen,
+		readTextClearsAfter: 1,
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if result.FailedIndex != 2 {
+		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", result.FailedIndex, result)
+	}
+	if countCallsWithPrefix(m.calls, "AgentPrompt") != 0 {
+		t.Errorf("calls = %v, want no prompt sent at all", m.calls)
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want the prompt handed back for paste", result.PromptText)
+	}
+}
+
+// TestExecuteFailsWhenThePromptDialogIsNeverAnswered: the budget runs out
+// with the dialog still up. Today's failure, and the message still leads
+// with what to do, since SubmitView truncates a step's value keeping the
+// head.
+func TestExecuteFailsWhenThePromptDialogIsNeverAnswered(t *testing.T) {
+	withDialogPollInterval(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:     herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText: trustDialogScreen,
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 20 * time.Millisecond},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if result.FailedIndex != 2 {
+		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", result.FailedIndex, result)
+	}
+	if countCallsWithPrefix(m.calls, "AgentPrompt") != 0 {
+		t.Errorf("calls = %v, want nothing ever sent into the dialog", m.calls)
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want the prompt handed back for paste", result.PromptText)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	for _, want := range []string{"answer the dialog in the pane", "Quick safety check"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("unanswered prompt dialog = %q, want it to contain %q", msg, want)
+		}
+	}
+	if strings.ContainsAny(msg, "\n\r") {
+		t.Errorf("unanswered prompt dialog = %q, want a single line", msg)
+	}
+}
+
+// TestExecuteReportsAGoneAgentFromThePromptDialog: "No, exit" ends Claude
+// Code, and `agent read` then has no agent to read. Same conclusion as the
+// launch-step wait, and deliberately the same sentence -- the user does not
+// care which step noticed.
+func TestExecuteReportsAGoneAgentFromThePromptDialog(t *testing.T) {
+	withDialogPollInterval(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	in.DetectionTimeout = 10 * time.Millisecond
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:          herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:      trustDialogScreen,
+		readErrAfter:  1,
+		readErrToGive: errors.New("herdr agent read pane-1: exit status 1: no agent in pane"),
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if result.FailedIndex != 2 {
+		t.Fatalf("FailedIndex = %d, want 2: %+v", result.FailedIndex, result)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	if !strings.Contains(msg, "no longer running") {
+		t.Errorf("gone agent = %q, want it to say the agent is no longer running", msg)
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want the prompt handed back for paste", result.PromptText)
+	}
+}
+
+// TestExecuteToleratesAnUnreadablePaneWhileWaiting: a pane can be briefly
+// unreadable mid-repaint, and a single failed read is not evidence the agent
+// behind it has gone. Treating it as death would abandon a session the user
+// is in the middle of rescuing -- the exact opposite of what the wait is
+// for -- so only a run of failures as long as the detection budget counts.
+func TestExecuteToleratesAnUnreadablePaneWhileWaiting(t *testing.T) {
+	withDialogPollInterval(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	in.DetectionTimeout = 30 * time.Second
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:                herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText:            trustDialogScreen,
+		readTextClearsAfter: 4,
+		readErrAfter:        2,
+		readErrCount:        1,
+		readErrToGive:       errors.New("herdr agent read pane-1: exit status 1: transient"),
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: one unreadable poll is not a dead agent: %+v",
+			result.FailedIndex, result)
+	}
+	if !containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
+		t.Errorf("calls = %v, want the prompt sent once the dialog cleared", m.calls)
 	}
 }
