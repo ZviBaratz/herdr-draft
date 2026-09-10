@@ -13,6 +13,17 @@ for why a heading here may read `unreleased`.
 
 ## 0.1.0 — unreleased
 
+### Added
+
+- `[clauth] launcher`: the argv that starts a pinned account, as a template
+  with `{account}` standing for the profile name. The default is
+  byte-identical to the previous hardcoded `clauth start <account> --`, so
+  nothing changes for an installation that omits the key. Set it to a
+  wrapper of your own — `["claude-as", "{account}"]` — to keep the session's
+  herdmates team lead, which `clauth start` costs it. Exactly one
+  `{account}` is required; any other shape falls back to the default with a
+  reason on stderr rather than launching on an unintended account.
+
 First release. There is no predecessor to diff against, so this entry says
 what 0.1.0 *is* rather than what changed.
 

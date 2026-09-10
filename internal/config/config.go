@@ -47,6 +47,73 @@ type ClauthConfig struct {
 	// which is distinct from explicitly disabling clauth integration.
 	Enabled *bool  `toml:"enabled"`
 	Default string `toml:"default"`
+
+	// Launcher is the argv that starts a pinned claude account, with
+	// `{account}` standing for the pin. It is a TEMPLATE rather than a
+	// prefix to swap because the two useful values do not share a shape:
+	// `clauth start <account> --` needs the trailing separator and
+	// `claude-as <account>` must not have one. Appending anything on the
+	// caller's behalf would corrupt one of them, so the whole argv is the
+	// unit and only ExtraArgs follows it.
+	//
+	// The default is byte-identical to what the plugin built before this
+	// key existed. It costs the session its herdmates team lead, because
+	// `clauth start` bypasses the `claude()` shell function that sets
+	// CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS and launches through
+	// herdmates' teammux-launch; `claude-as` is the dotfiles function
+	// that keeps both. That is a local choice, not a shareable one --
+	// `claude-as` is a shell function, so it resolves only in a pane whose
+	// shell sourced those dotfiles, and herdr TYPES this argv into the
+	// pane's shell (CLIRunner.PaneRun) rather than exec'ing it, which is
+	// the only reason a shell function can be named here at all.
+	Launcher []string `toml:"launcher"`
+
+	// LauncherWarning is non-empty when the file's own launcher was
+	// rejected and Launcher therefore holds the built-in default instead:
+	// the short reason, naming the rejected value. Never decoded from the
+	// file (`toml:"-"`) -- it is Load's own output, the same
+	// degrade-with-a-reason shape as BranchPrefixWarning.
+	LauncherWarning string `toml:"-"`
+}
+
+// AccountPlaceholder is the token ClauthConfig.Launcher substitutes for the
+// pinned account. Exported because plan builds the argv and this package
+// validates it, and a second spelling of it in either place would be a
+// template that silently launches the wrong account.
+const AccountPlaceholder = "{account}"
+
+// DefaultClauthLauncher returns the built-in launcher argv. It is a
+// function rather than a package-level slice so a caller cannot mutate the
+// default for every later call.
+func DefaultClauthLauncher() []string {
+	return []string{"clauth", "start", AccountPlaceholder, "--"}
+}
+
+// validateClauthLauncher returns why argv is unusable as a launcher
+// template, or "" when it is fine.
+//
+// Exactly one AccountPlaceholder is required, and that is the load-bearing
+// rule: none would launch the session on whatever account happened to be
+// active -- the mis-billing this key exists to fix, arriving silently --
+// and more than one would name the account twice in a single command line,
+// which no launcher takes. An empty element is rejected because argv[0]
+// blank is not a command and a blank element mid-argv is an empty word the
+// pane's shell would drop.
+func validateClauthLauncher(argv []string) string {
+	if len(argv) == 0 {
+		return "it is empty"
+	}
+	n := 0
+	for i, a := range argv {
+		if strings.TrimSpace(a) == "" {
+			return fmt.Sprintf("element %d is empty", i)
+		}
+		n += strings.Count(a, AccountPlaceholder)
+	}
+	if n != 1 {
+		return fmt.Sprintf("it contains %s %d times, want exactly 1", AccountPlaceholder, n)
+	}
+	return ""
 }
 
 // AgentsConfig is the optional `[agents]` table (spec §12).
@@ -147,6 +214,7 @@ type Config struct {
 // missing entirely.
 func defaults() Config {
 	return Config{
+		Clauth:           ClauthConfig{Launcher: DefaultClauthLauncher()},
 		BranchPrefix:     defaultBranchPrefix(),
 		DefaultWorktree:  true,
 		DefaultPlacement: "new-space",
@@ -241,6 +309,20 @@ func Load(configDir string) (Config, error) {
 		cfg.BranchPrefixWarning = fmt.Sprintf("ignoring branch_prefix %q: %v; using %q",
 			cfg.BranchPrefix, verr, defaultPrefix)
 		cfg.BranchPrefix = defaultPrefix
+	}
+
+	// Validated here, beside branch_prefix, for the same reason: this argv
+	// reaches a command line herdr types into a pane, so it is checked at
+	// the point it is first trusted. It degrades with a reason rather than
+	// failing Load -- a malformed optional key must never be what stops
+	// the form opening (config/repo.go's Notes doc) -- but it must never
+	// degrade SILENTLY either, since a template with no {account} would
+	// bill a session to whichever account was already active.
+	if verr := validateClauthLauncher(cfg.Clauth.Launcher); verr != "" {
+		def := DefaultClauthLauncher()
+		cfg.Clauth.LauncherWarning = fmt.Sprintf("ignoring [clauth] launcher %v: %s; using %v",
+			cfg.Clauth.Launcher, verr, def)
+		cfg.Clauth.Launcher = def
 	}
 	return cfg, nil
 }

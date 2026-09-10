@@ -1306,6 +1306,7 @@ func (m Model) buildPlanInput() plan.Input {
 		AgentKind:        m.agent.Value(),
 		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],
 		AccountPin:       m.accountPin(),
+		Launcher:         m.cfg.Clauth.Launcher,
 		Prompt:           m.prompt.Value(),
 		Ctx:              m.ctx,
 		DetectionTimeout: time.Duration(m.cfg.Timeouts.DetectionMS) * time.Millisecond,

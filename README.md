@@ -470,6 +470,25 @@ else in the form still works.
   `account` row starts on: a profile name, or the sentinel `"active"` —
   unset and `"active"` behave identically ("don't pin, use whichever profile
   clauth currently has live").
+- `launcher` (default: `["clauth", "start", "{account}", "--"]`) — the argv
+  that starts a pinned account, with `{account}` standing for the profile
+  name. It is a whole-argv **template**, not a prefix: `clauth start` needs
+  its trailing `--` and another launcher may not want one, so nothing is
+  appended on your behalf except the agent's own extra args.
+
+  Exactly one `{account}` is required. Any other shape — none, two, an empty
+  list, a blank element — is ignored with a line on stderr and the default
+  used instead, because a template with no `{account}` would launch on
+  whichever profile clauth has live and quietly spend the wrong budget.
+
+  The reason to change it: `clauth start` costs the session its herdmates
+  team lead, since it bypasses the shell function that sets
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` and launches through herdmates.
+  If you have a wrapper of your own that keeps both, name it here — e.g.
+  `launcher = ["claude-as", "{account}"]`. herdr *types* this argv into the
+  pane's shell rather than exec'ing it, so a shell function works, but only
+  in a pane whose shell defines it; that is why the shareable default stays
+  `clauth start`.
 
 The `account` row only renders when clauth is configured **and** at least
 two profiles exist (a static, startup-time check).
@@ -677,8 +696,9 @@ For where this file sits among your own settings, see
 ## clauth integration
 
 When clauth is configured and ≥2 profiles exist, the `account` row lets you
-pin a profile for the launched Claude session (`clauth start <profile> --`,
-routed through `herdr pane run`). Pinning is optional — leaving the row on
+pin a profile for the launched Claude session (by default
+`clauth start <profile> --`, routed through `herdr pane run`; see
+[`[clauth]`](#clauth) to change the launcher). Pinning is optional — leaving the row on
 `active` lets clauth use whatever profile is currently live, with no wrapper
 involved. The row carries each profile's own state: `<name> · <plan> · ok`,
 a rate-limited profile's percentage in the warning color, an expired one

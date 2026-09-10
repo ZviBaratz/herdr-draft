@@ -200,6 +200,13 @@ trust_repository = true
 			want := tc.want
 			want.ProjectDir, want.Title, want.IsGitRepo = projectDir, title, true
 			want.Ctx = mustContext(t, contextJSON)
+			// No scenario configures a [clauth] launcher, so both paths
+			// resolve the built-in one. Filled here rather than repeated in
+			// every literal, and only when the scenario left it unset, so a
+			// future scenario can still pin its own.
+			if want.Launcher == nil {
+				want.Launcher = config.DefaultClauthLauncher()
+			}
 			if !reflect.DeepEqual(fromCommand, want) {
 				t.Fatalf("the tiers did not resolve as the scenario describes.\ngot:  %s\nwant: %s",
 					showInput(fromCommand), showInput(want))
