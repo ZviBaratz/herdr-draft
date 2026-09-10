@@ -3236,3 +3236,38 @@ func TestPromptGuardOnTheMeasuredStartupWindow(t *testing.T) {
 		})
 	}
 }
+
+// TestExecuteWrapperLaunchThreadsPaneIDAndConfigDir is
+// TestExecuteClauthLaunchThreadsPaneID's wrapper-mode twin. The two are
+// spelled out separately rather than table-driven on purpose: the whole
+// point is that BOTH command lines are pinned by name, so a change to
+// either one has to be written down here before it can be green.
+func TestExecuteWrapperLaunchThreadsPaneIDAndConfigDir(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.AccountPin = "work"
+	in.AccountLaunch = LaunchWrapper
+	in.AccountConfigDir = "/dirs/work"
+	in.ExtraArgs = []string{"--model", "opus"}
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+	if result.FailedIndex != -1 {
+		t.Fatalf("unexpected failure: %+v", result)
+	}
+
+	wantCalls := []string{
+		"WorkspaceList()",
+		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"PaneRun(pane-1,CLAUDE_CONFIG_DIR=/dirs/work,claude,--model,opus)",
+		"AwaitDetection(pane-1," + in.DetectionTimeout.String() + ",0s)",
+	}
+	if !reflect.DeepEqual(m.calls, wantCalls) {
+		t.Fatalf("calls = %v, want %v", m.calls, wantCalls)
+	}
+}
