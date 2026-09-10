@@ -54,10 +54,24 @@ type submitFakeRunner struct {
 	failAt  string
 	failErr error
 
-	// readText is what AgentRead returns on success (default "": no
-	// dialog present -- the pre-existing happy-path scenario's implicit
-	// assumption, that the pane is a normal ready state, still holds).
+	// readText is what AgentRead returns on success. Its zero value is
+	// paintedIdleScreen, not the empty string: after #116 an empty
+	// detection buffer is a refusal rather than the "ordinary ready pane"
+	// the pre-existing happy paths meant by it. blankReads asks for the
+	// empty one on purpose.
 	readText string
+
+	// blankReads makes every AgentRead succeed with nothing in it -- a
+	// pane herdr will answer about and that has not drawn anything yet,
+	// which is the state #116's silent failure came out of.
+	blankReads bool
+
+	// postPromptErr is what AgentRead fails with once AgentPrompt has been
+	// called: a pane whose agent is gone, which is what a prompt sent into
+	// an unpainted dialog leaves behind. It is the only thing #116's
+	// post-send verification has to look at.
+	postPromptErr error
+	promptSent    bool
 
 	// dialogClears makes AgentRead stop returning readText once
 	// AwaitDetection has succeeded: the pane as it looks after the person
@@ -140,6 +154,7 @@ func (r *submitFakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) e
 	if r.shouldFail("AgentPrompt") {
 		return r.failErr
 	}
+	r.promptSent = true
 	return nil
 }
 
@@ -148,11 +163,26 @@ func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 		return "", r.failErr
 	}
 	r.readCalls++
-	if r.readClearsAfter > 0 && r.readCalls > r.readClearsAfter {
+	if r.promptSent && r.postPromptErr != nil {
+		return "", r.postPromptErr
+	}
+	if r.blankReads {
 		return "", nil
+	}
+	if r.readClearsAfter > 0 && r.readCalls > r.readClearsAfter {
+		return paintedIdleScreen, nil
+	}
+	if r.readText == "" {
+		return paintedIdleScreen, nil
 	}
 	return r.readText, nil
 }
+
+// paintedIdleScreen is an ordinary, painted, dialog-free pane -- what
+// submitFakeRunner.AgentRead reports whenever no dial asks for something
+// else. See internal/plan's constant of the same name for why the fake's
+// default could not stay empty (#116).
+const paintedIdleScreen = "> Sonnet 5 · claude-code\n  Type your message...\n"
 
 func (r *submitFakeRunner) AwaitDetection(_ context.Context, _ string, _, blockedTimeout time.Duration) error {
 	// Recorded rather than ignored: whether the popup hands down a trust
@@ -166,7 +196,7 @@ func (r *submitFakeRunner) AwaitDetection(_ context.Context, _ string, _, blocke
 		return r.awaitErr
 	}
 	if r.dialogClears {
-		r.readText = ""
+		r.readText = paintedIdleScreen
 	}
 	return nil
 }
@@ -380,7 +410,9 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 		t.Fatalf("ExecResult.FailedIndex = %d, want -1 (success): %+v", done.result.FailedIndex, done.result)
 	}
 
-	wantCalls := []string{"WorkspaceList", "WorktreeCreate", "PaneRun", "AwaitDetection", "AgentRead", "AgentPrompt"}
+	// The trailing AgentRead is #116's post-send verification: the popup
+	// may not report a create clean until the pane says the prompt landed.
+	wantCalls := []string{"WorkspaceList", "WorktreeCreate", "PaneRun", "AwaitDetection", "AgentRead", "AgentPrompt", "AgentRead"}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("runner.calls = %v, want %v", runner.calls, wantCalls)
 	}

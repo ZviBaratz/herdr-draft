@@ -29,10 +29,29 @@ type mockRunner struct {
 	failedSoFar int
 	topo        herdrc.CreatedTopology
 
-	// readText is what AgentRead returns on success (default "": no
-	// dialog present, matching the pre-existing test scenarios' implicit
-	// assumption that the pane is a normal ready state).
+	// readText is what AgentRead returns on success. Its zero value is
+	// paintedIdleScreen, NOT the empty string: after #116 an empty
+	// detection buffer is a refusal rather than the "ordinary ready pane"
+	// the pre-existing scenarios meant by it, so the default has to be a
+	// screen that has actually painted. blankReadsFirst is how a test asks
+	// for the empty one on purpose.
 	readText string
+
+	// blankReadsFirst makes the first n AgentRead calls come back
+	// SUCCESSFULLY with nothing in them -- #116's own mechanism, and the
+	// state the fake could not express before it: herdr answers the read,
+	// and the pane it answers about has not drawn anything yet. Distinct
+	// from readErrToGive beside it, which is a read that fails.
+	blankReadsFirst int
+
+	// postPromptText/postPromptErr are what AgentRead returns once
+	// AgentPrompt has been called -- the pane AFTER a send, which is the
+	// only thing confirmPromptLanded looks at. A call-count dial cannot
+	// express it, because how many reads precede the send depends on
+	// whether a wait ran.
+	postPromptText string
+	postPromptErr  error
+	promptSent     bool
 
 	// readErr, when non-nil, is what AgentRead fails with -- independent of
 	// failAt, which names a single method and so cannot express "this op
@@ -176,6 +195,7 @@ func (m *mockRunner) AgentPrompt(ctx context.Context, req herdrc.AgentPromptReq)
 	if m.shouldFail("AgentPrompt") {
 		return m.failErr
 	}
+	m.promptSent = true
 	return nil
 }
 
@@ -188,18 +208,42 @@ func (m *mockRunner) AgentRead(ctx context.Context, target string) (string, erro
 		return "", m.failErr
 	}
 	m.readCalls++
+	if m.promptSent {
+		if m.postPromptErr != nil {
+			return "", m.postPromptErr
+		}
+		if m.postPromptText != "" {
+			return m.postPromptText, nil
+		}
+	}
 	if m.readErrToGive != nil && m.readCalls > m.readErrAfter &&
 		(m.readErrCount == 0 || m.readCalls <= m.readErrAfter+m.readErrCount) {
 		return "", m.readErrToGive
 	}
-	if m.dialogAnswered {
+	if m.readCalls <= m.blankReadsFirst {
 		return "", nil
 	}
+	if m.dialogAnswered {
+		return paintedIdleScreen, nil
+	}
 	if m.readTextClearsAfter > 0 && m.readCalls > m.readTextClearsAfter {
-		return "", nil
+		return paintedIdleScreen, nil
+	}
+	if m.readText == "" {
+		return paintedIdleScreen, nil
 	}
 	return m.readText, nil
 }
+
+// paintedIdleScreen is an ordinary, painted, dialog-free pane -- what
+// mockRunner.AgentRead returns whenever no dial asks for something else.
+//
+// It exists because the fake's old default was the EMPTY string, which is
+// to say every happy-path test in this file used to assert that a prompt
+// is sent into a pane with nothing on it. That was #116 encoded as a
+// fixture: the defect and the test agreed with each other, so the suite
+// stayed green through the whole live run that found it.
+const paintedIdleScreen = "> Sonnet 5 · claude-code\n  Type your message...\n"
 
 func (m *mockRunner) AwaitDetection(ctx context.Context, paneID string, timeout, blockedTimeout time.Duration) error {
 	m.record("AwaitDetection", paneID, timeout.String(), blockedTimeout.String())
@@ -366,6 +410,11 @@ func TestExecuteHappyPathThreadsPaneID(t *testing.T) {
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
 		"AgentRead(pane-1)",
 		"AgentPrompt(pane-1,start work)",
+		// The read AFTER the send is #116's post-send verification, and it
+		// is in the happy path's own expected sequence on purpose: a check
+		// that only runs when something already looks wrong would not have
+		// caught the failure it exists for, which reported success.
+		"AgentRead(pane-1)",
 	}
 	if !reflect.DeepEqual(m.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", m.calls, wantCalls)
@@ -1532,19 +1581,26 @@ func TestExecuteDetectionTimeoutSurvivesAnUnreadablePane(t *testing.T) {
 	timeout := errors.New("await detection for pane pane-1: timed out after 30.001s")
 
 	for _, tc := range []struct {
-		name     string
-		readText string
+		name string
+		// readText and blankReadsFirst are two ways to spell an
+		// uninformative pane, and both have to reach withPaneTail: a
+		// screen of whitespace, and a read that succeeds with nothing in
+		// it at all. The second cannot be spelled with readText any more,
+		// since the fake's zero value is a painted screen (#116).
+		readText        string
+		blankReadsFirst int
 	}{
-		{"the pane is blank", "\n   \n\n"},
-		{"the pane is empty", ""},
+		{name: "the pane is blank", readText: "\n   \n\n"},
+		{name: "the pane is empty", blankReadsFirst: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &mockRunner{
-				failAt:    "AwaitDetection",
-				failErr:   timeout,
-				failCount: 1,
-				topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
-				readText:  tc.readText,
+				failAt:          "AwaitDetection",
+				failErr:         timeout,
+				failCount:       1,
+				topo:            herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+				readText:        tc.readText,
+				blankReadsFirst: tc.blankReadsFirst,
 			}
 
 			var progressed []Progress
@@ -2697,10 +2753,13 @@ func TestExecuteRetriesAPromptThatStalled(t *testing.T) {
 	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
 		t.Errorf("AgentPrompt called %d times, want exactly 2 -- one stall, one retry", n)
 	}
-	// The guard runs again before the retry, so the second send can no more
-	// type into a dialog than the first could.
-	if n := countCallsWithPrefix(m.calls, "AgentRead"); n != 2 {
-		t.Errorf("AgentRead called %d times, want 2 -- promptIfReady must gate the retry too", n)
+	// Three reads for two sends: the guard runs again before the retry, so
+	// the second send can no more type into a dialog than the first could,
+	// and the send that succeeds is then verified (#116). The stalled one
+	// is not -- there is nothing to verify about a send herdr says it never
+	// delivered.
+	if n := countCallsWithPrefix(m.calls, "AgentRead"); n != 3 {
+		t.Errorf("AgentRead called %d times, want 3 -- promptIfReady must gate the retry and verify the send", n)
 	}
 	if result.PromptText != "" {
 		t.Errorf("PromptText = %q, want empty", result.PromptText)
@@ -2810,5 +2869,358 @@ func TestExecuteDoesNotRetryAnUnconfirmedPrompt(t *testing.T) {
 	}
 	if !result.PromptUnconfirmed {
 		t.Errorf("PromptUnconfirmed = false, want true -- #108's classification must survive the retry logic")
+	}
+}
+
+// -- #116: a prompt sent into a not-yet-painted dialog ------------------
+//
+// The defect these pin is one race with two halves, and each half needs
+// its own rule. Before the send, a screen that has not painted must not be
+// read as a safe one (errPaneUnpainted). After it, a send that reported
+// success must be shown to have LANDED before the pipeline calls the
+// create clean (confirmPromptLanded). Neither rule subsumes the other:
+// the first cannot close a window it can only narrow, and the second
+// cannot stop the agent from dying -- it can only stop the popup from
+// telling the user it did not.
+
+// TestExecutePromptRefusedWhenScreenHasNotPainted is #116's pre-send half.
+//
+// The read SUCCEEDS and returns nothing: herdr answered, and the pane it
+// answered about had not drawn its trust dialog yet. Under the old
+// negative rule ("no signature matched, therefore safe") that sent the
+// prompt, and its trailing Enter answered the dialog's preselected
+// "No, exit". With no TrustWait -- the headless `create` shape -- the
+// refusal is terminal, and it is the RIGHT terminal outcome: the agent is
+// alive and the prompt is surfaced for a paste.
+func TestExecutePromptRefusedWhenScreenHasNotPainted(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:            herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		blankReadsFirst: 1,
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	wantFailedIndex := len(ops) - 1
+	if result.FailedIndex != wantFailedIndex {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, wantFailedIndex, result)
+	}
+	if result.PromptText != in.Prompt {
+		t.Fatalf("PromptText = %q, want %q (surfaced for manual paste)", result.PromptText, in.Prompt)
+	}
+	if containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
+		t.Fatalf("calls = %v, want NO AgentPrompt call -- an unpainted screen is not a ready one", m.calls)
+	}
+}
+
+// TestExecutePromptWaitsThroughAnUnpaintedScreen is the same refusal in
+// the popup, where somebody is at the keyboard.
+//
+// An unpainted screen is a wait, not a stop: #115's prompt-step wait polls
+// until the pane says something, and the whole point of the fix is that
+// "nothing yet" is not "clear". The wait therefore has to hold through a
+// blank read exactly as it holds through a dialog -- if it treated blank
+// as cleared it would resolve instantly and hand promptIfReady the very
+// pane it was entered for, which is a loop that sends the prompt anyway.
+func TestExecutePromptWaitsThroughAnUnpaintedScreen(t *testing.T) {
+	withDialogPollInterval(t, 0)
+
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:            herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		blankReadsFirst: 3,
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1 (the screen painted and the prompt went out): %+v",
+			result.FailedIndex, result)
+	}
+	if !containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
+		t.Fatalf("calls = %v, want the prompt sent once the pane painted", m.calls)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Errorf("AgentPrompt called %d times, want 1", n)
+	}
+}
+
+// TestExecutePromptFailsWhenTheSendKilledTheAgent is #116's headline: the
+// create that reports success over a dead agent.
+//
+// Everything upstream is green -- the pane painted, no signature matched,
+// `agent prompt --wait` returned ok -- and the agent is gone anyway,
+// because the screen that painted between the read and the send was a
+// dialog and the prompt's Enter answered it. The only evidence left is the
+// pane, and a pane whose agent has exited cannot be read at all
+// (ErrAgentGone's own reasoning, one step later). Reporting this as a
+// clean create is what makes the defect cost more than the launch: state
+// is persisted, no unsent-prompt.txt is written, and nobody has a reason
+// to look.
+func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
+	withDialogPollInterval(t, 0)
+
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:          herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		postPromptErr: errors.New("herdr agent read pane-1: exit status 1: no agent in pane"),
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	wantFailedIndex := len(ops) - 1
+	if result.FailedIndex != wantFailedIndex {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, wantFailedIndex, result)
+	}
+	if result.PromptText != in.Prompt {
+		t.Fatalf("PromptText = %q, want %q (surfaced for manual paste)", result.PromptText, in.Prompt)
+	}
+	if result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = true, want false -- nothing was delivered, so the clean is safe")
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Errorf("AgentPrompt called %d times, want exactly 1 -- verification must never resend (#108)", n)
+	}
+}
+
+// TestExecutePromptFailsWhenTheDialogSwallowedIt is the same race without
+// the death: the dialog ate the text and the Enter chose something that
+// did not exit.
+//
+// The pane after the send is still on a dialog and carries no trace of the
+// prompt, which is two independent facts pointing the same way. Note what
+// this must NOT do: having sent once already, it reports rather than
+// waiting and sending again. A second copy into an agent that did receive
+// the first is the injury #108 exists to prevent, and a post-send check
+// that retries would deliver it by the front door.
+func TestExecutePromptFailsWhenTheDialogSwallowedIt(t *testing.T) {
+	withDialogPollInterval(t, 0)
+
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		postPromptText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute}, nil)
+
+	wantFailedIndex := len(ops) - 1
+	if result.FailedIndex != wantFailedIndex {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, wantFailedIndex, result)
+	}
+	if result.PromptText != in.Prompt {
+		t.Fatalf("PromptText = %q, want %q (surfaced for manual paste)", result.PromptText, in.Prompt)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Errorf("AgentPrompt called %d times, want exactly 1 -- verification reports, it never resends (#108)", n)
+	}
+}
+
+// TestExecutePromptSucceedsWhenTheAgentRaisesItsOwnDialog is the
+// false-positive the post-send check has to survive, and the reason it
+// looks for the prompt rather than for the absence of a dialog.
+//
+// "Enter to confirm" is Claude Code's OWN footer: an agent that received
+// the prompt and immediately asked permission to act on it is sitting on a
+// screen carrying a dialog.go signature, with the prompt delivered and
+// already a turn. Calling that a failure would tell the user to re-paste
+// something the agent is working on -- #108's injury again, reached from
+// the opposite side. What separates the two panes is not the dialog, it is
+// whether the prompt is on the screen at all.
+func TestExecutePromptSucceedsWhenTheAgentRaisesItsOwnDialog(t *testing.T) {
+	withDialogPollInterval(t, 0)
+
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "delete the stale fixtures under testdata"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		// The turn is wrapped MID-WORD, and inside the probe rather than
+		// past it: "fixt|ures" is what a pane does to a line that runs off
+		// its right edge, and it is the case that decides how promptOnScreen
+		// has to normalise. Collapsing whitespace runs to a single space
+		// leaves "fixt ures" and finds nothing; removing it entirely puts
+		// the word back together. A fixture that wraps at a space cannot
+		// tell those two apart, so this one does not.
+		postPromptText: "❯ delete the stale fixt\n  ures under testdata\n\n" +
+			"● I'll remove those. Running:\n  rm -rf testdata/old\n\n" +
+			"Do you want to proceed?\n❯ Yes\n  No\n\nEnter to confirm · Esc to cancel\n",
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1 -- the prompt is on the screen, so it landed: %+v",
+			result.FailedIndex, result)
+	}
+}
+
+// TestExecutePromptSurvivesOneUnreadablePaneAfterSending keeps the
+// post-send check from inventing failures.
+//
+// A pane can be briefly unreadable mid-repaint, and the send that just
+// happened is exactly when a repaint is likeliest. One failed read is not
+// evidence an agent has gone -- the same distinction awaitDialogCleared
+// draws with its own detection budget -- so the check re-reads before it
+// concludes anything. A verification that turns a good create into a
+// failure is a worse defect than the one it replaced, because it fires on
+// every run rather than on a race.
+func TestExecutePromptSurvivesOneUnreadablePaneAfterSending(t *testing.T) {
+	withDialogPollInterval(t, 0)
+
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:          herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readErrAfter:  1,
+		readErrCount:  1,
+		readErrToGive: errors.New("herdr agent read pane-1: exit status 1: transient"),
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1 -- one unreadable poll is a repaint, not a dead agent: %+v",
+			result.FailedIndex, result)
+	}
+}
+
+// TestUnsafeScreenErrorsExcludeASwallowedPrompt pins the one membership
+// question in this file that a scenario test cannot reach.
+//
+// isUnsafeScreenError names the refusals Execute is allowed to WAIT on and
+// then try again, and what makes that safe is that every one of them
+// happens before any text is sent. errPromptSwallowed does not: it is the
+// verdict of a check that runs after a send. Putting it in this set would
+// make a swallowed prompt a resend, which is #108's double-paste arriving
+// through the front door.
+//
+// Asserted here, on the predicate itself, because driving it through
+// Execute proves nothing either way -- a swallowed prompt's pane is still
+// showing the dialog, so the wait that a wrong answer here would enter
+// runs out its budget and fails anyway, and the run looks identical. The
+// invariant is a claim about the SET, so the set is where it is tested.
+func TestUnsafeScreenErrorsExcludeASwallowedPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"a dialog on the screen is waitable", fmt.Errorf("wrapped: %w", errAgentOnDialog), true},
+		{"an unpainted screen is waitable", fmt.Errorf("wrapped: %w", errPaneUnpainted), true},
+		{"a swallowed prompt is NOT", fmt.Errorf("wrapped: %w", errPromptSwallowed), false},
+		{"nor is an unrelated failure", errors.New("herdr agent prompt: exit status 1"), false},
+		{"nor is nothing at all", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isUnsafeScreenError(tc.err); got != tc.want {
+				t.Errorf("isUnsafeScreenError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPromptGuardOnTheMeasuredStartupWindow pins what the pre-send guard
+// actually does with #116's own window, using the bytes off a real pane.
+//
+// Captured on 2026-09-10 by polling `agent read --source detection` through
+// four launches into an untrusted directory (docs/manual-smoke.md). The
+// sequence is: the read FAILS for ~300-500ms, then succeeds carrying the
+// shell's echo of the command herdr typed, then the account banner, and
+// only at ~2s does the trust dialog paint. The middle two are the danger:
+// a successful read, no dialog signature, and an agent that is about to
+// put a dialog under the prompt's trailing Enter.
+//
+// This test exists to record that errPaneUnpainted does NOT cover them --
+// they are not blank -- so that nobody reading that sentinel concludes the
+// window is closed. It is confirmPromptLanded, after the send, that covers
+// this. A test asserting the comfortable thing here would be worse than no
+// test, because the whole defect was a fixture agreeing with a defect.
+func TestPromptGuardOnTheMeasuredStartupWindow(t *testing.T) {
+	// \x1b[200~ / \x1b[201~ are the bracketed-paste markers around the
+	// command `herdr pane run` typed, kept verbatim: they are part of what
+	// makes this screen non-blank.
+	const (
+		echoOnly = "\x1b[200~claude\x1b[201~"
+		echoPlus = "\x1b[200~claude\x1b[201~\n❯ claude"
+		banner   = "\x1b[200~claude\x1b[201~\n❯ claude\n" +
+			"claude: account 'personal-1' — 4% used · tenant 'personal' (isolate\n" +
+			"d: ~/.local/state/claude-account-dirs/personal-1)"
+		painted = " Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n"
+	)
+
+	for _, tc := range []struct {
+		name string
+		// at is how long after `agent start` this screen was observed.
+		at         string
+		screen     string
+		wantBlank  bool
+		wantSigned bool
+	}{
+		{name: "590ms: the shell's echo of the launch command", at: "590ms", screen: echoOnly},
+		{name: "630ms: the echo and the prompt marker", at: "630ms", screen: echoPlus},
+		{name: "1889ms: clauth's account banner", at: "1889ms", screen: banner},
+		{name: "2s+: the dialog, finally", at: "2s", screen: painted, wantSigned: true},
+		{name: "a genuinely empty read", at: "n/a", screen: "", wantBlank: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotBlank := strings.TrimSpace(tc.screen) == ""
+			if gotBlank != tc.wantBlank {
+				t.Errorf("at %s: blank = %v, want %v", tc.at, gotBlank, tc.wantBlank)
+			}
+			gotSig := blockingDialogSignature(tc.screen) != ""
+			if gotSig != tc.wantSigned {
+				t.Errorf("at %s: signature matched = %v, want %v", tc.at, gotSig, tc.wantSigned)
+			}
+			// The conclusion the two rules add up to, stated rather than
+			// implied: for the three startup-window screens the pre-send
+			// guard SENDS. That is the measured hole, and it is why the
+			// post-send check is not optional.
+			wouldSend := !gotBlank && !gotSig
+			if wantSend := !tc.wantBlank && !tc.wantSigned; wouldSend != wantSend {
+				t.Errorf("at %s: guard would send = %v, want %v", tc.at, wouldSend, wantSend)
+			}
+		})
 	}
 }

@@ -1206,6 +1206,88 @@ into fresh worktrees of one throwaway repo.
   both `dialog.go` signatures verbatim, so the guard's *matching* is sound.
   What it cannot do is match a screen that has not painted yet.
 
+**#116, fixed on 2026-09-10 — and the fix has two rules because the defect
+has two halves.** The sitting above is the whole of its evidence, so it is
+recorded here rather than in a new entry. Before the send, an empty read is
+now a refusal in its own right (`errPaneUnpainted`): the guard's rule used
+to be negative — "no signature matched, therefore safe" — and a screen with
+nothing on it answered it the wrong way. In the popup that refusal enters
+#115's prompt-step wait, which had the same hole and no longer treats a
+blank poll as a cleared one; headless `create`, with nobody to wait for,
+refuses outright with the prompt saved. After the send, the pane is read
+again and the create is only reported clean once it says the prompt landed
+— an agent that has stopped answering, or a dialog still up with no trace of
+the prompt on it, is a failure. **It never resends** (#108): the second read
+decides what to tell the user, never whether to type again.
+
+Prevention alone would not have been enough, and this is the reasoning worth
+keeping: narrowing the window the guard misses does not make the report
+honest when it is missed anyway, and only the post-send read catches a race
+nobody predicted. The reverse is also true — the post-send read cannot stop
+the agent from dying, only stop the popup from calling that a success.
+
+Two limits to know before trusting it. The trace test is skipped for a
+prompt over ~400 characters or 10 lines, because Cell 10 already measured
+that a large prompt is wrapped and scrolled by the agent's own TUI and
+appears verbatim nowhere; those fall back to the "agent stopped answering"
+verdict alone. And "Enter to confirm" is Claude Code's own permission-prompt
+footer, so a *delivered* prompt whose agent immediately asks to act on it
+sits on a matching screen — which is why the check looks for the prompt
+rather than for the absence of a dialog.
+
+**2026-09-10, third sitting — #116's own verification, at `08b02b0`.** Route
+B, state dir redirected to `/var/tmp` (the user's real `recents.json` /
+`projects.json` / `last-used.json` were confirmed untouched afterwards, by
+mtime). Two form submits and four hand-driven probe launches into one
+throwaway repo plus a second untrusted one. Teardown left no workspace,
+checkout, or process behind.
+
+- **Both form submits pass, read off the pane.** The first met the trust
+  dialog: the launch row went `…` with the footer instruction, the dialog
+  was answered *in the agent's pane with nothing pressed in the popup*, and
+  the pane then held `❯ Reply with exactly one word: pineapple` as a
+  submitted turn, `● pineapple` under it, and an **empty input buffer** —
+  one copy, not two. The second ran with no dialog (Claude Code trusts a
+  sibling worktree of a repo it already trusts, which is worth knowing when
+  planning a cell) and closed in 19s, also clean. So the new pre-send
+  refusal does not block a good send and the post-send read does not invent
+  a failure — which was the fix's own biggest risk.
+- **The startup window was measured, and it is NOT blank.** This is the
+  finding, and it corrects the assumption the pre-send rule was built on.
+  Polling `agent read --source detection` as fast as it answers, through
+  four launches into an untrusted directory:
+
+  | after `agent start` | read | screen |
+  |---|---|---|
+  | 0–300/500 ms | **fails** | — (already refused before #116) |
+  | ~590 ms | ok, 20 non-space | `\x1b[200~claude\x1b[201~` — the shell's echo of the command herdr typed |
+  | ~630 ms | ok, 29 non-space | that, plus `❯ claude` |
+  | ~1889 ms | ok, 138 non-space | plus clauth's account banner |
+  | ~2 s | ok, 542 non-space | the dialog, both signatures present |
+
+  So there is a **~1.4 s window where the read succeeds, carries real text,
+  and matches no signature**. `errPaneUnpainted` does not close it — only a
+  strictly empty read is refused, and this is not one. What covers that
+  window is the post-send check, which is why taking both directions
+  mattered for a reason that was not visible when the choice was made.
+  `TestPromptGuardOnTheMeasuredStartupWindow` pins these exact bytes so the
+  hole stays documented rather than assumed closed.
+- **The post-send check's strongest evidence is confirmed.** A pane whose
+  agent has exited answers `agent read` with `agent_not_found` — checked
+  directly by cancelling a probe agent's dialog and reading its pane. That
+  is the verdict `confirmPromptLanded` draws, and it needs no heuristic.
+- **A detection screen can carry the dialog's tail without its heading.**
+  Reading a blocked probe pane returned the options and `Enter to confirm`
+  with `Quick safety check` scrolled out of the region entirely. Both
+  `dialog.go` signatures earn their keep; a guard matching only the heading
+  would have missed that pane.
+- Not reproduced this sitting: `agent start` returning **ok** with the trust
+  dialog pending. It refused (`agent_not_ready`) in all five untrusted
+  launches, where the 2026-09-09 sitting saw it return ok in two of three.
+  The race is real and recorded, but which side it lands on varies by
+  machine or load, so a run that does not reproduce it is not evidence it
+  is fixed.
+
 Four findings from the first sitting, all live-only against a green
 `just check`:
 
