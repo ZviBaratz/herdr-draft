@@ -3159,3 +3159,68 @@ func TestUnsafeScreenErrorsExcludeASwallowedPrompt(t *testing.T) {
 		})
 	}
 }
+
+// TestPromptGuardOnTheMeasuredStartupWindow pins what the pre-send guard
+// actually does with #116's own window, using the bytes off a real pane.
+//
+// Captured on 2026-09-10 by polling `agent read --source detection` through
+// four launches into an untrusted directory (docs/manual-smoke.md). The
+// sequence is: the read FAILS for ~300-500ms, then succeeds carrying the
+// shell's echo of the command herdr typed, then the account banner, and
+// only at ~2s does the trust dialog paint. The middle two are the danger:
+// a successful read, no dialog signature, and an agent that is about to
+// put a dialog under the prompt's trailing Enter.
+//
+// This test exists to record that errPaneUnpainted does NOT cover them --
+// they are not blank -- so that nobody reading that sentinel concludes the
+// window is closed. It is confirmPromptLanded, after the send, that covers
+// this. A test asserting the comfortable thing here would be worse than no
+// test, because the whole defect was a fixture agreeing with a defect.
+func TestPromptGuardOnTheMeasuredStartupWindow(t *testing.T) {
+	// \x1b[200~ / \x1b[201~ are the bracketed-paste markers around the
+	// command `herdr pane run` typed, kept verbatim: they are part of what
+	// makes this screen non-blank.
+	const (
+		echoOnly = "\x1b[200~claude\x1b[201~"
+		echoPlus = "\x1b[200~claude\x1b[201~\n❯ claude"
+		banner   = "\x1b[200~claude\x1b[201~\n❯ claude\n" +
+			"claude: account 'personal-1' — 4% used · tenant 'personal' (isolate\n" +
+			"d: ~/.local/state/claude-account-dirs/personal-1)"
+		painted = " Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n"
+	)
+
+	for _, tc := range []struct {
+		name string
+		// at is how long after `agent start` this screen was observed.
+		at         string
+		screen     string
+		wantBlank  bool
+		wantSigned bool
+	}{
+		{name: "590ms: the shell's echo of the launch command", at: "590ms", screen: echoOnly},
+		{name: "630ms: the echo and the prompt marker", at: "630ms", screen: echoPlus},
+		{name: "1889ms: clauth's account banner", at: "1889ms", screen: banner},
+		{name: "2s+: the dialog, finally", at: "2s", screen: painted, wantSigned: true},
+		{name: "a genuinely empty read", at: "n/a", screen: "", wantBlank: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotBlank := strings.TrimSpace(tc.screen) == ""
+			if gotBlank != tc.wantBlank {
+				t.Errorf("at %s: blank = %v, want %v", tc.at, gotBlank, tc.wantBlank)
+			}
+			gotSig := blockingDialogSignature(tc.screen) != ""
+			if gotSig != tc.wantSigned {
+				t.Errorf("at %s: signature matched = %v, want %v", tc.at, gotSig, tc.wantSigned)
+			}
+			// The conclusion the two rules add up to, stated rather than
+			// implied: for the three startup-window screens the pre-send
+			// guard SENDS. That is the measured hole, and it is why the
+			// post-send check is not optional.
+			wouldSend := !gotBlank && !gotSig
+			if wantSend := !tc.wantBlank && !tc.wantSigned; wouldSend != wantSend {
+				t.Errorf("at %s: guard would send = %v, want %v", tc.at, wouldSend, wantSend)
+			}
+		})
+	}
+}

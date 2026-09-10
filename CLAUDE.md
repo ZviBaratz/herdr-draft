@@ -216,10 +216,17 @@ Layering, outermost to innermost:
   "no dialog signature matched" was the old rule and an unpainted screen
   satisfies it, so `promptIfReady` refuses an empty read as
   `errPaneUnpainted` and `awaitDialogCleared` no longer counts a blank poll
-  as a cleared one. After the send, `confirmPromptLanded` reads the pane
-  again, because prevention can only narrow a window — it cannot make the
-  report honest when the window is missed anyway, and a create that lies is
-  the half that costs the most. It **reports and never resends**, which is
+  as a cleared one. **That half does not close #116's own window**, and the
+  measurement is the reason to read this rather than infer it: polled live
+  on 2026-09-10, `agent read` fails for ~300-500ms after `agent start`, then
+  succeeds for a further ~1.4s carrying the shell's echo of the launch
+  command and clauth's banner — real text, no signature — and only then
+  paints the dialog. `TestPromptGuardOnTheMeasuredStartupWindow` pins those
+  bytes. After the send, `confirmPromptLanded` reads the pane again, and it
+  is what actually covers that window: prevention can only narrow one — it
+  cannot make the report honest when the window is missed anyway, and a
+  create that lies is the half that costs the most. It **reports and never
+  resends**, which is
   what `isUnsafeScreenError` exists to say in one place: every other screen
   refusal happens before any text is sent, which is what makes waiting and
   retrying safe, and `errPromptSwallowed` is deliberately not in that set.

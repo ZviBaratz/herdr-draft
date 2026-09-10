@@ -344,15 +344,29 @@ var errAgentOnDialog = errors.New("agent is waiting on a dialog")
 // errPaneUnpainted reports a pane whose detection screen came back EMPTY:
 // readable, answered, and carrying nothing at all.
 //
-// This is #116's mechanism, and the reason promptIfReady's rule had to
-// become a positive one. The guard used to ask only "does this screen
-// match a dialog signature?", so a screen with no text on it answered no
-// and was treated as safe to type into. Measured live on 2026-09-09
-// (docs/manual-smoke.md): `agent start` returns ok while Claude Code's
-// first-run trust dialog is still painting, the read lands inside that
-// window, and the prompt's trailing Enter answers the preselected
-// "No, exit". A blank detection buffer is not evidence that a pane is
-// ready -- it is evidence there is nothing yet to judge.
+// The guard used to ask only "does this screen match a dialog signature?",
+// so a screen with no text on it answered no and was treated as safe to
+// type into. A blank detection buffer is not evidence that a pane is ready
+// -- it is evidence there is nothing yet to judge.
+//
+// Read the limit before relying on this, because #116's own window is
+// NOT blank and this rule does not close it. Measured on 2026-09-10 by
+// polling `agent read` through four real launches into an untrusted
+// directory (docs/manual-smoke.md): the read fails outright for the first
+// ~300-500ms, which the guard already refused, and then comes back
+// SUCCESSFULLY carrying the shell's echo of the launch command --
+// "\x1b[200~claude\x1b[201~", then "❯ claude", then clauth's account
+// banner -- for a further second before the dialog paints at ~2s. Twenty
+// non-space characters, no signature, and this check passes it. What
+// actually covers that window is confirmPromptLanded, one step later.
+//
+// So this stays as the cheap half of a positive rule, and its own claim is
+// the narrow one: a read that succeeds with nothing at all in it has told
+// us nothing, and a machine or an agent that produces one must not have a
+// prompt typed into it on the strength of a signature that had nothing to
+// match against. See TestPromptGuardOnTheMeasuredStartupWindow, which pins
+// the measured bytes so nobody re-derives the wrong conclusion from this
+// sentinel's existence.
 //
 // A separate sentinel rather than a reuse of errAgentOnDialog, because the
 // two are different claims about the world: one screen showed a dialog,
@@ -463,6 +477,16 @@ const promptVerifyReads = 3
 // pre-send guard misses does not make the report honest when it is missed
 // anyway, and this is the only one of #116's three directions that catches
 // a race nobody predicted.
+//
+// It turned out to be load-bearing for a second reason nobody expected.
+// The startup window measured on 2026-09-10 (see errPaneUnpainted) is a
+// screen carrying the shell's echo of the launch command: not blank, no
+// signature, and so it passes the pre-send guard entirely. THIS is what
+// covers it, and it covers both of its outcomes -- an agent the prompt
+// killed stops answering `agent read` at all (verified live: the call
+// returns agent_not_found within seconds of the agent exiting), and one
+// that survives with the dialog still up carries a signature and no trace
+// of the prompt.
 //
 // It reports; it NEVER resends. See errPromptSwallowed.
 //

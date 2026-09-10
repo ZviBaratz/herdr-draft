@@ -137,9 +137,10 @@ without the popup. It drives herdr exclusively through the public CLI
   with something on it: a screen that has not painted matches no dialog
   signature, and treating that as safe is how a prompt's own Enter used to
   answer a trust dialog that drew a moment later — killing the agent while
-  the run reported a clean create. So the pane is read again *after* the
-  send, and a create is only called clean once the pane says the prompt
-  landed. An agent that has stopped answering, or a dialog still up with no
+  the run reported a clean create. A pane can also carry a shell prompt and
+  nothing else for a second or so before an agent's own screen appears,
+  which no signature will ever match, so the pane is read again *after* the
+  send: a create is only called clean once the pane says the prompt landed. An agent that has stopped answering, or a dialog still up with no
   trace of the prompt on it, is a failure with the prompt saved. It never
   resends: the prompt goes out once, and everything after that only decides
   what to tell you.
