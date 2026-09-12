@@ -15,7 +15,7 @@ import (
 //
 // Run it with:
 //
-//	HERDR_DRAFT_PICKER=$(command -v claude-pick) go test ./internal/picker/ -run Real -v
+//	HERDR_DRAFT_PICKER=$(command -v <your-picker>) go test ./internal/picker/ -run Real -v
 //
 // What it proves that the stubs cannot: that the documented key list, the
 // documented flags and the documented exit codes describe something that

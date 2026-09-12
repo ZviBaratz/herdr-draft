@@ -619,14 +619,14 @@ func writeConfigBody(t *testing.T, body string) string {
 // whatever the wrapper was doing. So the default must be the mode that means
 // the same thing everywhere.
 func TestClauthLaunchDefaultsToClauthStart(t *testing.T) {
-	cfg, err := Load(writeConfigBody(t, "[clauth]\npicker = \"claude-pick\"\n"))
+	cfg, err := Load(writeConfigBody(t, "[clauth]\npicker = \"acct-pick\"\n"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Clauth.Launch != ClauthLaunchStart {
 		t.Fatalf("Launch = %q, want %q", cfg.Clauth.Launch, ClauthLaunchStart)
 	}
-	if cfg.Clauth.Picker != "claude-pick" {
+	if cfg.Clauth.Picker != "acct-pick" {
 		t.Fatalf("Picker = %q", cfg.Clauth.Picker)
 	}
 	if cfg.ClauthLaunchWarning != "" {
@@ -675,7 +675,7 @@ func TestClauthLaunchDegradesWithAReason(t *testing.T) {
 }
 
 // No picker unless one is named. The absence of this test is the shape the
-// spec's amendment refused: a plugin that finds a program called claude-pick
+// spec's amendment refused: a plugin that finds a same-named program
 // on PATH and starts routing account credentials through it.
 func TestPickerIsEmptyUnlessNamed(t *testing.T) {
 	cfg, err := Load(writeConfigBody(t, "[clauth]\ndefault = \"alpha-1\"\n"))

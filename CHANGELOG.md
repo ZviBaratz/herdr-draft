@@ -117,8 +117,12 @@ without the popup. It drives herdr exclusively through the public CLI
   none, which is what keeps this feature from making a public plugin depend
   on one machine's private toolchain. `[clauth] picker` names one —
   explicitly; a picker is never discovered on `PATH` — and it is probed once
-  before it is trusted. With it configured, the `account` row grows an `auto`
-  selection and `create` accepts `--account auto`.
+  before it is trusted. Every call is bounded by a 30-second deadline, a
+  refusal is always shown rather than silently downgraded to an unpinned
+  launch, and an exit code outside the documented set is reported as a
+  malfunction rather than obeyed as a decision. With it configured, the
+  `account` row grows an `auto` selection and `create` accepts
+  `--account auto`.
 - `[clauth] launch` selects how a pinned account is launched, defaulting to
   `clauth start <profile> --`. The opt-in `"wrapper"` mode types
   `CLAUDE_CONFIG_DIR=<dir> claude` instead, which is only worth setting on a

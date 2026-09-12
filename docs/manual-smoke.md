@@ -1147,20 +1147,28 @@ wrapper. Say which you had.
 **Passed on 0.9.0, 2026-09-10**, on a machine whose shell does define
 `claude` as a function.
 
-- Step 1: probe ok; picked `personal-1` (tenant `personal`, tier `Max`),
+The profile and tenant this run picked are written below as `<profile>` and
+`<tenant>`, the same placeholders this cell already uses for `<your-picker>`.
+This is a public repository and the evidence here is its *shape* — a probe that
+passed, a `config_dir` that was null under `--dry-run`, a row that rendered,
+a `tokens.acct` that was set — none of which one machine's account names carry.
+Redacting them is deliberate and is the same reasoning that genericised the Go
+fixtures; the date, the herdr version and the numbers are untouched.
+
+- Step 1: probe ok; picked `<profile>` (tenant `<tenant>`, tier `Max`),
   `config_dir` null under `--dry-run`.
-- Step 2: exit 0, `{"profile":"personal-1","tenant":"personal",`
+- Step 2: exit 0, `{"profile":"<profile>","tenant":"<tenant>",`
   `"config_dir":null,"class":"eligible","usage":{"five_hour":8,"weekly":12,`
   `"cache_age_s":66}}`.
 - Step 3: the row opened reading
-  `account  auto → personal-1 · Max · 5h 9% · 7d 12%`. **It did not on the
+  `account  auto → <profile> · Max · 5h 9% · 7d 12%`. **It did not on the
   first attempt** — the opening state showed a bare `auto`, which is the
   defect this step exists to catch and was fixed before the run was recorded.
-- Step 4: `✓ auto  picker  [gauges]  → personal-1` first, `active` second,
+- Step 4: `✓ auto  picker  [gauges]  → <profile>` first, `active` second,
   then five profiles; legend `auto  let the account picker choose, per
   project`. Four of the five profiles were at `7d 100%` and marked
   `rate limited`; the picker chose the one that was not.
-- Step 5: `tokens.acct = "personal-1"` on the launched pane, and
+- Step 5: `tokens.acct = "<profile>"` on the launched pane, and
   `process-info` reported
   `claude --settings {"teammateMode":"tmux"} --model claude-opus-5[1m] --effort xhigh`.
   The `--settings` argument is the whole point of wrapper mode: `clauth start`

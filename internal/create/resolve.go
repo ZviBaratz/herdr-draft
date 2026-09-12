@@ -485,12 +485,6 @@ func accountPin(req request, cfg config.Config, kind string) string {
 	return cfg.Clauth.Default
 }
 
-// resolveAccount turns an `auto` pin into a real profile and its config dir.
-//
-// --strict, and not --dry-run. Strict because this verb has nobody at the
-// keyboard: a picker that would have prompted must refuse instead. Not dry-run
-// because this is the real launch, and the protocol's ledger write is what
-// keeps two concurrent creates off one account.
 // accountPicker is the picker `--account auto` resolves through: whatever a
 // test injected, else one built from `[clauth] picker`, else nil.
 //
@@ -517,6 +511,12 @@ func accountPicker(cfg config.Config, deps Deps) picker.Source {
 	return nil
 }
 
+// resolveAccount turns an `auto` pin into a real profile and its config dir.
+//
+// --strict, and not --dry-run. Strict because this verb has nobody at the
+// keyboard: a picker that would have prompted must refuse instead. Not dry-run
+// because this is the real launch, and the protocol's ledger write is what
+// keeps two concurrent creates off one account.
 func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan.Input, error) {
 	if in.AccountPin != clauthAuto {
 		return in, nil

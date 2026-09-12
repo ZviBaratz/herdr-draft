@@ -806,12 +806,27 @@ on the answer.
 | `3` | refused: the machine is under too much load |
 | `4` | refused: no usable account table |
 | `5` | refused: no profiles registered |
-| `64` | usage error — the picker rejected its own arguments |
+| `64` | usage error — the picker did not accept herdr-draft's invocation |
 
-Any other exit code is treated as a malfunction, not a refusal, and the picker
-is reported as unusable rather than obeyed. Exit `0` with a `null` profile is
+Any other exit code is treated as a malfunction, not a refusal — on *every*
+call, the startup probe and the commit-time pick alike — and the picker is
+reported as unusable rather than obeyed. Exit `0` with a `null` profile is
 treated the same way: `0` means picked, so an answer that picked nothing has
 broken the contract, and herdr-draft will not quietly launch unpinned instead.
+
+`64` is the odd one out among the documented codes, and worth reading as what
+it is. Every other code is the picker's judgement about *your* request; `64`
+says the picker and herdr-draft disagree about the **invocation** — a wiring
+fault, shown in the row where a decision normally goes. If you see it, compare
+your picker's flags against the invocation above rather than looking for a
+reason it said no.
+
+**Every call is bounded.** A picker gets 30 seconds to answer, after which the
+invocation is abandoned and reported as a malfunction — never as a refusal,
+since nothing refused anything. The budget is deliberately generous (a cold
+usage cache may be several network round-trips) because reporting a working
+picker as broken is the worse error; it exists so that a picker which hangs
+cannot stop the dialog from opening.
 
 ### What herdr-draft does with it
 
@@ -839,13 +854,25 @@ A picker can be a shell script. The minimum viable one:
 
 ```sh
 #!/bin/sh
-# Ignores every flag and always picks the same account.
+# Always picks the same account. The one flag it must not ignore is --dry-run:
+# a dry run builds no account directory, so config_dir comes back null. The
+# startup probe and every preview pass it, so a picker that answers a real
+# config_dir there is claiming, several times a session, to have built
+# something it did not.
+config_dir="\"$HOME/.claude-my-account\""
+for arg in "$@"; do
+	[ "$arg" = --dry-run ] && config_dir=null
+done
 cat <<JSON
-{"profile":"my-account","tier":"Max","config_dir":"$HOME/.claude-my-account",
+{"profile":"my-account","tier":"Max","config_dir":$config_dir,
  "reason":null,"usage":{"five_hour":null,"weekly":null,"cache_age_s":null},
  "resets_at":{"five_hour":null,"weekly":null},"warnings":[],"skipped":[]}
 JSON
 ```
+
+This exact block is extracted from this file and run by
+`go test ./internal/picker/`, so the document cannot drift away from the
+contract it is documenting.
 
 Point `[clauth] picker` at it, reopen the dialog, and the `account` row grows
 an `auto` selection reading `auto → my-account`.
