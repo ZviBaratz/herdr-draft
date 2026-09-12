@@ -91,6 +91,30 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		// config file asks for is a create whose branch nobody can explain.
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.BranchPrefixWarning)
 	}
+	if cfg.Clauth.LauncherWarning != "" {
+		// Same reason, higher stakes: a launcher that fell back silently
+		// starts the session on whatever account clauth has live, so the
+		// pin the user chose is spent on somebody else's budget with
+		// nothing on screen saying why.
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.Clauth.LauncherWarning)
+	}
+	// The other two halves of the same promise. `[clauth] launch` and
+	// `[clauth] launcher` are one decision (config.Load reconciles them), so
+	// every way that decision can be overridden has to reach the same stderr
+	// the branch-prefix and malformed-launcher warnings do.
+	//
+	// ClauthLaunchWarning is here because it was NOWHERE: #122 set it, unit
+	// tested it at the config layer, and never surfaced it -- an unknown
+	// `launch` value silently became `start`, which is the exact silent
+	// degradation that PR argues against everywhere else. staticcheck cannot
+	// see it, because an exported struct field written and never read is not
+	// unused code.
+	if cfg.ClauthLaunchWarning != "" {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.ClauthLaunchWarning)
+	}
+	if cfg.Clauth.LauncherIgnoredWarning != "" {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.Clauth.LauncherIgnoredWarning)
+	}
 
 	projectDir, err := resolveProjectDir(req, deps)
 	if err != nil {
@@ -416,8 +440,14 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		ExtraArgs:     t.cfg.Agents.ExtraArgs[kind],
 		AccountPin:    accountPin(req, t.cfg, kind),
 		AccountLaunch: accountLaunch(t.cfg),
-		Prompt:        promptText(prompt, issue, t.cfg),
-		Ctx:           hctx,
+		// Off the same config as the form's buildPlanInput. Both paths must
+		// carry both of these or TestFormAndCommandProduceTheSamePlan fails --
+		// which is the invariant working: a launcher (or a launch mode) the
+		// popup honours and this verb ignores would put the two on different
+		// accounts for one config.
+		Launcher: t.cfg.Clauth.Launcher,
+		Prompt:   promptText(prompt, issue, t.cfg),
+		Ctx:      hctx,
 
 		DetectionTimeout: time.Duration(t.cfg.Timeouts.DetectionMS) * time.Millisecond,
 		PromptTimeout:    time.Duration(t.cfg.Timeouts.PromptWaitMS) * time.Millisecond,

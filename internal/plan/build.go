@@ -102,6 +102,12 @@ type Input struct {
 	// config dir must produce the same op list from the popup and from
 	// `create`, which is what equivalence_test.go asserts.
 	AccountConfigDir string
+	// Launcher is the argv template that starts a pinned claude account,
+	// with config.AccountPlaceholder standing for AccountPin. Empty means
+	// the built-in default, so a caller that does not set it keeps the
+	// argv this package built before the key existed. Only consulted on
+	// the pinned-claude path, the one place AccountPin is used at all.
+	Launcher []string
 
 	Prompt                          string
 	Ctx                             herdrc.Context
@@ -326,10 +332,63 @@ func placementOp(in Input, cwd string, cwdFromCheckout bool) (Op, bool) {
 	}
 }
 
+// defaultClauthLauncher returns the launcher argv used when Input.Launcher
+// is empty. config.DefaultClauthLauncher holds the same value for a
+// config.toml that omits the key; TestDefaultLauncherMatchesConfigDefault
+// holds the two together, because this package is a pure builder and does
+// not import config to ask.
+func defaultClauthLauncher() []string {
+	return []string{"clauth", "start", accountPlaceholder, "--"}
+}
+
+// accountPlaceholder mirrors config.AccountPlaceholder. See
+// defaultClauthLauncher for why it is duplicated rather than imported.
+const accountPlaceholder = "{account}"
+
+// resolveLauncher substitutes account into a launcher template, returning a
+// FRESH slice.
+//
+// The copy is not defensive habit: Build runs once per submit against a
+// template the caller holds, and substituting in place would leave the
+// previous account baked into it -- so the second launch of a session would
+// silently reuse the first one's account. Substitution is textual and
+// per element so a placeholder may share an element with other text
+// (`sh -c "exec claude-as {account}"` is accepted).
+//
+// That shape is accepted, not recommended, and the reason is worth stating
+// because an earlier version of this comment recommended it: ExtraArgs are
+// appended AFTER the whole template, so with `["sh","-c","exec claude-as
+// {account}"]` and `[agents.extra_args]` of `--model opus`, the argv becomes
+// `sh -c "exec claude-as work" --model opus` and those two words land as the
+// inner shell's $0 and $1 -- silently never reaching the agent, while the
+// launch step still reports ok (#72's shape again: the step covers the
+// typing, not the command). Pinned by
+// TestLaunchOps_ShCLauncherStrandsExtraArgs. A wrapper that must receive
+// ExtraArgs has to be a plain program or a function name, not an `sh -c`
+// string.
+//
+// A template reaching here has been validated by config.Load, which
+// guarantees exactly one placeholder. An UNVALIDATED one -- a caller
+// building Input by hand -- is still substituted rather than rejected:
+// Build is a pure builder and has no channel for a reason, and refusing
+// here would turn a config problem into a failed launch with no
+// explanation. Zero placeholders therefore yields the template unchanged,
+// which the config-load warning is what prevents reaching a real pane.
+func resolveLauncher(template []string, account string) []string {
+	if len(template) == 0 {
+		template = defaultClauthLauncher()
+	}
+	out := make([]string, len(template))
+	for i, a := range template {
+		out[i] = strings.ReplaceAll(a, accountPlaceholder, account)
+	}
+	return out
+}
+
 // launchOps returns the op(s) that start the agent. A pinned claude
-// account launches through clauth (a plain shell command herdr types into
-// the pane) and, unlike `herdr agent start`, does not itself wait for
-// detection -- so it is followed by an explicit OpAwaitDetection.
+// account launches through Input.Launcher (a plain shell command herdr
+// types into the pane) and, unlike `herdr agent start`, does not itself
+// wait for detection -- so it is followed by an explicit OpAwaitDetection.
 //
 // RunArgv is a plain, UNQUOTED argv, exactly like AgentStartReq.ExtraArgs
 // beside it: CLIRunner.PaneRun quotes for the pane's shell, since it is
@@ -397,10 +456,20 @@ func launchOps(in Input) []Op {
 // clauthLaunchCommand is the pinned-account command line and its environment
 // prefix, for the mode in.AccountLaunch asks for.
 //
-// LaunchWrapper WITHOUT a config dir becomes LaunchClauthStart, and that is
+// The two mechanisms meet here, and the branch is the whole of it: wrapper
+// mode conveys the account as a credential directory in the environment, and
+// everything else conveys it as a word in the argv, through Input.Launcher's
+// template (`[clauth] launcher`). config.ClauthConfig.Launch's doc comment
+// explains why those cannot be one key.
+//
+// LaunchWrapper WITHOUT a config dir becomes the argv mechanism, and that is
 // the honest fallback rather than an omission: a bare `claude` with no
 // CLAUDE_CONFIG_DIR launches under whatever credential is machine-global,
-// which is the exact opposite of the pin the user asked for.
+// which is the exact opposite of the pin the user asked for. Note that the
+// fallback goes through resolveLauncher rather than a second hardcoded `clauth
+// start`: a hardcoded one here is exactly how `[clauth] launcher` would have
+// become inert for every pinned launch, which is what the first draft of this
+// merge did.
 //
 // It returns whether it substituted, which is the third result's whole job.
 // This comment used to end "Build is pure and cannot report the substitution;
@@ -419,7 +488,7 @@ func clauthLaunchCommand(in Input) (argv []string, env []herdrc.EnvVar, downgrad
 		return append([]string{"claude"}, in.ExtraArgs...),
 			[]herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: in.AccountConfigDir}}, false
 	}
-	return append([]string{"clauth", "start", in.AccountPin, "--"}, in.ExtraArgs...),
+	return append(resolveLauncher(in.Launcher, in.AccountPin), in.ExtraArgs...),
 		nil, in.AccountLaunch == LaunchWrapper
 }
 

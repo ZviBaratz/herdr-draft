@@ -1477,6 +1477,7 @@ func (m Model) buildPlanInput() plan.Input {
 		AccountPin:       m.accountPin(),
 		AccountLaunch:    m.accountLaunch(),
 		AccountConfigDir: m.autoPick.ConfigDir,
+		Launcher:         m.cfg.Clauth.Launcher,
 		Prompt:           m.prompt.Value(),
 		Ctx:              m.ctx,
 		DetectionTimeout: time.Duration(m.cfg.Timeouts.DetectionMS) * time.Millisecond,

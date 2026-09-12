@@ -1080,28 +1080,40 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 		}
 		return ""
 	case plan.OpClauthLaunch:
-		// The two launch modes get different words, because they type
-		// different command lines and the step's whole job is to say which.
-		// Which mode RAN is read off op.RunEnv rather than off
-		// in.AccountLaunch on purpose: plan.Build falls back to `clauth start`
-		// when wrapper mode has no config dir to isolate with, and a step that
-		// named the mode the user ASKED for would be describing a command that
-		// was not typed. in.AccountLaunch is then consulted for one thing
-		// only -- whether the two disagree, which is the substitution itself
-		// and is worth a clause.
+		// Two independent corrections to one sentence, both needed, because
+		// "under clauth <pin>" was untrue in two different ways.
+		//
+		// The PROGRAM comes off the argv, not from the word "clauth":
+		// [clauth] launcher makes that argv configurable, so a hardcoded
+		// "under clauth" states something untrue for a session launched with
+		// `["claude-as","{account}"]` -- nothing about clauth runs there. For
+		// the default launcher RunArgv[0] IS "clauth", so every existing
+		// string and the progress golden frame are unchanged.
+		//
+		// And which MECHANISM ran is read off op.RunEnv rather than off
+		// in.AccountLaunch on purpose: plan.Build falls back to the argv
+		// mechanism when wrapper mode has no config dir to isolate with, and a
+		// step that named the mode the user ASKED for would be describing a
+		// command that was not typed. in.AccountLaunch is then consulted for
+		// one thing only -- whether the two disagree, which is the
+		// substitution itself and is worth a clause.
 		if len(op.RunEnv) > 0 {
 			return "as " + in.AccountPin + ", through your shell's claude"
 		}
-		detail := "under clauth"
+		prog := "clauth"
+		if len(op.RunArgv) > 0 && op.RunArgv[0] != "" {
+			prog = op.RunArgv[0]
+		}
+		detail := "under " + prog
 		if in.AccountPin != "" {
 			detail += " " + in.AccountPin
 		}
 		if in.AccountLaunch == plan.LaunchWrapper {
 			// Wrapper mode was ASKED for and did not happen: the pick came
-			// back with no config_dir, so plan.Build substituted `clauth
-			// start` (clauthLaunchCommand's own doc comment). Saying so here
-			// is the popup half of that substitution being reported at the
-			// moment it happens -- without it the row is honest about the
+			// back with no config_dir, so plan.Build fell back to the argv
+			// mechanism (clauthLaunchCommand's own doc comment). Saying so
+			// here is the popup half of that substitution being reported at
+			// the moment it happens -- without it the row is honest about the
 			// command and silent about the mode, and the one setting the user
 			// had to opt into turns itself off with nothing said. The README
 			// documents the fallback; a document is not a report.

@@ -568,3 +568,64 @@ func TestBuildIgnoresAConfigDirWithNoPin(t *testing.T) {
 		}
 	}
 }
+
+// --- where the two launch mechanisms meet ---------------------------------
+
+// The wrapper-mode FALLBACK goes through the launcher template, not through a
+// second hardcoded `clauth start`.
+//
+// This is the merge of #121 and #122 in one row. Both PRs replaced the same
+// line of launchOps: #121 with resolveLauncher, #122 with clauthLaunchCommand.
+// Taking #122's version wholesale -- which is what a conflict resolution
+// naturally does -- left a hardcoded `clauth start` on the non-wrapper branch
+// and made `[clauth] launcher` inert for every pinned launch, with the whole
+// suite still green, because #121's plan rows only ever exercise the path
+// where AccountLaunch is the zero value.
+func TestWrapperFallbackStillHonoursTheLauncher(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.AccountLaunch = LaunchWrapper // asked for...
+	in.AccountConfigDir = ""         // ...but no config dir, so it falls back
+	in.Launcher = []string{"claude-as", accountPlaceholder}
+
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "claude-as alpha-1"; got != want {
+		t.Fatalf("RunArgv = %q, want %q -- the fallback must use the configured launcher", got, want)
+	}
+	if len(op.RunEnv) != 0 {
+		t.Fatalf("RunEnv = %v, want none on the argv mechanism", op.RunEnv)
+	}
+	if !strings.Contains(op.Label, "no config dir") {
+		t.Fatalf("Label = %q, want the downgrade reported", op.Label)
+	}
+}
+
+// And wrapper mode that DOES run ignores the launcher entirely: its argv is a
+// bare `claude` and the account travels in the environment. config.Load resets
+// a launcher set alongside wrapper mode, so this combination should not reach
+// a real pane -- pinned here anyway, because plan is a pure builder that
+// accepts whatever Input it is handed and must not splice the two mechanisms.
+func TestWrapperModeDoesNotUseTheLauncher(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.AccountLaunch = LaunchWrapper
+	in.AccountConfigDir = "/dirs/alpha-1"
+	in.Launcher = []string{"claude-as", accountPlaceholder}
+
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "claude"; got != want {
+		t.Fatalf("RunArgv = %q, want %q", got, want)
+	}
+	want := []herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: "/dirs/alpha-1"}}
+	if !reflect.DeepEqual(op.RunEnv, want) {
+		t.Fatalf("RunEnv = %v, want %v", op.RunEnv, want)
+	}
+}

@@ -1536,3 +1536,102 @@ func TestCreateNamedAccountDoesNotConsultThePicker(t *testing.T) {
 		t.Fatalf("a named account must not consult the picker, got %d calls", len(p.calls))
 	}
 }
+
+// A launcher that fell back has to SAY so on stderr. The fallback itself is
+// safe -- the default pins the account correctly -- but silence would leave
+// the user believing their own template ran, and the whole reason the
+// template is validated is that one with no {account} launches on whichever
+// profile clauth has live. `create` has no panel to put a reason in, so
+// this line is the only place it can appear.
+func TestCreate_ReportsARejectedClauthLauncher(t *testing.T) {
+	h := newHarness(t)
+	body := "[clauth]\nlauncher = [\"claude-as\"]\n"
+	if err := os.WriteFile(filepath.Join(h.env.ConfigDir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d -- a bad launcher must not fail the create\nstderr: %s",
+			code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	for _, want := range []string{"launcher", "{account}", "clauth"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr does not mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// The mirror image, and the one that keeps the line from becoming noise: a
+// config that names no launcher at all is the overwhelmingly common case
+// and must produce no warning.
+func TestCreate_SaysNothingAboutAnAbsentClauthLauncher(t *testing.T) {
+	h := newHarness(t)
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if strings.Contains(h.stderr.String(), "launcher") {
+		t.Errorf("warned about a launcher nobody configured:\n%s", h.stderr)
+	}
+}
+
+// The other two ways the launch decision can be overridden, on the same
+// stderr and for the same reason as the rejected-launcher line above.
+//
+// `[clauth] launch` is the one that was NOWHERE: #122 set ClauthLaunchWarning,
+// unit tested it in internal/config, and surfaced it on no screen at all, so
+// an unrecognised launch mode silently became `start`. An exported field
+// written and never read is invisible to staticcheck, which is why a green
+// `just check` said nothing about it for the length of that PR.
+func TestCreate_ReportsAnUnknownClauthLaunchMode(t *testing.T) {
+	h := newHarness(t)
+	body := "[clauth]\nlaunch = \"teleport\"\n"
+	if err := os.WriteFile(filepath.Join(h.env.ConfigDir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d -- an unknown launch mode must not fail the create\nstderr: %s",
+			code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	for _, want := range []string{"launch", "teleport", "start"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr does not mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// And the seam between the two keys: wrapper mode takes no argv template, so
+// a launcher set beside it is reported rather than silently discarded. This is
+// the line that keeps "two keys, one decision" from being two keys where one
+// quietly wins.
+func TestCreate_ReportsALauncherIgnoredByWrapperMode(t *testing.T) {
+	h := newHarness(t)
+	body := "[clauth]\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\", \"{account}\"]\n"
+	if err := os.WriteFile(filepath.Join(h.env.ConfigDir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	for _, want := range []string{"launcher", "claude-as", "wrapper"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr does not mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// The mirror image for both, so neither line becomes noise: the common config
+// names no launch mode and no launcher, and must produce neither warning.
+func TestCreate_SaysNothingAboutAnAbsentLaunchMode(t *testing.T) {
+	h := newHarness(t)
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if got := h.stderr.String(); strings.Contains(got, "launch ") || strings.Contains(got, "ignoring") {
+		t.Errorf("warned about a launch mode nobody configured:\n%s", got)
+	}
+}

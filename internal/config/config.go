@@ -83,7 +83,129 @@ type ClauthConfig struct {
 	//
 	// An unrecognised value falls back to the default with the reason on
 	// Config.ClauthLaunchWarning; it never makes Load fail.
+	//
+	// TWO KEYS, ONE DECISION -- read this with Launcher below, because the
+	// pair is the thing that is easy to get wrong. They arrived in separate
+	// pull requests (#121 and #122) answering the same question -- how does a
+	// pinned account get launched? -- and the reconciliation is deliberate
+	// rather than an accident of merge order:
+	//
+	//	launch   picks the MECHANISM.
+	//	launcher configures the argv mechanism, and only that one.
+	//
+	// They are not one key because the two mechanisms cannot share a
+	// representation, which was established by measurement rather than taste.
+	// The argv mechanism conveys the account by NAME, as a word in a command
+	// line (`clauth start <acct> --`, `claude-as <acct>`). Wrapper mode
+	// conveys it as a CREDENTIAL DIRECTORY in the environment, so its argv is
+	// the bare word `claude` with the account named nowhere in it -- which
+	// validateClauthLauncher rejects, correctly, since a template with no
+	// {account} on the argv path would bill the session to whatever profile
+	// was already live. And the environment half cannot move into the argv
+	// template either: CLIRunner.PaneRun shell-quotes every element (#72), and
+	// a quoted `NAME=value` is not an assignment to any POSIX shell -- it is a
+	// command name. That is why plan.Op carries RunEnv as a channel of its
+	// own.
+	//
+	// So the two coexist, and Load makes sure only one is ever in effect: in
+	// wrapper mode a non-default Launcher is reset to the default and reported
+	// on LauncherIgnoredWarning. A user who sets both is told which one lost,
+	// which is the whole point -- two keys that both appear to work, where one
+	// silently wins, is the failure this arrangement exists to prevent.
 	Launch string `toml:"launch"`
+
+	// Launcher is the argv that starts a pinned claude account, with
+	// `{account}` standing for the pin. It is a TEMPLATE rather than a
+	// prefix to swap because the two useful values do not share a shape:
+	// `clauth start <account> --` needs the trailing separator and
+	// `claude-as <account>` must not have one. Appending anything on the
+	// caller's behalf would corrupt one of them, so the whole argv is the
+	// unit and only ExtraArgs follows it.
+	//
+	// The default is byte-identical to what the plugin built before this
+	// key existed. It costs the session its herdmates team lead, because
+	// `clauth start` bypasses the `claude()` shell function that sets
+	// CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS and launches through
+	// herdmates' teammux-launch; `claude-as` is the dotfiles function
+	// that keeps both. That is a local choice, not a shareable one --
+	// `claude-as` is a shell function, so it resolves only in a pane whose
+	// shell sourced those dotfiles, and herdr TYPES this argv into the
+	// pane's shell (CLIRunner.PaneRun) rather than exec'ing it, which is
+	// the only reason a shell function can be named here at all.
+	Launcher []string `toml:"launcher"`
+
+	// LauncherWarning is non-empty when the file's own launcher was
+	// rejected and Launcher therefore holds the built-in default instead:
+	// the short reason, naming the rejected value. Never decoded from the
+	// file (`toml:"-"`) -- it is Load's own output, the same
+	// degrade-with-a-reason shape as BranchPrefixWarning.
+	LauncherWarning string `toml:"-"`
+
+	// LauncherIgnoredWarning is non-empty when a launcher was set alongside
+	// `launch = "wrapper"`, which does not use one. Distinct from
+	// LauncherWarning because the causes and the remedies are different: that
+	// one means "your template is malformed, fix it", this one means "your
+	// template is fine and this mechanism does not take one, pick one of the
+	// two". Both are Load's own output, never decoded from the file.
+	LauncherIgnoredWarning string `toml:"-"`
+}
+
+// sameArgv reports whether two launcher argvs are element-for-element equal.
+// Used to tell a launcher the USER set from the built-in default, which is the
+// only signal available after decode: toml.Decode overwrites the defaults()
+// value in place, so an absent key and a key set to exactly the default are
+// indistinguishable -- and rightly so, since ignoring a launcher identical to
+// the default changes nothing and is not worth a warning.
+func sameArgv(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// AccountPlaceholder is the token ClauthConfig.Launcher substitutes for the
+// pinned account. Exported because plan builds the argv and this package
+// validates it, and a second spelling of it in either place would be a
+// template that silently launches the wrong account.
+const AccountPlaceholder = "{account}"
+
+// DefaultClauthLauncher returns the built-in launcher argv. It is a
+// function rather than a package-level slice so a caller cannot mutate the
+// default for every later call.
+func DefaultClauthLauncher() []string {
+	return []string{"clauth", "start", AccountPlaceholder, "--"}
+}
+
+// validateClauthLauncher returns why argv is unusable as a launcher
+// template, or "" when it is fine.
+//
+// Exactly one AccountPlaceholder is required, and that is the load-bearing
+// rule: none would launch the session on whatever account happened to be
+// active -- the mis-billing this key exists to fix, arriving silently --
+// and more than one would name the account twice in a single command line,
+// which no launcher takes. An empty element is rejected because argv[0]
+// blank is not a command and a blank element mid-argv is an empty word the
+// pane's shell would drop.
+func validateClauthLauncher(argv []string) string {
+	if len(argv) == 0 {
+		return "it is empty"
+	}
+	n := 0
+	for i, a := range argv {
+		if strings.TrimSpace(a) == "" {
+			return fmt.Sprintf("element %d is empty", i)
+		}
+		n += strings.Count(a, AccountPlaceholder)
+	}
+	if n != 1 {
+		return fmt.Sprintf("it contains %s %d times, want exactly 1", AccountPlaceholder, n)
+	}
+	return ""
 }
 
 // AgentsConfig is the optional `[agents]` table (spec §12).
@@ -191,10 +313,10 @@ type Config struct {
 // missing entirely.
 func defaults() Config {
 	return Config{
+		Clauth:           ClauthConfig{Launch: ClauthLaunchStart, Launcher: DefaultClauthLauncher()},
 		BranchPrefix:     defaultBranchPrefix(),
 		DefaultWorktree:  true,
 		DefaultPlacement: "new-space",
-		Clauth:           ClauthConfig{Launch: ClauthLaunchStart},
 		Agents: AgentsConfig{
 			Favorites: []string{"claude"},
 		},
@@ -303,6 +425,54 @@ func Load(configDir string) (Config, error) {
 		cfg.ClauthLaunchWarning = fmt.Sprintf("ignoring [clauth] launch %q: expected %q or %q; using %q",
 			cfg.Clauth.Launch, ClauthLaunchStart, ClauthLaunchWrapper, ClauthLaunchStart)
 		cfg.Clauth.Launch = ClauthLaunchStart
+	}
+
+	// Validated here, beside branch_prefix, for the same reason: this argv
+	// reaches a command line herdr types into a pane, so it is checked at
+	// the point it is first trusted. A bad SHAPE degrades with a reason
+	// rather than failing Load, and must never degrade SILENTLY either,
+	// since a template with no {account} would bill a session to whichever
+	// account was already active.
+	//
+	// A bad TYPE is different and is NOT handled here: `launcher = "clauth
+	// start {account} --"` -- a string, which is what a command line looks
+	// like, and the most plausible way to mistype an argv key -- fails in
+	// toml.Decode above, so Load returns an error and app.Bootstrap turns
+	// it into spec §9's pre-open refusal. That is this loader's behaviour
+	// for a wrong type on EVERY key (`branch_prefix = 5` does the same),
+	// not something this key introduces, and the refusal names the line
+	// and the key. An earlier version of this comment claimed a malformed
+	// optional key can never stop the form opening; that is true of a bad
+	// value and false of a bad type, and the over-claim is recorded here
+	// rather than quietly corrected. Making this one key tolerate a wrong
+	// type (decode through `any`, as config/repo.go does for the
+	// repository file) would be a real improvement and is deliberately
+	// left as its own change, since it belongs to the loader, not to this
+	// key.
+	if verr := validateClauthLauncher(cfg.Clauth.Launcher); verr != "" {
+		def := DefaultClauthLauncher()
+		cfg.Clauth.LauncherWarning = fmt.Sprintf("ignoring [clauth] launcher %v: %s; using %v",
+			cfg.Clauth.Launcher, verr, def)
+		cfg.Clauth.Launcher = def
+	}
+
+	// The two keys are ONE decision, and this is where that is enforced --
+	// see ClauthConfig.Launch for why they are two keys rather than one.
+	// `launch` picks the mechanism; `launcher` configures the argv one. In
+	// wrapper mode there is no argv template to configure, so a launcher set
+	// alongside it is reset to the default AND reported.
+	//
+	// Resetting rather than merely warning is what keeps the report true
+	// everywhere: wrapper mode falls back to the argv mechanism when the pick
+	// answers no config_dir (plan.clauthLaunchCommand), and if the rejected
+	// launcher were still in Launcher that fallback would quietly run the very
+	// template the user was just told is ignored.
+	if cfg.Clauth.Launch == ClauthLaunchWrapper && !sameArgv(cfg.Clauth.Launcher, DefaultClauthLauncher()) {
+		def := DefaultClauthLauncher()
+		cfg.Clauth.LauncherIgnoredWarning = fmt.Sprintf(
+			"ignoring [clauth] launcher %v: [clauth] launch = %q launches claude under an isolated credential directory rather than through an argv template; using %v",
+			cfg.Clauth.Launcher, ClauthLaunchWrapper, def)
+		cfg.Clauth.Launcher = def
 	}
 	return cfg, nil
 }
