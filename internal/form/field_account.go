@@ -647,14 +647,35 @@ func (f *AccountField) buildItems() []widgets.PickerItem {
 // column to disturb.
 func (f *AccountField) autoItem() widgets.PickerItem {
 	badge, marker := "", ""
+	// Toned per state, the way profileItem tones its own badge. All three
+	// states used to share ToneWarning -- Palette.Warning, whose documented
+	// meaning is "rate-limited and degraded states" -- so a SUCCESSFUL
+	// `→ alpha-1` was painted in the same colour as a refusal, and this row
+	// exists to draw exactly that distinction.
+	//
+	// This package's golden frames DO carry colour (they are captured with
+	// escapes intact), so the two auto frames moved when this was fixed and
+	// now pin it. That is the narrower lesson of the frames convention rather
+	// than an exception to it: a frame records what a state renders as, so it
+	// catches a tone that CHANGES and says nothing about whether the tone was
+	// ever right -- all three states were wrong in the original fixtures, and
+	// every one of them was green.
+	tone := widgets.ToneMuted
 
 	switch {
 	case f.preview.Refusal != "":
-		badge, marker = f.preview.Refusal, markerWarning
+		// Warning, not Danger: a refusal is the picker ANSWERING. Nothing is
+		// broken, the pool is busy, and the manual rows below still work --
+		// the same split profileItem draws between a rate limit and an auth
+		// failure.
+		badge, marker, tone = f.preview.Refusal, markerWarning, widgets.ToneWarning
 	case f.preview.Pending:
+		// Muted: "asking the picker…" is texture while a subprocess runs, not
+		// a state anyone needs to act on.
 		badge = accountAutoPending
 	case f.preview.Profile != "":
 		badge = accountAutoArrow[1:] + f.preview.Profile // "→ alpha-1", no leading pad: the badge column supplies its own.
+		tone = widgets.ToneSuccess
 	}
 
 	cells := make([]string, 0, 3+2*len(accountWindowLabels))
@@ -674,7 +695,7 @@ func (f *AccountField) autoItem() widgets.PickerItem {
 		ID:        accountAutoID,
 		Cells:     append(cells, ""),
 		Badge:     badge,
-		BadgeTone: widgets.ToneWarning,
+		BadgeTone: tone,
 		Marker:    marker,
 		Current:   f.auto,
 	}

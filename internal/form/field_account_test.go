@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
+	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -652,5 +653,38 @@ func TestAccountAutoRowIsWidthOnly(t *testing.T) {
 		if second := f.Row(72); first != second {
 			t.Fatalf("Row changed with panel height:\n %q\n %q", first, second)
 		}
+	}
+}
+
+// The auto row's badge is toned by STATE. All three states shipped as
+// ToneWarning -- Palette.Warning, documented as "rate-limited and degraded
+// states" -- so a successful pick and a refusal were painted identically,
+// flattening exactly the distinction this row is for.
+//
+// The auto frames do carry colour and so moved when this was fixed, but they
+// pin the three states only as a side effect of whatever the fixtures happen
+// to exercise, and they say nothing about WHICH tone each state should have.
+// This asserts the mapping itself, in the terms the palette documents it in.
+func TestAccountAutoBadgeIsTonedByState(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		preview AccountPickerPreview
+		want    widgets.Tone
+	}{
+		{"picked", AccountPickerPreview{Profile: "alpha-1"}, widgets.ToneSuccess},
+		{"refused", AccountPickerPreview{Refusal: "pool exhausted"}, widgets.ToneWarning},
+		{"pending", AccountPickerPreview{Pending: true}, widgets.ToneMuted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := accountFieldWithPicker(t)
+			f.SetPickerPreview(tc.preview)
+			item := f.autoItem()
+			if item.Badge == "" {
+				t.Fatalf("the %s state rendered no badge at all", tc.name)
+			}
+			if item.BadgeTone != tc.want {
+				t.Fatalf("%s badge tone = %v, want %v", tc.name, item.BadgeTone, tc.want)
+			}
+		})
 	}
 }
