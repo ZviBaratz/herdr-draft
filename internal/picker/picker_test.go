@@ -105,7 +105,7 @@ func TestCodeMeaningNamesEveryDocumentedCode(t *testing.T) {
 		ExitBackpressure: "machine under load",
 		ExitBadTable:     "no account table to pick from",
 		ExitNoProfiles:   "no profiles registered",
-		ExitUsage:        "picker rejected its own arguments",
+		ExitUsage:        "picker did not accept herdr-draft's invocation",
 	} {
 		if got := CodeMeaning(code); got != want {
 			t.Fatalf("CodeMeaning(%d) = %q, want %q", code, got, want)

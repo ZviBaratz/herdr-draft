@@ -61,7 +61,12 @@ func CodeMeaning(code int) string {
 	case ExitNoProfiles:
 		return "no profiles registered"
 	case ExitUsage:
-		return "picker rejected its own arguments"
+		// Names WHOSE arguments, which the old wording ("picker rejected its
+		// own arguments") left to the reader. 64 is the one documented code
+		// that is not a judgement about the user's request at all: the picker
+		// and herdr-draft disagree about the invocation, so it is a wiring
+		// fault sitting in the row where every other code is a decision.
+		return "picker did not accept herdr-draft's invocation"
 	default:
 		return fmt.Sprintf("picker exited %d", code)
 	}
@@ -192,16 +197,30 @@ func MissingKeys(b []byte) []string {
 	if err := json.Unmarshal(b, &top); err != nil {
 		return append([]string(nil), documentedKeys...)
 	}
-	var usage map[string]json.RawMessage
-	if raw, ok := top["usage"]; ok {
-		_ = json.Unmarshal(raw, &usage)
+	// A nested key's parent is decoded by the name THE KEY carries, cached so
+	// a parent several keys share is parsed once. The first draft looked
+	// `usage` up literally, which was right only by coincidence: every nested
+	// entry in documentedKeys happens to be a usage.* one today, and a future
+	// `resets_at.five_hour` would have been searched for inside `usage` and
+	// reported missing from an object it was never meant to be in.
+	parents := map[string]map[string]json.RawMessage{}
+	children := func(parent string) map[string]json.RawMessage {
+		if kids, seen := parents[parent]; seen {
+			return kids
+		}
+		var kids map[string]json.RawMessage
+		if raw, ok := top[parent]; ok {
+			_ = json.Unmarshal(raw, &kids)
+		}
+		parents[parent] = kids
+		return kids
 	}
 
 	var missing []string
 	for _, key := range documentedKeys {
 		name, sub, nested := strings.Cut(key, ".")
 		if nested {
-			if _, ok := usage[sub]; !ok {
+			if _, ok := children(name)[sub]; !ok {
 				missing = append(missing, key)
 			}
 			continue
