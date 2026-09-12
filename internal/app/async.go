@@ -1082,18 +1082,32 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 	case plan.OpClauthLaunch:
 		// The two launch modes get different words, because they type
 		// different command lines and the step's whole job is to say which.
-		// It reads off op.RunEnv rather than off in.AccountLaunch on purpose:
-		// plan.Build silently falls back to `clauth start` when wrapper mode
-		// has no config dir to isolate with, and a step that named the mode
-		// the user ASKED for would then be describing a command that was not
-		// typed.
+		// Which mode RAN is read off op.RunEnv rather than off
+		// in.AccountLaunch on purpose: plan.Build falls back to `clauth start`
+		// when wrapper mode has no config dir to isolate with, and a step that
+		// named the mode the user ASKED for would be describing a command that
+		// was not typed. in.AccountLaunch is then consulted for one thing
+		// only -- whether the two disagree, which is the substitution itself
+		// and is worth a clause.
 		if len(op.RunEnv) > 0 {
 			return "as " + in.AccountPin + ", through your shell's claude"
 		}
+		detail := "under clauth"
 		if in.AccountPin != "" {
-			return "under clauth " + in.AccountPin
+			detail += " " + in.AccountPin
 		}
-		return "under clauth"
+		if in.AccountLaunch == plan.LaunchWrapper {
+			// Wrapper mode was ASKED for and did not happen: the pick came
+			// back with no config_dir, so plan.Build substituted `clauth
+			// start` (clauthLaunchCommand's own doc comment). Saying so here
+			// is the popup half of that substitution being reported at the
+			// moment it happens -- without it the row is honest about the
+			// command and silent about the mode, and the one setting the user
+			// had to opt into turns itself off with nothing said. The README
+			// documents the fallback; a document is not a report.
+			detail += " (wrapper mode had no config dir)"
+		}
+		return detail
 	case plan.OpAwaitDetection:
 		return "waiting for the agent"
 	default:

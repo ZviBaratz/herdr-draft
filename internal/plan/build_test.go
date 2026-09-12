@@ -503,8 +503,8 @@ func TestBuildWrapperLaunchTypesClaudeUnderAConfigDir(t *testing.T) {
 // Wrapper mode with no config dir has nothing to isolate WITH. A bare
 // `claude` there would launch under whatever credential happened to be
 // machine-global -- the opposite of a pin -- so the pin falls back to the
-// mode that can honour it. Build is pure and cannot say so out loud; the
-// caller reports it.
+// mode that can honour it, and SAYS SO on the step's own label, which is what
+// `create` prints one line per step to stderr.
 func TestBuildWrapperWithoutAConfigDirFallsBackToClauthStart(t *testing.T) {
 	in := validInput()
 	in.AccountPin = "alpha-1"
@@ -519,6 +519,36 @@ func TestBuildWrapperWithoutAConfigDirFallsBackToClauthStart(t *testing.T) {
 	}
 	if len(op.RunEnv) != 0 {
 		t.Fatalf("RunEnv = %v, want none", op.RunEnv)
+	}
+	if !strings.Contains(op.Label, "no config dir") {
+		t.Fatalf("Label = %q, want one saying wrapper mode was downgraded", op.Label)
+	}
+}
+
+// And the label stays clean when nothing was substituted -- a note on every
+// launch would say nothing on the one launch it exists for.
+func TestBuildDoesNotClaimADowngradeThatDidNotHappen(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		launch    LaunchMode
+		configDir string
+	}{
+		{"clauth start", LaunchClauthStart, ""},
+		{"wrapper with a config dir", LaunchWrapper, "/home/a/dirs/alpha-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := validInput()
+			in.AccountPin = "alpha-1"
+			in.AccountLaunch = tc.launch
+			in.AccountConfigDir = tc.configDir
+			ops, err := Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if got := findOp(t, ops, OpClauthLaunch).Label; got != "typing the clauth launch" {
+				t.Fatalf("Label = %q, want the plain launch label", got)
+			}
+		})
 	}
 }
 

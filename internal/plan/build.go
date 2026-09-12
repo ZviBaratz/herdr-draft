@@ -340,7 +340,15 @@ func placementOp(in Input, cwd string, cwdFromCheckout bool) (Op, bool) {
 // performs its own detection wait server-side.
 func launchOps(in Input) []Op {
 	if in.AccountPin != "" && in.AgentKind == claudeAgentKind {
-		runArgv, runEnv := clauthLaunchCommand(in)
+		runArgv, runEnv, downgraded := clauthLaunchCommand(in)
+		label := "typing the clauth launch"
+		if downgraded {
+			// The substitution said out loud, on the step where it happens.
+			// This is `create`'s half of it -- the verb prints op labels one
+			// per line to stderr; the popup's half is async.go's
+			// submitStepDetail, which has its own value column to say it in.
+			label += " (wrapper mode had no config dir)"
+		}
 		return []Op{
 			{
 				Kind: OpClauthLaunch,
@@ -353,7 +361,7 @@ func launchOps(in Input) []Op {
 				// claude" reporting ok was claiming something it cannot
 				// know. The OpAwaitDetection that always follows is what
 				// confirms an agent; read the two rows as one launch.
-				Label:   "typing the clauth launch",
+				Label:   label,
 				RunArgv: runArgv,
 				RunEnv:  runEnv,
 			},
@@ -389,21 +397,30 @@ func launchOps(in Input) []Op {
 // clauthLaunchCommand is the pinned-account command line and its environment
 // prefix, for the mode in.AccountLaunch asks for.
 //
-// LaunchWrapper WITHOUT a config dir silently becomes LaunchClauthStart, and
-// that is the honest fallback rather than an omission: a bare `claude` with no
+// LaunchWrapper WITHOUT a config dir becomes LaunchClauthStart, and that is
+// the honest fallback rather than an omission: a bare `claude` with no
 // CLAUDE_CONFIG_DIR launches under whatever credential is machine-global,
-// which is the exact opposite of the pin the user asked for. Build is pure and
-// cannot report the substitution; the caller does, on the launch step.
+// which is the exact opposite of the pin the user asked for.
+//
+// It returns whether it substituted, which is the third result's whole job.
+// This comment used to end "Build is pure and cannot report the substitution;
+// the caller does, on the launch step" -- and the caller did not. The step
+// named the command line typed and never said a requested wrapper launch had
+// been downgraded, so the one mode the user had to opt into could turn itself
+// off in silence. Purity was never the obstacle: a bool travelling out of a
+// function that performs no I/O is still no I/O, and both callers (launchOps'
+// own Label for `create`, app's submitStepDetail for the popup) now say it.
 //
 // Both spellings pass ExtraArgs UNQUOTED, exactly as before: CLIRunner.PaneRun
 // is the layer that knows herdr types this rather than execing it, and it
 // quotes there (#72).
-func clauthLaunchCommand(in Input) (argv []string, env []herdrc.EnvVar) {
+func clauthLaunchCommand(in Input) (argv []string, env []herdrc.EnvVar, downgraded bool) {
 	if in.AccountLaunch == LaunchWrapper && in.AccountConfigDir != "" {
 		return append([]string{"claude"}, in.ExtraArgs...),
-			[]herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: in.AccountConfigDir}}
+			[]herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: in.AccountConfigDir}}, false
 	}
-	return append([]string{"clauth", "start", in.AccountPin, "--"}, in.ExtraArgs...), nil
+	return append([]string{"clauth", "start", in.AccountPin, "--"}, in.ExtraArgs...),
+		nil, in.AccountLaunch == LaunchWrapper
 }
 
 // maxAgentNameLen is AgentName's own output cap (spec: "clamp to 30 runes
