@@ -2637,6 +2637,84 @@ func TestResolveAccountSurfacesARefusal(t *testing.T) {
 	}
 }
 
+// The safety claim this whole feature rests on, pinned at the handler that
+// enforces it: a commit-time refusal must NOT fall through to beginSubmit.
+//
+// TestResolveAccountSurfacesARefusal above covers ResolveAccount returning an
+// error; it says nothing about what the handler consuming that error does
+// next, and the handler is where the promise lives. Mutating
+// handlePickerCommit's `if msg.err != nil` to `if false` -- a refusal
+// continuing straight into an UNPINNED launch, which is the exact silent
+// degradation this design was amended to forbid -- survived the entire suite
+// before this existed. The central claim was the one claim with no dead mutant
+// behind it.
+func TestACommitRefusalNeverFallsThroughToSubmit(t *testing.T) {
+	p := &fakePicker{err: &picker.RefusalError{Code: picker.ExitExhausted, Reason: "pool exhausted (resets 22:49)"}}
+	m := modelWithPicker(t, p, config.Config{})
+	// A form that would otherwise submit cleanly. Without a title plan.Build
+	// refuses on its own, and the submitting assertion below would then pass
+	// against the mutant for a reason that has nothing to do with the picker.
+	m.title.SetTitle("Fix pagination", false)
+
+	cmd := m.pickerCommitCmd()
+	msg, ok := cmd().(pickerCommitMsg)
+	if !ok {
+		t.Fatalf("pickerCommitCmd produced %T, want pickerCommitMsg", cmd())
+	}
+	if msg.err == nil {
+		t.Fatal("the fake picker's refusal did not reach the commit message")
+	}
+
+	m, _ = m.handlePickerCommit(msg)
+
+	if m.submitting {
+		t.Fatal("a refused commit-time pick started a submit -- `auto` would have launched under whatever account happened to be live")
+	}
+	if m.autoPick.Profile != "" {
+		t.Fatalf("a refused pick recorded an account: %+v", m.autoPick)
+	}
+	// Focus, not the returned cmd: focusByID's cmd is whatever the section's
+	// own Focus() produces, and a row with no live cursor legitimately
+	// produces nil. Where focus ENDED is the behaviour being promised.
+	if got := m.form.FocusedID(); got != "account" {
+		t.Fatalf("focus ended on %q, want the account row -- the manual choices should be one keystroke away", got)
+	}
+	if got := fieldText(m.account, 100); !strings.Contains(got, "pool exhausted (resets 22:49)") {
+		t.Fatalf("the account row should say why the submit stopped:\n%s", got)
+	}
+}
+
+// The other half: a pick that SUCCEEDS does resume the submit, pinned so the
+// guard above cannot be satisfied by a handler that simply never submits.
+func TestASuccessfulCommitPickResumesTheSubmit(t *testing.T) {
+	res := picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}
+	m := modelWithPicker(t, &fakePicker{res: res}, config.Config{})
+	m.title.SetTitle("Fix pagination", false)
+
+	m, _ = m.handlePickerCommit(pickerCommitMsg{res: res})
+
+	if !m.submitting {
+		t.Fatal("a successful commit-time pick did not resume the submit")
+	}
+	if m.autoPick.Profile != "alpha-1" {
+		t.Fatalf("the picked account did not reach the plan: %+v", m.autoPick)
+	}
+}
+
+// A picker that could not be RUN at all -- it vanished after the startup
+// probe, or died outside the protocol -- still has to say so on the row. A
+// blank row is indistinguishable from a picker that has not answered yet, and
+// "visible degradation" is the promise this feature is sold on.
+func TestANonRefusalPickerFailureStillReachesTheRow(t *testing.T) {
+	p := &fakePicker{err: errors.New("picker gone: no such file or directory")}
+	m := modelWithPicker(t, p, config.Config{})
+	m = runPreview(t, m, "/p/thing")
+
+	if got := fieldText(m.account, 100); !strings.Contains(got, "no such file or directory") {
+		t.Fatalf("a picker that could not be run must say so on the row:\n%s", got)
+	}
+}
+
 // The refusal reaches the ROW too, in the picker's own words.
 func TestPreviewRefusalReachesTheRow(t *testing.T) {
 	p := &fakePicker{err: &picker.RefusalError{Code: picker.ExitExhausted, Reason: "pool exhausted (resets 22:49)"}}
