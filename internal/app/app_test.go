@@ -2564,7 +2564,15 @@ func TestBootstrapDegradesAnUnprobeablePicker(t *testing.T) {
 	if m.account.IsAuto() {
 		t.Fatal("an unprobeable picker must not produce an auto selection")
 	}
-	if got := fieldText(m.account, 100); !strings.Contains(got, missing) {
+	// Rendered WIDE on purpose. The question this row asks is whether the
+	// reason reached the panel at all, and at 100 columns the assertion was
+	// really asking something else: whether a temp path fits a terminal. It
+	// does on Linux (/tmp/TestX123/not-a-picker) and does not on macOS
+	// (/var/folders/36/tjdph2t965j8snz9_.../T/TestX15.../not-a-picker), where
+	// the panel keeps the head and elides the basename -- so this test was red
+	// on the macOS CI leg from the commit that introduced it, while every
+	// local Linux run, and the independent review's, called it green.
+	if got := fieldText(m.account, 400); !strings.Contains(got, missing) {
 		t.Fatalf("the account row should name the picker that failed:\n%s", got)
 	}
 }
