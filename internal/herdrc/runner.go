@@ -90,6 +90,22 @@ type AgentPromptReq struct {
 	WaitTimeout time.Duration
 }
 
+// EnvVar is one environment assignment prefixed to a PaneRun command line:
+// `NAME=value cmd …`, the shell's own way of setting a variable for one
+// command.
+//
+// It is a separate parameter from argv rather than a leading argv element
+// because the two are quoted DIFFERENTLY, and that difference is the whole
+// reason this type exists. PaneRun shell-quotes every argv element (#72),
+// which is correct for a word and wrong for an assignment: quoting the whole
+// `NAME=value` gives the shell a command name.
+//
+// It is also not `env NAME=value cmd`. env(1) execs its target, which
+// bypasses shell functions -- and the only reason to want an environment
+// prefix here at all is a `claude` the user's login shell resolves to a
+// function of their own (`[clauth] launch = "wrapper"`).
+type EnvVar struct{ Name, Value string }
+
 // Runner performs herdr operations needed to create and control agent
 // sessions from the plugin. Every implementation drives the herdr CLI
 // executable rather than the socket API directly.
@@ -109,8 +125,10 @@ type Runner interface {
 	AwaitDetection(ctx context.Context, paneID string, timeout, blockedTimeout time.Duration) error
 	// PaneRun types a command into a pane's shell. Pass a plain argv:
 	// the implementation shell-quotes each element, because herdr's own
-	// `pane run` joins and types rather than execs (#72).
-	PaneRun(ctx context.Context, paneID string, argv []string) error
+	// `pane run` joins and types rather than execs (#72). env, when
+	// non-empty, is emitted ahead of argv as shell assignments -- see
+	// EnvVar for why it cannot simply be more argv.
+	PaneRun(ctx context.Context, paneID string, env []EnvVar, argv []string) error
 	// PaneClose runs `herdr pane close <pane_id>` -- placement spec §5.4:
 	// when Execute claimed a fresh pane for the agent in a workspace it did
 	// not create (a reuse correction, §5.2), Clean must close THAT pane
@@ -1017,13 +1035,50 @@ func shellQuote(s string) string {
 // to survive this path was the documented workaround until this fix, and it
 // broke the other one -- claude received a model name beginning with an
 // apostrophe.
-func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, argv []string) error {
-	args := make([]string, 0, len(argv)+3)
+//
+// The env prefix is the one thing here that is NOT quoted whole, and EnvVar's
+// own doc comment says why: `'NAME=value' cmd` asks the shell for a command
+// called `NAME=value`. Name and value are quoted separately -- the name
+// against a whitelist (envNameOK), the value with the same shellQuote every
+// argv element gets.
+func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, env []EnvVar, argv []string) error {
+	args := make([]string, 0, len(argv)+len(env)+3)
 	args = append(args, "pane", "run", paneID)
+	for _, e := range env {
+		if !envNameOK(e.Name) {
+			return fmt.Errorf("%w pane run: %q is not a usable environment variable name", errRefused, e.Name)
+		}
+		args = append(args, e.Name+"="+shellQuote(e.Value))
+	}
 	for _, a := range argv {
 		args = append(args, shellQuote(a))
 	}
 	return r.runOK(ctx, args...)
+}
+
+// envNameOK reports whether name is a portable shell variable name --
+// [A-Za-z_][A-Za-z0-9_]* -- and therefore safe to type UNQUOTED, which is the
+// only way an assignment prefix can be spelled.
+//
+// The value beside it is quoted and so cannot escape; the name is the half
+// with no protection, so it gets a whitelist rather than an escaping rule.
+// Every name herdr-draft itself passes is a compile-time constant, so this
+// guard is for a future caller, and for the reader who needs to see that the
+// unquoted half was thought about rather than overlooked.
+func envNameOK(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // PaneClose runs `herdr pane close <pane_id>`. herdr's own JSON success

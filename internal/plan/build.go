@@ -36,6 +36,38 @@ const (
 	PlacementSplitHere
 )
 
+// LaunchMode selects how a pinned claude account reaches the pane.
+//
+// The zero value is LaunchClauthStart, and that is load-bearing rather than
+// alphabetical: it is what every caller written before this field existed
+// already means, and it is the mode that means the same thing on every
+// machine that has clauth.
+type LaunchMode int
+
+const (
+	// LaunchClauthStart types `clauth start <profile> -- <extra args>`.
+	// clauth builds the per-profile CLAUDE_CONFIG_DIR itself and execs claude
+	// under it.
+	LaunchClauthStart LaunchMode = iota
+	// LaunchWrapper types `CLAUDE_CONFIG_DIR=<dir> claude <extra args>`,
+	// leaving the pane's own login shell to resolve `claude`.
+	//
+	// Opt-in only (`[clauth] launch = "wrapper"`), and the README says what it
+	// is opting into: on a machine whose shell defines a `claude` FUNCTION,
+	// this reaches that function -- which is what can register a session
+	// holder and launch through a team-lead helper, neither of which
+	// `clauth start` has ever done. On every other machine `claude` is the
+	// plain binary: the credential is still isolated, and everything else the
+	// wrapper was for is silently absent. That asymmetry is why this is not
+	// the default.
+	LaunchWrapper
+)
+
+// ClaudeConfigDirVar is the environment variable both launch modes ultimately
+// set -- clauth sets it itself under LaunchClauthStart, and LaunchWrapper
+// sets it as a shell assignment prefix.
+const ClaudeConfigDirVar = "CLAUDE_CONFIG_DIR"
+
 // Input is the creation form's output: everything Build needs to produce an
 // ordered op list. Build performs no I/O, so every fact that would
 // otherwise require a lookup (whether ProjectDir is a git repo, the
@@ -56,12 +88,27 @@ type Input struct {
 	// account. Pinning is only valid when AgentKind == "claude" (spec
 	// §6.7); Build rejects any other combination.
 	AccountPin string
+	// AccountLaunch selects how AccountPin reaches the pane; the zero value is
+	// LaunchClauthStart. Consulted only when AccountPin is set and AgentKind
+	// is claude.
+	AccountLaunch LaunchMode
+	// AccountConfigDir is the picked profile's CLAUDE_CONFIG_DIR, when the
+	// caller has one -- an account picker's `config_dir`. It is the only thing
+	// that makes LaunchWrapper possible, and a caller with no config dir gets
+	// LaunchClauthStart back regardless of what it asked for (launchOps).
+	//
+	// A plan.Input field rather than an ExecOpts one because it is part of
+	// WHAT is built, not of how a runtime waits: the same pin and the same
+	// config dir must produce the same op list from the popup and from
+	// `create`, which is what equivalence_test.go asserts.
+	AccountConfigDir string
 	// Launcher is the argv template that starts a pinned claude account,
 	// with config.AccountPlaceholder standing for AccountPin. Empty means
 	// the built-in default, so a caller that does not set it keeps the
 	// argv this package built before the key existed. Only consulted on
 	// the pinned-claude path, the one place AccountPin is used at all.
-	Launcher                        []string
+	Launcher []string
+
 	Prompt                          string
 	Ctx                             herdrc.Context
 	DetectionTimeout, PromptTimeout time.Duration
@@ -125,6 +172,7 @@ type Op struct {
 	Split     *herdrc.PaneSplitReq       // OpPaneSplit
 	Agent     *herdrc.AgentStartReq      // OpAgentStart
 	RunArgv   []string                   // OpClauthLaunch: argv for Runner.PaneRun
+	RunEnv    []herdrc.EnvVar            // OpClauthLaunch: shell assignment prefix for Runner.PaneRun
 	Prompt    *herdrc.AgentPromptReq     // OpAgentPrompt
 	Timeout   time.Duration              // OpAwaitDetection, and OpAgentStart's #115 fallback
 
@@ -351,7 +399,15 @@ func resolveLauncher(template []string, account string) []string {
 // performs its own detection wait server-side.
 func launchOps(in Input) []Op {
 	if in.AccountPin != "" && in.AgentKind == claudeAgentKind {
-		runArgv := append(resolveLauncher(in.Launcher, in.AccountPin), in.ExtraArgs...)
+		runArgv, runEnv, downgraded := clauthLaunchCommand(in)
+		label := "typing the clauth launch"
+		if downgraded {
+			// The substitution said out loud, on the step where it happens.
+			// This is `create`'s half of it -- the verb prints op labels one
+			// per line to stderr; the popup's half is async.go's
+			// submitStepDetail, which has its own value column to say it in.
+			label += " (wrapper mode had no config dir)"
+		}
 		return []Op{
 			{
 				Kind: OpClauthLaunch,
@@ -364,8 +420,9 @@ func launchOps(in Input) []Op {
 				// claude" reporting ok was claiming something it cannot
 				// know. The OpAwaitDetection that always follows is what
 				// confirms an agent; read the two rows as one launch.
-				Label:   "typing the clauth launch",
+				Label:   label,
 				RunArgv: runArgv,
+				RunEnv:  runEnv,
 			},
 			{
 				Kind:      OpAwaitDetection,
@@ -394,6 +451,45 @@ func launchOps(in Input) []Op {
 			Timeout: in.DetectionTimeout,
 		},
 	}
+}
+
+// clauthLaunchCommand is the pinned-account command line and its environment
+// prefix, for the mode in.AccountLaunch asks for.
+//
+// The two mechanisms meet here, and the branch is the whole of it: wrapper
+// mode conveys the account as a credential directory in the environment, and
+// everything else conveys it as a word in the argv, through Input.Launcher's
+// template (`[clauth] launcher`). config.ClauthConfig.Launch's doc comment
+// explains why those cannot be one key.
+//
+// LaunchWrapper WITHOUT a config dir becomes the argv mechanism, and that is
+// the honest fallback rather than an omission: a bare `claude` with no
+// CLAUDE_CONFIG_DIR launches under whatever credential is machine-global,
+// which is the exact opposite of the pin the user asked for. Note that the
+// fallback goes through resolveLauncher rather than a second hardcoded `clauth
+// start`: a hardcoded one here is exactly how `[clauth] launcher` would have
+// become inert for every pinned launch, which is what the first draft of this
+// merge did.
+//
+// It returns whether it substituted, which is the third result's whole job.
+// This comment used to end "Build is pure and cannot report the substitution;
+// the caller does, on the launch step" -- and the caller did not. The step
+// named the command line typed and never said a requested wrapper launch had
+// been downgraded, so the one mode the user had to opt into could turn itself
+// off in silence. Purity was never the obstacle: a bool travelling out of a
+// function that performs no I/O is still no I/O, and both callers (launchOps'
+// own Label for `create`, app's submitStepDetail for the popup) now say it.
+//
+// Both spellings pass ExtraArgs UNQUOTED, exactly as before: CLIRunner.PaneRun
+// is the layer that knows herdr types this rather than execing it, and it
+// quotes there (#72).
+func clauthLaunchCommand(in Input) (argv []string, env []herdrc.EnvVar, downgraded bool) {
+	if in.AccountLaunch == LaunchWrapper && in.AccountConfigDir != "" {
+		return append([]string{"claude"}, in.ExtraArgs...),
+			[]herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: in.AccountConfigDir}}, false
+	}
+	return append(resolveLauncher(in.Launcher, in.AccountPin), in.ExtraArgs...),
+		nil, in.AccountLaunch == LaunchWrapper
 }
 
 // maxAgentNameLen is AgentName's own output cap (spec: "clamp to 30 runes

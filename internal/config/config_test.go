@@ -598,3 +598,169 @@ func TestLoad_TrustRepositoryExplicitFalseIsNotNil(t *testing.T) {
 		t.Error("Worktree.TrustRepository = *true, want *false")
 	}
 }
+
+// The launch mode is a TRUST decision, not a preference: "wrapper" types a
+// bare `claude` into the pane and depends on the user's shell resolving it to
+// a wrapper function. On every machine that has no such function it is the
+// plain binary, which still isolates the credential but silently drops
+// whatever the wrapper was doing. So the default must be the mode that means
+// the same thing everywhere.
+func TestClauthLaunchDefaultsToClauthStart(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\npicker = \"acct-pick\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchStart {
+		t.Fatalf("Launch = %q, want %q", cfg.Clauth.Launch, ClauthLaunchStart)
+	}
+	if cfg.Clauth.Picker != "acct-pick" {
+		t.Fatalf("Picker = %q", cfg.Clauth.Picker)
+	}
+	if cfg.ClauthLaunchWarning != "" {
+		t.Fatalf("unexpected warning %q", cfg.ClauthLaunchWarning)
+	}
+}
+
+// No config file at all must reach the same default, not the zero value.
+func TestClauthLaunchDefaultsWithNoConfigFile(t *testing.T) {
+	cfg, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchStart {
+		t.Fatalf("Launch = %q, want %q", cfg.Clauth.Launch, ClauthLaunchStart)
+	}
+}
+
+func TestClauthLaunchAcceptsWrapper(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlaunch = \"wrapper\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchWrapper {
+		t.Fatalf("Launch = %q, want %q", cfg.Clauth.Launch, ClauthLaunchWrapper)
+	}
+}
+
+// An unusable value degrades to the default WITH A REASON, exactly like
+// branch_prefix: a typo in an optional key is not a reason to refuse to open,
+// and a value silently ignored is a value the user will spend an afternoon
+// on.
+func TestClauthLaunchDegradesWithAReason(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlaunch = \"wraper\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchStart {
+		t.Fatalf("Launch = %q, want the default %q", cfg.Clauth.Launch, ClauthLaunchStart)
+	}
+	for _, want := range []string{"wraper", "start", "wrapper"} {
+		if !strings.Contains(cfg.ClauthLaunchWarning, want) {
+			t.Fatalf("warning %q should name %q", cfg.ClauthLaunchWarning, want)
+		}
+	}
+}
+
+// No picker unless one is named. The absence of this test is the shape the
+// spec's amendment refused: a plugin that finds a same-named program
+// on PATH and starts routing account credentials through it.
+func TestPickerIsEmptyUnlessNamed(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\ndefault = \"alpha-1\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Picker != "" {
+		t.Fatalf("Picker = %q, want empty: a picker is named, never discovered", cfg.Clauth.Picker)
+	}
+}
+
+// An EXPLICIT empty launch resolves to start, like an absent one.
+//
+// This is the `case "":` arm, and it needs its own row because nothing else
+// reaches it: defaults() seeds Launch with "start" and toml.Decode leaves that
+// in place for a file that omits the key, so an absent `launch` never lands on
+// the empty case at all. Measured rather than assumed -- mutating that arm to
+// ClauthLaunchWrapper survived the whole suite both before and after the merge
+// with #121, which makes it the one arm of this switch with nothing behind it.
+func TestAnExplicitlyEmptyClauthLaunchIsStart(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlaunch = \"\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.Launch != ClauthLaunchStart {
+		t.Fatalf("Launch = %q, want %q", cfg.Clauth.Launch, ClauthLaunchStart)
+	}
+	// An empty value is not a wrong value: it degrades to the default without
+	// a complaint, the same way an absent one does.
+	if cfg.ClauthLaunchWarning != "" {
+		t.Errorf("an empty launch is not a bad launch: %q", cfg.ClauthLaunchWarning)
+	}
+}
+
+// --- the two launch keys are one decision ---------------------------------
+//
+// `[clauth] launch` (#122) and `[clauth] launcher` (#121) arrived separately
+// and answer the same question. Neither PR's own rows could cover the seam
+// between them, which is exactly where "two keys that both appear to work,
+// one silently winning" would live.
+
+// Wrapper mode does not take an argv template, so a launcher set beside it is
+// reset AND reported. Reset, not merely reported: wrapper mode falls back to
+// the argv mechanism when no config_dir is available, and a launcher left in
+// place would then run the very template the user was just told is ignored.
+func TestWrapperModeIgnoresALauncherAndSaysSo(t *testing.T) {
+	dir := writeConfigBody(t, "[clauth]\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\", \"{account}\"]\n")
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.LauncherIgnoredWarning == "" {
+		t.Fatal("a launcher set alongside wrapper mode must be reported, not silently dropped")
+	}
+	for _, want := range []string{"claude-as", "wrapper"} {
+		if !strings.Contains(cfg.Clauth.LauncherIgnoredWarning, want) {
+			t.Errorf("warning %q should name %q", cfg.Clauth.LauncherIgnoredWarning, want)
+		}
+	}
+	if !sameArgv(cfg.Clauth.Launcher, DefaultClauthLauncher()) {
+		t.Fatalf("Launcher = %v, want it reset to the default so the wrapper fallback cannot run it", cfg.Clauth.Launcher)
+	}
+	// The malformed-launcher warning is a different fact and must stay clear:
+	// this template is perfectly well formed.
+	if cfg.Clauth.LauncherWarning != "" {
+		t.Errorf("a well-formed launcher must not be reported as malformed: %q", cfg.Clauth.LauncherWarning)
+	}
+}
+
+// The default mechanism uses the launcher, which is the other half: a
+// reconciliation that ignored the launcher in BOTH modes would pass the test
+// above and make #121's key inert.
+func TestStartModeKeepsTheLauncher(t *testing.T) {
+	for _, body := range []string{
+		"[clauth]\nlauncher = [\"claude-as\", \"{account}\"]\n",
+		"[clauth]\nlaunch = \"start\"\nlauncher = [\"claude-as\", \"{account}\"]\n",
+	} {
+		cfg, err := Load(writeConfigBody(t, body))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !sameArgv(cfg.Clauth.Launcher, []string{"claude-as", "{account}"}) {
+			t.Fatalf("Launcher = %v, want the configured template", cfg.Clauth.Launcher)
+		}
+		if cfg.Clauth.LauncherIgnoredWarning != "" {
+			t.Fatalf("the argv mechanism USES the launcher; nothing to ignore: %q", cfg.Clauth.LauncherIgnoredWarning)
+		}
+	}
+}
+
+// Wrapper mode with no launcher of its own is not accused of ignoring one --
+// a warning nobody caused is noise, the same rule #121 applied to its own.
+func TestWrapperModeAloneWarnsAboutNothing(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlaunch = \"wrapper\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Clauth.LauncherIgnoredWarning != "" {
+		t.Fatalf("unexpected warning %q", cfg.Clauth.LauncherIgnoredWarning)
+	}
+}

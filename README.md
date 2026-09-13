@@ -58,7 +58,7 @@ below the title needs your attention unless you want to change it.
 A herdr plugin: a single-screen dialog, opened in a herdr popup, that
 creates a fully configured agent session in one submit — git worktree,
 placement, agent kind, Claude account (via
-[clauth](https://github.com/clauth/clauth)), an initial prompt, and
+[clauth](https://github.com/uwuclxdy/clauth)), an initial prompt, and
 optionally a Linear issue to seed all three from. The same binary also
 creates one [without the popup](#headless-create).
 
@@ -173,7 +173,7 @@ there, not the workspace the popup was opened from.
   to install or link a plugin whose minimum is newer than the running binary,
   so an older herdr gets a clean refusal rather than a plugin that loads and
   then misbehaves.
-- [clauth](https://github.com/clauth/clauth) ≥ 0.14.1 for account-pinned
+- [clauth](https://github.com/uwuclxdy/clauth) ≥ 0.14.1 for account-pinned
   (Path B) launches — see [clauth integration](#clauth-integration) below.
   clauth is entirely optional: without it, herdr-draft still works for
   manual/Linear-seeded session creation (Path A), it just has no `account`
@@ -418,8 +418,9 @@ herdr plugin config-dir zvibaratz.draft
   (`git check-ref-format`'s rules, minus the ones a prefix is exempt from:
   a trailing `/` is fine, and an explicit empty value means "no prefix"),
   and it may not start with `-`, which the herdr CLI would read as a flag.
-  An unusable value is ignored with a reason and the default takes over;
-  it never stops herdr-draft from opening.
+  An unusable value is ignored and the default takes over; it never stops
+  herdr-draft from opening. `herdr-draft create` prints the reason on stderr.
+  The popup does not yet show it anywhere.
 - `default_worktree` (default: `true`) — whether the worktree row starts on
   or off for a git target.
 - `default_placement` (default: `"new-space"`) — where the agent's own pane
@@ -470,15 +471,38 @@ else in the form still works.
   `account` row starts on: a profile name, or the sentinel `"active"` —
   unset and `"active"` behave identically ("don't pin, use whichever profile
   clauth currently has live").
+Two keys decide how a pinned account is launched, and they are **one
+decision**: `launch` picks the mechanism, `launcher` configures one of them.
+Read them together.
+
+| you want | set |
+|---|---|
+| the default — `clauth start <profile> --` | nothing |
+| your own account-switching wrapper, by name | `launcher = ["claude-as", "{account}"]` |
+| bare `claude` under a picker's credential dir | `launch = "wrapper"` |
+
+`launcher` configures the `launch = "start"` mechanism only. Under
+`launch = "wrapper"` there is no argv template to configure, so a `launcher`
+set alongside it is ignored.
+
+**Where you are told about it depends on the surface.** `herdr-draft create`
+prints a line on stderr for each of these: a `launcher` ignored under
+`"wrapper"`, a malformed `launcher`, and an unrecognised `launch`. The popup
+does **not** yet show any of the three. What the popup does show is the
+launch itself: its progress row names the program and account it launched
+through, and says so when wrapper mode fell back for want of a `config_dir`. It does not say that
+a key was ignored or replaced.
+
 - `launcher` (default: `["clauth", "start", "{account}", "--"]`) — the argv
   that starts a pinned account, with `{account}` standing for the profile
-  name. It is a whole-argv **template**, not a prefix: `clauth start` needs
-  its trailing `--` and another launcher may not want one, so nothing is
-  appended on your behalf except the agent's own extra args.
+  name. Used when `launch` is `"start"`, which is the default. It is a
+  whole-argv **template**, not a prefix: `clauth start` needs its trailing
+  `--` and another launcher may not want one, so nothing is appended on your
+  behalf except the agent's own extra args.
 
   Exactly one `{account}` is required. Any other *shape* — none, two, an
-  empty list, a blank element — is ignored with a line on stderr and the
-  default used instead, because a template with no `{account}` would launch
+  empty list, a blank element — is ignored and the default used instead
+  (reported on stderr by `create`; not yet in the popup), because a template with no `{account}` would launch
   on whichever profile clauth has live and quietly spend the wrong budget.
 
   A wrong *type* is not that case and does not degrade: `launcher = "clauth
@@ -503,8 +527,65 @@ else in the form still works.
   in a pane whose shell defines it; that is why the shareable default stays
   `clauth start`.
 
+- `picker` (default: unset, meaning "no picker") — an executable implementing
+  the [account picker protocol](#account-picker-protocol), used by the
+  `account` row's `auto` selection and by `create --account auto`. A command
+  name resolved on `PATH`, or an absolute path.
+
+  **It must be named here.** herdr-draft never goes looking for a picker, and
+  it will not adopt one it happens to find on `PATH` — finding a program with
+  the expected name is not the same as finding the program you meant, and a
+  plugin that silently routes account credentials through a same-named
+  stranger is worse than a plugin with no picker. Even a named one is probed
+  once at startup (one `--json --dry-run`) and is used only if the answer
+  carries the documented keys; if it does not, the `account` row says so
+  rather than quietly going without.
+
+- `launch` (default: `"start"`) — how a pinned account is launched.
+
+  - `"start"` types `clauth start <profile> -- <extra args>` into the pane.
+    clauth builds the per-profile `CLAUDE_CONFIG_DIR` and execs Claude under
+    it. This means the same thing on every machine that has clauth, which is
+    why it is the default.
+  - `"wrapper"` types `CLAUDE_CONFIG_DIR=<dir> claude <extra args>` instead,
+    leaving your pane's own login shell to resolve `claude`.
+
+  **`"wrapper"` is only worth setting if your shell defines `claude` as a
+  function.** That is the entire reason the mode exists: a wrapper function
+  can register a session holder, launch through a team-lead helper, or
+  anything else it likes, and `clauth start` cannot call it. If `claude` is
+  the plain binary on your machine — which it is unless you have arranged
+  otherwise — this mode still isolates the credential and silently does none
+  of the rest. herdr-draft cannot detect the difference from outside the pane,
+  so it will not guess: you opt in.
+
+  `"wrapper"` also needs a `config_dir`, and only a picker supplies one. A
+  hand-pinned profile under `launch = "wrapper"` falls back to the argv
+  mechanism — `clauth start`, since wrapper mode resets any `launcher` set
+  beside it — because a bare `claude` with nothing isolating it would launch
+  under whatever credential is machine-global, the opposite of the pin you
+  asked for. The launch step names which of the two it actually typed, and
+  says when the downgrade happened.
+
+  An unrecognised value is ignored rather than refused, and `"start"` is
+  used. A `launcher` set alongside `"wrapper"` is ignored too — the two keys
+  are one decision and only one mechanism can be in effect. `create` reports
+  both on stderr; the popup does not yet report either (see above).
+
+  **Why this is not one key.** The two mechanisms cannot share a
+  representation. `launcher` conveys the account as a *word in a command line*
+  and requires exactly one `{account}` in the template. Wrapper mode conveys
+  it as a *credential directory in the environment*, so its argv is the bare
+  word `claude` with the account named nowhere — which the `launcher`
+  validator rejects, correctly, since on the argv path a template with no
+  `{account}` would spend the wrong budget. Nor can the environment half move
+  into the template: herdr *types* this argv into a shell and every element is
+  quoted, and a quoted `NAME=value` is not an assignment to any POSIX shell —
+  it is a command name. Hence two keys, ordered, with exactly one in effect.
+
 The `account` row only renders when clauth is configured **and** at least
-two profiles exist (a static, startup-time check).
+two profiles exist (a static, startup-time check). The `auto` row appears
+inside it only when `picker` is set and its probe succeeded.
 
 ### `[agents]`
 
@@ -729,6 +810,145 @@ binding. Upstream discussion #3228 proposes per-agent resume templates
 (`clauth info <id>` already prints the exact resume command). Documented
 in README; nothing herdr-draft can fix locally.
 
+## Account picker protocol
+
+herdr-draft can delegate *"which Claude account should this session use?"* to
+an external program. It does not ship one, and it is not written against any
+particular one: what follows is the whole contract, and **any executable
+satisfying it is a picker.**
+
+This is deliberate. The picker this was designed against is not a standalone
+tool — it sources a shell framework and a per-machine tenant table — so
+depending on it by name would have made a private toolchain a hidden
+prerequisite of a public plugin. A documented interface costs one section and
+works for everybody.
+
+Like clauth itself, it is **entirely optional**: without `[clauth] picker`,
+herdr-draft works exactly as it did before this existed.
+
+### Invocation
+
+```
+<picker> --dir <project path> --json [--strict] [--dry-run]
+```
+
+- `--dir` is the project directory the session is being created in.
+- `--json` is always passed.
+- `--strict` asks for headless semantics — no interactive fallback, no waiting
+  for a person. `herdr-draft create` passes it; the popup does not.
+- `--dry-run` asks the picker **not** to write whatever ledger it keeps and
+  **not** to build an account directory, so `config_dir` comes back `null`.
+  The popup's live preview passes it, on every project change; the one
+  commit-time call, at submit, does not.
+
+### Answer
+
+One JSON object on stdout:
+
+```json
+{
+  "tenant": "alpha", "tenant_state": "default",
+  "profile": "alpha-1", "tier": "Max",
+  "config_dir": "/home/you/.local/state/account-dirs/alpha-1",
+  "score": 8066, "class": "eligible", "reason": null, "overflow": false,
+  "usage":     { "five_hour": 3, "weekly": 11, "cache_age_s": 18 },
+  "resets_at": { "five_hour": "2026-09-10T22:49:59Z", "weekly": "2026-09-13T01:59:59Z" },
+  "machine":   { "load1": 0.9, "ncpu": 8, "swap_used_pct": 2 },
+  "warnings": [], "skipped": [ { "profile": "alpha-0", "why": "rate limited" } ]
+}
+```
+
+Every field may be `null` when the picker could not determine it, and a picker
+may emit keys not listed here — they are ignored. `reason` is the picker's own
+one-line explanation, and it is what herdr-draft shows you when the picker says
+no, in preference to anything herdr-draft could compose itself.
+
+Six of these keys are **required** — `profile`, `config_dir`, `reason`, and
+all three of `usage.five_hour`, `usage.weekly`, `usage.cache_age_s`. They must
+be *present*; `null` is a fine value for any of them. That is what the startup
+probe checks, and it is deliberately a check on the answer's shape rather than
+on the answer.
+
+### Exit codes
+
+| code | meaning |
+|---|---|
+| `0` | picked — `profile` names the account |
+| `2` | refused: the pool is exhausted |
+| `3` | refused: the machine is under too much load |
+| `4` | refused: no usable account table |
+| `5` | refused: no profiles registered |
+| `64` | usage error — the picker did not accept herdr-draft's invocation |
+
+Any other exit code is treated as a malfunction, not a refusal — on *every*
+call, the startup probe and the commit-time pick alike — and the picker is
+reported as unusable rather than obeyed. Exit `0` with a `null` profile is
+treated the same way: `0` means picked, so an answer that picked nothing has
+broken the contract, and herdr-draft will not quietly launch unpinned instead.
+
+`64` is the odd one out among the documented codes, and worth reading as what
+it is. Every other code is the picker's judgement about *your* request; `64`
+says the picker and herdr-draft disagree about the **invocation** — a wiring
+fault, shown in the row where a decision normally goes. If you see it, compare
+your picker's flags against the invocation above rather than looking for a
+reason it said no.
+
+**Every call is bounded.** A picker gets 30 seconds to answer, after which the
+invocation is abandoned and reported as a malfunction — never as a refusal,
+since nothing refused anything. The budget is deliberately generous (a cold
+usage cache may be several network round-trips) because reporting a working
+picker as broken is the worse error; it exists so that a picker which hangs
+cannot stop the dialog from opening.
+
+### What herdr-draft does with it
+
+- **At startup**, once: `--json --dry-run` against the current project. The
+  answer's *shape* is checked — the six required keys, one of the six
+  documented exit codes — never the answer. A machine whose pool is exhausted
+  still has a working picker, and it would be perverse to disable the feature
+  on the day it most needs to explain itself. If the probe fails, the `account`
+  row says so and the `auto` selection does not appear.
+- **On every project change**, debounced: `--json --dry-run`, to fill the
+  `auto` row with what the picker *would* choose.
+- **Once per submit**, after every blocking check and before anything is
+  created: `--json` (plus `--strict` for `create`). This is the call whose
+  answer becomes the pin. A refusal here refuses the submit and moves focus to
+  the manual account rows — it never falls through to an unpinned launch.
+
+`herdr-draft create` skips the startup probe: the very next thing it does is
+the real call, and a failure there is reported in full to whoever is reading
+stderr. `create --account auto` with no `[clauth] picker` set is a usage
+error (exit 2), not a quiet fallback.
+
+### Writing one
+
+A picker can be a shell script. The minimum viable one:
+
+```sh
+#!/bin/sh
+# Always picks the same account. The one flag it must not ignore is --dry-run:
+# a dry run builds no account directory, so config_dir comes back null. The
+# startup probe and every preview pass it, so a picker that answers a real
+# config_dir there is claiming, several times a session, to have built
+# something it did not.
+config_dir="\"$HOME/.claude-my-account\""
+for arg in "$@"; do
+	[ "$arg" = --dry-run ] && config_dir=null
+done
+cat <<JSON
+{"profile":"my-account","tier":"Max","config_dir":$config_dir,
+ "reason":null,"usage":{"five_hour":null,"weekly":null,"cache_age_s":null},
+ "resets_at":{"five_hour":null,"weekly":null},"warnings":[],"skipped":[]}
+JSON
+```
+
+This exact block is extracted from this file and run by
+`go test ./internal/picker/`, so the document cannot drift away from the
+contract it is documenting.
+
+Point `[clauth] picker` at it, reopen the dialog, and the `account` row grows
+an `auto` selection reading `auto → my-account`.
+
 ## Known limitations
 
 These are real, live-verified rough edges, not deferred features — read
@@ -779,6 +999,13 @@ them before filing a bug against something documented here:
 - **Popup panes are only reachable via keybinding or CLI.** Plugin actions
   do not appear in herdr's own context/global menus in plugin v1 — see
   [Keybinding](#keybinding) for both routes.
+- **`[clauth] launch = "wrapper"` cannot be verified from outside the pane.**
+  herdr-draft types `CLAUDE_CONFIG_DIR=<dir> claude` and the pane's own shell
+  resolves `claude`. Whether that reaches a wrapper function or the plain
+  binary is a fact about your shell that no herdr API reports, so herdr-draft
+  does not claim either way — the launch step says which command line it
+  typed, and what happened to it is between that line and your `.zshrc`. This
+  is why `"start"`, not `"wrapper"`, is the default.
 
 ## Troubleshooting
 

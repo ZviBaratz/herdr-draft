@@ -15,6 +15,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
@@ -217,8 +218,12 @@ func (r *fakeRunner) AwaitDetection(_ context.Context, paneID string, _, blocked
 	return r.record("AwaitDetection", paneID+" blocked="+blockedTimeout.String())
 }
 
-func (r *fakeRunner) PaneRun(_ context.Context, paneID string, argv []string) error {
-	return r.record("PaneRun", append([]string{paneID}, argv...)...)
+func (r *fakeRunner) PaneRun(_ context.Context, paneID string, env []herdrc.EnvVar, argv []string) error {
+	rec := []string{paneID}
+	for _, e := range env {
+		rec = append(rec, e.Name+"="+e.Value)
+	}
+	return r.record("PaneRun", append(rec, argv...)...)
 }
 
 func (r *fakeRunner) PaneClose(_ context.Context, paneID string) error {
@@ -1431,6 +1436,107 @@ func TestSuccessfulPromptStatusIsSent(t *testing.T) {
 	}
 }
 
+// --- the account picker ---------------------------------------------------
+
+// fakePicker is this package's own, declared locally rather than shared with
+// internal/app's identical one: exporting a fake from a production package to
+// a sibling's tests is a worse trade than eight duplicated lines.
+type fakePicker struct {
+	res   picker.Result
+	err   error
+	calls []picker.Options
+	dirs  []string
+}
+
+func (p *fakePicker) Pick(_ context.Context, dir string, opts picker.Options) (picker.Result, error) {
+	p.calls = append(p.calls, opts)
+	p.dirs = append(p.dirs, dir)
+	return p.res, p.err
+}
+
+// `--account auto` resolves through the picker, with --strict and WITHOUT
+// --dry-run: there is nobody at the keyboard to answer an interactive
+// fallback, and this is the real launch, so the ledger write must happen.
+func TestCreateResolvesAutoThroughThePickerStrictly(t *testing.T) {
+	h := newHarness(t)
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}}
+	h.deps.Picker = p
+
+	if code := h.run("--title", "fix login", "--account", "auto", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if len(p.calls) != 1 {
+		t.Fatalf("picker calls = %d, want exactly 1", len(p.calls))
+	}
+	if !p.calls[0].Strict {
+		t.Error("the headless verb must ask for --strict: nobody is at the keyboard")
+	}
+	if p.calls[0].DryRun {
+		t.Error("the commit pick must NOT be a --dry-run: it is what writes the ledger")
+	}
+	if p.dirs[0] != "/projects/thing" {
+		t.Errorf("picker dir = %q, want the project directory", p.dirs[0])
+	}
+	if got := strings.Join(h.runner.calls, "\n"); !strings.Contains(got, "alpha-1") {
+		t.Fatalf("the picked profile should reach the launch:\n%s", got)
+	}
+}
+
+// A refusal fails the request BEFORE any worktree or pane exists, with the
+// picker's own reason on stderr, and exits 2 -- this verb's existing contract
+// for a request that cannot be satisfied.
+func TestCreateRefusesBeforeCreatingAnythingWhenThePickerRefuses(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Picker = &fakePicker{
+		err: &picker.RefusalError{Code: picker.ExitExhausted, Reason: "pool exhausted (resets 22:49)"},
+	}
+
+	code := h.run("--title", "fix login", "--account", "auto", "--no-worktree")
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d", code, ExitUsage)
+	}
+	if !strings.Contains(h.stderr.String(), "pool exhausted (resets 22:49)") {
+		t.Fatalf("stderr should carry the picker's own reason:\n%s", h.stderr)
+	}
+	// registerPane is the harness's own pre-existing pane, not a created
+	// one; nothing the plan would have run may have happened.
+	for _, call := range h.runner.calls {
+		if strings.HasPrefix(call, "WorktreeCreate") || strings.HasPrefix(call, "WorkspaceCreate") ||
+			strings.HasPrefix(call, "PaneRun") || strings.HasPrefix(call, "AgentStart") {
+			t.Fatalf("a picker refusal must create nothing, got %v", h.runner.calls)
+		}
+	}
+}
+
+// `--account auto` with no picker configured is a usage error, not a silent
+// fallback to the active account: the user named a resolution strategy this
+// install does not have.
+func TestCreateRejectsAutoWithNoPicker(t *testing.T) {
+	h := newHarness(t)
+
+	if code := h.run("--title", "fix login", "--account", "auto", "--no-worktree"); code != ExitUsage {
+		t.Fatalf("exit = %d, want %d", code, ExitUsage)
+	}
+	if !strings.Contains(h.stderr.String(), "[clauth] picker") {
+		t.Fatalf("stderr should name the config key that is missing:\n%s", h.stderr)
+	}
+}
+
+// A named profile never consults the picker: the user has already answered
+// the question it exists to answer.
+func TestCreateNamedAccountDoesNotConsultThePicker(t *testing.T) {
+	h := newHarness(t)
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1"}}
+	h.deps.Picker = p
+
+	if code := h.run("--title", "fix login", "--account", "alpha-2", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if len(p.calls) != 0 {
+		t.Fatalf("a named account must not consult the picker, got %d calls", len(p.calls))
+	}
+}
+
 // A launcher that fell back has to SAY so on stderr. The fallback itself is
 // safe -- the default pins the account correctly -- but silence would leave
 // the user believing their own template ran, and the whole reason the
@@ -1466,5 +1572,66 @@ func TestCreate_SaysNothingAboutAnAbsentClauthLauncher(t *testing.T) {
 	}
 	if strings.Contains(h.stderr.String(), "launcher") {
 		t.Errorf("warned about a launcher nobody configured:\n%s", h.stderr)
+	}
+}
+
+// The other two ways the launch decision can be overridden, on the same
+// stderr and for the same reason as the rejected-launcher line above.
+//
+// `[clauth] launch` is the one that was NOWHERE: #122 set ClauthLaunchWarning,
+// unit tested it in internal/config, and surfaced it on no screen at all, so
+// an unrecognised launch mode silently became `start`. An exported field
+// written and never read is invisible to staticcheck, which is why a green
+// `just check` said nothing about it for the length of that PR.
+func TestCreate_ReportsAnUnknownClauthLaunchMode(t *testing.T) {
+	h := newHarness(t)
+	body := "[clauth]\nlaunch = \"teleport\"\n"
+	if err := os.WriteFile(filepath.Join(h.env.ConfigDir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d -- an unknown launch mode must not fail the create\nstderr: %s",
+			code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	for _, want := range []string{"launch", "teleport", "start"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr does not mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// And the seam between the two keys: wrapper mode takes no argv template, so
+// a launcher set beside it is reported rather than silently discarded. This is
+// the line that keeps "two keys, one decision" from being two keys where one
+// quietly wins.
+func TestCreate_ReportsALauncherIgnoredByWrapperMode(t *testing.T) {
+	h := newHarness(t)
+	body := "[clauth]\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\", \"{account}\"]\n"
+	if err := os.WriteFile(filepath.Join(h.env.ConfigDir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	for _, want := range []string{"launcher", "claude-as", "wrapper"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr does not mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// The mirror image for both, so neither line becomes noise: the common config
+// names no launch mode and no launcher, and must produce neither warning.
+func TestCreate_SaysNothingAboutAnAbsentLaunchMode(t *testing.T) {
+	h := newHarness(t)
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if got := h.stderr.String(); strings.Contains(got, "launch ") || strings.Contains(got, "ignoring") {
+		t.Errorf("warned about a launch mode nobody configured:\n%s", got)
 	}
 }

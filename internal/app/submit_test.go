@@ -201,7 +201,7 @@ func (r *submitFakeRunner) AwaitDetection(_ context.Context, _ string, _, blocke
 	return nil
 }
 
-func (r *submitFakeRunner) PaneRun(context.Context, string, []string) error {
+func (r *submitFakeRunner) PaneRun(context.Context, string, []herdrc.EnvVar, []string) error {
 	if r.shouldFail("PaneRun") {
 		return r.failErr
 	}
@@ -1462,6 +1462,37 @@ func TestSubmit_WaitingHintPromisesAPromptOnlyWhenThereIsOne(t *testing.T) {
 					tc.prompt, hint, got, tc.promise)
 			}
 		})
+	}
+}
+
+// The popup's half of the wrapper substitution. plan.Build falls back to
+// `clauth start` when wrapper mode has no config dir, and the launch step used
+// to name the command typed without ever saying the mode the user opted into
+// had been dropped -- so the setting turned itself off in silence and the
+// README was the only place that mentioned it could.
+func TestTheLaunchStepSaysWrapperModeWasDowngraded(t *testing.T) {
+	op := plan.Op{Kind: plan.OpClauthLaunch}
+	in := plan.Input{AccountPin: "alpha-1", AccountLaunch: plan.LaunchWrapper}
+
+	got := submitStepDetail(op, in)
+	if !strings.Contains(got, "alpha-1") || !strings.Contains(got, "no config dir") {
+		t.Fatalf("detail = %q, want the account and the reason wrapper mode did not happen", got)
+	}
+
+	// Wrapper mode that actually ran says so in its own words, and says
+	// nothing about a config dir it had.
+	ran := submitStepDetail(plan.Op{
+		Kind:   plan.OpClauthLaunch,
+		RunEnv: []herdrc.EnvVar{{Name: plan.ClaudeConfigDirVar, Value: "/dirs/alpha-1"}},
+	}, in)
+	if !strings.Contains(ran, "through your shell's claude") || strings.Contains(ran, "no config dir") {
+		t.Fatalf("detail = %q, want the wrapper launch described as itself", ran)
+	}
+
+	// And a plain `clauth start` launch is not accused of a downgrade.
+	plain := submitStepDetail(op, plan.Input{AccountPin: "alpha-1"})
+	if plain != "under clauth alpha-1" {
+		t.Fatalf("detail = %q, want the plain clauth start wording", plain)
 	}
 }
 

@@ -444,3 +444,188 @@ func TestAgentNameAlwaysMatchesHerdrPattern(t *testing.T) {
 		}
 	}
 }
+
+// findOp returns the single op of kind in ops, failing when there is none.
+func findOp(t *testing.T, ops []Op, kind OpKind) Op {
+	t.Helper()
+	for _, op := range ops {
+		if op.Kind == kind {
+			return op
+		}
+	}
+	t.Fatalf("no %v in %v", kind, ops)
+	return Op{}
+}
+
+// The zero LaunchMode must be today's behaviour, byte for byte. That is what
+// lets every existing caller -- and every test written before this field
+// existed -- go on meaning what it meant.
+func TestBuildDefaultLaunchIsClauthStart(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.ExtraArgs = []string{"--model", "opus[1m]"}
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "clauth start alpha-1 -- --model opus[1m]"; got != want {
+		t.Fatalf("RunArgv = %q, want %q", got, want)
+	}
+	if len(op.RunEnv) != 0 {
+		t.Fatalf("RunEnv = %v, want none", op.RunEnv)
+	}
+}
+
+// Wrapper mode types a bare `claude` under a CLAUDE_CONFIG_DIR assignment, so
+// the pane's login shell resolves `claude` itself -- to a function, where the
+// user has one.
+func TestBuildWrapperLaunchTypesClaudeUnderAConfigDir(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.AccountLaunch = LaunchWrapper
+	in.AccountConfigDir = "/home/a/dirs/alpha-1"
+	in.ExtraArgs = []string{"--model", "opus[1m]"}
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "claude --model opus[1m]"; got != want {
+		t.Fatalf("RunArgv = %q, want %q", got, want)
+	}
+	want := []herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: "/home/a/dirs/alpha-1"}}
+	if !reflect.DeepEqual(op.RunEnv, want) {
+		t.Fatalf("RunEnv = %v, want %v", op.RunEnv, want)
+	}
+}
+
+// Wrapper mode with no config dir has nothing to isolate WITH. A bare
+// `claude` there would launch under whatever credential happened to be
+// machine-global -- the opposite of a pin -- so the pin falls back to the
+// mode that can honour it, and SAYS SO on the step's own label, which is what
+// `create` prints one line per step to stderr.
+func TestBuildWrapperWithoutAConfigDirFallsBackToClauthStart(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.AccountLaunch = LaunchWrapper
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "clauth start alpha-1 --"; got != want {
+		t.Fatalf("RunArgv = %q, want %q", got, want)
+	}
+	if len(op.RunEnv) != 0 {
+		t.Fatalf("RunEnv = %v, want none", op.RunEnv)
+	}
+	if !strings.Contains(op.Label, "no config dir") {
+		t.Fatalf("Label = %q, want one saying wrapper mode was downgraded", op.Label)
+	}
+}
+
+// And the label stays clean when nothing was substituted -- a note on every
+// launch would say nothing on the one launch it exists for.
+func TestBuildDoesNotClaimADowngradeThatDidNotHappen(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		launch    LaunchMode
+		configDir string
+	}{
+		{"clauth start", LaunchClauthStart, ""},
+		{"wrapper with a config dir", LaunchWrapper, "/home/a/dirs/alpha-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := validInput()
+			in.AccountPin = "alpha-1"
+			in.AccountLaunch = tc.launch
+			in.AccountConfigDir = tc.configDir
+			ops, err := Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if got := findOp(t, ops, OpClauthLaunch).Label; got != "typing the clauth launch" {
+				t.Fatalf("Label = %q, want the plain launch label", got)
+			}
+		})
+	}
+}
+
+// A config dir with no pin is not a launch instruction. Unpinned means
+// "whatever clauth has live", and there is no clauth launch op at all.
+func TestBuildIgnoresAConfigDirWithNoPin(t *testing.T) {
+	in := validInput()
+	in.AccountLaunch = LaunchWrapper
+	in.AccountConfigDir = "/home/a/dirs/alpha-1"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, op := range ops {
+		if op.Kind == OpClauthLaunch {
+			t.Fatal("an unpinned account must not produce a clauth launch op")
+		}
+	}
+}
+
+// --- where the two launch mechanisms meet ---------------------------------
+
+// The wrapper-mode FALLBACK goes through the launcher template, not through a
+// second hardcoded `clauth start`.
+//
+// This is the merge of #121 and #122 in one row. Both PRs replaced the same
+// line of launchOps: #121 with resolveLauncher, #122 with clauthLaunchCommand.
+// Taking #122's version wholesale -- which is what a conflict resolution
+// naturally does -- left a hardcoded `clauth start` on the non-wrapper branch
+// and made `[clauth] launcher` inert for every pinned launch, with the whole
+// suite still green, because #121's plan rows only ever exercise the path
+// where AccountLaunch is the zero value.
+func TestWrapperFallbackStillHonoursTheLauncher(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.AccountLaunch = LaunchWrapper // asked for...
+	in.AccountConfigDir = ""         // ...but no config dir, so it falls back
+	in.Launcher = []string{"claude-as", accountPlaceholder}
+
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "claude-as alpha-1"; got != want {
+		t.Fatalf("RunArgv = %q, want %q -- the fallback must use the configured launcher", got, want)
+	}
+	if len(op.RunEnv) != 0 {
+		t.Fatalf("RunEnv = %v, want none on the argv mechanism", op.RunEnv)
+	}
+	if !strings.Contains(op.Label, "no config dir") {
+		t.Fatalf("Label = %q, want the downgrade reported", op.Label)
+	}
+}
+
+// And wrapper mode that DOES run ignores the launcher entirely: its argv is a
+// bare `claude` and the account travels in the environment. config.Load resets
+// a launcher set alongside wrapper mode, so this combination should not reach
+// a real pane -- pinned here anyway, because plan is a pure builder that
+// accepts whatever Input it is handed and must not splice the two mechanisms.
+func TestWrapperModeDoesNotUseTheLauncher(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "alpha-1"
+	in.AccountLaunch = LaunchWrapper
+	in.AccountConfigDir = "/dirs/alpha-1"
+	in.Launcher = []string{"claude-as", accountPlaceholder}
+
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	op := findOp(t, ops, OpClauthLaunch)
+	if got, want := strings.Join(op.RunArgv, " "), "claude"; got != want {
+		t.Fatalf("RunArgv = %q, want %q", got, want)
+	}
+	want := []herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: "/dirs/alpha-1"}}
+	if !reflect.DeepEqual(op.RunEnv, want) {
+		t.Fatalf("RunEnv = %v, want %v", op.RunEnv, want)
+	}
+}
