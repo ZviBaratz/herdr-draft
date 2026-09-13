@@ -21,8 +21,9 @@ for why a heading here may read `unreleased`.
   nothing changes for an installation that omits the key. Set it to a
   wrapper of your own — `["claude-as", "{account}"]` — to keep the session's
   herdmates team lead, which `clauth start` costs it. Exactly one
-  `{account}` is required; any other shape falls back to the default with a
-  reason on stderr rather than launching on an unintended account.
+  `{account}` is required; any other shape falls back to the default rather
+  than launching on an unintended account, and `herdr-draft create` prints the
+  reason on stderr. The popup does not yet show it.
 
 First release. There is no predecessor to diff against, so this entry says
 what 0.1.0 *is* rather than what changed.
@@ -147,8 +148,11 @@ without the popup. It drives herdr exclusively through the public CLI
   credential directory in the environment and names the account nowhere in its
   argv, and a quoted `NAME=value` is not a shell assignment, so the
   environment half cannot travel inside the template. Only one mechanism is
-  ever in effect, and a `launcher` set alongside `launch = "wrapper"` is
-  reported rather than silently dropped.
+  ever in effect: a `launcher` set alongside `launch = "wrapper"` is ignored.
+  `herdr-draft create` reports that on stderr, as it does a malformed
+  `launcher` and an unrecognised `launch`; the popup does not yet report any of
+  the three. The popup does report the launch it performed, including when
+  wrapper mode fell back for want of a `config_dir`.
 - `[palette]` overrides individual theme fields when herdr's own theme
   cannot be resolved from a static config file. Every region that marks
   something — rules, the focused row's fill, input backgrounds — has a

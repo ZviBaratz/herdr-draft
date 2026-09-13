@@ -86,9 +86,15 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		return resolution{}, err
 	}
 	if cfg.BranchPrefixWarning != "" {
-		// The form shows this in a panel; here it is a line on stderr,
-		// because a create that silently used a different prefix than the
-		// config file asks for is a create whose branch nobody can explain.
+		// A line on stderr, because a create that silently used a different
+		// prefix than the config file asks for is a create whose branch
+		// nobody can explain.
+		//
+		// This comment used to begin "The form shows this in a panel". The
+		// form does not: internal/app reads none of the four config warnings
+		// in this block, so this verb is the ONLY surface any of them reach.
+		// Routing them to a row verdict, the way app already routes
+		// PickerUnavailable, is #123.
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.BranchPrefixWarning)
 	}
 	if cfg.Clauth.LauncherWarning != "" {

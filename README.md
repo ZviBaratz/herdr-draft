@@ -418,8 +418,9 @@ herdr plugin config-dir zvibaratz.draft
   (`git check-ref-format`'s rules, minus the ones a prefix is exempt from:
   a trailing `/` is fine, and an explicit empty value means "no prefix"),
   and it may not start with `-`, which the herdr CLI would read as a flag.
-  An unusable value is ignored with a reason and the default takes over;
-  it never stops herdr-draft from opening.
+  An unusable value is ignored and the default takes over; it never stops
+  herdr-draft from opening. `herdr-draft create` prints the reason on stderr.
+  The popup does not yet show it anywhere.
 - `default_worktree` (default: `true`) — whether the worktree row starts on
   or off for a git target.
 - `default_placement` (default: `"new-space"`) — where the agent's own pane
@@ -482,7 +483,15 @@ Read them together.
 
 `launcher` configures the `launch = "start"` mechanism only. Under
 `launch = "wrapper"` there is no argv template to configure, so a `launcher`
-set alongside it is ignored — with a line on stderr saying so, never silently.
+set alongside it is ignored.
+
+**Where you are told about it depends on the surface.** `herdr-draft create`
+prints a line on stderr for each of these: a `launcher` ignored under
+`"wrapper"`, a malformed `launcher`, and an unrecognised `launch`. The popup
+does **not** yet show any of the three. What the popup does show is the
+launch itself: its progress row names the program and account it launched
+through, and says so when wrapper mode fell back for want of a `config_dir`. It does not say that
+a key was ignored or replaced.
 
 - `launcher` (default: `["clauth", "start", "{account}", "--"]`) — the argv
   that starts a pinned account, with `{account}` standing for the profile
@@ -492,8 +501,8 @@ set alongside it is ignored — with a line on stderr saying so, never silently.
   behalf except the agent's own extra args.
 
   Exactly one `{account}` is required. Any other *shape* — none, two, an
-  empty list, a blank element — is ignored with a line on stderr and the
-  default used instead, because a template with no `{account}` would launch
+  empty list, a blank element — is ignored and the default used instead
+  (reported on stderr by `create`; not yet in the popup), because a template with no `{account}` would launch
   on whichever profile clauth has live and quietly spend the wrong budget.
 
   A wrong *type* is not that case and does not degrade: `launcher = "clauth
@@ -558,9 +567,10 @@ set alongside it is ignored — with a line on stderr saying so, never silently.
   asked for. The launch step names which of the two it actually typed, and
   says when the downgrade happened.
 
-  An unrecognised value is ignored with a warning rather than refused;
-  `"start"` is used. So is a `launcher` set alongside `"wrapper"` — the two
-  keys are one decision and only one mechanism can be in effect.
+  An unrecognised value is ignored rather than refused, and `"start"` is
+  used. A `launcher` set alongside `"wrapper"` is ignored too — the two keys
+  are one decision and only one mechanism can be in effect. `create` reports
+  both on stderr; the popup does not yet report either (see above).
 
   **Why this is not one key.** The two mechanisms cannot share a
   representation. `launcher` conveys the account as a *word in a command line*
@@ -571,7 +581,7 @@ set alongside it is ignored — with a line on stderr saying so, never silently.
   `{account}` would spend the wrong budget. Nor can the environment half move
   into the template: herdr *types* this argv into a shell and every element is
   quoted, and a quoted `NAME=value` is not an assignment to any POSIX shell —
-  it is a command name. Hence two keys, ordered, with the override reported.
+  it is a command name. Hence two keys, ordered, with exactly one in effect.
 
 The `account` row only renders when clauth is configured **and** at least
 two profiles exist (a static, startup-time check). The `auto` row appears
