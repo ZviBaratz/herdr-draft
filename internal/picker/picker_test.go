@@ -98,6 +98,25 @@ func TestMissingKeysIsEmptyForTheRealPicker(t *testing.T) {
 	}
 }
 
+// TestMissingKeysLooksANestedKeyUpUnderItsOwnParent pins the parent lookup
+// (#124). Every documented nested key is a usage.* one today, so looking
+// `usage` up literally passes every other row in this file; only a key under
+// some other parent tells the two apart, and it has to in both directions --
+// a key present under its own parent, and one present only under usage.
+func TestMissingKeysLooksANestedKeyUpUnderItsOwnParent(t *testing.T) {
+	saved := documentedKeys
+	t.Cleanup(func() { documentedKeys = saved })
+	documentedKeys = []string{"usage.weekly", "resets_at.five_hour"}
+
+	if got := MissingKeys([]byte(`{"usage":{"weekly":1},"resets_at":{"five_hour":"2026-09-10T22:49:59Z"}}`)); len(got) != 0 {
+		t.Errorf("MissingKeys = %v, want none: resets_at.five_hour is present under resets_at", got)
+	}
+	got := MissingKeys([]byte(`{"usage":{"weekly":1,"five_hour":1}}`))
+	if want := []string{"resets_at.five_hour"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("MissingKeys = %v, want %v: a five_hour under usage is not one under resets_at", got, want)
+	}
+}
+
 func TestCodeMeaningNamesEveryDocumentedCode(t *testing.T) {
 	for code, want := range map[int]string{
 		ExitPicked:       "picked",
