@@ -550,15 +550,11 @@ func (d *DirField) Panel(w, h int) string {
 		d.pickerRowsShown = rows
 		lines = append(lines, panelPickerLines(d.picker, w, rows, "row:"+d.ID()+":", d.palette)...)
 	}
-	// Warning, not dim: every other line in this panel is a thing the user
-	// can pick, and these are the one thing here that says something they
-	// wrote was refused. A note styled like a hint is a note nobody reads,
-	// which is the whole defect v2 spec §11's "with a visible note" names.
-	// The text is prose, so it elides at its TAIL (keepHead) rather than
-	// being clipped silently by panelText's own fit.
-	note := lipgloss.NewStyle().Foreground(d.palette.Warning)
+	// Warning-toned, through the composer every refused-key report shares:
+	// every other line in this panel is a thing the user can pick, and these
+	// are the one thing here that says something they wrote was refused.
 	for _, n := range notes {
-		lines = append(lines, panelText(note.Render(keepHead(n, panelInner(w))), w))
+		lines = append(lines, noteLine(n, w, d.palette))
 	}
 	lines = append(lines, panelStatusLine(dimHint(d.palette).Render(d.panelStatus()), d.filterCount(), w, d.palette))
 	return panelBlock(w, h, lines...)

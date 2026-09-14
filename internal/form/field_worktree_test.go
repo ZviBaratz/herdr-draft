@@ -555,6 +555,69 @@ func TestWorktreeField_ProvenanceSurvivesAnOffWorktree(t *testing.T) {
 	}
 }
 
+// TestWorktreeField_NotesSitUnderThePartsAheadOfProvenance is #123's worktree
+// half: config.toml's refused branch_prefix, on the panel of the branch it
+// would have shaped. A note says something the user wrote was refused, where
+// the provenance line only says who chose a value, so the note sits first and
+// is the later of the two a short panel gives up -- and neither ever costs
+// the three parts.
+func TestWorktreeField_NotesSitUnderThePartsAheadOfProvenance(t *testing.T) {
+	const note = `ignoring branch_prefix "-x": starts with "-"`
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	turnOn(w)
+	w.SetBranch("zvi/fix-login-redirect-loop", false)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+	w.SetProvenance(".herdr-draft.toml")
+
+	rowBefore, bare := w.Row(60), w.PanelRows()
+	w.SetNotes([]string{note})
+
+	if got := w.PanelRows(); got != bare+1 {
+		t.Fatalf("PanelRows() with a note = %d, want %d", got, bare+1)
+	}
+	if got := w.Row(60); got != rowBefore {
+		t.Errorf("Row(60) changed when a note was set:\n before: %q\n  after: %q", rowText(rowBefore), rowText(got))
+	}
+
+	panel := w.Panel(60, w.PanelRows())
+	if got := panelLineAt(panel, worktreePanelParts); got != note {
+		t.Errorf("panel line %d = %q, want the note directly under the three parts", worktreePanelParts, got)
+	}
+	if got := panelLineAt(panel, worktreePanelParts+1); got != "from .herdr-draft.toml" {
+		t.Errorf("panel line %d = %q, want the provenance under the note", worktreePanelParts+1, got)
+	}
+	if got := panelLineAt(panel, worktreePanelParts+2); !strings.Contains(got, "HEAD") {
+		t.Errorf("panel line %d = %q, want the base list to resume under both", worktreePanelParts+2, got)
+	}
+
+	short := ansi.Strip(w.Panel(60, worktreePanelParts+1))
+	if !strings.Contains(short, note) || strings.Contains(short, "from .herdr-draft.toml") {
+		t.Errorf("Panel one row above the floor = %q, want the note kept and the provenance dropped", short)
+	}
+	if floor := ansi.Strip(w.Panel(60, panelFloor)); strings.Contains(floor, note) {
+		t.Errorf("Panel at the %d-row floor = %q, want the parts alone", panelFloor, floor)
+	}
+}
+
+// TestWorktreeField_NotesSurviveAnOffWorktree: branch_prefix was refused
+// whether or not this session makes a worktree, so the off panel books the
+// note exactly as it books the provenance line.
+func TestWorktreeField_NotesSurviveAnOffWorktree(t *testing.T) {
+	const note = `ignoring branch_prefix "-x": starts with "-"`
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetNotes([]string{note})
+
+	if got := w.PanelRows(); got != worktreePanelParts+1 {
+		t.Fatalf("PanelRows() while off = %d, want %d", got, worktreePanelParts+1)
+	}
+	if got := panelLineAt(w.Panel(60, w.PanelRows()), worktreePanelParts); got != note {
+		t.Errorf("last panel line while off = %q, want the note", got)
+	}
+}
+
 // TestWorktreeField_RowVocabulary pins v2 spec §6's worktree row in each
 // of its three states, and the elision order the row promises.
 func TestWorktreeField_RowVocabulary(t *testing.T) {

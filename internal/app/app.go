@@ -863,6 +863,12 @@ func New(s Setup) Model {
 	// the data exists; it is never re-fetched (see Model.workspaces).
 	m.title.SetSessions(titleSessions(s.Workspaces, s.Ctx.WorkspaceID))
 	m.worktree = form.NewWorktreeField(palette)
+	// config.toml's refused branch_prefix (#123), on the panel of the branch
+	// it would have shaped -- a standing note, the same shape the account
+	// row's [clauth] warnings take below.
+	if w := s.Config.BranchPrefixWarning; w != "" {
+		m.worktree.SetNotes([]string{w})
+	}
 	m.placement = form.NewPlacementField(palette)
 	m.agent = form.NewAgentField(palette)
 	m.prompt = form.NewPromptField(palette)
@@ -962,6 +968,14 @@ func New(s Setup) Model {
 		// no-ops (AccountField.SetPin's own doc comment): the picker
 		// already starts on the "active" row by construction.
 		m.account.SetPin(s.Config.Clauth.Default)
+		// config.toml's refused [clauth] keys (#123), on the row whose launch
+		// they would have changed. Notes, where PickerUnavailable above is a
+		// verdict: a verdict is keyed on one pin and hidden once the pin
+		// moves, and these matter most with a profile pinned, since only then
+		// is a launcher used -- see AccountField.SetNotes. Only this branch
+		// carries them because only it can pin: with no working account row,
+		// nothing launches through the keys they are about.
+		m.account.SetNotes(s.Config.ClauthWarnings())
 	}
 
 	// Agent (spec §6 field 6, carried requirement): favorites first, then

@@ -688,3 +688,73 @@ func TestAccountAutoBadgeIsTonedByState(t *testing.T) {
 		})
 	}
 }
+
+// TestAccountField_NotesOutliveThePinAndTheVerdict pins #123's account half. A
+// config.toml key that was ignored is a standing fact about the FILE, and it
+// has to stay on screen whichever profile is pinned. SetVerdict's staleness
+// guard is exactly wrong for that: a verdict keyed on one pin stops rendering
+// the moment the pin moves, and `[clauth] launcher` is only ever used when a
+// profile IS pinned -- so a verdict keyed on the unpinned "" would be hidden in
+// precisely the case the warning is about.
+func TestAccountField_NotesOutliveThePinAndTheVerdict(t *testing.T) {
+	const note = "ignoring [clauth] launcher [claude-as]: it contains {account} 0 times"
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow())
+	f.SetPin("alpha")
+
+	rowBefore, bare := f.Row(80), f.PanelRows()
+	f.SetNotes([]string{note})
+
+	if got := f.PanelRows(); got != bare+1 {
+		t.Fatalf("PanelRows() with a note = %d, want %d (the note is booked, not taken from the list)", got, bare+1)
+	}
+	if got := f.Row(80); got != rowBefore {
+		t.Errorf("Row(80) changed when a note was set -- rows stay quiet:\n before: %q\n  after: %q", rowText(rowBefore), rowText(got))
+	}
+	if text := fieldText(f, 80); !strings.Contains(text, note) {
+		t.Fatalf("the panel does not carry the note:\n%s", text)
+	}
+
+	const verdict = "sign in again  clauth reports expired"
+	f.SetPin("gamma")
+	f.SetVerdict("gamma", verdict)
+	text := fieldText(f, 80)
+	for _, want := range []string{note, verdict} {
+		if !strings.Contains(text, want) {
+			t.Errorf("after a pin change and a verdict, the panel lost %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestAccountField_NotesYieldToTheCursorRow: this panel exists to choose an
+// account, so at v2 spec §9's three-row floor a report keeps its first line
+// and the list keeps its cursor row -- the rule DirField.notesShown already
+// follows for a repository's refused keys. An unreadable clauth draws neither:
+// the row is inert and its reason is the whole panel.
+func TestAccountField_NotesYieldToTheCursorRow(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow())
+	f.SetNotes([]string{"first note", "second note"})
+
+	floor := ansi.Strip(f.Panel(80, panelFloor))
+	lines := strings.Split(floor, "\n")
+	if len(lines) != panelFloor {
+		t.Fatalf("Panel at the floor drew %d lines, want %d:\n%s", len(lines), panelFloor, floor)
+	}
+	if !strings.Contains(lines[0], accountActiveLabel) {
+		t.Errorf("floor line 0 = %q, want the list's cursor row kept", lines[0])
+	}
+	if !strings.Contains(floor, "first note") || strings.Contains(floor, "second note") {
+		t.Errorf("Panel at the floor = %q, want the first note and not the second", floor)
+	}
+
+	f.SetUnavailable("exit status 1")
+	if got := f.PanelRows(); got != 1 {
+		t.Errorf("PanelRows() while unavailable = %d, want 1", got)
+	}
+	if got := ansi.Strip(f.Panel(80, panelFloor)); strings.Contains(got, "first note") {
+		t.Errorf("an unavailable account panel drew a note:\n%s", got)
+	}
+}

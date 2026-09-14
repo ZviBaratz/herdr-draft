@@ -268,6 +268,10 @@ type AccountField struct {
 	// pushed in by the app layer. internal/form runs no subprocesses; see
 	// SetPickerPreview.
 	preview AccountPickerPreview
+
+	// notes is SetNotes' report about the [clauth] table of the user's own
+	// config.toml: the keys Load refused. See SetNotes.
+	notes []string
 }
 
 // AccountPickerPreview is an account picker's last answer for the current
@@ -940,6 +944,20 @@ func (f *AccountField) SetVerdict(key, text string) {
 	f.verdictText = text
 }
 
+// SetNotes records the app layer's report about the `[clauth]` table of the
+// user's own config.toml: one already-worded line per key config.Load refused
+// and replaced with a default (#123). nil -- the resting state -- reserves no
+// rows.
+//
+// Notes, not a verdict, and the difference is the design. A verdict is about
+// one pin and stops rendering the moment the pin moves (verdictKey); a refused
+// key is a standing fact about a FILE, true whichever row the ✓ is on. It
+// matters most with a profile pinned, since only then is a launcher used --
+// which is exactly when a verdict keyed on the unpinned "" would be filtered
+// out as stale. These are the same kind of line DirField.SetNotes carries for
+// a repository's refused keys, and noteLine draws both.
+func (f *AccountField) SetNotes(notes []string) { f.notes = notes }
+
 // Pin returns the profile the user has DELIBERATELY committed to, or ""
 // when none is (spec: "don't pin — use whatever profile is live") -- the
 // getter-boundary translation field_worktree.go's Base() documents for the
@@ -1141,24 +1159,51 @@ func accountPercent(pct float64) string {
 	return strconv.Itoa(int(math.Round(pct))) + "%"
 }
 
-// Panel is the profile picker plus one status line, which carries -- in
-// the same priority order v1 used -- a live verdict,
-// then the degraded-status hint, then nothing.
+// Panel is the profile picker, then any notes (SetNotes), then one status
+// line, which carries -- in the same priority order v1 used -- a live
+// verdict, then the degraded-status hint, then nothing.
+//
+// The notes sit directly above the status line rather than against any row
+// of the list: they are about how every account is launched, not about one.
 func (f *AccountField) Panel(w, h int) string {
 	if h < 1 {
 		h = 1
 	}
+	notes := f.notesShown(h)
 	lines := make([]string, 0, h)
 	f.pickerRowsShown = 0
-	if f.unavailable == "" && h > 1 {
-		f.pickerRowsShown = h - 1
-		lines = append(lines, panelPickerLines(f.picker, w, h-1, "row:"+f.ID()+":", f.palette)...)
+	if rows := h - 1 - len(notes); f.unavailable == "" && rows > 0 {
+		f.pickerRowsShown = rows
+		lines = append(lines, panelPickerLines(f.picker, w, rows, "row:"+f.ID()+":", f.palette)...)
 	}
-	for len(lines) < h-1 {
+	for len(lines) < h-1-len(notes) {
 		lines = append(lines, panelText("", w))
+	}
+	for _, n := range notes {
+		lines = append(lines, noteLine(n, w, f.palette))
 	}
 	lines = append(lines, panelStatusLine(f.panelStatus(panelInner(w)), f.filterCount(), w, f.palette))
 	return panelBlock(w, h, lines...)
+}
+
+// notesShown is how many of the notes this panel height can afford, from the
+// front. It keeps DirField.notesShown's rule: the status line and one list
+// row -- the cursor's -- are spoken for first, because a report about a
+// config file must never be the thing that empties the chooser. An
+// unavailable field draws no list and no notes; its reason is the whole
+// panel, and PanelRows books nothing more.
+func (f *AccountField) notesShown(h int) []string {
+	if f.unavailable != "" {
+		return nil
+	}
+	room := h - 2
+	if room > len(f.notes) {
+		room = len(f.notes)
+	}
+	if room < 0 {
+		room = 0
+	}
+	return f.notes[:room]
 }
 
 // filterCount is v3 spec §8.5's readout for this field. Nothing filters
@@ -1235,14 +1280,15 @@ func (f *AccountField) panelLegend(inner int) string {
 }
 
 // PanelRows is the "active" row, the "auto" row when a picker exists, one row
-// per profile, and the status line, capped at accountPanelMaxRows.
+// per profile, one per note (SetNotes), and the status line, capped at
+// accountPanelMaxRows -- notes inside the cap, as DirField books its own.
 func (f *AccountField) PanelRows() int {
 	// An inert field wants only the status line, which is all Panel draws
 	// for it -- the same accounting IssueField.PanelRows does.
 	if f.unavailable != "" {
 		return 1
 	}
-	rows := 2 + len(f.profiles)
+	rows := 2 + len(f.profiles) + len(f.notes)
 	if f.pickerAvailable {
 		rows++
 	}

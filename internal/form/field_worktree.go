@@ -195,6 +195,10 @@ type WorktreeField struct {
 	// values no config file chose. See SetProvenance.
 	provenance string
 
+	// notes is SetNotes' report about the user's own config.toml: its
+	// refused branch_prefix. See SetNotes.
+	notes []string
+
 	// headBranch is the branch currently checked out in the target repo,
 	// shown alongside the base picker's HEAD row -- spec §6 field 4's own
 	// "row 0 `HEAD (<current branch>)`". "" (a detached HEAD, or before
@@ -732,15 +736,30 @@ func (w *WorktreeField) Panel(width, h int) string {
 	inner := panelInner(width)
 	labelW, valueW := labelCol(inner)
 
-	// The provenance line is the FIRST thing a short panel gives up: at
-	// v2 spec §9's three-row floor the three parts are the whole panel,
-	// and a note about where a value came from must not cost the control
-	// that changes it. It sits directly under those parts rather than
-	// after the base list, because it speaks about them -- and because a
-	// fixed line placed after a list whose length follows the window would
-	// move every time the popup is resized.
+	// Under the three parts come the notes (SetNotes), then the provenance
+	// line, then the base list, and a short panel gives them up in the
+	// reverse of that order. At v2 spec §9's three-row floor the three parts
+	// are the whole panel: neither a report about a config file nor a note
+	// about where a value came from may cost the control that changes it. A
+	// note outlasts the provenance line because it says something the user
+	// wrote was thrown away, where provenance only attributes a value that
+	// stands.
+	//
+	// Both sit directly under the parts rather than after the base list,
+	// because they speak about them -- and because a fixed line placed after
+	// a list whose length follows the window would move every time the popup
+	// is resized.
+	extra := h - worktreePanelParts
+	if extra < 0 {
+		extra = 0
+	}
+	notes := w.notes
+	if len(notes) > extra {
+		notes = notes[:extra]
+	}
+	extra -= len(notes)
 	prov := ""
-	if h > worktreePanelParts {
+	if extra > 0 {
 		prov = w.provenance
 	}
 
@@ -760,8 +779,8 @@ func (w *WorktreeField) Panel(width, h int) string {
 	// The base list's height is settled BEFORE the base part line is
 	// composed, because whether the list is on screen is what decides
 	// whether that line names the selection at all -- see panelBase.
-	rows := h - worktreePanelParts - provenanceRows(prov)
-	if rows < 0 || !w.isGitRepo || !w.On() {
+	rows := extra - provenanceRows(prov)
+	if !w.isGitRepo || !w.On() {
 		rows = 0
 	}
 	w.baseRowsShown = rows
@@ -773,6 +792,9 @@ func (w *WorktreeField) Panel(width, h int) string {
 	}
 	if h > 2 {
 		lines = append(lines, w.panelPart(partBase, worktreeBaseLabel, w.panelBase(valueW, w.baseListNamesSelection(rows)), labelW))
+	}
+	for _, n := range notes {
+		lines = append(lines, noteLine(n, width, w.palette))
 	}
 	if prov != "" {
 		lines = append(lines, provenanceLine(prov, width, w.palette))
@@ -908,14 +930,16 @@ func (w *WorktreeField) panelBaseRows(labelW, valueW, rows int) []string {
 	return out
 }
 
-// PanelRows is the three parts, the provenance line when there is one,
-// and one line per base candidate, capped at worktreePanelMaxRows. An
-// inert or off worktree asks for the parts alone -- there is no list to
-// show, and reserving rows for one would leave a hole where the panel says
-// nothing -- but it still asks for the provenance line, since a repository
-// that turned the worktree OFF is exactly the case a reader needs told.
+// PanelRows is the three parts, one line per note, the provenance line when
+// there is one, and one line per base candidate, capped at
+// worktreePanelMaxRows. An inert or off worktree asks for the parts alone --
+// there is no list to show, and reserving rows for one would leave a hole
+// where the panel says nothing -- but it still asks for the notes and the
+// provenance line: a repository that turned the worktree OFF is exactly the
+// case a reader needs told, and a refused branch_prefix is refused whether
+// or not this session makes a worktree.
 func (w *WorktreeField) PanelRows() int {
-	head := worktreePanelParts + provenanceRows(w.provenance)
+	head := worktreePanelParts + len(w.notes) + provenanceRows(w.provenance)
 	if !w.isGitRepo || !w.On() {
 		return head
 	}
@@ -933,6 +957,17 @@ func (w *WorktreeField) PanelRows() int {
 // the ten rows the base list is competing for. See PlacementField
 // .SetProvenance for why this takes a plain file name.
 func (w *WorktreeField) SetProvenance(source string) { w.provenance = source }
+
+// SetNotes records the app layer's report about the one key of the user's
+// own config.toml this panel's branch depends on: config.Load's refused
+// branch_prefix, already worded (#123). nil -- the resting state -- reserves
+// no rows.
+//
+// A line of its own rather than a reuse of SetProvenance's, and ahead of it,
+// because the two say different kinds of thing: provenance attributes a
+// value that stands, and a note reports one that was thrown away. noteLine
+// draws it exactly as DirField draws a repository's refused keys.
+func (w *WorktreeField) SetNotes(notes []string) { w.notes = notes }
 
 // FooterRungs implements form.go's footerHinter: the footer teaches the
 // focused field (v2 spec §3 rule 4), and this field's keys mean different
