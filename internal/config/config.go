@@ -480,8 +480,12 @@ func Load(configDir string) (Config, error) {
 	launcher := cfg.Clauth.Launcher
 	if verr := validateClauthLauncher(launcher); verr != "" {
 		def := DefaultClauthLauncher()
-		cfg.Clauth.LauncherWarning = fmt.Sprintf("ignoring [clauth] launcher %v: %s; using %v",
-			launcher, verr, def)
+		// The reason first and the file's own value last, here and in the
+		// wrapper warning below: the popup draws each warning on one line cut
+		// to its panel's width, a launcher can run to paths, and the value is
+		// the one part the reader already has (review of #125).
+		cfg.Clauth.LauncherWarning = fmt.Sprintf("ignoring [clauth] launcher: %s; using %v instead of %v",
+			verr, def, launcher)
 		cfg.Clauth.Launcher = def
 	}
 
@@ -506,8 +510,8 @@ func Load(configDir string) (Config, error) {
 	if cfg.Clauth.Launch == ClauthLaunchWrapper && !sameArgv(launcher, DefaultClauthLauncher()) {
 		def := DefaultClauthLauncher()
 		cfg.Clauth.LauncherIgnoredWarning = fmt.Sprintf(
-			"ignoring [clauth] launcher %v: [clauth] launch = %q launches claude under an isolated credential directory rather than through an argv template; using %v",
-			launcher, ClauthLaunchWrapper, def)
+			"ignoring [clauth] launcher: [clauth] launch = %q launches claude under an isolated credential directory rather than through an argv template; using %v instead of %v",
+			ClauthLaunchWrapper, def, launcher)
 		cfg.Clauth.Launcher = def
 	}
 	return cfg, nil

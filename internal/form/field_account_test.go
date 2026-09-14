@@ -697,7 +697,7 @@ func TestAccountAutoBadgeIsTonedByState(t *testing.T) {
 // profile IS pinned -- so a verdict keyed on the unpinned "" would be hidden in
 // precisely the case the warning is about.
 func TestAccountField_NotesOutliveThePinAndTheVerdict(t *testing.T) {
-	const note = "ignoring [clauth] launcher [claude-as]: it contains {account} 0 times"
+	const note = "ignoring [clauth] launcher: it contains {account} 0 times, want exactly 1"
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
 	f.SetProfiles(sampleStatus(), sampleNow())
@@ -736,6 +736,9 @@ func TestAccountField_NotesYieldToTheCursorRow(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
 	f.SetProfiles(sampleStatus(), sampleNow())
+	// The cursor goes to the LAST profile, so "kept the cursor row" and "kept
+	// the first row" are different claims and only one of them passes.
+	f.SetPin("gamma")
 	f.SetNotes([]string{"first note", "second note"})
 
 	floor := ansi.Strip(f.Panel(80, panelFloor))
@@ -743,8 +746,8 @@ func TestAccountField_NotesYieldToTheCursorRow(t *testing.T) {
 	if len(lines) != panelFloor {
 		t.Fatalf("Panel at the floor drew %d lines, want %d:\n%s", len(lines), panelFloor, floor)
 	}
-	if !strings.Contains(lines[0], accountActiveLabel) {
-		t.Errorf("floor line 0 = %q, want the list's cursor row kept", lines[0])
+	if !strings.Contains(lines[0], "gamma") {
+		t.Errorf("floor line 0 = %q, want the list's cursor row (gamma) kept", lines[0])
 	}
 	if !strings.Contains(floor, "first note") || strings.Contains(floor, "second note") {
 		t.Errorf("Panel at the floor = %q, want the first note and not the second", floor)

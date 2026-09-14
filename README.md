@@ -420,7 +420,9 @@ herdr plugin config-dir zvibaratz.draft
   and it may not start with `-`, which the herdr CLI would read as a flag.
   An unusable value is ignored and the default takes over; it never stops
   herdr-draft from opening. The popup shows the reason on the `worktree`
-  row's panel, and `herdr-draft create` prints it on stderr.
+  row's panel, and `herdr-draft create` prints it on stderr — except in a
+  repository whose `.herdr-draft.toml` sets its own `branch_prefix`, which
+  would have overridden this key even if it were valid.
 - `default_worktree` (default: `true`) — whether the worktree row starts on
   or off for a git target.
 - `default_placement` (default: `"new-space"`) — where the agent's own pane
@@ -487,13 +489,15 @@ set alongside it is ignored.
 
 **You are told when one of them loses.** A `launcher` ignored under
 `"wrapper"`, a malformed `launcher` and an unrecognised `launch` each produce
-a line naming the value and what was used instead: in the popup on the
-`account` row's panel, and from `herdr-draft create` on stderr. A malformed
-`launcher` set beside `"wrapper"` gets both of its lines — that it is
-malformed, and that wrapper mode would not have used it anyway. The popup
-also shows the launch itself: its progress row names the program and account
-it launched through, and says so when wrapper mode fell back for want of a
-`config_dir`.
+a warning that says which key was ignored, why, and what was used instead.
+`herdr-draft create` prints each one whole on stderr. The popup puts each on
+one line of the `account` row's panel, cut to the panel's width — the reason
+comes first so that it survives a long `launcher` — whenever that row lets you
+pin an account, which is the only time these keys are used. A malformed
+`launcher` set beside `"wrapper"` gets both warnings: that it is malformed,
+and that wrapper mode would not have used it anyway. The popup also shows the
+launch itself: its progress row names the program and account it launched
+through, and says so when wrapper mode fell back for want of a `config_dir`.
 
 - `launcher` (default: `["clauth", "start", "{account}", "--"]`) — the argv
   that starts a pinned account, with `{account}` standing for the profile

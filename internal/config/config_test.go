@@ -836,3 +836,26 @@ func TestClauthWarningsListsWhatLoadReported(t *testing.T) {
 		})
 	}
 }
+
+// Both launcher warnings lead with the reason and end with the user's own
+// value (review of #125). The popup draws each warning on one line cut to the
+// panel's width, and a launcher is an argv that can run to paths: while the
+// value led, a long one pushed both reasons past the edge and the two warnings
+// rendered as the same truncated line. The value is the part the reader
+// already has -- it is in their file.
+func TestLauncherWarningsLeadWithTheReason(t *testing.T) {
+	const value = "/home/someone/.local/bin/claude-as"
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlaunch = \"wrapper\"\nlauncher = [\""+value+"\"]\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for name, tc := range map[string]struct{ warning, reason string }{
+		"malformed": {cfg.Clauth.LauncherWarning, "it contains {account} 0 times"},
+		"ignored":   {cfg.Clauth.LauncherIgnoredWarning, `launch = "wrapper"`},
+	} {
+		r, v := strings.Index(tc.warning, tc.reason), strings.Index(tc.warning, value)
+		if r < 0 || v < 0 || r > v {
+			t.Errorf("%s warning %q: want its reason %q before the rejected value", name, tc.warning, tc.reason)
+		}
+	}
+}

@@ -85,19 +85,14 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	if err != nil {
 		return resolution{}, err
 	}
-	if cfg.BranchPrefixWarning != "" {
-		// A line on stderr, because a create that silently used a different
-		// prefix than the config file asks for is a create whose branch
-		// nobody can explain. The popup shows the same line on the worktree
-		// row's panel.
-		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.BranchPrefixWarning)
-	}
-	// Same reason, higher stakes: `[clauth] launch` and `[clauth] launcher`
-	// are one decision (config.Load reconciles them), and every way that
-	// decision can be overridden changes which account a session is billed
-	// to. config.ClauthWarnings is the same list the popup's account panel
-	// reads, which is what keeps a warning added to it from reaching one
-	// surface and not the other.
+	// A line on stderr for every [clauth] warning, because a create that
+	// silently launched some other way than the config file asks for is a
+	// create nobody can explain -- and the stakes are high: `[clauth] launch`
+	// and `[clauth] launcher` are one decision (config.Load reconciles them),
+	// and every way that decision can be overridden changes which account a
+	// session is billed to. config.ClauthWarnings is the same list the popup's
+	// account panel reads, which is what keeps a warning added to it from
+	// reaching one surface and not the other.
 	for _, w := range cfg.ClauthWarnings() {
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
 	}
@@ -124,6 +119,16 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		HaveProject:     t.haveEntry,
 		KnownAgentKinds: kinds,
 	})
+	// A line on stderr, because a create that silently used a different
+	// prefix than the config file asks for is a create whose branch nobody
+	// can explain. It waits for the resolution and goes through the same
+	// app.BranchPrefixWarning the popup's worktree panel does, because a
+	// repository's own branch_prefix outranks config.toml's: there the
+	// warning's `using "<fallback>"` would name a prefix this create is not
+	// using, for a key that would not have applied even if it were valid.
+	if w := app.BranchPrefixWarning(cfg, res); w != "" {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
+	}
 
 	issue, err := findIssue(ctx, req, cfg, env, deps)
 	if err != nil {

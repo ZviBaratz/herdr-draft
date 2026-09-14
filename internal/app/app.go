@@ -863,12 +863,6 @@ func New(s Setup) Model {
 	// the data exists; it is never re-fetched (see Model.workspaces).
 	m.title.SetSessions(titleSessions(s.Workspaces, s.Ctx.WorkspaceID))
 	m.worktree = form.NewWorktreeField(palette)
-	// config.toml's refused branch_prefix (#123), on the panel of the branch
-	// it would have shaped -- a standing note, the same shape the account
-	// row's [clauth] warnings take below.
-	if w := s.Config.BranchPrefixWarning; w != "" {
-		m.worktree.SetNotes([]string{w})
-	}
 	m.placement = form.NewPlacementField(palette)
 	m.agent = form.NewAgentField(palette)
 	m.prompt = form.NewPromptField(palette)
@@ -890,6 +884,12 @@ func New(s Setup) Model {
 		Global:          s.State,
 		KnownAgentKinds: m.agentKinds,
 	})
+	// config.toml's refused branch_prefix (#123), on the panel of the branch
+	// it would have shaped. It waits for the resolution above because whether
+	// it applies is a question about the resolved prefix -- see
+	// BranchPrefixWarning -- and showRepoConfig asks it again for every
+	// project the form moves to.
+	m.worktree.SetNotes(m.branchPrefixNotes())
 
 	// [default_placement] (spec §12), resolved across config.toml and
 	// last-used.json: the two folded-in Task 20 gaps this task's brief
@@ -1894,6 +1894,37 @@ func (m *Model) showRepoConfig() {
 		m.fromRepoConfig(defaults.FieldPlacement, m.placementTouched),
 	))
 	m.dir.SetNotes(m.repoConfigNotes())
+	// config.toml's own refused branch_prefix follows the resolution the same
+	// way, because a repository's .herdr-draft.toml can take the prefix over
+	// -- see BranchPrefixWarning.
+	m.worktree.SetNotes(m.branchPrefixNotes())
+}
+
+// BranchPrefixWarning is config.toml's refused-branch_prefix warning when it
+// describes res, and "" otherwise: when there is none, or when a tier above
+// config.toml -- a repository's .herdr-draft.toml -- supplied the prefix
+// (review of #125). The warning ends `using "<fallback>"`, and in such a
+// repository that fallback is not the prefix in use, so a note saying it is
+// would contradict the branch printed directly above it; the refused key
+// would not have applied there even had it been valid.
+//
+// Exported for internal/create, which reports the same warning on stderr and
+// has to decide the same way -- the reason it borrows BranchFor rather than
+// restating it.
+func BranchPrefixWarning(cfg config.Config, res defaults.Resolved) string {
+	if res.From[defaults.FieldBranchPrefix] > defaults.TierUserConfig {
+		return ""
+	}
+	return cfg.BranchPrefixWarning
+}
+
+// branchPrefixNotes is BranchPrefixWarning as the worktree panel's note list:
+// nil, which reserves no rows, when there is nothing to say.
+func (m Model) branchPrefixNotes() []string {
+	if w := BranchPrefixWarning(m.cfg, m.resolved); w != "" {
+		return []string{w}
+	}
+	return nil
 }
 
 // fromRepoConfig reports whether field's resolved value came from the
