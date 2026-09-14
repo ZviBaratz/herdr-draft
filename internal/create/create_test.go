@@ -1624,6 +1624,57 @@ func TestCreate_ReportsALauncherIgnoredByWrapperMode(t *testing.T) {
 	}
 }
 
+// Both facts at once (#123). A malformed launcher beside wrapper mode used to
+// report only the malformedness, which told the user to fix a template that
+// wrapper mode would never have used -- and not that it would not.
+func TestCreate_ReportsAMalformedLauncherUnderWrapperModeAsIgnoredToo(t *testing.T) {
+	h := newHarness(t)
+	body := "[clauth]\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\"]\n"
+	if err := os.WriteFile(filepath.Join(h.env.ConfigDir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	for _, want := range []string{"it contains {account} 0 times", "isolated credential directory"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr does not mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// A repository's own branch_prefix outranks config.toml's, so a refused
+// config.toml prefix is not the one such a create falls back to, and a line
+// ending `using "<fallback>"` would contradict the branch it derives (review
+// of #125). Both directions: silent where the repository supplies a prefix,
+// reported where it does not -- the same rule the popup's worktree panel
+// follows, through the same app.BranchPrefixWarning.
+func TestCreate_ReportsARefusedBranchPrefixOnlyWhereItsFallbackApplies(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		repoPrefix string
+		wantLine   bool
+	}{
+		{"the repository supplies a prefix", "team/", false},
+		{"the repository supplies none", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			writeConfig(t, h.env.ConfigDir, "branch_prefix = \"a b/\"\n")
+			h.deps.RepoConfig = func(string) config.RepoConfig { return config.RepoConfig{BranchPrefix: tc.repoPrefix} }
+
+			if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+			}
+			if got := strings.Contains(h.stderr.String(), `ignoring branch_prefix "a b/"`); got != tc.wantLine {
+				t.Errorf("stderr reports the refused prefix = %v, want %v\nstderr: %s", got, tc.wantLine, h.stderr)
+			}
+		})
+	}
+}
+
 // The mirror image for both, so neither line becomes noise: the common config
 // names no launch mode and no launcher, and must produce neither warning.
 func TestCreate_SaysNothingAboutAnAbsentLaunchMode(t *testing.T) {

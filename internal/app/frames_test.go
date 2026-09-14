@@ -374,7 +374,14 @@ var frameSizes = []struct{ w, h int }{
 // fires.
 func filledFrameModel(t *testing.T, full, worktree bool) Model {
 	t.Helper()
-	m := newAssembledModel(t, full)
+	return fillFrameModel(newAssembledModel(t, full), worktree)
+}
+
+// fillFrameModel types filledFrameModel's state into a form that is already
+// assembled, for a frame whose Setup differs from frameSetup's in something
+// only New can apply -- a config warning, say -- and that would otherwise
+// have to restate this whole state and drift from the frames beside it.
+func fillFrameModel(m Model, worktree bool) Model {
 	m.title.SetTitle("fix login redirect loop", false)
 	m.worktree.SetOn(worktree)
 	m.worktree.SetBranch("zvi/fix-login-redirect-loop", false)
@@ -670,6 +677,57 @@ func TestAssembledForm_ClauthUnreadable(t *testing.T) {
 	m.reactToChanges()
 
 	assertAppFrame(t, "assembled-clauth-unreadable-101x30", m, framePopupW, framePopupH)
+}
+
+// TestAssembledForm_ConfigWarnings pins #123's two new states, one per row the
+// warnings land on, at the size the popup ships. Before them the popup had no
+// rendering of any of config.Load's four warnings -- not a state a frame could
+// have caught, but one a frame now keeps from coming back.
+//
+// The words come out of config.Load rather than a fixture string, so a
+// reworded warning moves the frame and a reviewer reads the sentence at the
+// width a user will. Only the fields each warning lives on are copied across:
+// the rest of a loaded Config carries the OS username as its branch prefix, and
+// a golden frame has to be the same bytes on every machine.
+func TestAssembledForm_ConfigWarnings(t *testing.T) {
+	t.Run("clauth", func(t *testing.T) {
+		// A pinned default, wrapper mode and a malformed launcher: both
+		// launcher warnings at once, in the state where a launcher is used.
+		loaded := loadConfigBody(t, "[clauth]\ndefault = \"work\"\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\"]\n")
+		setup := frameSetup(true)
+		setup.Config.Clauth = loaded.Clauth
+		setup.Config.ClauthLaunchWarning = loaded.ClauthLaunchWarning
+
+		m := resolveDirCheck(t, newTestModel(t, setup))
+		m.form.FocusByID("account")
+		m.reactToChanges()
+
+		assertAppFrame(t, "assembled-config-warnings-clauth-101x30", m, framePopupW, framePopupH)
+	})
+
+	t.Run("branch-prefix", func(t *testing.T) {
+		loaded := loadConfigBody(t, "branch_prefix = \"-x\"\n")
+		setup := frameSetup(true)
+		// The warning's tail names the prefix Load fell back to, which is the
+		// OS user's own; frameSetup's prefix stands in for it. The check below
+		// is what stops a reworded tail from quietly putting a username in the
+		// golden bytes instead.
+		want := fmt.Sprintf("using %q", setup.Config.BranchPrefix)
+		setup.Config.BranchPrefixWarning = strings.Replace(loaded.BranchPrefixWarning,
+			fmt.Sprintf("using %q", loaded.BranchPrefix), want, 1)
+		if !strings.HasSuffix(setup.Config.BranchPrefixWarning, want) {
+			t.Fatalf("BranchPrefixWarning = %q, want it to end %s", setup.Config.BranchPrefixWarning, want)
+		}
+
+		// Worktree on, with filledFrameModel's title and branch typed in,
+		// because that is the state a prefix is for: the branch part above the
+		// note carries the fallback prefix the note names.
+		m := fillFrameModel(resolveDirCheck(t, newTestModel(t, setup)), true)
+		m.form.FocusByID("worktree")
+		m.reactToChanges()
+
+		assertAppFrame(t, "assembled-config-warnings-branch-prefix-101x30", m, framePopupW, framePopupH)
+	})
 }
 
 // --- #90: the screen a blocked first-run trust prompt produces -------------

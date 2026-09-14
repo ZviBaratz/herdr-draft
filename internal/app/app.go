@@ -884,6 +884,12 @@ func New(s Setup) Model {
 		Global:          s.State,
 		KnownAgentKinds: m.agentKinds,
 	})
+	// config.toml's refused branch_prefix (#123), on the panel of the branch
+	// it would have shaped. It waits for the resolution above because whether
+	// it applies is a question about the resolved prefix -- see
+	// BranchPrefixWarning -- and showRepoConfig asks it again for every
+	// project the form moves to.
+	m.worktree.SetNotes(m.branchPrefixNotes())
 
 	// [default_placement] (spec §12), resolved across config.toml and
 	// last-used.json: the two folded-in Task 20 gaps this task's brief
@@ -962,6 +968,14 @@ func New(s Setup) Model {
 		// no-ops (AccountField.SetPin's own doc comment): the picker
 		// already starts on the "active" row by construction.
 		m.account.SetPin(s.Config.Clauth.Default)
+		// config.toml's refused [clauth] keys (#123), on the row whose launch
+		// they would have changed. Notes, where PickerUnavailable above is a
+		// verdict: a verdict is keyed on one pin and hidden once the pin
+		// moves, and these matter most with a profile pinned, since only then
+		// is a launcher used -- see AccountField.SetNotes. Only this branch
+		// carries them because only it can pin: with no working account row,
+		// nothing launches through the keys they are about.
+		m.account.SetNotes(s.Config.ClauthWarnings())
 	}
 
 	// Agent (spec §6 field 6, carried requirement): favorites first, then
@@ -1880,6 +1894,37 @@ func (m *Model) showRepoConfig() {
 		m.fromRepoConfig(defaults.FieldPlacement, m.placementTouched),
 	))
 	m.dir.SetNotes(m.repoConfigNotes())
+	// config.toml's own refused branch_prefix follows the resolution the same
+	// way, because a repository's .herdr-draft.toml can take the prefix over
+	// -- see BranchPrefixWarning.
+	m.worktree.SetNotes(m.branchPrefixNotes())
+}
+
+// BranchPrefixWarning is config.toml's refused-branch_prefix warning when it
+// describes res, and "" otherwise: when there is none, or when a tier above
+// config.toml -- a repository's .herdr-draft.toml -- supplied the prefix
+// (review of #125). The warning ends `using "<fallback>"`, and in such a
+// repository that fallback is not the prefix in use, so a note saying it is
+// would contradict the branch printed directly above it; the refused key
+// would not have applied there even had it been valid.
+//
+// Exported for internal/create, which reports the same warning on stderr and
+// has to decide the same way -- the reason it borrows BranchFor rather than
+// restating it.
+func BranchPrefixWarning(cfg config.Config, res defaults.Resolved) string {
+	if res.From[defaults.FieldBranchPrefix] > defaults.TierUserConfig {
+		return ""
+	}
+	return cfg.BranchPrefixWarning
+}
+
+// branchPrefixNotes is BranchPrefixWarning as the worktree panel's note list:
+// nil, which reserves no rows, when there is nothing to say.
+func (m Model) branchPrefixNotes() []string {
+	if w := BranchPrefixWarning(m.cfg, m.resolved); w != "" {
+		return []string{w}
+	}
+	return nil
 }
 
 // fromRepoConfig reports whether field's resolved value came from the
