@@ -269,8 +269,9 @@ type AccountField struct {
 	// SetPickerPreview.
 	preview AccountPickerPreview
 
-	// notes is SetNotes' report about the [clauth] table of the user's own
-	// config.toml: the keys Load refused. See SetNotes.
+	// notes is SetNotes' standing report about how accounts would be
+	// launched: a picker that could not be trusted, and the [clauth] keys
+	// config.Load refused. See SetNotes.
 	notes []string
 }
 
@@ -944,18 +945,20 @@ func (f *AccountField) SetVerdict(key, text string) {
 	f.verdictText = text
 }
 
-// SetNotes records the app layer's report about the `[clauth]` table of the
-// user's own config.toml: one already-worded line per key config.Load refused
-// and replaced with a default (#123). nil -- the resting state -- reserves no
-// rows.
+// SetNotes records the app layer's standing report about how this row's
+// accounts would be launched, one already-worded line each: why a picker
+// named in config.toml is not in use, and each `[clauth]` key config.Load
+// refused and replaced with a default (#123). nil -- the resting state --
+// reserves no rows.
 //
 // Notes, not a verdict, and the difference is the design. A verdict is about
-// one pin and stops rendering the moment the pin moves (verdictKey); a refused
-// key is a standing fact about a FILE, true whichever row the ✓ is on. It
-// matters most with a profile pinned, since only then is a launcher used --
-// which is exactly when a verdict keyed on the unpinned "" would be filtered
-// out as stale. These are the same kind of line DirField.SetNotes carries for
-// a repository's refused keys, and noteLine draws both.
+// one pin and stops rendering the moment the pin moves (verdictKey); these
+// are standing facts about the configuration, true whichever row the ✓ is on.
+// They matter most with a profile pinned, since only then is a launcher used
+// -- which is exactly when a verdict keyed on the unpinned "" is filtered out
+// as stale, and how a failed picker's reason used to disappear. These are the
+// same kind of line DirField.SetNotes carries for a repository's refused keys,
+// and noteLine draws both.
 func (f *AccountField) SetNotes(notes []string) { f.notes = notes }
 
 // Pin returns the profile the user has DELIBERATELY committed to, or ""

@@ -575,6 +575,15 @@ type Model struct {
 	// working one.
 	linearUnavailable string
 
+	// clauthUnavailable and pickerUnavailable mirror Setup's fields of the
+	// same names, for the reason linearUnavailable does. The rebuild used to
+	// drop both, and each clear erased one: New builds no account row at all
+	// for a clauth with no profiles unless it is told that clauth is
+	// unreadable, and gives no reason for a missing auto row unless it is
+	// told the picker failed its probe.
+	clauthUnavailable string
+	pickerUnavailable string
+
 	// linearIssueSelected tracks IssueField's own "none" vs a real
 	// selection (spec §6 field 1: "In Linear mode branchName owns the
 	// branch and the title is free text") -- reactToChanges only derives a
@@ -851,6 +860,8 @@ func New(s Setup) Model {
 		linearIssues: s.LinearCache,
 
 		linearUnavailable: s.LinearUnavailable,
+		clauthUnavailable: s.ClauthUnavailable,
+		pickerUnavailable: s.PickerUnavailable,
 
 		fetchedRepos: map[string]bool{},
 	}
@@ -955,27 +966,31 @@ func New(s Setup) Model {
 		// makes the configured default lose to the picker.
 		if s.Deps.Picker != nil {
 			m.account.SetPickerAvailable(true)
-		} else if s.PickerUnavailable != "" {
-			// Not SetUnavailable: clauth itself is fine and its profile rows
-			// are still usable. Only the auto row is missing, and the verdict
-			// line is the one place that can say why. Keyed on "" -- the pin
-			// this model rests on, since no auto row exists to select --
-			// so it renders rather than being filtered out as stale.
-			m.account.SetVerdict("", s.PickerUnavailable)
 		}
 		// [clauth] default (spec §12), when set to a real profile name --
 		// "" and the config's own documented "active" sentinel are both
 		// no-ops (AccountField.SetPin's own doc comment): the picker
 		// already starts on the "active" row by construction.
 		m.account.SetPin(s.Config.Clauth.Default)
-		// config.toml's refused [clauth] keys (#123), on the row whose launch
-		// they would have changed. Notes, where PickerUnavailable above is a
-		// verdict: a verdict is keyed on one pin and hidden once the pin
-		// moves, and these matter most with a profile pinned, since only then
-		// is a launcher used -- see AccountField.SetNotes. Only this branch
-		// carries them because only it can pin: with no working account row,
-		// nothing launches through the keys they are about.
-		m.account.SetNotes(s.Config.ClauthWarnings())
+		// Everything this row has to report about how an account would be
+		// launched, as standing notes rather than a verdict: a verdict is
+		// keyed on one pin and hidden once the pin moves, and these matter
+		// most with a profile pinned -- see AccountField.SetNotes.
+		//
+		// First, why there is no auto row when a picker was named and failed
+		// its probe. Not SetUnavailable: clauth itself is fine and its profile
+		// rows still work; only the auto row is missing. This used to be a
+		// verdict keyed on the unpinned "", which a `[clauth] default` naming
+		// a profile hid -- leaving a configured, broken picker looking exactly
+		// like no picker at all. Then config.toml's refused [clauth] keys
+		// (#123). Only this branch carries any of them because only it can
+		// pin: with no working account row, nothing launches through what
+		// they are about.
+		var notes []string
+		if s.PickerUnavailable != "" {
+			notes = append(notes, s.PickerUnavailable)
+		}
+		m.account.SetNotes(append(notes, s.Config.ClauthWarnings()...))
 	}
 
 	// Agent (spec §6 field 6, carried requirement): favorites first, then
@@ -1587,6 +1602,8 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		HomeDir:      m.homeDir,
 
 		LinearUnavailable: m.linearUnavailable,
+		ClauthUnavailable: m.clauthUnavailable,
+		PickerUnavailable: m.pickerUnavailable,
 	})
 	// Spec §10: "⌃R⌃R clears back to the repository default" -- explicitly
 	// NOT back to what you last did in this project. New has already

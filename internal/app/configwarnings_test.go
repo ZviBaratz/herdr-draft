@@ -59,8 +59,8 @@ const (
 //
 // `default` names a profile on purpose. A launcher is only ever used for a
 // PINNED account, so that is the state these warnings matter in -- and the
-// state a verdict keyed on the unpinned "" (the shape Setup.PickerUnavailable
-// is routed with) would have filtered out as stale.
+// state a verdict keyed on the unpinned "" would have filtered out as stale,
+// which is how Setup.PickerUnavailable's reason used to vanish.
 func TestConfigWarnings_ClauthOnesReachTheAccountPanel(t *testing.T) {
 	m := configWarningsModel(t, "[clauth]\ndefault = \"work\"\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\"]\n")
 	if got := m.account.Pin(); got != "work" {
