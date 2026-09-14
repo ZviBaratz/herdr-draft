@@ -240,9 +240,12 @@ type Setup struct {
 	// answer did not implement the protocol. Distinct from no picker being
 	// configured, which is the common case and renders no auto row.
 	//
-	// When set, the account row still renders and carries this reason, which
-	// is the whole point: a picker that was configured and is not working must
-	// not look identical to one that was never configured.
+	// When set and the account row renders, the row carries this reason as its
+	// first note, which is the whole point: a picker that was configured and
+	// is not working must not look identical to one that was never
+	// configured. With no working account row (clauth absent or unreadable, or
+	// fewer than two profiles) it is shown nowhere, deliberately: the popup can
+	// pin no account there, so no picker could have been used.
 	PickerUnavailable string
 }
 
@@ -987,7 +990,10 @@ func New(s Setup) Model {
 		// pin: with no working account row, nothing launches through what
 		// they are about.
 		var notes []string
-		if s.PickerUnavailable != "" {
+		// Only when no picker works: Bootstrap sets one of the two, never both,
+		// and a working auto row beside a failed probe would be two answers to
+		// one question. The verdict this replaced got that from an else-branch.
+		if s.PickerUnavailable != "" && s.Deps.Picker == nil {
 			notes = append(notes, s.PickerUnavailable)
 		}
 		m.account.SetNotes(append(notes, s.Config.ClauthWarnings()...))

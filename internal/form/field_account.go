@@ -1191,8 +1191,8 @@ func (f *AccountField) Panel(w, h int) string {
 
 // notesShown is how many of the notes this panel height can afford, from the
 // front. It keeps DirField.notesShown's rule: the status line and one list
-// row -- the cursor's -- are spoken for first, because a report about a
-// config file must never be the thing that empties the chooser. An
+// row -- the cursor's -- are spoken for first, because a report about how
+// accounts are launched must never be the thing that empties the chooser. An
 // unavailable field draws no list and no notes; its reason is the whole
 // panel, and PanelRows books nothing more.
 func (f *AccountField) notesShown(h int) []string {
