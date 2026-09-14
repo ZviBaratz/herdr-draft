@@ -1624,6 +1624,27 @@ func TestCreate_ReportsALauncherIgnoredByWrapperMode(t *testing.T) {
 	}
 }
 
+// Both facts at once (#123). A malformed launcher beside wrapper mode used to
+// report only the malformedness, which told the user to fix a template that
+// wrapper mode would never have used -- and not that it would not.
+func TestCreate_ReportsAMalformedLauncherUnderWrapperModeAsIgnoredToo(t *testing.T) {
+	h := newHarness(t)
+	body := "[clauth]\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\"]\n"
+	if err := os.WriteFile(filepath.Join(h.env.ConfigDir, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if code := h.run("--title", "fix login redirect", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	for _, want := range []string{"it contains {account} 0 times", "isolated credential directory"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr does not mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
 // The mirror image for both, so neither line becomes noise: the common config
 // names no launch mode and no launcher, and must produce neither warning.
 func TestCreate_SaysNothingAboutAnAbsentLaunchMode(t *testing.T) {

@@ -764,3 +764,75 @@ func TestWrapperModeAloneWarnsAboutNothing(t *testing.T) {
 		t.Fatalf("unexpected warning %q", cfg.Clauth.LauncherIgnoredWarning)
 	}
 }
+
+// Wrapper mode beside a MALFORMED launcher is two facts, and the second one
+// used to go missing (#123). validateClauthLauncher ran first and reset the
+// template to the default, and the ignored-under-wrapper check then compared
+// that default against itself and said nothing -- so the user was told to fix
+// a template, and not told that wrapper mode would never have used it anyway.
+func TestWrapperModeReportsAMalformedLauncherAsBothMalformedAndIgnored(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "[clauth]\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\"]\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !strings.Contains(cfg.Clauth.LauncherWarning, "claude-as") {
+		t.Errorf("LauncherWarning = %q, want the malformed template reported and named", cfg.Clauth.LauncherWarning)
+	}
+	// The ignored warning names what the user WROTE. Naming the default it had
+	// already been reset to would report that the built-in template is being
+	// ignored, which is true of nothing the user did.
+	for _, want := range []string{"claude-as", "wrapper"} {
+		if !strings.Contains(cfg.Clauth.LauncherIgnoredWarning, want) {
+			t.Errorf("LauncherIgnoredWarning = %q, want it to name %q", cfg.Clauth.LauncherIgnoredWarning, want)
+		}
+	}
+	if !sameArgv(cfg.Clauth.Launcher, DefaultClauthLauncher()) {
+		t.Fatalf("Launcher = %v, want the default", cfg.Clauth.Launcher)
+	}
+}
+
+// ClauthWarnings is the one list both surfaces read -- create's stderr and the
+// popup's account panel -- so a warning added to Load and to that method
+// reaches both, where #122's ClauthLaunchWarning, set on a field nothing read,
+// reached neither. Driven through Load rather than a hand-built Config because
+// the combinations Load can actually produce are the ones whose order matters.
+//
+// The ignored warning leads the malformed one: whether a template is used at
+// all is the first thing to know about what is wrong with it, and a panel
+// short of rows keeps its first note.
+func TestClauthWarningsListsWhatLoadReported(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		// want is a substring each warning must carry, in order.
+		want []string
+	}{
+		{"none", "[clauth]\nlaunch = \"wrapper\"\n", nil},
+		{
+			"an unknown launch and a malformed launcher",
+			"[clauth]\nlaunch = \"teleport\"\nlauncher = [\"claude-as\"]\n",
+			[]string{`launch "teleport"`, "it contains {account} 0 times"},
+		},
+		{
+			"wrapper beside a malformed launcher",
+			"[clauth]\nlaunch = \"wrapper\"\nlauncher = [\"claude-as\"]\n",
+			[]string{"isolated credential directory", "it contains {account} 0 times"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Load(writeConfigBody(t, tc.body))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			got := cfg.ClauthWarnings()
+			if len(got) != len(tc.want) {
+				t.Fatalf("ClauthWarnings() = %q, want %d warnings", got, len(tc.want))
+			}
+			for i, want := range tc.want {
+				if !strings.Contains(got[i], want) {
+					t.Errorf("ClauthWarnings()[%d] = %q, want it to carry %q", i, got[i], want)
+				}
+			}
+		})
+	}
+}

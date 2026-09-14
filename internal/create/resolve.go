@@ -88,38 +88,18 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	if cfg.BranchPrefixWarning != "" {
 		// A line on stderr, because a create that silently used a different
 		// prefix than the config file asks for is a create whose branch
-		// nobody can explain.
-		//
-		// This comment used to begin "The form shows this in a panel". The
-		// form does not: internal/app reads none of the four config warnings
-		// in this block, so this verb is the ONLY surface any of them reach.
-		// Routing them to a row verdict, the way app already routes
-		// PickerUnavailable, is #123.
+		// nobody can explain. The popup shows the same line on the worktree
+		// row's panel.
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.BranchPrefixWarning)
 	}
-	if cfg.Clauth.LauncherWarning != "" {
-		// Same reason, higher stakes: a launcher that fell back silently
-		// starts the session on whatever account clauth has live, so the
-		// pin the user chose is spent on somebody else's budget with
-		// nothing on screen saying why.
-		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.Clauth.LauncherWarning)
-	}
-	// The other two halves of the same promise. `[clauth] launch` and
-	// `[clauth] launcher` are one decision (config.Load reconciles them), so
-	// every way that decision can be overridden has to reach the same stderr
-	// the branch-prefix and malformed-launcher warnings do.
-	//
-	// ClauthLaunchWarning is here because it was NOWHERE: #122 set it, unit
-	// tested it at the config layer, and never surfaced it -- an unknown
-	// `launch` value silently became `start`, which is the exact silent
-	// degradation that PR argues against everywhere else. staticcheck cannot
-	// see it, because an exported struct field written and never read is not
-	// unused code.
-	if cfg.ClauthLaunchWarning != "" {
-		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.ClauthLaunchWarning)
-	}
-	if cfg.Clauth.LauncherIgnoredWarning != "" {
-		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", cfg.Clauth.LauncherIgnoredWarning)
+	// Same reason, higher stakes: `[clauth] launch` and `[clauth] launcher`
+	// are one decision (config.Load reconciles them), and every way that
+	// decision can be overridden changes which account a session is billed
+	// to. config.ClauthWarnings is the same list the popup's account panel
+	// reads, which is what keeps a warning added to it from reaching one
+	// surface and not the other.
+	for _, w := range cfg.ClauthWarnings() {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
 	}
 
 	projectDir, err := resolveProjectDir(req, deps)

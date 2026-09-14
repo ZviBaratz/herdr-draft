@@ -308,6 +308,31 @@ type Config struct {
 	Palette map[string]string `toml:"palette"`
 }
 
+// ClauthWarnings is every warning Load wrote about the `[clauth]` table, in
+// the order a reader should meet them, or nil when there are none.
+//
+// It is the ONE list both surfaces read -- `herdr-draft create` prints each on
+// stderr and the popup puts them on the account row's panel -- because the
+// defect it replaces had exactly the shape a list prevents: #122 set
+// ClauthLaunchWarning on a field nothing read, and after that fix the popup
+// still read none of the three while create read all of them (#123). A new
+// [clauth] warning goes in here, and so reaches both. BranchPrefixWarning is
+// not one: it shapes the branch rather than the launch, and lands on a
+// different row.
+//
+// The ignored-launcher warning comes before the malformed-launcher one when
+// both fire: whether a template is used at all is the first thing to know
+// about what is wrong with it, and a panel short of rows keeps its first note.
+func (c Config) ClauthWarnings() []string {
+	var out []string
+	for _, w := range []string{c.ClauthLaunchWarning, c.Clauth.LauncherIgnoredWarning, c.Clauth.LauncherWarning} {
+		if w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
 // defaults returns Config's built-in defaults (spec §12), used for any key
 // a config.toml omits -- including the case where the file itself is
 // missing entirely.
@@ -449,10 +474,14 @@ func Load(configDir string) (Config, error) {
 	// repository file) would be a real improvement and is deliberately
 	// left as its own change, since it belongs to the loader, not to this
 	// key.
-	if verr := validateClauthLauncher(cfg.Clauth.Launcher); verr != "" {
+	//
+	// The launcher the file SET is kept aside before the reset: the wrapper
+	// check below asks about it too.
+	launcher := cfg.Clauth.Launcher
+	if verr := validateClauthLauncher(launcher); verr != "" {
 		def := DefaultClauthLauncher()
 		cfg.Clauth.LauncherWarning = fmt.Sprintf("ignoring [clauth] launcher %v: %s; using %v",
-			cfg.Clauth.Launcher, verr, def)
+			launcher, verr, def)
 		cfg.Clauth.Launcher = def
 	}
 
@@ -467,11 +496,18 @@ func Load(configDir string) (Config, error) {
 	// answers no config_dir (plan.clauthLaunchCommand), and if the rejected
 	// launcher were still in Launcher that fallback would quietly run the very
 	// template the user was just told is ignored.
-	if cfg.Clauth.Launch == ClauthLaunchWrapper && !sameArgv(cfg.Clauth.Launcher, DefaultClauthLauncher()) {
+	//
+	// It asks about the launcher the file SET, not the one validation left
+	// behind. A malformed launcher in wrapper mode is two facts and both are
+	// reported: that it is malformed, and that wrapper mode would not have
+	// used it anyway -- the second being the one that says which key to
+	// delete. Asking the already-reset value found the default, compared it
+	// equal to the default, and reported only the first (#123).
+	if cfg.Clauth.Launch == ClauthLaunchWrapper && !sameArgv(launcher, DefaultClauthLauncher()) {
 		def := DefaultClauthLauncher()
 		cfg.Clauth.LauncherIgnoredWarning = fmt.Sprintf(
 			"ignoring [clauth] launcher %v: [clauth] launch = %q launches claude under an isolated credential directory rather than through an argv template; using %v",
-			cfg.Clauth.Launcher, ClauthLaunchWrapper, def)
+			launcher, ClauthLaunchWrapper, def)
 		cfg.Clauth.Launcher = def
 	}
 	return cfg, nil
