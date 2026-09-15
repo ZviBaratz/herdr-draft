@@ -730,6 +730,22 @@ func TestAssembledForm_ConfigWarnings(t *testing.T) {
 	})
 }
 
+// TestAssembledForm_PickerUnavailable pins a state no frame had: a picker was
+// named in config.toml and failed its probe, so the account row has no auto
+// row and has to say why. The default is pinned because that is the case the
+// reason used to vanish in -- it rode on a verdict keyed on the unpinned "".
+func TestAssembledForm_PickerUnavailable(t *testing.T) {
+	setup := frameSetup(true)
+	setup.PickerUnavailable = pickerProbeReason
+	setup.Config.Clauth.Default = "work"
+
+	m := resolveDirCheck(t, newTestModel(t, setup))
+	m.form.FocusByID("account")
+	m.reactToChanges()
+
+	assertAppFrame(t, "assembled-picker-unavailable-101x30", m, framePopupW, framePopupH)
+}
+
 // --- #90: the screen a blocked first-run trust prompt produces -------------
 
 // TestAssembledSubmit_BlockedStartFrame is the state #90 made routine and
