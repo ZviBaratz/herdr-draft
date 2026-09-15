@@ -6,13 +6,16 @@ version(s) you intend to support, before publishing. It exercises the real
 popup, the real herdr CLI, and (for Path B) a real clauth profile — nothing
 here is mocked.
 
-Ten cells: the original four (Path A/B × worktree on/off), plus three that
-cover what v2 added — the headless `create`, the repo-level
+Twelve cells and a 10b: the original four (Path A/B × worktree on/off), plus
+three that cover what v2 added — the headless `create`, the repo-level
 `.herdr-draft.toml`, and per-project memory — plus two that cover what the
 placement spec added: placement honored under a worktree, and the reuse
 path. The tenth is the one the 0.9.0 floor exists for, a large multi-line
-prompt (#73); it is also the only cell that spends real model quota, so it
-is the one to decide about deliberately rather than by default.
+prompt (#73), and 10b asks the same question from the other side (#108).
+Cell 10 spends real model quota on its payload, so it is the one to decide
+about deliberately rather than by default. The last two cover how a pinned
+account is launched: the account picker with the wrapper launch, and a
+`[clauth] launcher` of your own.
 
 ---
 
@@ -1184,6 +1187,148 @@ that a `pane run` into a pane running a TUI is a submit, not a shell command.
 Send `esc` and confirm the form is gone before running anything into that
 pane.
 
+## What the configurable launcher added
+
+### Cell 12 — a `[clauth] launcher` of your own
+
+**Why this cell exists.** `[clauth] launcher` (#121) is the command line
+herdr-draft *types* into the agent's pane on every pinned launch, and typing is
+where #72 hid: a launch step reporting ok over a shell that had refused the
+command. Cells 3 and 4 exercise the default template. Nothing else here runs
+one of your own.
+
+**Step 1 costs nothing. Step 2 costs one real launch** on the profile you pin;
+it sends no prompt, so the agent never takes a turn.
+
+**Setup:** Route A0's disposable session, and two scratch config directories —
+never your real plugin config. The first holds the launcher under test, with
+**no `launch` key**, because `launch = "wrapper"` ignores `launcher` entirely:
+
+```toml
+[clauth]
+launcher = ["env", "HERDR_DRAFT_SMOKE=launcher", "clauth", "start", "{account}", "--"]
+
+[agents.extra_args]
+claude = ["--model", "<a model id your account can use, with [brackets] in it>"]
+```
+
+The template is chosen so that it needs no wrapper of your own: `env` exists
+everywhere. It still puts words before the account, the account mid-argv, and
+a `NAME=value` element that has to reach `env` as a plain argument once the
+pane's shell has parsed the typed line. The bracketed model id is #72's own
+shape: typed unquoted, the shell globs it and the launch dies.
+
+The second directory holds a launcher that is refused twice over:
+
+```toml
+[clauth]
+launch = "wrapper"
+launcher = ["claude-as"]
+```
+
+1. **Free: the refusals, with nothing launched.** `create` reports its config
+   before it looks for herdr, so with `HERDR_BIN_PATH` pointing nowhere the
+   run stops at exit 3 having said everything this step needs:
+
+   ```bash
+   state="$(mktemp -d)"
+   env -u HERDR_WORKSPACE_ID -u HERDR_TAB_ID -u HERDR_PANE_ID \
+       HERDR_BIN_PATH=/nonexistent/herdr HERDR_PLUGIN_ID=zvibaratz.draft \
+       HERDR_PLUGIN_CONFIG_DIR=<refused-config-dir> HERDR_PLUGIN_STATE_DIR="$state" \
+       ./bin/herdr-draft create --title "launcher smoke" --no-worktree \
+         --placement new-space --account <profile>
+   ls -A "$state"   # must print nothing
+   ```
+
+   **Expected**, both facts about the one launcher, the ignored one first:
+
+   ```
+   herdr-draft create: ignoring [clauth] launcher: [clauth] launch = "wrapper" launches claude under an isolated credential directory rather than through an argv template; using [clauth start {account} --] instead of [claude-as]
+   herdr-draft create: ignoring [clauth] launcher: it contains {account} 0 times, want exactly 1; using [clauth start {account} --] instead of [claude-as]
+   herdr-draft create: herdr unreachable: herdr workspace list: fork/exec /nonexistent/herdr: no such file or directory
+   ```
+
+   The same command against the first directory must print no `ignoring`
+   line at all. And if clauth has at least two profiles, opening the form on
+   the second directory via Route B puts the same two lines on the `account`
+   row's panel.
+
+2. **The real launch**, from a pane of the disposable session, into a
+   directory already trusted under `<profile>` ("Claude Code's trust prompt
+   is a precondition"; this repo's checkout does fine):
+
+   ```bash
+   herdr[S] pane send-text <scratch-pane-id> \
+     'HERDR_PLUGIN_ID=zvibaratz.draft HERDR_PLUGIN_CONFIG_DIR=<launcher-config-dir> \
+      HERDR_PLUGIN_STATE_DIR="$(mktemp -d)" herdr-draft create --title "launcher smoke" \
+      --no-worktree --placement new-space --account <profile> --json'
+   ```
+
+   **Expected:** exit 0 and `"ok": true`, with stderr's launch rows reading
+   `typing the clauth launch` and then `waiting for agent detection`. Neither
+   row is the evidence — the first covers the typing and not the command,
+   which is the whole of #72 — so read the facts off the agent's pane
+   (`.pane_id` from the JSON, not `space_pane_id`):
+
+   - **It ran, under clauth.** `herdr[S] pane list` shows `agent: "claude"`
+     and `tokens.clauth: "<profile>"`, and
+     `herdr[S] pane process-info --pane <pane-id>` shows `clauth` (parent)
+     and `claude` (child). A pane back at a shell prompt is the #72 failure.
+   - **The extra args followed the whole template, and the brackets arrived
+     as data.** The same `process-info` shows `claude` carrying your model id
+     with its brackets intact — not a glob error, and not with quote
+     characters left in it.
+   - **The words before the account ran.** `HERDR_DRAFT_SMOKE=launcher` is in
+     the agent's environment, which a template dropped or mangled on the way
+     into the pane could not have put there:
+
+     ```bash
+     # Linux
+     for f in $(command grep -l HERDR_DRAFT_SMOKE=launcher /proc/[0-9]*/environ 2>/dev/null); do
+       tr '\0' ' ' < "${f%environ}cmdline"; echo; done
+     # macOS
+     ps eww -Ao pid,command | command grep '[H]ERDR_DRAFT_SMOKE=launcher'
+     ```
+
+     Expect `clauth` and `claude` among the matches, plus anything `claude`
+     has started since, which inherits it. `command grep` is not a flourish:
+     a shell function named `grep` made this print nothing on the first run,
+     with the variable present in both processes.
+   - **What was typed.** Not on screen: by the time `create` returns, Claude
+     Code has started and replaced the shell's echo, so `pane read` shows its
+     banner instead. A shell that records history as each command runs has
+     the line, and it should read `env HERDR_DRAFT_SMOKE=launcher clauth start
+     <profile> -- --model '<model id>' …` — the account filled in, the extra
+     args after the whole template, and only the bracketed element quoted.
+
+**Teardown:** close the new workspace (`herdr[S] workspace close`), as Cell
+2; nothing else was created. Delete both scratch directories.
+
+**Passed on herdr 0.9.0 and clauth 0.15.1, 2026-09-15**, with the binary
+built at `4d5fdeb`, through Route A0 — `create` run from the host shell with
+`HERDR_BIN_PATH` at the Route A0 wrapper, rather than typed into one of the
+session's panes. The profile is written as `<profile>`, for the reason Cell
+11 gives.
+
+- Step 1: the three expected lines exactly, exit 3, and an empty state
+  directory; the first directory printed no `ignoring` line. The Route B
+  half — the same lines on the `account` panel — was not run live;
+  `assembled-config-warnings-clauth-101x30` pins it.
+- Step 2: exit 0 and `"ok": true`, with stderr reading
+  `[1/3] creating workspace ... ok`, `[2/3] typing the clauth launch ... ok`,
+  `[3/3] waiting for agent detection ... ok`. `pane list` showed
+  `agent: "claude"`, `agent_status: "idle"` and `tokens.clauth: "<profile>"`.
+  `process-info` showed `clauth start <profile> -- --model claude-opus-5[1m]
+  --effort xhigh` with `claude --model claude-opus-5[1m] --effort xhigh`
+  beneath it: the brackets intact, the extra args after the template.
+  `HERDR_DRAFT_SMOKE` was in the environment of `clauth`, whose parent was the
+  pane's `zsh` (so `env` ran and exec'd into it), and of `claude`.
+- The run corrected two things in this cell before it was recorded: the
+  Linux check now says `command grep`, and the typed line is no longer
+  promised on screen. Shell history had it as
+  `env HERDR_DRAFT_SMOKE=launcher clauth start <profile> -- --model
+  'claude-opus-5[1m]' --effort xhigh`.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:
@@ -1417,3 +1562,12 @@ probe session deleted. The run's own litter in the user's state
 (`last-used.json`, and three paths each in `projects.json`/`recents.json`) was
 reverted by hand afterwards; a smoke pass writes real state, so budget for
 that or accept it.
+
+### herdr 0.9.0 — 2026-09-15
+
+**Cell 12's first run, at `4d5fdeb`** — herdr 0.9.0, clauth 0.15.1, Route A0.
+Both steps passed. The detail, and the two sentences the run corrected in the
+cell, are recorded in Cell 12 itself. Teardown was clean — workspace closed,
+session stopped and deleted, no process left carrying the marker, no orphaned
+`herdr-draft` — and because the state directory was a scratch one, the run
+left nothing in the real plugin state to revert.
