@@ -1284,25 +1284,50 @@ launcher = ["claude-as"]
 
      ```bash
      # Linux
-     for f in $(grep -l HERDR_DRAFT_SMOKE=launcher /proc/[0-9]*/environ 2>/dev/null); do
+     for f in $(command grep -l HERDR_DRAFT_SMOKE=launcher /proc/[0-9]*/environ 2>/dev/null); do
        tr '\0' ' ' < "${f%environ}cmdline"; echo; done
      # macOS
-     ps eww -Ao pid,command | grep '[H]ERDR_DRAFT_SMOKE=launcher'
+     ps eww -Ao pid,command | command grep '[H]ERDR_DRAFT_SMOKE=launcher'
      ```
 
-     Expect a `claude` command line among the matches.
-   - **What was typed.** Straight after the launch, before the agent's own
-     screen has pushed it away, `herdr[S] pane read <pane-id>` shows the
-     shell's echo of the typed line — `env`, `HERDR_DRAFT_SMOKE=launcher`,
-     `clauth start <profile> --`, then the model arguments, in that order —
-     and no `command not found` or `no matches found` after it. If it has
-     already scrolled away, the three checks above carry the same facts.
+     Expect `clauth` and `claude` among the matches, plus anything `claude`
+     has started since, which inherits it. `command grep` is not a flourish:
+     a shell function named `grep` made this print nothing on the first run,
+     with the variable present in both processes.
+   - **What was typed.** Not on screen: by the time `create` returns, Claude
+     Code has started and replaced the shell's echo, so `pane read` shows its
+     banner instead. A shell that records history as each command runs has
+     the line, and it should read `env HERDR_DRAFT_SMOKE=launcher clauth start
+     <profile> -- --model '<model id>' …` — the account filled in, the extra
+     args after the whole template, and only the bracketed element quoted.
 
 **Teardown:** close the new workspace (`herdr[S] workspace close`), as Cell
 2; nothing else was created. Delete both scratch directories.
 
-**Not yet run.** Until it is, `launcher` is the one shipped `[clauth]` key
-this matrix has never launched. Record the run here and in **Recorded runs**.
+**Passed on herdr 0.9.0 and clauth 0.15.1, 2026-09-15**, with the binary
+built at `4d5fdeb`, through Route A0 — `create` run from the host shell with
+`HERDR_BIN_PATH` at the Route A0 wrapper, rather than typed into one of the
+session's panes. The profile is written as `<profile>`, for the reason Cell
+11 gives.
+
+- Step 1: the three expected lines exactly, exit 3, and an empty state
+  directory; the first directory printed no `ignoring` line. The Route B
+  half — the same lines on the `account` panel — was not run live;
+  `assembled-config-warnings-clauth-101x30` pins it.
+- Step 2: exit 0 and `"ok": true`, with stderr reading
+  `[1/3] creating workspace ... ok`, `[2/3] typing the clauth launch ... ok`,
+  `[3/3] waiting for agent detection ... ok`. `pane list` showed
+  `agent: "claude"`, `agent_status: "idle"` and `tokens.clauth: "<profile>"`.
+  `process-info` showed `clauth start <profile> -- --model claude-opus-5[1m]
+  --effort xhigh` with `claude --model claude-opus-5[1m] --effort xhigh`
+  beneath it: the brackets intact, the extra args after the template.
+  `HERDR_DRAFT_SMOKE` was in the environment of `clauth`, whose parent was the
+  pane's `zsh` (so `env` ran and exec'd into it), and of `claude`.
+- The run corrected two things in this cell before it was recorded: the
+  Linux check now says `command grep`, and the typed line is no longer
+  promised on screen. Shell history had it as
+  `env HERDR_DRAFT_SMOKE=launcher clauth start <profile> -- --model
+  'claude-opus-5[1m]' --effort xhigh`.
 
 ## After the matrix
 
@@ -1537,3 +1562,12 @@ probe session deleted. The run's own litter in the user's state
 (`last-used.json`, and three paths each in `projects.json`/`recents.json`) was
 reverted by hand afterwards; a smoke pass writes real state, so budget for
 that or accept it.
+
+### herdr 0.9.0 — 2026-09-15
+
+**Cell 12's first run, at `4d5fdeb`** — herdr 0.9.0, clauth 0.15.1, Route A0.
+Both steps passed. The detail, and the two sentences the run corrected in the
+cell, are recorded in Cell 12 itself. Teardown was clean — workspace closed,
+session stopped and deleted, no process left carrying the marker, no orphaned
+`herdr-draft` — and because the state directory was a scratch one, the run
+left nothing in the real plugin state to revert.
