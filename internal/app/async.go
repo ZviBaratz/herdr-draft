@@ -806,6 +806,10 @@ func previewFrom(res picker.Result, err error) form.AccountPickerPreview {
 		Tier:        res.Tier,
 		FiveHourPct: res.Usage.FiveHour,
 		WeeklyPct:   res.Usage.Weekly,
+		Load1:       res.Machine.Load1,
+		NCPU:        res.Machine.NCPU,
+		SwapUsedPct: res.Machine.SwapUsedPct,
+		Warnings:    res.Warnings,
 	}
 }
 

@@ -1816,6 +1816,22 @@ func TestCreateResolvesAutoThroughThePickerStrictly(t *testing.T) {
 	}
 }
 
+// The picker's warnings go to stderr (#165): `create` has no account panel to
+// draw them on, and a warning nobody sees is a warning not given.
+func TestCreatePrintsThePickersWarnings(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Picker = &fakePicker{res: picker.Result{
+		Profile: "alpha-1", Warnings: []string{"alpha-1 resets in 12m"},
+	}}
+
+	if code := h.run("--title", "fix login", "--account", "auto", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), "alpha-1 resets in 12m") {
+		t.Fatalf("stderr should carry the picker's warning:\n%s", h.stderr)
+	}
+}
+
 // A refusal fails the request BEFORE any worktree or pane exists, with the
 // picker's own reason on stderr, and exits 2 -- this verb's existing contract
 // for a request that cannot be satisfied.

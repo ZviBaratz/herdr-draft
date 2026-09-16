@@ -580,20 +580,24 @@ func accountPicker(cfg config.Config, deps Deps) picker.Source {
 // keyboard: a picker that would have prompted must refuse instead. Not dry-run
 // because this is the real launch, and the protocol's ledger write is what
 // keeps two concurrent creates off one account.
-func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan.Input, error) {
+//
+// The picker's `warnings` come back beside the input, for run() to print:
+// the popup draws them on the account panel, and this verb has no panel
+// (#165).
+func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan.Input, []string, error) {
 	if in.AccountPin != clauthAuto {
-		return in, nil
+		return in, nil, nil
 	}
 	if err := requirePicker(in, src); err != nil {
-		return in, err
+		return in, nil, err
 	}
 	res, err := src.Pick(ctx, in.ProjectDir, picker.Options{Strict: true})
 	if err != nil {
-		return in, err
+		return in, nil, err
 	}
 	in.AccountPin = res.Profile
 	in.AccountConfigDir = res.ConfigDir
-	return in, nil
+	return in, res.Warnings, nil
 }
 
 // requirePicker refuses an `auto` account when there is no picker to resolve

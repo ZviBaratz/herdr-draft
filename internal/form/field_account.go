@@ -162,6 +162,9 @@ const (
 	// accountPanelMaxRows caps PanelRows -- a clauth profile set is small
 	// and the panel should not claim more of the form than it can fill.
 	accountPanelMaxRows = 8
+	// accountMachineLabel leads the panel line carrying the picker's machine
+	// figures (#165).
+	accountMachineLabel = "machine"
 	// accountPanelEmpty speaks in the field's own terms when clauth
 	// reported no profiles at all (v2 spec §6.1's "nothing to choose").
 	accountPanelEmpty = "no clauth profiles"
@@ -298,6 +301,12 @@ type AccountPickerPreview struct {
 	Refusal string
 	// Pending is true while a call is in flight with no answer yet.
 	Pending bool
+	// Load1, NCPU and SwapUsedPct are the picker's view of the host it would
+	// launch on (the protocol's `machine`), each nil when it did not measure
+	// that figure (#165). Pointers for the same reason as FiveHourPct.
+	Load1, NCPU, SwapUsedPct *float64
+	// Warnings is the picker's own `warnings`, one line each.
+	Warnings []string
 }
 
 // SetPickerAvailable records whether an account picker is configured and has
@@ -319,7 +328,17 @@ func (f *AccountField) SetPickerAvailable(available bool) {
 // what the picker will actually answer at submit time is a separate call the
 // app layer makes then (a preview is a --dry-run, which by contract writes no
 // ledger entry and builds no account directory).
+//
+// A pending preview keeps the previous answer's machine figures and warnings:
+// it lasts one picker call, the host has not changed in that time, and lines
+// that blinked out and back on every project change would be noise (#165). A
+// refusal does not keep them, since its reason may be about exactly those
+// figures.
 func (f *AccountField) SetPickerPreview(p AccountPickerPreview) {
+	if p.Pending {
+		p.Load1, p.NCPU, p.SwapUsedPct = f.preview.Load1, f.preview.NCPU, f.preview.SwapUsedPct
+		p.Warnings = f.preview.Warnings
+	}
 	f.preview = p
 	f.refreshItems()
 }
@@ -1183,7 +1202,11 @@ func (f *AccountField) Panel(w, h int) string {
 		lines = append(lines, panelText("", w))
 	}
 	for _, n := range notes {
-		lines = append(lines, noteLine(n, w, f.palette))
+		if n.dim {
+			lines = append(lines, panelText(dimHint(f.palette).Render(keepHead(n.text, panelInner(w))), w))
+			continue
+		}
+		lines = append(lines, noteLine(n.text, w, f.palette))
 	}
 	lines = append(lines, panelStatusLine(f.panelStatus(panelInner(w)), f.filterCount(), w, f.palette))
 	return panelBlock(w, h, lines...)
@@ -1195,18 +1218,73 @@ func (f *AccountField) Panel(w, h int) string {
 // accounts are launched must never be the thing that empties the chooser. An
 // unavailable field draws no list and no notes; its reason is the whole
 // panel, and PanelRows books nothing more.
-func (f *AccountField) notesShown(h int) []string {
+func (f *AccountField) notesShown(h int) []accountNote {
 	if f.unavailable != "" {
 		return nil
 	}
+	notes := f.panelNotes()
 	room := h - 2
-	if room > len(f.notes) {
-		room = len(f.notes)
+	if room > len(notes) {
+		room = len(notes)
 	}
 	if room < 0 {
 		room = 0
 	}
-	return f.notes[:room]
+	return notes[:room]
+}
+
+// accountNote is one line of the panel's notes block: text, and whether it is
+// informational (dim) rather than a warning.
+type accountNote struct {
+	text string
+	dim  bool
+}
+
+// panelNotes is every line the notes block would draw, in the order a short
+// panel gives them up from the back: SetNotes' reports about the config
+// first, since they say an account may launch some other way than configured;
+// then the picker's own warnings; then its machine figures, which only inform
+// (#165).
+func (f *AccountField) panelNotes() []accountNote {
+	notes := make([]accountNote, 0, len(f.notes)+len(f.preview.Warnings)+1)
+	for _, n := range f.notes {
+		notes = append(notes, accountNote{text: n})
+	}
+	for _, w := range f.preview.Warnings {
+		notes = append(notes, accountNote{text: w})
+	}
+	if line := machineLine(f.preview); line != "" {
+		notes = append(notes, accountNote{text: line, dim: true})
+	}
+	return notes
+}
+
+// machineLine renders the picker's machine figures -- `machine  load 4.4 on 8
+// cpus · swap 32%` -- or "" when it reported none of them. A figure it did not
+// measure says so rather than reading as zero: the protocol allows null for
+// every field, and "swap 0%" about a box nobody measured is a false
+// reassurance.
+func machineLine(p AccountPickerPreview) string {
+	if p.Load1 == nil && p.NCPU == nil && p.SwapUsedPct == nil {
+		return ""
+	}
+	load := "load unmeasured"
+	if p.Load1 != nil {
+		load = "load " + strconv.FormatFloat(*p.Load1, 'f', 1, 64)
+		if p.NCPU != nil {
+			n := int(math.Round(*p.NCPU))
+			unit := "cpus"
+			if n == 1 {
+				unit = "cpu"
+			}
+			load += " on " + strconv.Itoa(n) + " " + unit
+		}
+	}
+	swap := "swap unmeasured"
+	if p.SwapUsedPct != nil {
+		swap = "swap " + accountPercent(*p.SwapUsedPct)
+	}
+	return accountMachineLabel + "  " + load + " · " + swap
 }
 
 // filterCount is v3 spec §8.5's readout for this field. Nothing filters
@@ -1291,7 +1369,7 @@ func (f *AccountField) PanelRows() int {
 	if f.unavailable != "" {
 		return 1
 	}
-	rows := 2 + len(f.profiles) + len(f.notes)
+	rows := 2 + len(f.profiles) + len(f.panelNotes())
 	if f.pickerAvailable {
 		rows++
 	}

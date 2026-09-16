@@ -282,9 +282,12 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	// request nothing is left to refuse. The picker's own refusal is still
 	// before anything is created -- the whole of the contract the spec
 	// states for its exit 2/3/4.
-	in, err := resolveAccount(ctx, resolved.input, accountPicker(resolved.tiers.cfg, deps))
+	in, warnings, err := resolveAccount(ctx, resolved.input, accountPicker(resolved.tiers.cfg, deps))
 	if err != nil {
 		return usageError(deps.stderr(), err)
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: account picker: %s\n", w)
 	}
 	resolved.input = in
 
