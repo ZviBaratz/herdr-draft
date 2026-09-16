@@ -173,10 +173,10 @@ with no user action — so the worktree row's base picker offers remote
 branches that arrived since you last fetched. **That contacts the
 repository's default remote** — the current branch's upstream, otherwise
 `origin` — with whatever credentials git would normally use, including a
-`core.sshCommand` or `GIT_SSH` of your own. It runs with terminal prompts and ssh interaction disabled
-and under a 30-second deadline, so a remote that wants a password fails
-instead of prompting on top of the form, and one that never answers cannot
-hang the popup.
+`core.sshCommand` or `GIT_SSH` of your own. It runs with terminal prompts
+and ssh interaction disabled and under a 30-second deadline, so a remote
+that wants a password fails instead of prompting on top of the form, and
+one that never answers cannot hang the popup.
 
 ## Requirements
 
