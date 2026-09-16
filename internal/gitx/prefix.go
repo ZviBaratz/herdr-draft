@@ -38,11 +38,12 @@ const forbiddenRefRunes = " ~^:?*[\\"
 //     leading dash in a refname, and herdr's own parser is not the hazard
 //     either -- it takes the next argv element as --branch's value whatever
 //     that value starts with (herdr:src/cli/worktree.rs at v0.9.0). The
-//     hazard is what herdr then builds out of it: `git worktree add -b
-//     <branch> <path> <base>`, with no `--` terminator
-//     (herdr:src/worktree.rs:238-256 at v0.9.0), so the value reaches
-//     *git's* option parser as an option. That is the argument-injection
-//     surface; the git rules below only bound the rest.
+//     hazard is what herdr builds next, `git worktree add -b <branch> <path>
+//     <base>` (herdr:src/worktree.rs:238-256 at v0.9.0): worktree add
+//     accepts the value as -b's argument, then hands it on to a `git branch`
+//     child that reads it as an option (measured on git 2.53.0). A `--`
+//     would not help; the child parses its own argv. That is the
+//     argument-injection surface; the git rules below only bound the rest.
 //   - Rule 4: no ASCII control character (NUL included), space, "~", "^"
 //     or ":" anywhere. Widened slightly: any Unicode control character
 //     (category Cc, so DEL and the C1 block too), not just the C0 range
@@ -94,7 +95,7 @@ func ValidateBranchPrefix(prefix string) error {
 	}
 
 	if strings.HasPrefix(prefix, "-") {
-		return errors.New(`starts with "-", which the herdr CLI reads as a flag rather than a branch name`)
+		return errors.New(`starts with "-", which git would read as an option rather than a branch name`)
 	}
 
 	for _, r := range prefix {

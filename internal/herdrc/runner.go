@@ -449,12 +449,17 @@ var errRefused = errors.New("refusing to run herdr")
 // The hazard is not herdr's own parsing. Its hand-rolled parsers take the
 // next argv element as a flag's value whatever that value starts with
 // (herdr:src/cli/worktree.rs at v0.9.0, `let Some(value) = args.get(index +
-// 1)`). The hazard is what herdr builds out of those values: `git worktree
-// add -b <branch> <path> <base>` with no `--` terminator
+// 1)`). The hazard is the git command herdr builds from two of them,
+// `git worktree add -b <branch> <path> <base>`
 // (https://github.com/herdrdev/herdr/blob/v0.9.0/src/worktree.rs#L238-L256),
-// so a "-"-leading --branch or --base arrives at *git's* option parser as
-// an option. That is the argument-injection surface this closes, and those
-// two flags are why it is kept.
+// which a "-"-leading value reaches by one of two routes, measured on git
+// 2.53.0. --base lands as a positional with no `--` before it, so `git
+// worktree add` itself reads it as an option. --branch is safe from that
+// parser as -b's argument, but is handed on to a `git branch` child that
+// reads it as an option -- a route no `--` would close. Those two flags are
+// why the refusal is kept; for every other flag it is the same pathological
+// shape refused at the same funnel, which is why the error text names no
+// particular parser.
 //
 // Every `--flag`/value pair CLIRunner builds goes through this one helper
 // rather than through a guard at each call site, so a subcommand wired up
@@ -465,13 +470,13 @@ var errRefused = errors.New("refusing to run herdr")
 // cannot begin with "-".)
 //
 // Refused rather than escaped, because nothing spelled on this side
-// reaches the parser that matters. The value is re-emitted by herdr into a
-// git command line this process never sees, so neither of the two
-// disarming spellings helps -- and both were checked rather than assumed.
-// `--flag=value` is not accepted at all: `herdr tab list --workspace=wG`
-// answers `unknown option: --workspace=wG`. A `--` end-of-flags terminator
-// would be swallowed: every creation command here appends
-// --focus/--no-focus after these values. Refusal is what is left, and it
+// reaches the parser that matters: the value is re-emitted by herdr into a
+// git command line this process never sees. Neither disarming spelling is
+// available to try anyway. `--flag=value` is not accepted: `herdr tab list
+// --workspace=wG` answers `unknown option: --workspace=wG`. Nor is a `--`
+// end-of-flags terminator: herdr's parsers have no arm for it and reject it
+// the same way (herdr:src/cli/worktree.rs at v0.9.0, the `other =>` arms).
+// Refusal is what is left, and it
 // is defensible on its own terms: a ref, path or label
 // beginning with "-" is pathological. gitx.ValidateBranchPrefix rejects
 // the same shape one layer up, for the same reason -- this closes it for
@@ -501,7 +506,7 @@ func appendFlag(args []string, flag, value string) ([]string, error) {
 		// Returns nil, not args: a caller that ignored the error would
 		// then run herdr with no arguments at all rather than silently
 		// with the flag dropped.
-		return nil, fmt.Errorf(`%w: %s value %q begins with "-", which git would read as an option`, errRefused, flag, value)
+		return nil, fmt.Errorf(`%w: %s value %q begins with "-", which would be read as an option`, errRefused, flag, value)
 	}
 	return append(args, flag, value), nil
 }

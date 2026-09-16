@@ -847,10 +847,12 @@ func assertNeverExecuted(t *testing.T, argvLog string) {
 
 // TestCLIRunnerRefusesFlagValueReadAsAnotherFlag covers every `--flag
 // value` pair CLIRunner builds from a variable, one row each: a value
-// beginning with "-" must be refused before anything is executed, because
-// herdr re-emits it into a `git worktree add` built with no `--`
-// terminator, where git reads it as an option -- see appendFlag for the
-// herdr v0.9.0 sources and for why no spelling on this side disarms it.
+// beginning with "-" must be refused before anything is executed. For
+// --branch and --base the reason is concrete: herdr hands both to `git
+// worktree add`, where each reaches a git option parser by its own route
+// (see appendFlag, with the herdr v0.9.0 sources). For the other rows it is
+// the same pathological shape refused at the same funnel, so a flag wired
+// up later cannot reopen the hole by being left out.
 //
 // Not in the table, for lack of a way to reach them: AgentPrompt's
 // --timeout (its `WaitTimeout > 0` guard already excludes every value that

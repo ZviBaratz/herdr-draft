@@ -525,9 +525,9 @@ herdr plugin config-dir zvibaratz.draft
   in manual mode. It must be usable as the leading part of a git ref
   (`git check-ref-format`'s rules, minus the ones a prefix is exempt from:
   a trailing `/` is fine, and an explicit empty value means "no prefix"),
-  and it may not start with `-`, which would reach *git's* own option
-  parser: herdr builds `git worktree add -b <branch> <path> <base>` with no
-  `--` terminator.
+  and it may not start with `-`: herdr passes the branch to `git worktree
+  add -b`, which accepts it but hands it on to a `git branch` child that
+  reads it as an option.
   An unusable value is ignored and the default takes over; it never stops
   herdr-draft from opening. The popup shows the reason on the `worktree`
   row's panel, and `herdr-draft create` prints it on stderr — except in a

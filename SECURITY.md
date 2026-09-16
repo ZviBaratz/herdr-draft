@@ -32,9 +32,12 @@ same way.
   (`internal/linear/client.go`).
 - `[clauth] picker` is an executable implementing the [account picker
   protocol](README.md#account-picker-protocol), and it runs more often than
-  the other two: once as a probe at startup, again on every project change
-  while the `account` row is on `auto`, and once more at submit — plus once
-  per `herdr-draft create --account auto`. It is argv with no shell either,
+  the other two. Opening the popup runs it twice — a probe, then a
+  `--dry-run` preview for the opening project — and every project change
+  runs another preview, whether or not the `account` row is on `auto`.
+  Submitting runs it once more, for real, when the row *is* on `auto`; and
+  `herdr-draft create --account auto` runs it once. It is argv with no shell
+  either,
   and every call is bounded by a 30-second deadline. herdr-draft never goes
   looking for a picker, so one that merely happens to sit on your `PATH`
   under the expected name is not run: it does nothing unless this key names
@@ -71,12 +74,20 @@ silently run a command with different meaning. What that refusal protects
 is **git**, not herdr. herdr's own parsers take the next argv element as a
 flag's value whatever it starts with
 ([`src/cli/worktree.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/worktree.rs#L104-L119)),
-so a leading `-` is no danger there — but herdr then builds `git worktree
-add -b <branch> <path> <base>` with **no `--` terminator**
+so a leading `-` is no danger there. The danger is the command herdr builds
+from those two values, `git worktree add -b <branch> <path> <base>`
 ([`src/worktree.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/worktree.rs#L238-L256)),
-so a `-`-leading `--branch` or `--base` arrives at git's own option parser
-as an option. That is the argument-injection surface, and those two flags
-are why the refusal is kept. It is also why `branch_prefix` is validated
+which a `-`-leading value reaches by one of two routes (measured on git
+2.53.0):
+
+- `<base>` is a positional with **no `--` terminator** before it, so
+  `git worktree add` itself reads a `-`-leading base as an option.
+- `<branch>` is safe from that parser as `-b`'s argument, but `git worktree
+  add` hands it on to a `git branch` child, which reads it as an option. A
+  `--` would not close this route.
+
+That is the argument-injection surface, and `--base` and `--branch` are why
+the refusal is kept. It is also why `branch_prefix` is validated
 wherever it comes from — it reaches `herdr worktree create --branch
 <value>` as argv.
 
