@@ -456,6 +456,160 @@ func TestRepoRootFallback(t *testing.T) {
 // ssh must fail rather than ask for a passphrase, and neither may cost the
 // caller the rest of its environment -- cmd.Env = nil means "inherit", so
 // the helper has to build on the base it is given rather than replace it.
+// isolateGitConfig points git's global and system config at /dev/null for
+// the duration of a test, so a developer's own config (an insteadOf
+// rewrite, a credential helper, a core.sshCommand of their own) cannot
+// change the result. runGit builds its environment from the process's, so
+// the process environment is where this has to go.
+func isolateGitConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	for _, key := range []string{"GIT_SSH_COMMAND", "GIT_SSH", "GIT_ASKPASS", "SSH_ASKPASS"} {
+		// t.Setenv registers the restore; os.Unsetenv then makes it
+		// genuinely absent rather than present-but-empty, which git
+		// treats as a set value for some of these.
+		if v, ok := os.LookupEnv(key); ok {
+			t.Setenv(key, v)
+			os.Unsetenv(key)
+		}
+	}
+}
+
+// sshStub writes an executable that appends its own argv to a log file and
+// then fails, and returns its path and that log's. It stands in for ssh so
+// a test can see WHICH ssh git chose and WHAT options it was handed,
+// without a network or a key anywhere.
+func sshStub(t *testing.T, dir string) (stub, log string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	stub = filepath.Join(dir, "ssh-stub")
+	log = filepath.Join(dir, "argv.log")
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		`printf '%s\n' "$*" >> ` + shellQuote(log),
+		"exit 1",
+		"",
+	}, "\n")
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatalf("write ssh stub: %v", err)
+	}
+	return stub, log
+}
+
+// sshRepo builds a throwaway repo whose only remote is an ssh URL, so any
+// fetch has to pick an ssh command to run. The host is .invalid (RFC 2606)
+// and never resolved -- the stub replaces ssh before that could matter.
+func sshRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	gitRun(t, repo, "remote", "add", "origin", "ssh://git@example.invalid/x.git")
+	return repo
+}
+
+// TestFetchPruneUsesTheConfiguredSSHCommand is the regression pin for the
+// review's finding 1. git picks its ssh in a three-step order --
+// GIT_SSH_COMMAND, then GIT_SSH, then core.sshCommand -- and setting
+// GIT_SSH_COMMAND unconditionally outranks and silently discards the other
+// two. A user with a per-repo `core.sshCommand = ssh -i ~/.ssh/work_key`
+// would have had the popup's fetch fall back to the default key and fail,
+// silently, because the fetch is best-effort.
+//
+// Each case asserts BOTH halves: the user's own command still ran (the
+// stub logged something), and it ran non-interactively (BatchMode=yes
+// reached it).
+func TestFetchPruneUsesTheConfiguredSSHCommand(t *testing.T) {
+	check := func(t *testing.T, log string) {
+		t.Helper()
+		body, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatalf("the configured ssh command was never run -- git fell back to a plain ssh, discarding the user's own: %v", err)
+		}
+		if !strings.Contains(string(body), "BatchMode=yes") {
+			t.Errorf("the configured ssh command ran without BatchMode=yes; argv log:\n%s", body)
+		}
+	}
+
+	t.Run("core.sshCommand", func(t *testing.T) {
+		isolateGitConfig(t)
+		stub, log := sshStub(t, filepath.Join(t.TempDir(), "stubs"))
+		repo := sshRepo(t)
+		gitRun(t, repo, "config", "core.sshCommand", stub)
+
+		if err := FetchPrune(context.Background(), repo); err == nil {
+			t.Fatalf("FetchPrune with a failing ssh stub = nil error, want the stub's failure")
+		}
+		check(t, log)
+	})
+
+	t.Run("GIT_SSH, whose path is not shell-parsed by git and so must be quoted", func(t *testing.T) {
+		isolateGitConfig(t)
+		// A space in the directory name is the point: git treats GIT_SSH
+		// as a bare program path and never splits it, while the
+		// GIT_SSH_COMMAND this folds it into IS shell-parsed.
+		stub, log := sshStub(t, filepath.Join(t.TempDir(), "ssh stubs"))
+		t.Setenv("GIT_SSH", stub)
+		repo := sshRepo(t)
+
+		if err := FetchPrune(context.Background(), repo); err == nil {
+			t.Fatalf("FetchPrune with a failing ssh stub = nil error, want the stub's failure")
+		}
+		check(t, log)
+	})
+
+	t.Run("GIT_SSH_COMMAND still wins over both", func(t *testing.T) {
+		isolateGitConfig(t)
+		winner, winnerLog := sshStub(t, filepath.Join(t.TempDir(), "winner"))
+		loser, loserLog := sshStub(t, filepath.Join(t.TempDir(), "loser"))
+		t.Setenv("GIT_SSH_COMMAND", winner)
+		t.Setenv("GIT_SSH", loser)
+		repo := sshRepo(t)
+		gitRun(t, repo, "config", "core.sshCommand", loser)
+
+		if err := FetchPrune(context.Background(), repo); err == nil {
+			t.Fatalf("FetchPrune with a failing ssh stub = nil error, want the stub's failure")
+		}
+		check(t, winnerLog)
+		if _, err := os.Stat(loserLog); err == nil {
+			t.Errorf("the lower-precedence ssh command ran; GIT_SSH_COMMAND must win, as it does for git itself")
+		}
+	})
+}
+
+// TestRunGitAppliesTheNonInteractiveEnv pins the one line that actually
+// fixes S4 -- runGit assigning the environment. The helper's own unit test
+// cannot see that line, so without this the wiring could be deleted with
+// the whole suite still green (the review's finding 3, found by deleting
+// it).
+//
+// No pty is needed to tell wired from unwired: with the environment
+// applied git reports `terminal prompts disabled`, and without it git
+// reaches for /dev/tty and reports something else entirely.
+func TestRunGitAppliesTheNonInteractiveEnv(t *testing.T) {
+	isolateGitConfig(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	gitRun(t, repo, "remote", "add", "origin", srv.URL+"/repo.git")
+
+	err := FetchPrune(context.Background(), repo)
+	if err == nil {
+		t.Fatalf("FetchPrune against a server demanding credentials = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "terminal prompts disabled") {
+		t.Errorf("FetchPrune error = %v,\nwant it to carry git's `terminal prompts disabled` -- without that, git went looking for a terminal to ask on, which inside the popup is the pty the form is drawn on", err)
+	}
+}
+
 func TestNonInteractiveEnv(t *testing.T) {
 	get := func(env []string, key string) (string, int) {
 		var val string
@@ -468,54 +622,104 @@ func TestNonInteractiveEnv(t *testing.T) {
 		return val, n
 	}
 
-	t.Run("prompts disabled and ssh in batch mode", func(t *testing.T) {
-		env := nonInteractiveEnv([]string{"PATH=/usr/bin"})
+	t.Run("prompts disabled and the given ssh put in batch mode", func(t *testing.T) {
+		env := nonInteractiveEnv([]string{"PATH=/usr/bin"}, "my-ssh -v")
 
 		if v, n := get(env, "GIT_TERMINAL_PROMPT"); v != "0" || n != 1 {
 			t.Errorf("GIT_TERMINAL_PROMPT = %q (%d entries), want exactly one %q", v, n, "0")
 		}
 		v, n := get(env, "GIT_SSH_COMMAND")
 		if n != 1 {
-			t.Fatalf("GIT_SSH_COMMAND appears %d times, want exactly one", n)
+			t.Fatalf("GIT_SSH_COMMAND appears %d times, want exactly one (a duplicate leaves which one wins up to exec)", n)
+		}
+		if !strings.Contains(v, "my-ssh -v") {
+			t.Errorf("GIT_SSH_COMMAND = %q, want the resolved command %q kept", v, "my-ssh -v")
 		}
 		if !strings.Contains(v, "BatchMode=yes") {
-			t.Errorf("GIT_SSH_COMMAND = %q, want it to carry BatchMode=yes", v)
-		}
-		if !strings.Contains(v, "ssh") {
-			t.Errorf("GIT_SSH_COMMAND = %q, want it to still invoke ssh", v)
+			t.Errorf("GIT_SSH_COMMAND = %q, want BatchMode=yes appended", v)
 		}
 		if got, _ := get(env, "PATH"); got != "/usr/bin" {
 			t.Errorf("PATH = %q, want the base environment's %q to survive", got, "/usr/bin")
 		}
 	})
 
-	t.Run("a user-set GIT_SSH_COMMAND is preserved", func(t *testing.T) {
-		env := nonInteractiveEnv([]string{"PATH=/usr/bin", "GIT_SSH_COMMAND=my-ssh -v"})
+	t.Run("no resolved command falls back to plain ssh", func(t *testing.T) {
+		env := nonInteractiveEnv([]string{"PATH=/usr/bin"}, "")
+		v, _ := get(env, "GIT_SSH_COMMAND")
+		if v != "ssh -oBatchMode=yes" {
+			t.Errorf("GIT_SSH_COMMAND = %q, want %q", v, "ssh -oBatchMode=yes")
+		}
+	})
 
-		v, n := get(env, "GIT_SSH_COMMAND")
-		if n != 1 {
-			t.Fatalf("GIT_SSH_COMMAND appears %d times, want exactly one (a duplicate leaves which one wins up to exec)", n)
+	t.Run("a stale GIT_SSH_COMMAND in the base does not survive alongside", func(t *testing.T) {
+		env := nonInteractiveEnv([]string{"GIT_SSH_COMMAND=ignored", "GIT_TERMINAL_PROMPT=1"}, "chosen")
+		if v, n := get(env, "GIT_SSH_COMMAND"); n != 1 || !strings.HasPrefix(v, "chosen") {
+			t.Errorf("GIT_SSH_COMMAND = %q (%d entries), want exactly one built from the resolved command", v, n)
 		}
-		if !strings.Contains(v, "my-ssh -v") {
-			t.Errorf("GIT_SSH_COMMAND = %q, want the user's own %q kept -- silently replacing an ssh wrapper is a worse bug than the prompt this prevents", v, "my-ssh -v")
-		}
-		if !strings.Contains(v, "BatchMode=yes") {
-			t.Errorf("GIT_SSH_COMMAND = %q, want BatchMode=yes appended to the user's value", v)
+		if v, n := get(env, "GIT_TERMINAL_PROMPT"); n != 1 || v != "0" {
+			t.Errorf("GIT_TERMINAL_PROMPT = %q (%d entries), want exactly one %q", v, n, "0")
 		}
 	})
 }
 
-// TestFetchPruneHonoursContext is a regression pin for runGit's WaitDelay,
-// not a failing-first test: runGit already used exec.CommandContext, so a
-// cancelled context already killed git itself. What it guards is the half
-// that kill does not cover -- stdout/stderr are bytes.Buffers, so exec
-// pipes them and cmd.Wait blocks on its copier goroutines until every
-// writer closes, and a surviving grandchild (an ssh holding the write end)
-// can keep Wait blocked long past the kill.
+// TestEffectiveSSHCommand pins git's own three-step order for choosing an
+// ssh command. Getting this wrong is not a cosmetic bug: whatever comes
+// back here is what gets written into GIT_SSH_COMMAND, which outranks
+// everything below it, so a wrong answer does not merely fail to honour a
+// user's setting -- it overrides it.
+func TestEffectiveSSHCommand(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("GIT_SSH_COMMAND is used as-is", func(t *testing.T) {
+		got := effectiveSSHCommand(ctx, []string{"GIT_SSH_COMMAND=ssh -i /k/one"}, "")
+		if got != "ssh -i /k/one" {
+			t.Errorf("effectiveSSHCommand = %q, want the environment's own value unchanged (git shell-parses it, so it must not be re-quoted)", got)
+		}
+	})
+
+	t.Run("GIT_SSH outranks config and is quoted", func(t *testing.T) {
+		got := effectiveSSHCommand(ctx, []string{"GIT_SSH=/opt/my ssh/bin/ssh"}, "")
+		if got != `'/opt/my ssh/bin/ssh'` {
+			t.Errorf("effectiveSSHCommand = %q, want the path quoted -- git never splits GIT_SSH, but it does shell-parse the GIT_SSH_COMMAND this becomes", got)
+		}
+	})
+
+	t.Run("core.sshCommand when neither variable is set", func(t *testing.T) {
+		isolateGitConfig(t)
+		repo := mkRepo(t)
+		gitRun(t, repo, "config", "core.sshCommand", "ssh -i /k/from-config")
+
+		if got := effectiveSSHCommand(ctx, os.Environ(), repo); got != "ssh -i /k/from-config" {
+			t.Errorf("effectiveSSHCommand = %q, want the repository's core.sshCommand", got)
+		}
+	})
+
+	t.Run("plain ssh when nothing is configured", func(t *testing.T) {
+		isolateGitConfig(t)
+		repo := mkRepo(t)
+
+		if got := effectiveSSHCommand(ctx, os.Environ(), repo); got != "ssh" {
+			t.Errorf("effectiveSSHCommand = %q, want %q", got, "ssh")
+		}
+	})
+}
+
+// TestFetchPruneHonoursContext pins runGit's WaitDelay, and it is a
+// failing-first test rather than the regression pin it was first written
+// as. exec.CommandContext killing git was expected to be enough; measured,
+// it is not. Without WaitDelay this does not merely return late, it never
+// returns at all (15s, the test's own escape hatch) -- stdout/stderr are
+// bytes.Buffers, so exec pipes them and cmd.Wait blocks on its copier
+// goroutines until every writer closes, and git-remote-http outlives the
+// kill still holding the write end.
 //
 // The server accepts the connection and never answers, which is the shape
 // that hangs: a refused connection fails fast on its own and would pin
 // nothing.
+//
+// What this does NOT pin, because exec cannot do it: killing git does not
+// kill git's own children. That helper is orphaned, not reaped -- see
+// runGit.
 func TestFetchPruneHonoursContext(t *testing.T) {
 	// A developer's own global git config must not be able to change this
 	// (an insteadOf rewrite, a credential helper, a proxy); runGit builds

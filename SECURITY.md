@@ -101,8 +101,10 @@ code 3.
   you have configured a key. It does, separately, make **git** talk to the
   network on your behalf: opening the form on a git repository fires a
   background `git fetch --prune` there — once per repository per form open,
-  with no user action — which contacts that repository's configured remotes
-  with whatever credentials git would use, and prunes remote-tracking refs.
+  with no user action — which contacts that repository's default remote (the
+  current branch's upstream, otherwise `origin`; all of them if `fetch.all`
+  is set) with whatever credentials git would use, and prunes
+  remote-tracking refs.
   That fetch runs with terminal prompts and ssh interaction disabled
   (`GIT_TERMINAL_PROMPT=0`, `ssh -oBatchMode=yes`) and under a 30-second
   deadline, so it can neither prompt for credentials on the popup's own
