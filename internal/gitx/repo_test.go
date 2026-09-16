@@ -450,12 +450,6 @@ func TestRepoRootFallback(t *testing.T) {
 	})
 }
 
-// TestNonInteractiveEnv pins the three properties the popup depends on:
-// git must never be able to prompt (it writes `Username for '…':` to
-// /dev/tty, which is the popup's own pty, not to the stdin exec gave it),
-// ssh must fail rather than ask for a passphrase, and neither may cost the
-// caller the rest of its environment -- cmd.Env = nil means "inherit", so
-// the helper has to build on the base it is given rather than replace it.
 // isolateGitConfig points git's global and system config at /dev/null for
 // the duration of a test, so a developer's own config (an insteadOf
 // rewrite, a credential helper, a core.sshCommand of their own) cannot
@@ -610,6 +604,14 @@ func TestRunGitAppliesTheNonInteractiveEnv(t *testing.T) {
 	}
 }
 
+// TestNonInteractiveEnv pins what the helper does with a command it has
+// already been handed: git must never be able to prompt (it writes
+// `Username for '…':` to /dev/tty, which is the popup's own pty, not to
+// the stdin exec gave it), that command must end up in batch mode, and
+// none of it may cost the caller the rest of its environment -- cmd.Env =
+// nil means "inherit", so the helper has to build on the base it is given
+// rather than replace it. WHICH command that is, is resolved a step
+// earlier and pinned by TestEffectiveSSHCommand.
 func TestNonInteractiveEnv(t *testing.T) {
 	get := func(env []string, key string) (string, int) {
 		var val string
