@@ -100,6 +100,36 @@ tab-here and split-here need herdr's own pane environment
 every pane, worktree or not. Only a new space needs none of it.
 `
 
+// registerFlags builds create's flag set, binding every flag to the
+// caller's own storage. Split out of parseArgs so that the set of flags
+// this command accepts is a value a test can ENUMERATE rather than a list
+// it restates: `fs.VisitAll` over this is the real answer to "what does
+// create accept", where createUsage's prose and create_test.go's flagNames
+// were each a hand-maintained copy a new flag could be added without.
+//
+// That gap used to be recorded as deliberate beside flagNames, on the
+// grounds that splitting the construction out for a test's benefit was not
+// worth it. What changed is what depends on the answer: the spawn skill's
+// document is held to this set from another package
+// (spawnskill_contract_test.go), and a flag the document never names is a
+// flag an agent never uses -- so "what does create accept" stopped being a
+// question only this package asks itself.
+func registerFlags(fs *flag.FlagSet, req *request, worktreeOn, worktreeOff *bool) {
+	fs.StringVar(&req.project, "project", "", "")
+	fs.StringVar(&req.title, "title", "", "")
+	fs.StringVar(&req.prompt, "prompt", "", "")
+	fs.StringVar(&req.branch, "branch", "", "")
+	fs.StringVar(&req.base, "base", "", "")
+	fs.BoolVar(worktreeOn, "worktree", false, "")
+	fs.BoolVar(worktreeOff, "no-worktree", false, "")
+	fs.StringVar(&req.placement, "placement", "", "")
+	fs.StringVar(&req.agent, "agent", "", "")
+	fs.StringVar(&req.account, "account", "", "")
+	fs.StringVar(&req.issue, "issue", "", "")
+	fs.BoolVar(&req.json, "json", false, "")
+	fs.StringVar(&req.onFailure, "on-failure", onFailureKeep, "")
+}
+
 // parseArgs parses the arguments following the `create` verb. Its output
 // writer is discarded and its Usage suppressed: this package prints both
 // the error and the usage itself (see Run), so the flag package's own
@@ -112,19 +142,7 @@ func parseArgs(args []string) (request, error) {
 	var req request
 	var worktreeOn, worktreeOff bool
 
-	fs.StringVar(&req.project, "project", "", "")
-	fs.StringVar(&req.title, "title", "", "")
-	fs.StringVar(&req.prompt, "prompt", "", "")
-	fs.StringVar(&req.branch, "branch", "", "")
-	fs.StringVar(&req.base, "base", "", "")
-	fs.BoolVar(&worktreeOn, "worktree", false, "")
-	fs.BoolVar(&worktreeOff, "no-worktree", false, "")
-	fs.StringVar(&req.placement, "placement", "", "")
-	fs.StringVar(&req.agent, "agent", "", "")
-	fs.StringVar(&req.account, "account", "", "")
-	fs.StringVar(&req.issue, "issue", "", "")
-	fs.BoolVar(&req.json, "json", false, "")
-	fs.StringVar(&req.onFailure, "on-failure", onFailureKeep, "")
+	registerFlags(fs, &req, &worktreeOn, &worktreeOff)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
