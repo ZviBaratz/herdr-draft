@@ -264,7 +264,7 @@ immediately, without restarting anything.
 **`link` does not build, and that is the one thing to remember about it.**
 herdr runs `[[build]]` from `install` only —
 [`run_plugin_build_commands` has a single call site, inside
-`plugin_install`](https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/plugin.rs#L210).
+`plugin_install`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/plugin.rs#L210).
 Linking a tree with no `bin/herdr-draft` in it registers an action that
 launches nothing, which is why the command above builds first.
 

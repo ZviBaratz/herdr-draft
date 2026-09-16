@@ -101,19 +101,25 @@ finding. **Read them before changing the code they sit on** — they usually
 record a non-obvious constraint rather than restating the code.
 
 Citations into herdr's own source name a pinned ref, never a local path.
-The current pin is the **`v0.9.0`** tag
-(`b99002ac99b09e00b4ca692436cb15a6b0d676f1`), the herdr release this
-plugin's floor names: `herdr:src/cli.rs at v0.9.0` for a passing
-reference, or a full `https://github.com/herdrdev/herdr/blob/v0.9.0/...#L123`
-URL where a reader will want to go look. Citations anchored to
+Two spellings: `herdr:src/cli.rs at <pin>` for a passing reference, or a
+full `https://github.com/herdrdev/herdr/blob/<pin>/...#L123` URL where a
+reader will want to go look. The pin is always the herdr release this
+plugin's floor names (`min_herdr_version` in `herdr-plugin.toml`), so it
+moves when the floor does. Citations anchored to the first pin,
 `b1ff4582e9688f52ffb943cfa8bee4871ae122e4` (`herdr:src/cli.rs` with no ref,
-or `blob/b1ff4582/`) are **legacy**: that commit was the first pin, it is
-59 commits behind `v0.9.0`, and it differs in the prompt-wait semantics
-several comments depend on — so a legacy citation is still a valid
-statement about *that* commit, not necessarily about the herdr this plugin
-runs against. Migrate one to `v0.9.0`, re-reading the cited lines at the
-new ref, when you touch the code around it; do not write a new one. A
-citation that resolves only on one machine is not a citation.
+or `blob/b1ff4582/`), are **legacy**: that commit differs from the current
+pin in the prompt-wait semantics several comments depend on — so a legacy
+citation is still a valid statement about *that* commit, not necessarily
+about the herdr this plugin runs against. Migrate one to the current pin,
+re-reading the cited lines at the new ref, when you touch the code around
+it; do not write a new one. A citation that resolves only on one machine is
+not a citation.
+
+**The current pin is the `v0.9.0` tag**
+(`b99002ac99b09e00b4ca692436cb15a6b0d676f1`), 59 commits ahead of
+`b1ff4582`. This paragraph is the only place the pin is written down —
+`CLAUDE.md` states the same rule and points here — so bumping the floor
+means editing this paragraph and nothing else about the convention.
 
 ## Commits and pull requests
 
