@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // IsGitRepo reports whether dir is inside a git working tree. It never
@@ -30,6 +32,13 @@ func IsGitRepo(dir string) bool {
 func runGit(ctx context.Context, repoDir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoDir
+	cmd.Env = nonInteractiveEnv(os.Environ())
+	// exec.CommandContext kills git when ctx is done, but stdout/stderr
+	// are bytes.Buffers, so exec pipes them and cmd.Wait blocks on its
+	// copier goroutines until every writer closes -- a grandchild that
+	// outlives the kill (an ssh holding the write end) keeps Wait blocked
+	// with it. WaitDelay is what makes the kill actually return.
+	cmd.WaitDelay = 2 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -37,6 +46,51 @@ func runGit(ctx context.Context, repoDir string, args ...string) (string, error)
 		return "", fmt.Errorf("git %s (in %s): %w: %s", strings.Join(args, " "), repoDir, err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// nonInteractiveEnv returns base plus the two settings that stop git
+// asking a human anything. It is applied in runGit rather than at the one
+// call site that reaches the network because a per-call opt-in is the
+// shape that rots: no caller of this package should ever prompt.
+//
+// GIT_TERMINAL_PROMPT=0 is the load-bearing one. git does not ask for
+// credentials on the stdin it was given -- it opens /dev/tty and writes
+// `Username for '…':` there, which inside the popup is the pty Bubble Tea
+// is drawing the form on, so a null stdin buys nothing. BatchMode=yes is
+// the same refusal one layer down, for a passphrase-protected ssh key
+// with no agent behind it.
+//
+// Neither stops a configured GIT_ASKPASS/SSH_ASKPASS helper, which git
+// still calls and which may be a GUI dialog that never returns; that
+// hazard is covered by the caller's deadline, not here.
+//
+// base is a parameter so a test can supply one instead of mutating the
+// process environment; production passes os.Environ(). Building on it is
+// mandatory rather than stylistic: cmd.Env = nil means "inherit", so
+// assigning a two-element slice would strip PATH and everything else. A
+// user-set GIT_SSH_COMMAND is appended to rather than replaced --
+// silently dropping someone's ssh wrapper would be a worse bug than the
+// prompt this prevents.
+func nonInteractiveEnv(base []string) []string {
+	ssh := "ssh"
+	for _, kv := range base {
+		if v, ok := strings.CutPrefix(kv, "GIT_SSH_COMMAND="); ok && strings.TrimSpace(v) != "" {
+			ssh = v
+		}
+	}
+	env := make([]string, 0, len(base)+2)
+	for _, kv := range base {
+		// Dropped rather than shadowed: a duplicate key leaves which one
+		// wins up to exec, and the test asserts exactly one of each.
+		if strings.HasPrefix(kv, "GIT_TERMINAL_PROMPT=") || strings.HasPrefix(kv, "GIT_SSH_COMMAND=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_SSH_COMMAND="+ssh+" -oBatchMode=yes",
+	)
 }
 
 // RepoRoot returns the root of the repository containing dir -- the ORIGIN

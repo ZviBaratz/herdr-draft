@@ -104,6 +104,11 @@ type fakeGit struct {
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
+	// fetchPruneBudgets records, per FetchPrune call, how much time the
+	// context it was handed still had left -- or 0 when that context
+	// carried no deadline at all, which is what an unbounded background
+	// fetch looks like from in here.
+	fetchPruneBudgets []time.Duration
 	// listSubdirsCalls records every directory actually read, in order, so
 	// a test can assert that typing WITHIN one directory re-ranks what is
 	// already on hand instead of re-reading it.
@@ -196,8 +201,13 @@ func (g *fakeGit) CurrentBranch(_ context.Context, dir string) (string, error) {
 	g.dirsSeen = append(g.dirsSeen, dir)
 	return g.currentBranchResult, g.currentBranchErr
 }
-func (g *fakeGit) FetchPrune(_ context.Context, dir string) error {
+func (g *fakeGit) FetchPrune(ctx context.Context, dir string) error {
 	g.fetchPruneCalls = append(g.fetchPruneCalls, dir)
+	budget := time.Duration(0)
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = time.Until(deadline)
+	}
+	g.fetchPruneBudgets = append(g.fetchPruneBudgets, budget)
 	return g.fetchPruneErr
 }
 
@@ -2812,5 +2822,36 @@ func TestTheOpeningStateSchedulesNoPreviewWithoutAPicker(t *testing.T) {
 		if _, ok := cmd().(pickerDebounceMsg); ok {
 			t.Fatal("no picker is configured; nothing may ask one")
 		}
+	}
+}
+
+// TestFetchPruneRunsUnderADeadline pins fetchPruneTimeout on the one call
+// that reaches the network with no user action behind it. The bound is not
+// about slow remotes: GIT_TERMINAL_PROMPT=0 stops git prompting on the
+// popup's own tty, but it does not stop a configured GIT_ASKPASS or
+// SSH_ASKPASS helper, which may be a GUI dialog that never returns. Handed
+// context.Background(), that fetch runs for the life of the popup.
+func TestFetchPruneRunsUnderADeadline(t *testing.T) {
+	git := newFakeGit()
+	m := newTestModel(t, testSetup{Git: git})
+
+	req := request{version: 1, key: "/repo"}
+	m.baseReqVersion = 1
+
+	_, cmd := m.handleBaseResult(baseResultMsg{req: req, refs: []string{"main"}})
+	if cmd == nil {
+		t.Fatalf("first successful base-list result for a new repo produced no fetch cmd")
+	}
+	cmd()
+
+	if len(git.fetchPruneBudgets) != 1 {
+		t.Fatalf("fetchPruneBudgets = %v, want exactly one call", git.fetchPruneBudgets)
+	}
+	budget := git.fetchPruneBudgets[0]
+	if budget == 0 {
+		t.Fatalf("FetchPrune was handed a context with no deadline, want one bounded by fetchPruneTimeout (%s)", fetchPruneTimeout)
+	}
+	if budget > fetchPruneTimeout || budget < fetchPruneTimeout-5*time.Second {
+		t.Errorf("FetchPrune's context had %s left, want roughly fetchPruneTimeout (%s)", budget, fetchPruneTimeout)
 	}
 }

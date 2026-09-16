@@ -97,8 +97,16 @@ code 3.
 
 ### What it does not do
 
-- No network access except Linear's GraphQL API, and only when you have
-  configured a key.
+- No network access of its own except Linear's GraphQL API, and only when
+  you have configured a key. It does, separately, make **git** talk to the
+  network on your behalf: opening the form on a git repository fires a
+  background `git fetch --prune` there — once per repository per form open,
+  with no user action — which contacts that repository's configured remotes
+  with whatever credentials git would use, and prunes remote-tracking refs.
+  That fetch runs with terminal prompts and ssh interaction disabled
+  (`GIT_TERMINAL_PROMPT=0`, `ssh -oBatchMode=yes`) and under a 30-second
+  deadline, so it can neither prompt for credentials on the popup's own
+  terminal nor hold the popup open waiting for a remote that never answers.
 - No telemetry, no analytics, no crash reporting.
 - No writes outside its own plugin state directory and the git/herdr
   operations you submit. An unset state directory means *there is no state

@@ -2,9 +2,12 @@ package gitx
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -445,4 +448,108 @@ func TestRepoRootFallback(t *testing.T) {
 			t.Errorf("repoRootFallback on a non-repository = %q, want %q", got, "")
 		}
 	})
+}
+
+// TestNonInteractiveEnv pins the three properties the popup depends on:
+// git must never be able to prompt (it writes `Username for '…':` to
+// /dev/tty, which is the popup's own pty, not to the stdin exec gave it),
+// ssh must fail rather than ask for a passphrase, and neither may cost the
+// caller the rest of its environment -- cmd.Env = nil means "inherit", so
+// the helper has to build on the base it is given rather than replace it.
+func TestNonInteractiveEnv(t *testing.T) {
+	get := func(env []string, key string) (string, int) {
+		var val string
+		var n int
+		for _, kv := range env {
+			if v, ok := strings.CutPrefix(kv, key+"="); ok {
+				val, n = v, n+1
+			}
+		}
+		return val, n
+	}
+
+	t.Run("prompts disabled and ssh in batch mode", func(t *testing.T) {
+		env := nonInteractiveEnv([]string{"PATH=/usr/bin"})
+
+		if v, n := get(env, "GIT_TERMINAL_PROMPT"); v != "0" || n != 1 {
+			t.Errorf("GIT_TERMINAL_PROMPT = %q (%d entries), want exactly one %q", v, n, "0")
+		}
+		v, n := get(env, "GIT_SSH_COMMAND")
+		if n != 1 {
+			t.Fatalf("GIT_SSH_COMMAND appears %d times, want exactly one", n)
+		}
+		if !strings.Contains(v, "BatchMode=yes") {
+			t.Errorf("GIT_SSH_COMMAND = %q, want it to carry BatchMode=yes", v)
+		}
+		if !strings.Contains(v, "ssh") {
+			t.Errorf("GIT_SSH_COMMAND = %q, want it to still invoke ssh", v)
+		}
+		if got, _ := get(env, "PATH"); got != "/usr/bin" {
+			t.Errorf("PATH = %q, want the base environment's %q to survive", got, "/usr/bin")
+		}
+	})
+
+	t.Run("a user-set GIT_SSH_COMMAND is preserved", func(t *testing.T) {
+		env := nonInteractiveEnv([]string{"PATH=/usr/bin", "GIT_SSH_COMMAND=my-ssh -v"})
+
+		v, n := get(env, "GIT_SSH_COMMAND")
+		if n != 1 {
+			t.Fatalf("GIT_SSH_COMMAND appears %d times, want exactly one (a duplicate leaves which one wins up to exec)", n)
+		}
+		if !strings.Contains(v, "my-ssh -v") {
+			t.Errorf("GIT_SSH_COMMAND = %q, want the user's own %q kept -- silently replacing an ssh wrapper is a worse bug than the prompt this prevents", v, "my-ssh -v")
+		}
+		if !strings.Contains(v, "BatchMode=yes") {
+			t.Errorf("GIT_SSH_COMMAND = %q, want BatchMode=yes appended to the user's value", v)
+		}
+	})
+}
+
+// TestFetchPruneHonoursContext is a regression pin for runGit's WaitDelay,
+// not a failing-first test: runGit already used exec.CommandContext, so a
+// cancelled context already killed git itself. What it guards is the half
+// that kill does not cover -- stdout/stderr are bytes.Buffers, so exec
+// pipes them and cmd.Wait blocks on its copier goroutines until every
+// writer closes, and a surviving grandchild (an ssh holding the write end)
+// can keep Wait blocked long past the kill.
+//
+// The server accepts the connection and never answers, which is the shape
+// that hangs: a refused connection fails fast on its own and would pin
+// nothing.
+func TestFetchPruneHonoursContext(t *testing.T) {
+	// A developer's own global git config must not be able to change this
+	// (an insteadOf rewrite, a credential helper, a proxy); runGit builds
+	// its environment from the process's, so this is where to disable it.
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+
+	blocked := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-blocked
+	}))
+	defer srv.Close()
+	defer close(blocked)
+
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	gitRun(t, repo, "remote", "add", "origin", srv.URL+"/repo.git")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- FetchPrune(ctx, repo) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("FetchPrune against a server that never answers = nil error, want the cancelled context's failure")
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("FetchPrune returned after %s, want well inside the deadline plus WaitDelay", elapsed)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("FetchPrune never returned: the context killed git but cmd.Wait is still blocked")
+	}
 }

@@ -61,6 +61,17 @@ import (
 // source in this file waits out before running its real check.
 const debounceDelay = 150 * time.Millisecond
 
+// fetchPruneTimeout bounds the background `git fetch --prune` that fires
+// once per repository per form open (runFetchPrune, below). It is a safety
+// bound rather than a tuning knob, and deliberately not a [timeouts] key:
+// gitx's non-interactive environment stops git prompting on the popup's
+// own terminal, but it does not stop a configured GIT_ASKPASS/SSH_ASKPASS
+// helper, which git still calls and which may be a GUI dialog that never
+// answers. 30s is long enough for a slow remote on a slow link, and short
+// enough that such a helper does not hold a goroutine and a git process
+// for the life of the popup.
+const fetchPruneTimeout = 30 * time.Second
+
 // maxBaseRefs is spec §6 field 4's "capped at 50" bound on the base-ref
 // picker's candidate list.
 const maxBaseRefs = 50
@@ -447,7 +458,9 @@ func (m Model) runFetchPrune(path string) tea.Cmd {
 		// branchFetchDoneMsg, which carries no success/failure signal at
 		// all: completion alone is what matters, to re-list with whatever
 		// the fetch did or didn't change.
-		_ = git.FetchPrune(context.Background(), pathx.ExpandTilde(path))
+		ctx, cancel := context.WithTimeout(context.Background(), fetchPruneTimeout)
+		defer cancel()
+		_ = git.FetchPrune(ctx, pathx.ExpandTilde(path))
 		return fetchPruneDoneMsg{path: path}
 	}
 }
