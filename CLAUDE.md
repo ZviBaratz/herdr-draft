@@ -84,9 +84,11 @@ Layering, outermost to innermost:
   `$HERDR_PLUGIN_CONTEXT_JSON` / `$HERDR_PLUGIN_CONFIG_DIR` /
   `$HERDR_PLUGIN_STATE_DIR` / `$HERDR_BIN_PATH`, construct production
   `Deps`, call `app.Bootstrap`, run the `tea.Program`. `create` hands the
-  rest of the command line to `internal/create`; `help`/`-h`/`--help`
-  prints usage to stdout and exits 0; anything else prints usage to stderr
-  and exits 2. `dispatch` takes both verbs as injected funcs so routing is
+  rest of the command line to `internal/create`; `skill` prints the
+  agent-facing document from `internal/skill`; `help`/`-h`/`--help`
+  prints usage and `version`/`--version`/`-V` the build line, both to
+  stdout with exit 0; anything else prints usage to stderr and exits 2.
+  `dispatch` takes the popup and both verbs as injected funcs so routing is
   testable without a `tea.Program` or a herdr.
 - **`internal/app`** — the real `tea.Model`. Owns `form.Model` plus every
   data source behind it (Linear, clauth, git, herdr), and is the *only*
@@ -154,10 +156,19 @@ Layering, outermost to innermost:
   Both the allow-list and the deny-list are guarded by an `init()` that
   panics if they ever overlap. Anything rejected is reported, never
   silently dropped.
-- **`internal/clauth`, `internal/linear`, `internal/gitx`, `internal/pathx`,
-  `internal/theme`** — thin, single-purpose clients/helpers, each behind a
-  small interface `internal/app` depends on (`clauthSource`, `linearSource`,
-  `gitSource`) so it can be tested with fakes.
+- **`internal/clauth`, `internal/linear`, `internal/gitx`, `internal/picker`,
+  `internal/pathx`, `internal/theme`** — thin, single-purpose clients/helpers,
+  each behind a small interface `internal/app` depends on (`clauthSource`,
+  `linearSource`, `gitSource`, `pickerSource`) so it can be tested with
+  fakes. `internal/picker` speaks the documented account-picker protocol
+  (`<picker> --dir <path> --json [--strict] [--dry-run]`) to whatever
+  executable is configured, rather than depending on any one tool.
+- **`internal/skill`** — not a client: the embedded `spawn_skill.md` that
+  `herdr-draft skill` prints, and the renderer that stamps the binary path
+  and version into it. No interface and no I/O beyond the writer it is
+  handed, and it imports nothing else from this module, because prose about
+  the CLI must not depend on the code the CLI drives; the tests holding
+  that prose to the code live in `internal/create`.
 
 ### Load-bearing conventions
 
@@ -280,12 +291,23 @@ Layering, outermost to innermost:
   had just refused. `ExecResult.promptUnconfirmedCause` carries which of the
   three it was, purely so `CleanCheck` names the right evidence; the
   exported flag stays the posture every other package reads.
-- **Citations into herdr's source name a pinned commit, never a local
-  path.** Two spellings, both anchored to
-  `b1ff4582e9688f52ffb943cfa8bee4871ae122e4`: the `herdr:src/cli.rs`
+- **Citations into herdr's source name a pinned ref, never a local
+  path.** The current pin is the **`v0.9.0`** tag
+  (`b99002ac99b09e00b4ca692436cb15a6b0d676f1`), the herdr release this
+  plugin's floor names. Two spellings: the `herdr:src/cli.rs at v0.9.0`
   shorthand for a passing reference, and a full
-  `https://github.com/herdrdev/herdr/blob/b1ff4582/...#L123` URL where a
-  reader will actually want to go look. Eleven comments used to cite
+  `https://github.com/herdrdev/herdr/blob/v0.9.0/...#L123` URL where a
+  reader will actually want to go look. Citations anchored to
+  `b1ff4582e9688f52ffb943cfa8bee4871ae122e4` (`herdr:src/cli.rs` with no
+  ref, or `blob/b1ff4582/`) are **legacy**: that commit was the first pin,
+  it is 59 commits behind `v0.9.0`, and it differs in the prompt-wait
+  semantics several comments depend on — so a legacy citation is still a
+  valid statement about *that* commit, not necessarily about the herdr
+  this plugin runs against. Migrate one to `v0.9.0`, re-reading the cited
+  lines at the new ref, when you touch the code around it; do not write a
+  new one. Until 2026-09-16 this bullet named `b1ff4582` as the only pin,
+  which by then was false about the tree (24 legacy citations against 15
+  at `v0.9.0`). Eleven comments used to cite
   `/home/zvi/Projects/herdr/...`, a tree nobody else has — the claims were
   correct and unverifiable at the same time, which is the worst of both.
   A citation that only resolves on one laptop is not a citation.

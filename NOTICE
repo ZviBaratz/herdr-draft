@@ -52,4 +52,7 @@ original work.
 Visual conventions and default palette values are translated from herdr
 (https://github.com/herdrdev/herdr), Copyright the herdr contributors,
 licensed under the Apache License, Version 2.0, at herdr commit
-b1ff4582e9688f52ffb943cfa8bee4871ae122e4.
+b1ff4582e9688f52ffb943cfa8bee4871ae122e4. A copy of that License is in
+LICENSES/Apache-2.0.txt. The translated values are in
+internal/theme/palette.go, whose header records what was changed from
+herdr's source. herdr distributes no NOTICE file of its own at that commit.

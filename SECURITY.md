@@ -64,7 +64,7 @@ returns are cached in your plugin state directory.
 herdr-draft drives `herdr`, `git` and `clauth` as child processes, and
 several arguments derive from what you type — a branch name from a title,
 a base ref, a project path. Every one of those invocations is argv, with no
-shell anywhere. One path is not, and it has its own paragraph below.
+shell anywhere. Two paths are not, and each has its own section below.
 
 The hardening is at the boundary rather than sprinkled over call sites:
 `appendFlag` refuses any value beginning with `-`, and it returns an error
@@ -112,6 +112,31 @@ caller that comes later.
 This is also why the same values must **not** be quoted on the other path:
 `herdr agent start` takes `extra_args` as an argv vector with no shell
 anywhere, and quoting them there would corrupt them.
+
+### And one string that git hands to a shell
+
+Every `git` herdr-draft runs that could reach a remote is started with
+`GIT_SSH_COMMAND` set, so that a fetch meeting a passphrase-protected key
+fails instead of asking for the passphrase on the terminal the form is
+drawn on. git does not exec that variable; it runs it through a shell
+(`internal/gitx/repo.go`, `nonInteractiveEnv`).
+
+**Nothing you type into the form reaches that string.** It is built from
+exactly two things: the ssh command git would have used anyway, and a
+fixed `-oBatchMode=yes` appended to it. The first is resolved in git's own
+precedence order — your `GIT_SSH_COMMAND`, then your `GIT_SSH`, then
+`core.sshCommand` — and falls back to plain `ssh` (`effectiveSSHCommand`).
+Two of those three sources are shell-parsed by git already, so passing
+them on changes nothing about what runs; git would have handed your
+`core.sshCommand` to a shell with or without this plugin. `GIT_SSH` is the
+one git treats as a bare program path, so it is shell-quoted before it is
+folded in, and a path with a space in it stays one word.
+
+The project path you pick decides only *which* repository's configuration
+that read consults, never what it says, and it is not a clone-borne input
+either: `git clone` does not copy a repository's `.git/config`, so
+`core.sshCommand` can only come from configuration written on your own
+machine.
 
 ### It reads a file that arrives with `git clone`
 
