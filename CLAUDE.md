@@ -273,8 +273,13 @@ Layering, outermost to innermost:
   processed" stops: herdr writes the text and Enter *before* it starts
   watching (herdr v0.9.0, `src/api/wait.rs`), so a stall that survives the
   retry takes the **unconfirmed** posture — two sends have been made, the
-  pane may hold two copies, and `ExecResult.PromptStalledTwice` is what lets
-  `CleanCheck` say that rather than the timeout's "the wait timed out".
+  pane may hold two copies. And the posture is **sticky**: once herdr has
+  typed the text, no later failure in the same op may take it back to
+  "unsent", which is what stops the retry's own guard — correctly refusing a
+  dialog that painted during the settle — from re-permitting the clean it
+  had just refused. `ExecResult.promptUnconfirmedCause` carries which of the
+  three it was, purely so `CleanCheck` names the right evidence; the
+  exported flag stays the posture every other package reads.
 - **Citations into herdr's source name a pinned commit, never a local
   path.** Two spellings, both anchored to
   `b1ff4582e9688f52ffb943cfa8bee4871ae122e4`: the `herdr:src/cli.rs`

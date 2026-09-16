@@ -327,7 +327,7 @@ ones you passed). It never prompts. Exit codes:
 
 **A prompt has three fates, not two.** `prompt_status` names which:
 `sent`, `unsent`, or `unconfirmed`. The third means delivery is unknown,
-and it is reached two ways:
+and it is reached three ways:
 
 - **the wait gave up.** `herdr agent prompt --wait` returned before the
   agent's status changed, which is *not* proof the prompt failed to
@@ -341,6 +341,12 @@ and it is reached two ways:
   prompt text and Enter before it starts watching, so two sends later
   "it never arrived" is not something this command knows, and the pane
   may hold two copies.
+- **something failed after the text had already gone out.** Once herdr has
+  typed the prompt, nothing later in the same step can put delivery back to
+  "never arrived". In practice this is the retry above meeting a dialog: the
+  first send stalls because the agent's screen had not finished painting,
+  and by the time the retry looks, the dialog is up — so herdr-draft
+  correctly refuses to type into it, having already typed once.
 
 Read `prompt_status` rather than inferring from the other fields:
 
@@ -363,12 +369,12 @@ gets its instructions twice. On `unconfirmed`, check the pane before
 resending anything.
 
 `--on-failure clean` is **refused** for an `unconfirmed` prompt, with the
-reason in `clean_refused` — which names whichever of the two shapes it
+reason in `clean_refused` — which names whichever of the three shapes it
 was. After a wait that gave up, the session may have an agent working in
-it right now and cleaning up would kill it mid-turn. After two stalls,
-what the pane holds is unknown and worth reading before anything is
-removed. Either way the ids are still reported, so nothing is stranded
-without a way back to it.
+it right now and cleaning up would kill it mid-turn. After two stalls, or
+after any failure that followed a send, what the pane holds is unknown and
+worth reading before anything is removed. The ids are still reported in
+every case, so nothing is stranded without a way back to it.
 
 **The reported ids name the agent, not the worktree.**
 `workspace_id`/`tab_id`/`pane_id` — and `workspace=`/`tab=`/`pane=` on the

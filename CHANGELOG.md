@@ -226,6 +226,12 @@ without the popup. It drives herdr exclusively through the public CLI
   so after two sends the pane may hold two copies and "it never arrived" is
   not something this command knows. `--on-failure clean` is refused, and
   both the popup and `create` say to read the pane before resending.
+
+  That posture is **sticky**. Once the text has gone out, nothing later in
+  the same step reports the prompt as unsent or permits the clean — which
+  matters most when the retry itself is refused, the first send having
+  stalled against a screen that had not painted and the dialog being up by
+  the time the retry looks.
 - `herdr pane run` types its argv into a shell rather than exec'ing it, so
   the runner shell-quotes every element — and the argv path that has no
   shell deliberately does not.

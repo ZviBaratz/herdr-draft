@@ -59,6 +59,14 @@ type fakeRunner struct {
 	failAt     string
 	readText   string
 
+	// readTextShowsAfter delays readText until after that many AgentRead
+	// calls, answering with a painted, dialog-free pane until then. The
+	// ORDER is what it exists for: the guard's first read passes, the send
+	// goes out and stalls, and the dialog has painted by the time the
+	// retry's guard looks (#132's rider).
+	readTextShowsAfter int
+	readCalls          int
+
 	// failTimes bounds how many calls to failAt actually fail. Zero means
 	// all of them, which is what every test that leaves it alone means by
 	// failAt; a positive N fails the first N and lets the rest through,
@@ -210,7 +218,8 @@ func (r *fakeRunner) AgentRead(_ context.Context, target string) (string, error)
 	if err := r.record("AgentRead", target); err != nil {
 		return "", err
 	}
-	if r.readText == "" {
+	r.readCalls++
+	if r.readText == "" || r.readCalls <= r.readTextShowsAfter {
 		// A painted, dialog-free pane. The zero value cannot be the empty
 		// screen any more: after #116 that is what a pane looks like
 		// before it has drawn the dialog that eats the prompt, and
@@ -1028,6 +1037,72 @@ func TestOnFailureCleanRefusesASurvivingStall(t *testing.T) {
 	}
 	if out.SpacePaneID == "" && out.PaneID == "" {
 		t.Errorf("no pane id in the report, but the caller was told to read the pane: %+v", out)
+	}
+}
+
+// TestStallThenARefusedRetryIsStillUnconfirmed is #132's rider reaching the
+// headless verb, and it is the shape the posture existed to prevent: a stall
+// whose RETRY is refused by the guard used to be classified from the
+// terminal error alone, so it reported `unsent` -- README's "resend it; it
+// never arrived" -- and `--on-failure clean` removed the session, after herdr
+// had already written the prompt text and Enter into that pane once.
+//
+// The timing is the measured one (CLAUDE.md, 2026-09-10): the guard's first
+// read lands in the window where the pane carries the shell's echo and no
+// signature, and the dialog paints during the two-second settle.
+func TestStallThenARefusedRetryIsStillUnconfirmed(t *testing.T) {
+	const prompt = "implement the fix"
+
+	h := newHarness(t)
+	h.runner.failAt = "AgentPrompt"
+	h.runner.failErr = stalledPromptErr()
+	h.runner.readTextShowsAfter = 1
+	h.runner.readText = "Quick safety check: Is this a project you created or one you trust?\n" +
+		"❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel"
+
+	code := h.run("--title", "t", "--no-worktree", "--prompt", prompt,
+		"--on-failure", "clean", "--json")
+	if code != ExitFailed {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+	}
+	if n := h.runner.countCalls("AgentPrompt"); n != 1 {
+		t.Fatalf("AgentPrompt called %d times, want 1 -- the retry's guard must refuse the dialog: %v",
+			n, h.runner.calls)
+	}
+	for _, closer := range []string{"WorkspaceClose", "PaneClose", "TabClose"} {
+		if h.runner.called(closer) {
+			t.Errorf("clean removed a pane the prompt had already gone into (%s): %v",
+				closer, h.runner.calls)
+		}
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if out.PromptStatus != promptStatusUnconfirmed {
+		t.Errorf("prompt_status = %q, want %q -- one send has already gone out",
+			out.PromptStatus, promptStatusUnconfirmed)
+	}
+	if out.PromptSent != nil {
+		t.Errorf("prompt_sent = %v, want it absent", *out.PromptSent)
+	}
+	if out.UnconfirmedPrompt != prompt || out.UnsentPrompt != "" {
+		t.Errorf("text came back under the wrong key: unconfirmed=%q unsent=%q",
+			out.UnconfirmedPrompt, out.UnsentPrompt)
+	}
+	if out.Cleaned || out.CleanRefused == "" {
+		t.Errorf("cleaned=%v clean_refused=%q, want a disclosed refusal", out.Cleaned, out.CleanRefused)
+	}
+	// The refusal must name its own evidence: one send, not two, and
+	// nothing timed out.
+	if strings.Contains(out.CleanRefused, "timed out") || strings.Contains(out.CleanRefused, "twice") {
+		t.Errorf("clean_refused = %q, want the after-a-send evidence", out.CleanRefused)
+	}
+	// The guard's own refusal is the `error` field here, and its tail is
+	// the claim this rider retracts.
+	if strings.Contains(out.Error, "prompt not sent") {
+		t.Errorf("error field still says the prompt was not sent:\n%s", out.Error)
 	}
 }
 

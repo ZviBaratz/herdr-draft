@@ -68,6 +68,15 @@ type mockRunner struct {
 	readTextClearsAfter int
 	readCalls           int
 
+	// readTextShowsAfter is readTextClearsAfter's inverse: AgentRead
+	// answers with a painted, dialog-free pane for that many calls and
+	// readText from then on. That ORDER is the one #132's rider is about
+	// and the one CLAUDE.md measured on 2026-09-10 -- the guard's first
+	// read lands in the ~1.4s window where the pane carries the shell
+	// echo and no signature, the send goes out and stalls, and the dialog
+	// has painted by the time the retry's guard looks.
+	readTextShowsAfter int
+
 	// readErrAfter/readErrToGive make AgentRead succeed for that many
 	// calls and then fail with readErrToGive from then on -- the pane as
 	// it looks once the agent behind it has exited, which is what a
@@ -222,6 +231,9 @@ func (m *mockRunner) AgentRead(ctx context.Context, target string) (string, erro
 	}
 	if m.readCalls <= m.blankReadsFirst {
 		return "", nil
+	}
+	if m.readTextShowsAfter > 0 && m.readCalls <= m.readTextShowsAfter {
+		return paintedIdleScreen, nil
 	}
 	if m.dialogAnswered {
 		return paintedIdleScreen, nil
@@ -3008,10 +3020,10 @@ func TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape(t *testing.T) {
 	}
 
 	stalled := CleanCheck(context.Background(), in, ExecResult{
-		FailedIndex:        2,
-		PromptText:         "implement the fix",
-		PromptUnconfirmed:  true,
-		PromptStalledTwice: true,
+		FailedIndex:            2,
+		PromptText:             "implement the fix",
+		PromptUnconfirmed:      true,
+		promptUnconfirmedCause: causeStalledTwice,
 	})
 	if stalled.Allowed {
 		t.Fatalf("a twice-stalled prompt allowed the clean: %+v", stalled)
@@ -3019,8 +3031,133 @@ func TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape(t *testing.T) {
 	if strings.Contains(stalled.Reason, "timed out") {
 		t.Errorf("stall reason = %q, want the stall's own evidence -- nothing timed out", stalled.Reason)
 	}
-	if !strings.Contains(stalled.Reason, "read the pane") && !strings.Contains(stalled.Reason, "Read the pane") {
-		t.Errorf("stall reason = %q, want it to send the user to the pane", stalled.Reason)
+	if !strings.Contains(stalled.Reason, "two copies") {
+		t.Errorf("stall reason = %q, want it to name what two sends may have left", stalled.Reason)
+	}
+
+	// The third shape (#132's rider): one send went out, and a LATER
+	// attempt failed for a different reason. Neither of the other two
+	// sentences fits -- nothing timed out, and there were not two sends.
+	afterSend := CleanCheck(context.Background(), in, ExecResult{
+		FailedIndex:            2,
+		PromptText:             "implement the fix",
+		PromptUnconfirmed:      true,
+		promptUnconfirmedCause: causeFailedAfterSending,
+	})
+	if afterSend.Allowed {
+		t.Fatalf("a failure after a send allowed the clean: %+v", afterSend)
+	}
+	if strings.Contains(afterSend.Reason, "timed out") || strings.Contains(afterSend.Reason, "twice") {
+		t.Errorf("after-send reason = %q, want its own evidence rather than either neighbour's",
+			afterSend.Reason)
+	}
+
+	for name, d := range map[string]CleanDecision{
+		"timeout": timeout, "stalled": stalled, "after-send": afterSend,
+	} {
+		if !strings.Contains(strings.ToLower(d.Reason), "read the pane") {
+			t.Errorf("%s reason = %q, want it to send the user to the pane", name, d.Reason)
+		}
+	}
+}
+
+// TestExecuteKeepsTheUnconfirmedPostureWhenTheRetryIsRefused is #132's
+// rider, and the scenario is the measured one rather than an invented one:
+// the guard's first read lands in the startup window CLAUDE.md pinned on
+// 2026-09-10 -- a pane carrying the shell's echo, real text, no signature --
+// so the send goes out; herdr sees no reaction and calls it stalled; the
+// two-second settle gives the dialog time to paint; and the retry's guard
+// then correctly refuses to type into it.
+//
+// That last refusal is a PRE-send refusal for the attempt and a POST-send
+// one for the prompt. Classified from the terminal error alone it reported
+// the `unsent` posture -- "resend it; it never arrived" -- and let
+// `--on-failure clean` remove a pane herdr had already typed into.
+func TestExecuteKeepsTheUnconfirmedPostureWhenTheRetryIsRefused(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:    "AgentPrompt",
+		failErr:   stalledPromptErr(),
+		failCount: 99,
+		// Read 1 (the first send's guard) is clean; read 2 (the retry's
+		// guard) finds the dialog that painted during the settle.
+		readTextShowsAfter: 1,
+		readText: "Quick safety check: Is this a project you created or one you trust?\n" +
+			"❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel",
+	}
+
+	// ExecOpts{} -- headless `create`, the path with no budget to wait the
+	// dialog out. The popup reaches the same refusal by a different route.
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if result.FailedIndex != 2 {
+		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", result.FailedIndex, result)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Fatalf("AgentPrompt called %d times, want 1 -- the retry's guard must refuse the dialog: %v",
+			n, m.calls)
+	}
+	if !result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = false, want true -- herdr already typed the text once, so " +
+			"no later refusal may take the posture back to \"unsent\"")
+	}
+	if result.promptUnconfirmedCause != causeFailedAfterSending {
+		t.Errorf("cause = %q, want %q", result.promptUnconfirmedCause, causeFailedAfterSending)
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want the prompt handed back", result.PromptText)
+	}
+	if d := CleanCheck(context.Background(), in, result); d.Allowed {
+		t.Errorf("CleanCheck allowed the clean over a pane the prompt had already gone into: %+v", d)
+	}
+}
+
+// TestExecuteRefusalWithNoSendKeepsSayingThePromptWasNotSent is the other
+// side of the line above, and the one that stops the rider from becoming
+// "every guard refusal is unconfirmed". With no send behind it, a refused
+// dialog really did keep the text out of the pane: the posture stays
+// `unsent`, the clean stays allowed, and the message still says so.
+func TestExecuteRefusalWithNoSendKeepsSayingThePromptWasNotSent(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = false
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		readText: "Quick safety check: Is this a project you created or one you trust?\n" +
+			"❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel",
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if countCallsWithPrefix(m.calls, "AgentPrompt") != 0 {
+		t.Fatalf("the guard did not hold: %v", m.calls)
+	}
+	if result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = true, want false -- nothing was ever typed: %+v", result)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	if !strings.Contains(msg, "prompt not sent") {
+		t.Errorf("refusal = %q, want it to still say the prompt was not sent", msg)
+	}
+	if d := CleanCheck(context.Background(), in, result); !d.Allowed {
+		t.Errorf("CleanCheck refused a clean for a prompt that never left: %+v", d)
 	}
 }
 
