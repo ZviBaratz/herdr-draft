@@ -2902,7 +2902,7 @@ func TestExecuteRetriesAStalledPromptOnlyOnce(t *testing.T) {
 
 // TestExecuteRetriesAStalledPromptWithoutATrustBudget is the gate #115's
 // decision 2 must NOT reach. It used to assert the opposite, which is how
-// headless `create` came to have no retry at all.
+// headless `create` came to have no retry at all (#132).
 //
 // TrustWait is a budget for waiting on a PERSON: five minutes for someone to
 // answer a blocking dialog, which is right for the popup and wrong for a

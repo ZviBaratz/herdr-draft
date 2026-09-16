@@ -267,7 +267,7 @@ Layering, outermost to innermost:
   reports `idle` and `interactive_ready` while the agent's TUI is not yet
   accepting input. Collapsing the two would either strand a delivered prompt
   or double-paste into a working agent. That retry is **not** gated on
-  `trust_wait_ms` and must not be re-gated on it: the budget is for
+  `trust_wait_ms` and must not be re-gated on it (#132): the budget is for
   waiting on a *person*, and a two-second settle waits for nobody, so both
   the popup and headless `create` take it. Note also where "nothing was
   processed" stops: herdr writes the text and Enter *before* it starts

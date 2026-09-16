@@ -177,10 +177,11 @@ type ExecResult struct {
 	// error, and meaningless on its own -- the flag above is the posture,
 	// this is only the wording.
 	//
-	// It exists because one refusal sentence does not fit both. CleanCheck
-	// receives nothing but Input and ExecResult, and its timeout reason
-	// names a wait that gave up; shown for a stall, which timed nothing
-	// out, that is a fabricated account of a failure that did not happen.
+	// It exists because one refusal sentence does not fit both (#132).
+	// CleanCheck receives nothing but Input and ExecResult, and its
+	// timeout reason names a wait that gave up; shown for a stall, which
+	// timed nothing out, that is a fabricated account of a failure that
+	// did not happen.
 	PromptStalledTwice bool
 }
 
@@ -813,7 +814,7 @@ func explainPromptKilledAgent(err error) error {
 }
 
 // explainStalledPrompt says what is left after a prompt stalled TWICE --
-// which, since the retry stopped being gated on the human-wait budget, is
+// which, since #132 stopped gating the retry on the human-wait budget, is
 // what every caller reaching here has done, popup and `create` alike.
 //
 // One stall is evidence the agent was not accepting input yet, and Execute
@@ -1281,10 +1282,10 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// starting cannot be fed the same prompt repeatedly.
 				//
 				// Ungated by opts.TrustWait, unlike the two waits above, and
-				// that asymmetry is the point: TrustWait budgets a wait for
-				// a PERSON to answer a dialog, and #115's decision 2 --
-				// headless `create` passes zero -- is about not waiting five
-				// minutes for one nobody will answer. A two-second settle
+				// that asymmetry is the point (#132): TrustWait budgets a
+				// wait for a PERSON to answer a dialog, and #115's decision
+				// 2 -- headless `create` passes zero -- is about not waiting
+				// five minutes for one nobody will answer. A two-second settle
 				// for a TUI to finish its first paint waits for nobody, so
 				// the budget has nothing to say about it. Gating it here was
 				// PR #117 hanging a later discovery on the knob that
