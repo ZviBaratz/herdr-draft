@@ -1338,6 +1338,58 @@ session's panes. The profile is written as `<profile>`, for the reason Cell
   `env HERDR_DRAFT_SMOKE=launcher clauth start <profile> -- --model
   'claude-opus-5[1m]' --effort xhigh`.
 
+## What the spawn skill added
+
+### Cell 13 — does `/spawn` actually fire?
+
+**Why this cell exists.** Everything else about the skill is held to the
+binary by tests: the flags it names exist, the exit codes match, the
+frontmatter parses. Not one of them can tell you whether Claude Code
+*picks the skill up* when an agent forms the intent the description was
+written for. That is a property of Claude Code's skill matching and of one
+paragraph of English, and nothing in this repository can assert it.
+
+**Step 1 — install it.** Into your real personal skill directory; this is
+the one cell that deliberately touches it.
+
+```bash
+herdr-draft skill > /tmp/spawn-SKILL.md    # inspect it first
+head -5 /tmp/spawn-SKILL.md                # must start with the `---` fence
+mkdir -p ~/.claude/skills/spawn
+cp /tmp/spawn-SKILL.md ~/.claude/skills/spawn/SKILL.md
+```
+
+Check the path it baked in is the one you expect — `grep -m1 create
+~/.claude/skills/spawn/SKILL.md` — and that the version in its last
+section matches `herdr-draft version`.
+
+**Step 2 — the trigger.** Open a *fresh* Claude Code session in a herdr
+pane (a skill added mid-session is not seen). Ask for a handoff in words
+that never say "herdr-draft", "spawn", "plugin" or "skill". Something
+like:
+
+> I'm done with the auth refactor here. Start another agent on the
+> migration piece so it can run while I review this.
+
+**Pass:** the session announces it is using the `spawn` skill, and what it
+proposes is a `herdr-draft create` command — not a handoff document, and
+not a hand-rolled `herdr agent start`.
+
+**Also worth recording, because it is the likeliest way this goes wrong:**
+ask something that should *not* fire it — "spawn a subagent to read these
+forty files and summarise them" — and confirm it does not. An over-trigger
+onto the Agent tool's in-process subagents is the misfire that would
+discredit the skill fastest, and section 1 of the document exists to
+prevent it.
+
+**Step 3 — the environment half.** If it did fire, watch whether the agent
+exports the three `HERDR_PLUGIN_*` variables before running `create`, or
+runs it bare and gets the built-in-defaults line on stderr. That is the
+whole reason the skill's second section is where it is.
+
+**Unrun.** Nothing here has been observed; do not write a result you did
+not see.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:

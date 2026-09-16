@@ -89,6 +89,14 @@ without the popup. It drives herdr exclusively through the public CLI
 - `create` reads the plugin environment only when `HERDR_PLUGIN_ID` says it
   is ours, so a shell inside another plugin's pane cannot have its config
   read as this plugin's or its state written into.
+- **`herdr-draft skill` prints an agent skill for driving all of the
+  above.** Redirect it into `~/.claude/skills/spawn/SKILL.md` and an agent
+  asked to hand work off creates a session instead of writing a handoff
+  document and stopping. It carries the `HERDR_PLUGIN_*` exports, the
+  placement choice, the prompt, and how to read `prompt_status` and the
+  pane afterwards — and the absolute path of the binary that printed it,
+  since nothing puts that on `PATH`, which is also why the emitted file is
+  machine-specific and regenerated after an upgrade.
 
 ### Where values come from
 
