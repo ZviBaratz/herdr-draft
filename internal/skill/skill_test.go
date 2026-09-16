@@ -44,7 +44,13 @@ func TestRunKeepsStdoutCleanWhenThePathCannotBeResolved(t *testing.T) {
 	}
 	// The whole point: `herdr-draft skill > SKILL.md` must not write a
 	// warning into the skill file.
-	if strings.Contains(stdout.String(), "could not") {
+	//
+	// Matched on the warning's own "<verb>: " prefix rather than on a
+	// phrase from its body. The document is prose about prompt delivery
+	// and says "could not be confirmed" in it quite legitimately, so a
+	// looser needle asserts something about the skill's wording instead
+	// of something about the writer it went to.
+	if strings.Contains(stdout.String(), "herdr-draft skill:") {
 		t.Error("the warning reached stdout, which would corrupt a redirected skill file")
 	}
 	if !strings.HasPrefix(stdout.String(), "---") {
