@@ -306,11 +306,13 @@ Layering, outermost to innermost:
   this plugin runs against. Migrate one to `v0.9.0`, re-reading the cited
   lines at the new ref, when you touch the code around it; do not write a
   new one. Until 2026-09-16 this bullet named `b1ff4582` as the only pin,
-  which by then was false about the tree (24 legacy citations against 15
-  at `v0.9.0`). Eleven comments used to cite
-  `/home/zvi/Projects/herdr/...`, a tree nobody else has — the claims were
-  correct and unverifiable at the same time, which is the worst of both.
-  A citation that only resolves on one laptop is not a citation.
+  which by then was false about the tree (24 lines in `*.go` citing the
+  legacy commit against 15 citing `v0.9.0` — Go files only; a repo-wide
+  grep also counts the prose, this bullet included). Eleven comments used
+  to cite `/home/zvi/Projects/herdr/...`, a tree nobody else has — the
+  claims were correct and unverifiable at the same time, which is the
+  worst of both. A citation that only resolves on one laptop is not a
+  citation.
 - **`plan.Build` stays pure.** It performs no I/O and never touches a
   `herdrc.Runner`; anything Build needs to decide (is this a git repo, what
   is the invoking pane id) must already be resolved by the caller
