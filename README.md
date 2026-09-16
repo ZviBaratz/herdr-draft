@@ -353,20 +353,34 @@ Read `prompt_status` rather than inferring from the other fields:
 | `prompt_status` | `prompt_sent` | the text comes back as | what to do |
 |---|---|---|---|
 | `sent` | `true` | — | nothing |
-| `unsent` | `false` | `unsent_prompt` | resend it; it never arrived |
-| `unconfirmed` | *absent* | `unconfirmed_prompt` | **read the pane first** |
+| `unsent` | `false` | `unsent_prompt` | **read the pane first**, then resend |
+| `unconfirmed` | *absent* | `unconfirmed_prompt` | **read the pane. Never resend.** |
 
-`unsent` is for the failures that really are unsent, where nothing was
-ever typed: a dialog the guard refused to type into, or a plan that
-stopped before it reached the prompt step at all.
+**`unsent` is not permission to resend blind.** It means the text is not in
+front of the agent — not that it was never typed — and it covers three
+shapes:
+
+- **the guard refused to send**, because the pane was showing a blocking
+  dialog or had not painted yet. Resending types the prompt into that
+  dialog, where the trailing Enter answers whichever option is highlighted.
+  That is the failure #116 exists to prevent, arriving through the front
+  door.
+- **the send went out and left no trace** on the screen afterwards. There
+  may be no agent left to receive a second copy.
+- **the plan stopped before the prompt step**, so nothing was typed — and
+  there may be no pane to read at all, if it failed before one was made.
+
+So read the pane, clear whatever it is showing or hand it to someone who
+can, and only then resend. If there is no pane, there is nothing to clear
+and the text is simply yours to reuse.
 
 `prompt_sent` is absent for `unconfirmed` because neither `true` nor
-`false` is a statement this command can make. And the text comes back
-under a different key on purpose: `unsent_prompt` means "this failure
-destroyed your work, here it is back", so a caller that does the
-documented thing with it — paste it into the pane — is how a working agent
-gets its instructions twice. On `unconfirmed`, check the pane before
-resending anything.
+`false` is a statement this command can make. The two keys carry different
+instructions, which is why the text comes back under one or the other:
+`unsent_prompt` is text to put back in front of the agent once you have
+looked at the pane, while `unconfirmed_prompt` may **already** be in front
+of it. Resending that one is how an agent that is working gets its
+instructions twice.
 
 `--on-failure clean` is **refused** for an `unconfirmed` prompt, with the
 reason in `clean_refused` — which names whichever of the three shapes it
