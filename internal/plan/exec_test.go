@@ -2900,9 +2900,21 @@ func TestExecuteRetriesAStalledPromptOnlyOnce(t *testing.T) {
 	}
 }
 
-// TestExecuteWithoutATrustBudgetDoesNotRetryAStalledPrompt: decision 2 once
-// more. `create` gets herdr's own refusal, on the first attempt, unchanged.
-func TestExecuteWithoutATrustBudgetDoesNotRetryAStalledPrompt(t *testing.T) {
+// TestExecuteRetriesAStalledPromptWithoutATrustBudget is the gate #115's
+// decision 2 must NOT reach. It used to assert the opposite, which is how
+// headless `create` came to have no retry at all.
+//
+// TrustWait is a budget for waiting on a PERSON: five minutes for someone to
+// answer a blocking dialog, which is right for the popup and wrong for a
+// script with nobody at the keyboard, so headless `create` passes zero. The
+// stall retry waits for nobody -- a two-second settle for a TUI to finish
+// its first paint -- so decision 2 has nothing to say about it. It hung on
+// this knob only because PR #117 discovered the stall retry after #115's
+// decision was already written beside it.
+//
+// Do not re-apply that gate: zero TrustWait is `create`, and `create`
+// getting zero retries is the whole defect.
+func TestExecuteRetriesAStalledPromptWithoutATrustBudget(t *testing.T) {
 	withPromptRetrySettle(t, 0)
 	in := validInput()
 	in.UseWorktree = true
@@ -2924,8 +2936,16 @@ func TestExecuteWithoutATrustBudgetDoesNotRetryAStalledPrompt(t *testing.T) {
 	if result.FailedIndex != 2 {
 		t.Fatalf("FailedIndex = %d, want 2: %+v", result.FailedIndex, result)
 	}
-	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
-		t.Errorf("AgentPrompt called %d times, want exactly 1 -- no budget, no retry", n)
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
+		t.Errorf("AgentPrompt called %d times, want exactly 2 -- the settle waits for nobody, "+
+			"so the human-wait budget does not gate it", n)
+	}
+	// Two sends make "unsent" a stronger claim than the evidence supports,
+	// which is the other half of this fix: herdr writes the text and Enter before
+	// it starts watching, so a stall is evidence nothing was PROCESSED, not
+	// evidence nothing arrived.
+	if !result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = false, want true after two sends: %+v", result)
 	}
 }
 
@@ -2957,6 +2977,50 @@ func TestExecuteDoesNotRetryAnUnconfirmedPrompt(t *testing.T) {
 	}
 	if !result.PromptUnconfirmed {
 		t.Errorf("PromptUnconfirmed = false, want true -- #108's classification must survive the retry logic")
+	}
+}
+
+// TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape keeps the
+// discriminator from rotting back into one generic sentence.
+//
+// PromptUnconfirmed is one posture reached two ways, and the two rest on
+// different evidence. A wait timeout gave up while the agent was
+// demonstrably busy -- that is what "timed out" names, and it is the reason
+// `clean` would kill a mid-turn agent. A stall timed nothing out; herdr
+// watched and saw the agent do nothing, twice, so what is unknown is
+// whether either send landed and what the pane may hold is two copies.
+// Showing the timeout's sentence for a stall would be a fabricated
+// explanation of a failure that did not happen.
+func TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = false
+
+	timeout := CleanCheck(context.Background(), in, ExecResult{
+		FailedIndex:       2,
+		PromptText:        "implement the fix",
+		PromptUnconfirmed: true,
+	})
+	if timeout.Allowed {
+		t.Fatalf("a prompt-wait timeout allowed the clean: %+v", timeout)
+	}
+	if !strings.Contains(timeout.Reason, "timed out") {
+		t.Errorf("timeout reason = %q, want it to name the wait that gave up", timeout.Reason)
+	}
+
+	stalled := CleanCheck(context.Background(), in, ExecResult{
+		FailedIndex:        2,
+		PromptText:         "implement the fix",
+		PromptUnconfirmed:  true,
+		PromptStalledTwice: true,
+	})
+	if stalled.Allowed {
+		t.Fatalf("a twice-stalled prompt allowed the clean: %+v", stalled)
+	}
+	if strings.Contains(stalled.Reason, "timed out") {
+		t.Errorf("stall reason = %q, want the stall's own evidence -- nothing timed out", stalled.Reason)
+	}
+	if !strings.Contains(stalled.Reason, "read the pane") && !strings.Contains(stalled.Reason, "Read the pane") {
+		t.Errorf("stall reason = %q, want it to send the user to the pane", stalled.Reason)
 	}
 }
 

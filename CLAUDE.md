@@ -266,7 +266,15 @@ Layering, outermost to innermost:
   measured: for about a second after a trust dialog clears, `agent get`
   reports `idle` and `interactive_ready` while the agent's TUI is not yet
   accepting input. Collapsing the two would either strand a delivered prompt
-  or double-paste into a working agent.
+  or double-paste into a working agent. That retry is **not** gated on
+  `trust_wait_ms` and must not be re-gated on it: the budget is for
+  waiting on a *person*, and a two-second settle waits for nobody, so both
+  the popup and headless `create` take it. Note also where "nothing was
+  processed" stops: herdr writes the text and Enter *before* it starts
+  watching (herdr v0.9.0, `src/api/wait.rs`), so a stall that survives the
+  retry takes the **unconfirmed** posture — two sends have been made, the
+  pane may hold two copies, and `ExecResult.PromptStalledTwice` is what lets
+  `CleanCheck` say that rather than the timeout's "the wait timed out".
 - **Citations into herdr's source name a pinned commit, never a local
   path.** Two spellings, both anchored to
   `b1ff4582e9688f52ffb943cfa8bee4871ae122e4`: the `herdr:src/cli.rs`

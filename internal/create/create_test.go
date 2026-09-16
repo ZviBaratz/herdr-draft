@@ -59,6 +59,14 @@ type fakeRunner struct {
 	failAt     string
 	readText   string
 
+	// failTimes bounds how many calls to failAt actually fail. Zero means
+	// all of them, which is what every test that leaves it alone means by
+	// failAt; a positive N fails the first N and lets the rest through,
+	// which is the only way to model a failure a RETRY recovers from.
+	// failed counts the ones that did.
+	failTimes int
+	failed    int
+
 	// failErr, when non-nil, is what failAt fails with instead of the
 	// generic error below -- needed only where the error's own TEXT is
 	// what the test is about, since herdrc.CLIRunner surfaces herdr's
@@ -133,7 +141,8 @@ func (r *fakeRunner) nextPaneBeside(paneID string) herdrc.CreatedTopology {
 
 func (r *fakeRunner) record(name string, args ...string) error {
 	r.calls = append(r.calls, name+"("+strings.Join(args, ",")+")")
-	if name == r.failAt {
+	if name == r.failAt && (r.failTimes == 0 || r.failed < r.failTimes) {
+		r.failed++
 		if r.failErr != nil {
 			return r.failErr
 		}
@@ -142,13 +151,16 @@ func (r *fakeRunner) record(name string, args ...string) error {
 	return nil
 }
 
-func (r *fakeRunner) called(name string) bool {
+func (r *fakeRunner) called(name string) bool { return r.countCalls(name) > 0 }
+
+func (r *fakeRunner) countCalls(name string) int {
+	n := 0
 	for _, c := range r.calls {
 		if strings.HasPrefix(c, name+"(") {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }
 
 func (r *fakeRunner) WorkspaceList(context.Context) ([]herdrc.WorkspaceInfo, error) {
@@ -836,6 +848,174 @@ func TestBlockedStartIsExplainedHeadlessly(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
 		}
+	}
+}
+
+// --- a stalled prompt -----------------------------------------------------
+//
+// These three close a coverage gap: nothing in this package drove a stall at
+// all, so the popup-only retry and the "unsent" label a surviving stall wore
+// were both invisible from here. They cost about two
+// seconds each in real time -- plan.promptRetrySettle is that package's own
+// unexported var, and the settle is deliberately not an ExecOpts knob, since
+// the whole point of the fix is that both paths retry identically.
+
+// stalledPromptErr is herdr's agent_prompt_stalled as internal/herdrc
+// classifies it: `agent prompt` observed no working and no blocked state at
+// all within AGENT_PROMPT_EFFECT_TIMEOUT_MS. The sentinel is what
+// internal/plan matches on, so the JSON tail is here only because that is
+// the shape a real failure arrives in.
+func stalledPromptErr() error {
+	return fmt.Errorf("%w: herdr agent prompt wS1:pP1 ...: exit status 1: "+
+		`{"error":{"code":"agent_prompt_stalled","message":"agent prompt produced no observed working or blocked state within 5000 ms; current status is idle"},"id":"cli:agent:prompt"}`,
+		herdrc.ErrPromptStalled)
+}
+
+// TestStalledPromptIsRetriedThenReportedUnconfirmed is the whole fix end to
+// end. Two facts, and before it `create` got neither: the retry was gated on
+// `[timeouts] trust_wait_ms`, which headless `create` passes as zero on
+// purpose, and the single stall that resulted was then labelled "unsent" --
+// which README documents as "resend it; it never arrived".
+//
+// herdr writes the prompt text and Enter before it starts waiting
+// (herdr v0.9.0, src/api/wait.rs), so after two sends "it never arrived" is
+// not something this command knows. The posture is therefore the same one
+// #108 established for the other unknown-delivery sentinel.
+func TestStalledPromptIsRetriedThenReportedUnconfirmed(t *testing.T) {
+	const prompt = "implement the fix"
+
+	h := newHarness(t)
+	h.runner.failAt = "AgentPrompt"
+	h.runner.failErr = stalledPromptErr()
+
+	code := h.run("--title", "t", "--no-worktree", "--prompt", prompt, "--json")
+	if code != ExitFailed {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+	}
+	if n := h.runner.countCalls("AgentPrompt"); n != 2 {
+		t.Errorf("AgentPrompt called %d times, want 2 -- a stall is retried once in `create` too: %v",
+			n, h.runner.calls)
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if out.OK {
+		t.Errorf("ok = true, want false")
+	}
+	if out.PromptStatus != promptStatusUnconfirmed {
+		t.Errorf("prompt_status = %q, want %q", out.PromptStatus, promptStatusUnconfirmed)
+	}
+	// Absent, not false: neither value is a statement this command can make
+	// after two sends, and a consumer branching on true/false must be made
+	// to notice rather than quietly read the zero value.
+	if out.PromptSent != nil {
+		t.Errorf("prompt_sent = %v, want it absent", *out.PromptSent)
+	}
+	if strings.Contains(h.stdout.String(), "prompt_sent") {
+		t.Errorf("stdout carries a prompt_sent key:\n%s", h.stdout)
+	}
+	if out.UnconfirmedPrompt != prompt {
+		t.Errorf("unconfirmed_prompt = %q, want the prompt text back", out.UnconfirmedPrompt)
+	}
+	if out.UnsentPrompt != "" {
+		t.Errorf("unsent_prompt = %q, want it absent -- that key is what tells a script to resend",
+			out.UnsentPrompt)
+	}
+
+	// The same run without --json, because the prompt text and its
+	// instruction are written to stderr only in human mode.
+	h2 := newHarness(t)
+	h2.runner.failAt = "AgentPrompt"
+	h2.runner.failErr = stalledPromptErr()
+	if code := h2.run("--title", "t", "--no-worktree", "--prompt", prompt); code != ExitFailed {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h2.stderr)
+	}
+	stderr := h2.stderr.String()
+	if strings.Contains(stderr, "was not sent") {
+		t.Errorf("stderr claims the prompt was not sent after two sends:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "read the pane") {
+		t.Errorf("stderr = %q, want it to send the caller to the pane before resending", stderr)
+	}
+}
+
+// TestStalledPromptTheRetryRescues is the retry earning its keep, and the
+// reason the fix is a retry rather than better wording: the measured cause
+// of a stall is a TUI that reports itself ready about half a second before
+// it accepts input, which one settle is past. Nothing is echoed back,
+// because nothing was lost.
+func TestStalledPromptTheRetryRescues(t *testing.T) {
+	const prompt = "implement the fix"
+
+	h := newHarness(t)
+	h.runner.failAt = "AgentPrompt"
+	h.runner.failErr = stalledPromptErr()
+	h.runner.failTimes = 1
+
+	code := h.run("--title", "t", "--no-worktree", "--prompt", prompt, "--json")
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if n := h.runner.countCalls("AgentPrompt"); n != 2 {
+		t.Errorf("AgentPrompt called %d times, want 2 -- one stall, one retry: %v", n, h.runner.calls)
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if !out.OK {
+		t.Errorf("ok = false, want true: %+v", out)
+	}
+	if out.PromptStatus != promptStatusSent {
+		t.Errorf("prompt_status = %q, want %q", out.PromptStatus, promptStatusSent)
+	}
+	if strings.Contains(h.stdout.String(), prompt) || strings.Contains(h.stderr.String(), prompt) {
+		t.Errorf("the prompt was echoed back after being delivered:\nstdout: %s\nstderr: %s",
+			h.stdout, h.stderr)
+	}
+}
+
+// TestOnFailureCleanRefusesASurvivingStall is the accepted cost of the
+// posture, pinned so it cannot be traded away later: after two sends the
+// pane may hold the prompt, and `clean` would remove a pane that might have
+// a healthy agent working in it. The refusal is disclosed rather than
+// silent, and the caller still gets the ids.
+func TestOnFailureCleanRefusesASurvivingStall(t *testing.T) {
+	h := newHarness(t)
+	h.runner.failAt = "AgentPrompt"
+	h.runner.failErr = stalledPromptErr()
+
+	code := h.run("--title", "t", "--no-worktree", "--prompt", "implement the fix",
+		"--on-failure", "clean", "--json")
+	if code != ExitFailed {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+	}
+	for _, closer := range []string{"WorkspaceClose", "PaneClose", "TabClose"} {
+		if h.runner.called(closer) {
+			t.Errorf("--on-failure clean removed the session with %s: %v", closer, h.runner.calls)
+		}
+	}
+
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if out.Cleaned {
+		t.Errorf("cleaned = true, want false")
+	}
+	if out.CleanRefused == "" {
+		t.Error("clean_refused is empty -- a refusal the caller cannot see is a silent no-op")
+	}
+	// The timeout's reason names a wait that gave up; a stall timed nothing
+	// out, and saying so would be a fabricated explanation.
+	if strings.Contains(out.CleanRefused, "timed out") {
+		t.Errorf("clean_refused = %q, want the stall's own evidence, not the timeout's", out.CleanRefused)
+	}
+	if out.SpacePaneID == "" && out.PaneID == "" {
+		t.Errorf("no pane id in the report, but the caller was told to read the pane: %+v", out)
 	}
 }
 

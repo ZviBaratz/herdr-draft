@@ -129,10 +129,23 @@ type ExecResult struct {
 	SpaceReused bool
 	SpaceLabel  string
 
-	// PromptUnconfirmed reports that the prompt op failed with herdrc's
-	// ErrPromptWaitTimeout -- `herdr agent prompt --wait` gave up waiting
-	// for the agent's status to change -- so whether the prompt arrived is
-	// UNKNOWN rather than known to be false (#108).
+	// PromptUnconfirmed reports that delivery of the prompt is UNKNOWN
+	// rather than known to be false (#108). It is reached two ways, and
+	// they rest on different evidence:
+	//
+	//   - ErrPromptWaitTimeout. `herdr agent prompt --wait` gave up
+	//     waiting for the agent's status to change, having watched it be
+	//     demonstrably busy. The send itself did not fail; only the wait
+	//     for its effect did.
+	//   - ErrPromptStalled, twice. herdr saw no working and no blocked
+	//     state at all, so nothing was PROCESSED -- which is why Execute
+	//     answers the first one by sending again. What the second does not
+	//     license is "nothing arrived": herdr writes the prompt text and
+	//     Enter before it starts watching (herdr v0.9.0, src/api/wait.rs),
+	//     so after two sends the pane may hold two copies of it.
+	//
+	// PromptStalledTwice below is which of the two, for callers that must
+	// name the evidence rather than merely act on the posture.
 	//
 	// It never travels alone: it is only ever set on a failed prompt op,
 	// which is exactly the case that also sets PromptText, so
@@ -157,6 +170,18 @@ type ExecResult struct {
 	// suppressing the text on a run that really failed to deliver -- so
 	// this reports what is known and leaves the pane to the human.
 	PromptUnconfirmed bool
+
+	// PromptStalledTwice discriminates WHICH of PromptUnconfirmed's two
+	// evidence shapes set it: true for a send that stalled twice, false
+	// for a wait that timed out. Set on the same line, from the same
+	// error, and meaningless on its own -- the flag above is the posture,
+	// this is only the wording.
+	//
+	// It exists because one refusal sentence does not fit both. CleanCheck
+	// receives nothing but Input and ExecResult, and its timeout reason
+	// names a wait that gave up; shown for a stall, which timed nothing
+	// out, that is a fabricated account of a failure that did not happen.
+	PromptStalledTwice bool
 }
 
 // busyRetryInterval, busyRetryBudget, and busyRetryNow implement the busy
@@ -787,7 +812,9 @@ func explainPromptKilledAgent(err error) error {
 		"can be removed and started again: %w", err)
 }
 
-// explainStalledPrompt says what is left after a prompt stalled TWICE.
+// explainStalledPrompt says what is left after a prompt stalled TWICE --
+// which, since the retry stopped being gated on the human-wait budget, is
+// what every caller reaching here has done, popup and `create` alike.
 //
 // One stall is evidence the agent was not accepting input yet, and Execute
 // answers it by trying again. Two is where that evidence stops carrying the
@@ -796,7 +823,12 @@ func explainPromptKilledAgent(err error) error {
 // than what is known. The instruction is therefore the same one #108
 // established for the opposite sentinel -- read the pane before pasting --
 // because the failure mode that costs the user most here is a double-paste
-// into an agent that did eventually receive it.
+// into an agent that did eventually receive it. That is also why the result
+// takes the unconfirmed posture rather than merely corrected "unsent"
+// wording: this message is one of several places a caller reads the
+// outcome, and the rest -- `--json`'s prompt_status, `create`'s stderr, the
+// popup's own line, CleanCheck's refusal -- all branch on
+// ExecResult.PromptUnconfirmed instead of reading any of this text.
 func explainStalledPrompt(err error) error {
 	return fmt.Errorf("the agent was still not accepting input, so the prompt was probably not delivered -- "+
 		"read the pane before pasting it, in case a copy arrived late: %w", err)
@@ -1233,18 +1265,33 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 						err = promptIfReady(ctx, r, req)
 					}
 				}
-				// A stalled send means herdr saw the agent do NOTHING, which
-				// is the one prompt failure that is positive evidence
-				// nothing was delivered -- so it is the one worth sending
-				// again. Deliberately not ErrPromptWaitTimeout beside it:
-				// that one means the agent WAS working, and resending would
-				// give a busy agent its instructions twice (#108).
+				// A stalled send means herdr saw the agent do NOTHING --
+				// positive evidence nothing was PROCESSED, which is the one
+				// prompt failure worth sending again. Not "nothing was
+				// delivered": herdr writes the text and Enter before it
+				// starts watching (herdr v0.9.0, src/api/wait.rs), which is
+				// why two stalls leave delivery unknown rather than false.
+				// Deliberately not ErrPromptWaitTimeout beside it: that one
+				// means the agent WAS working, and resending would give a
+				// busy agent its instructions twice (#108).
 				//
 				// Exactly one extra attempt, and through promptIfReady, so
 				// the guard gates the retry as it gates the first send and a
 				// TUI that buffered the keystrokes it was handed while
 				// starting cannot be fed the same prompt repeatedly.
-				if opts.TrustWait > 0 && errors.Is(err, herdrc.ErrPromptStalled) {
+				//
+				// Ungated by opts.TrustWait, unlike the two waits above, and
+				// that asymmetry is the point: TrustWait budgets a wait for
+				// a PERSON to answer a dialog, and #115's decision 2 --
+				// headless `create` passes zero -- is about not waiting five
+				// minutes for one nobody will answer. A two-second settle
+				// for a TUI to finish its first paint waits for nobody, so
+				// the budget has nothing to say about it. Gating it here was
+				// PR #117 hanging a later discovery on the knob that
+				// happened to be beside it, and it cost `create` its only
+				// retry and the popup its retry whenever a user set
+				// `trust_wait_ms = 0`.
+				if errors.Is(err, herdrc.ErrPromptStalled) {
 					select {
 					case <-ctx.Done():
 					case <-time.After(promptRetrySettle):
@@ -1288,7 +1335,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			// busy-retry that eventually succeeds must not leave the flag
 			// behind, and by this point runErr is the error that actually
 			// ended the run.
-			result.PromptUnconfirmed = errors.Is(runErr, herdrc.ErrPromptWaitTimeout)
+			result.PromptStalledTwice = errors.Is(runErr, herdrc.ErrPromptStalled)
+			result.PromptUnconfirmed = result.PromptStalledTwice ||
+				errors.Is(runErr, herdrc.ErrPromptWaitTimeout)
 			return result
 		}
 
@@ -1350,7 +1399,20 @@ func CleanCheck(ctx context.Context, in Input, result ExecResult) CleanDecision 
 	// it right now, which outranks all of them: on a prompt-wait timeout
 	// the agent may be mid-turn on the very prompt that appeared to fail,
 	// and `clean` would kill it (#108).
+	//
+	// Two reasons for one refusal, because the two ways delivery becomes
+	// unknown (ExecResult.PromptUnconfirmed) know different things, and the
+	// user is being asked to go and look at a pane -- so the sentence has
+	// to say what they will be looking for.
 	if result.PromptUnconfirmed {
+		if result.PromptStalledTwice {
+			return CleanDecision{
+				Allowed: false,
+				Reason: "the prompt was sent twice and herdr saw the agent do nothing either time, so " +
+					"whether the text landed is unknown and the pane may hold two copies of it. " +
+					"Read the pane before removing anything.",
+			}
+		}
 		return CleanDecision{
 			Allowed: false,
 			Reason: "the prompt may already have been delivered -- the wait for the agent's status " +

@@ -326,11 +326,21 @@ ones you passed). It never prompts. Exit codes:
 | 3 | herdr is unreachable |
 
 **A prompt has three fates, not two.** `prompt_status` names which:
-`sent`, `unsent`, or `unconfirmed`. The third is `herdr agent prompt
---wait` giving up before the agent's status changed, which is *not* proof
-the prompt failed to arrive — herdr 0.9.0 completes that wait only on
-observed working-or-blocked activity, so a large prompt into an agent slow
-to paint its transition times out while running perfectly well.
+`sent`, `unsent`, or `unconfirmed`. The third means delivery is unknown,
+and it is reached two ways:
+
+- **the wait gave up.** `herdr agent prompt --wait` returned before the
+  agent's status changed, which is *not* proof the prompt failed to
+  arrive — herdr 0.9.0 completes that wait only on observed
+  working-or-blocked activity, so a large prompt into an agent slow to
+  paint its transition times out while running perfectly well.
+- **the send stalled twice.** A *stall* is herdr seeing no working and no
+  blocked activity at all after a send — positive evidence the agent
+  processed nothing, which is why herdr-draft pauses a couple of seconds
+  and sends once more. If that stalls too, it stops. herdr writes the
+  prompt text and Enter before it starts watching, so two sends later
+  "it never arrived" is not something this command knows, and the pane
+  may hold two copies.
 
 Read `prompt_status` rather than inferring from the other fields:
 
@@ -339,6 +349,10 @@ Read `prompt_status` rather than inferring from the other fields:
 | `sent` | `true` | — | nothing |
 | `unsent` | `false` | `unsent_prompt` | resend it; it never arrived |
 | `unconfirmed` | *absent* | `unconfirmed_prompt` | **read the pane first** |
+
+`unsent` is for the failures that really are unsent, where nothing was
+ever typed: a dialog the guard refused to type into, or a plan that
+stopped before it reached the prompt step at all.
 
 `prompt_sent` is absent for `unconfirmed` because neither `true` nor
 `false` is a statement this command can make. And the text comes back
@@ -349,8 +363,12 @@ gets its instructions twice. On `unconfirmed`, check the pane before
 resending anything.
 
 `--on-failure clean` is **refused** for an `unconfirmed` prompt, with the
-reason in `clean_refused`: the session may have an agent working in it
-right now, and cleaning up would kill it mid-turn.
+reason in `clean_refused` — which names whichever of the two shapes it
+was. After a wait that gave up, the session may have an agent working in
+it right now and cleaning up would kill it mid-turn. After two stalls,
+what the pane holds is unknown and worth reading before anything is
+removed. Either way the ids are still reported, so nothing is stranded
+without a way back to it.
 
 **The reported ids name the agent, not the worktree.**
 `workspace_id`/`tab_id`/`pane_id` — and `workspace=`/`tab=`/`pane=` on the
@@ -653,8 +671,12 @@ inside it only when `picker` is set and its probe succeeded.
   take five minutes to report. Set it to `0` to switch the wait off and
   fail immediately instead.
 
-  Only the popup waits. Headless `create` has nobody at the keyboard, so
-  it keeps failing fast with the reason, and there is no flag for it.
+  Only the popup waits for **you**. Headless `create` has nobody at the
+  keyboard, so it keeps failing fast with the reason, and there is no flag
+  for it. This budget covers that wait alone: the short pause before a
+  stalled prompt is sent again waits for a terminal to finish painting,
+  not for a person, so it happens on both paths and setting this to `0`
+  does not switch it off.
 
 ### `[worktree]`
 
