@@ -1309,6 +1309,7 @@ something privately.
 herdr-draft is MIT licensed (see `LICENSE`). It ports and adapts UI code
 from [Atrium](https://github.com/ZviBaratz/atrium) (AGPL-3.0) under a
 license grant from Atrium's own author, and translates visual conventions
-and default palette values from herdr (Apache-2.0). Full attribution and
+and default palette values from herdr (Apache-2.0, whose text ships in
+`LICENSES/Apache-2.0.txt`). Full attribution and
 the audited file-by-file provenance are in `NOTICE` and the v1 design
 spec's §14.
