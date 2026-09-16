@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
@@ -269,6 +270,9 @@ func (r *fakeRunner) WorkspaceClose(_ context.Context, workspaceID string) error
 type fakeGit struct {
 	exists bool
 	isRepo bool
+	// branches names the branches BranchExists reports as already there,
+	// locally or on a remote -- nil for every test that does not care.
+	branches map[string]bool
 }
 
 var _ GitSource = (*fakeGit)(nil)
@@ -277,6 +281,9 @@ func newFakeGit() *fakeGit { return &fakeGit{exists: true, isRepo: true} }
 
 func (g *fakeGit) DirExists(string) bool { return g.exists }
 func (g *fakeGit) IsGitRepo(string) bool { return g.isRepo }
+func (g *fakeGit) BranchExists(_ context.Context, _ string, name string) (bool, error) {
+	return g.branches[name], nil
+}
 func (g *fakeGit) RepoRoot(_ context.Context, dir string) (string, error) {
 	if !g.isRepo {
 		return "", nil
@@ -1835,6 +1842,19 @@ func TestCreateRefusesBeforeCreatingAnythingWhenThePickerRefuses(t *testing.T) {
 	}
 }
 
+// ... and it is a usage error even with herdr down. It is a fault in the
+// command or the config, which needs no pick to find, so it must not wait for
+// the reachability probe: exit 3 tells an agent "nothing was created; stop",
+// when what it needs to hear is "fix the command".
+func TestCreateRejectsAutoWithNoPickerBeforeTheReachabilityProbe(t *testing.T) {
+	h := newHarness(t)
+	h.runner.listErr = errors.New("connection refused")
+
+	if code := h.run("--title", "fix login", "--account", "auto", "--no-worktree"); code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+}
+
 // `--account auto` with no picker configured is a usage error, not a silent
 // fallback to the active account: the user named a resolution strategy this
 // install does not have.
@@ -2011,5 +2031,201 @@ func TestCreate_SaysNothingAboutAnAbsentLaunchMode(t *testing.T) {
 	}
 	if got := h.stderr.String(); strings.Contains(got, "launch ") || strings.Contains(got, "ignoring") {
 		t.Errorf("warned about a launch mode nobody configured:\n%s", got)
+	}
+}
+
+// --- the form's submit-time refusals (#145, #146, #147) --------------------
+
+// fakeClauth implements ClauthSource.
+type fakeClauth struct {
+	status clauth.Status
+	err    error
+}
+
+func (c *fakeClauth) Status(context.Context) (clauth.Status, error) {
+	return c.status, c.err
+}
+
+// createdAnything reports whether any call that makes a session -- a
+// worktree, a workspace, a tab, a split, or a launch -- reached the runner.
+func (h *harness) createdAnything() bool {
+	for _, name := range []string{"WorktreeCreate", "WorkspaceCreate", "TabCreate", "PaneSplit", "PaneRun", "AgentStart"} {
+		if h.runner.called(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// #147: herdr v0.9.0 does not refuse a worktree on a branch that already
+// exists -- it checks that branch out and ignores the base
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/worktree.rs#L315) -- so
+// a create that let this through would start the agent on someone's old
+// work. The form refuses it; so must the command.
+func TestCreateRefusesAWorktreeOnAnExistingBranch(t *testing.T) {
+	h := newHarness(t)
+	h.git.branches = map[string]bool{"feature/login": true}
+
+	code := h.run("--title", "fix login", "--branch", "feature/login", "--worktree")
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), `"feature/login"`) {
+		t.Errorf("stderr should name the branch:\n%s", h.stderr)
+	}
+	if h.createdAnything() {
+		t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+	}
+}
+
+// The branch only matters when a worktree would create it: without one no
+// branch is made at all, which is the same condition the form's check has.
+func TestCreateIgnoresAnExistingBranchWithoutAWorktree(t *testing.T) {
+	h := newHarness(t)
+	h.git.branches = map[string]bool{"feature/login": true}
+
+	if code := h.run("--title", "fix login", "--branch", "feature/login", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+}
+
+// #147's other half of the duplicate check: an open workspace already
+// labelled with the title.
+func TestCreateRefusesATitleAnOpenWorkspaceAlreadyCarries(t *testing.T) {
+	h := newHarness(t)
+	h.runner.workspaces = []herdrc.WorkspaceInfo{{WorkspaceID: "wOld", Label: "fix login"}}
+
+	code := h.run("--title", "fix login", "--no-worktree", "--placement", "new-space")
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), "wOld") {
+		t.Errorf("stderr should name the workspace holding the label:\n%s", h.stderr)
+	}
+	if h.createdAnything() {
+		t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+	}
+}
+
+// #147: a pinned profile clauth reports as not signed in is refused, as the
+// form refuses it, rather than typed into a pane where it fails.
+func TestCreateRefusesAProfileClauthReportsSignedOut(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Clauth = &fakeClauth{status: clauth.Status{Schema: 1, Profiles: []clauth.Profile{
+		{Name: "alpha-1", AuthStatus: "ok"},
+		{Name: "alpha-2", AuthStatus: "expired"},
+	}}}
+
+	code := h.run("--title", "fix login", "--account", "alpha-2", "--no-worktree")
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+	for _, want := range []string{"alpha-2", "expired"} {
+		if !strings.Contains(h.stderr.String(), want) {
+			t.Errorf("stderr should mention %q:\n%s", want, h.stderr)
+		}
+	}
+	if h.createdAnything() {
+		t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+	}
+}
+
+// The mirror images, which keep the check from becoming a new way to fail:
+// a signed-in profile passes, and so does one clauth could not report on --
+// the form treats an unknown status as non-blocking, and a create that
+// refused whenever clauth hiccupped would be stricter than the popup.
+func TestCreateLaunchesAProfileClauthReportsSignedIn(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Clauth = &fakeClauth{status: clauth.Status{Schema: 1, Profiles: []clauth.Profile{
+		{Name: "alpha-2", AuthStatus: "ok"},
+	}}}
+
+	if code := h.run("--title", "fix login", "--account", "alpha-2", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+}
+
+func TestCreateLaunchesWhenClauthCannotReport(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Clauth = &fakeClauth{err: errors.New("clauth status --json: exit status 1")}
+
+	if code := h.run("--title", "fix login", "--account", "alpha-2", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), "exit status 1") {
+		t.Errorf("an unchecked auth status should be said on stderr, not skipped silently:\n%s", h.stderr)
+	}
+}
+
+// #146: `active` is the "no pin" sentinel on the command line too, not a
+// profile called "active".
+func TestCreateAccountActiveIsNoPin(t *testing.T) {
+	h := newHarness(t)
+
+	if code := h.run("--title", "fix login", "--account", "active", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if h.runner.called("PaneRun") {
+		t.Fatalf("--account active must not launch through clauth, got %v", h.runner.calls)
+	}
+	if !h.runner.called("AgentStart") {
+		t.Fatalf("--account active should start the agent unpinned, got %v", h.runner.calls)
+	}
+}
+
+// ... including for an agent that cannot be pinned: no pin is not a pin, so
+// there is nothing for plan.Build to refuse.
+func TestCreateAccountActiveWithANonClaudeAgent(t *testing.T) {
+	h := newHarness(t)
+
+	if code := h.run("--title", "fix login", "--account", "active", "--agent", "codex", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+}
+
+// #145: the commit pick writes the picker's ledger, so every refusal that
+// can be known without it has to come first. One test per refusal class,
+// because a pick that moved past one of them and not another is exactly
+// the partial fix this is here to catch.
+func TestCreateAutoPicksNothingForARequestItThenRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(h *harness)
+		args  []string
+		want  int
+	}{
+		{
+			name: "plan.Build refuses the pin",
+			args: []string{"--title", "fix login", "--account", "auto", "--agent", "codex", "--no-worktree"},
+			want: ExitUsage,
+		},
+		{
+			name:  "herdr is unreachable",
+			setup: func(h *harness) { h.runner.listErr = errors.New("connection refused") },
+			args:  []string{"--title", "fix login", "--account", "auto", "--no-worktree"},
+			want:  ExitUnreachable,
+		},
+		{
+			name:  "the branch already exists",
+			setup: func(h *harness) { h.git.branches = map[string]bool{"feature/login": true} },
+			args:  []string{"--title", "fix login", "--account", "auto", "--branch", "feature/login", "--worktree"},
+			want:  ExitUsage,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			p := &fakePicker{res: picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}}
+			h.deps.Picker = p
+			if tc.setup != nil {
+				tc.setup(h)
+			}
+
+			if code := h.run(tc.args...); code != tc.want {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, tc.want, h.stderr)
+			}
+			if len(p.calls) != 0 {
+				t.Fatalf("the picker was called %d time(s) for a create that was then refused", len(p.calls))
+			}
+		})
 	}
 }

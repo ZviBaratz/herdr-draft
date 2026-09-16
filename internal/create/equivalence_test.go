@@ -288,7 +288,16 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	if err != nil {
 		t.Fatalf("resolveRequest: %v", err)
 	}
-	return resolved.input
+	// run() resolves an `auto` account after the rest of the pre-flight
+	// (#145), so the comparison has to take that step too -- the command's
+	// counterpart of formPlanInputAuto's ResolveAccount. Without it the
+	// command side would hand back the sentinel and the auto test would be
+	// comparing the pick against nothing.
+	in, err := resolveAccount(context.Background(), resolved.input, accountPicker(resolved.tiers.cfg, Deps{Picker: c.picker}))
+	if err != nil {
+		t.Fatalf("resolveAccount: %v", err)
+	}
+	return in
 }
 
 // formCase/formPlanInput build a real app.Model over the same tiers, let

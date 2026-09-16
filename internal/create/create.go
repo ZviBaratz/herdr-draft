@@ -33,6 +33,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/ZviBaratz/herdr-draft/internal/app"
+	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
@@ -115,6 +117,16 @@ type GitSource interface {
 	DirExists(path string) bool
 	IsGitRepo(dir string) bool
 	RepoRoot(ctx context.Context, dir string) (string, error)
+	// BranchExists is the form's duplicate-branch check (#147): whether a
+	// branch of that name already exists locally or on a remote.
+	BranchExists(ctx context.Context, dir, name string) (bool, error)
+}
+
+// ClauthSource is clauth's status feed -- the same one-method interface
+// internal/app reads the account row from, so app.NewClauthSource satisfies
+// it and production has one loader rather than two.
+type ClauthSource interface {
+	Status(ctx context.Context) (clauth.Status, error)
 }
 
 // IssueSource is the Linear access --issue needs -- the same one-method
@@ -146,6 +158,12 @@ type Deps struct {
 	// every test in this package hands in a fake, so no test here ever runs a
 	// subprocess.
 	Picker picker.Source
+	// Clauth is where a pinned profile's auth status is read from, the same
+	// feed the form's account row shows. nil means there is no clauth to ask,
+	// and the check is skipped: unlike Git, the production loader needs the
+	// status-file path and binary name main.go owns, so it cannot be built
+	// here, and main.go passes it.
+	Clauth ClauthSource
 
 	Stdin  io.Reader
 	Stdout io.Writer
@@ -232,21 +250,112 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 		return usageError(deps.stderr(), err)
 	}
 
-	ops, err := plan.Build(resolved.input)
-	if err != nil {
+	// Built once as a CHECK, with an `auto` account still unpicked: every
+	// refusal plan.Build can make is a refusal the pick below must not be
+	// spent on (#145).
+	if _, err := plan.Build(resolved.input); err != nil {
+		return usageError(deps.stderr(), err)
+	}
+	// `auto` with no picker to ask is a fault in the command or the config,
+	// so it is reported here, ahead of the probe, as it was when the pick ran
+	// inside resolveRequest: with herdr also down, exit 3 would tell the
+	// caller to stop when the remedy is to fix the invocation.
+	if err := requirePicker(resolved.input, accountPicker(resolved.tiers.cfg, deps)); err != nil {
 		return usageError(deps.stderr(), err)
 	}
 
-	// The reachability probe (spec §13's exit 3) is deliberately the LAST
-	// pre-flight step: a typo in a flag should not need a running herdr to
-	// be reported, and `workspace list` is the same call app.Bootstrap
-	// uses for the same purpose.
+	// The reachability probe (spec §13's exit 3) comes after every check
+	// that needs no herdr -- a typo in a flag should not need a running
+	// herdr to be reported -- and `workspace list` is the same call
+	// app.Bootstrap uses for the same purpose.
 	if _, err := deps.Runner.WorkspaceList(ctx); err != nil {
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: herdr unreachable: %v\n", err)
 		return ExitUnreachable
 	}
 
+	if err := refuseWhatTheFormRefuses(ctx, resolved, deps); err != nil {
+		return usageError(deps.stderr(), err)
+	}
+
+	// The pick is the LAST pre-flight step, as it is in the form's
+	// handleSubmit: it writes the picker's ledger, so it happens only for a
+	// request nothing is left to refuse. The picker's own refusal is still
+	// before anything is created -- the whole of the contract the spec
+	// states for its exit 2/3/4.
+	in, err := resolveAccount(ctx, resolved.input, accountPicker(resolved.tiers.cfg, deps))
+	if err != nil {
+		return usageError(deps.stderr(), err)
+	}
+	resolved.input = in
+
+	ops, err := plan.Build(resolved.input)
+	if err != nil {
+		return usageError(deps.stderr(), err)
+	}
 	return execute(ctx, resolved, req, deps, ops)
+}
+
+// refuseWhatTheFormRefuses is the form's submit-time validation that
+// plan.Build does not already make (#147): checkSubmitValidation's
+// duplicate-title and signed-out-profile blocks. Without it a request the
+// popup would refuse went straight to herdr from here, and
+// equivalence_test.go could not see the difference, because it compares
+// plan.Inputs and a refusal is not one.
+//
+// Each check reads its condition the way the form's does, so the two
+// refuse the same requests: the branch only when a worktree would create
+// it, the label against the workspace snapshot the resolver already read,
+// and the auth status as non-blocking whenever it is unknown.
+func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Deps) error {
+	in := resolved.input
+
+	// Not a formality: herdr v0.9.0 does not refuse a branch that exists
+	// locally. It checks it out and ignores the base
+	// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/worktree.rs#L315),
+	// failing only if that branch's checkout directory is already on disk,
+	// so this is what stops a session starting on old work. A branch that
+	// exists only on a remote is refused too, as the form refuses it: herdr
+	// would make an unrelated local branch of the same name from the base.
+	if in.UseWorktree && in.Branch != "" {
+		if exists, err := deps.git().BranchExists(ctx, in.ProjectDir, in.Branch); err == nil && exists {
+			return fmt.Errorf("branch %q already exists, locally or on a remote; pass --branch with a new name", in.Branch)
+		}
+	}
+
+	if w, taken := app.WorkspaceLabelled(resolved.tiers.workspaces, in.Title); taken {
+		return fmt.Errorf("workspace %s is already labelled %q; pass a different --title", w.WorkspaceID, in.Title)
+	}
+
+	return refuseSignedOutProfile(ctx, resolved, deps)
+}
+
+// refuseSignedOutProfile is the form's accountAuthBlocked: a pinned profile
+// clauth reports with an auth status other than "ok". Only a named profile
+// is checked -- `auto` is still the sentinel here, exactly as it is when the
+// form runs the same check -- and an unknown status never blocks, as it does
+// not in the form. Unlike the form, where the account row already shows why
+// clauth could not be read, a status that could not be loaded is said on
+// stderr: there is no row here, and a check skipped in silence reads as a
+// check passed.
+func refuseSignedOutProfile(ctx context.Context, resolved resolution, deps Deps) error {
+	pin := resolved.input.AccountPin
+	if pin == "" || pin == clauthAuto || deps.Clauth == nil {
+		return nil
+	}
+	if enabled := resolved.tiers.cfg.Clauth.Enabled; enabled != nil && !*enabled {
+		return nil
+	}
+	status, err := deps.Clauth.Status(ctx)
+	if err != nil {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: could not check whether %s is signed in: %v\n", pin, err)
+		return nil
+	}
+	for _, p := range status.Profiles {
+		if p.Name == pin && p.AuthStatus != "" && p.AuthStatus != "ok" {
+			return fmt.Errorf("clauth reports profile %s as %q, not signed in: `clauth login %s`, or pass a different --account", pin, p.AuthStatus, pin)
+		}
+	}
+	return nil
 }
 
 // execute runs the plan and reports it. It is the only part of this

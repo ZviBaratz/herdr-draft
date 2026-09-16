@@ -63,9 +63,9 @@ type tiers struct {
 	// workspaces is the `herdr workspace list` snapshot the open-workspace
 	// tier reads (defaults.Sources.Workspaces). nil when herdr could not be
 	// asked: that leaves every other tier's answer standing, and run()'s
-	// reachability probe -- still the LAST pre-flight step, so a flag typo
-	// needs no running herdr to be reported -- is what turns an unreachable
-	// herdr into exit 3.
+	// reachability probe -- after every check that needs no herdr, so a flag
+	// typo needs no running herdr to be reported -- is what turns an
+	// unreachable herdr into exit 3.
 	workspaces []herdrc.WorkspaceInfo
 }
 
@@ -83,9 +83,12 @@ type resolution struct {
 	env Env
 }
 
-// resolveRequest is the whole pre-flight: locate the project, load every
-// tier, resolve the layered defaults through internal/defaults, apply the
-// explicit flags on top, and refuse anything that cannot work.
+// resolveRequest is the first half of the pre-flight: locate the project,
+// load every tier, resolve the layered defaults through internal/defaults,
+// apply the explicit flags on top, and refuse anything that is wrong with
+// the request itself. The half that needs herdr, or spends something --
+// the plan check, the reachability probe, the form's duplicate and auth
+// refusals, and the `auto` pick -- is run()'s, in that order (#145).
 //
 // The order matters in one place only: the project directory has to be
 // known before any tier can be loaded, because two of the five tiers
@@ -168,18 +171,9 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		return resolution{}, err
 	}
 
-	// An `auto` account is turned into a real profile HERE, inside the
-	// resolution the equivalence test compares against the form's -- which is
-	// the point: a plan.Input field only one path can fill is exactly the
-	// drift that test exists to catch, and `auto` adds two of them.
-	//
-	// It is also before anything is created, so a refusal costs no worktree,
-	// no workspace and no pane: the whole of the contract the spec states for
-	// the picker's exit 2/3/4.
-	in, err = resolveAccount(ctx, in, accountPicker(cfg, deps))
-	if err != nil {
-		return resolution{}, err
-	}
+	// An `auto` account is still the sentinel here: turning it into a profile
+	// runs the picker for real and writes its ledger, so it waits for every
+	// refusal that can be known without it -- see run() (#145).
 	return resolution{input: in, tiers: t, provenance: prov, env: env}, nil
 }
 
@@ -524,9 +518,10 @@ func agentKind(req request, res defaults.Resolved, kinds []string, prov map[stri
 // when clauth is enabled and names a real profile rather than the "active"
 // sentinel.
 //
-// An explicit --account is passed through even for a non-claude kind,
-// deliberately: plan.Build's own refusal names the rule, which is more
-// useful than silently dropping the flag.
+// An explicit --account naming a profile is passed through even for a
+// non-claude kind, deliberately: plan.Build's own refusal names the rule,
+// which is more useful than silently dropping the flag. `active` names no
+// profile, so it is no pin for any kind (#146).
 //
 // `auto` is returned UNRESOLVED, as the sentinel: resolving it runs a
 // subprocess, and this function is pure so that every precedence rule stays
@@ -534,6 +529,11 @@ func agentKind(req request, res defaults.Resolved, kinds []string, prov map[stri
 // name, once, at the point the request is otherwise complete.
 func accountPin(req request, cfg config.Config, kind string) string {
 	if req.set["account"] {
+		// `active` means no pin wherever it is written, the flag included:
+		// passed through, it typed `clauth start active` into the pane (#146).
+		if req.account == clauthActive {
+			return ""
+		}
 		return req.account
 	}
 	if kind != claudeKind {
@@ -584,8 +584,8 @@ func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan
 	if in.AccountPin != clauthAuto {
 		return in, nil
 	}
-	if src == nil {
-		return in, fmt.Errorf("--account auto needs an account picker: set `[clauth] picker` in config.toml to an executable implementing the picker protocol")
+	if err := requirePicker(in, src); err != nil {
+		return in, err
 	}
 	res, err := src.Pick(ctx, in.ProjectDir, picker.Options{Strict: true})
 	if err != nil {
@@ -594,6 +594,16 @@ func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan
 	in.AccountPin = res.Profile
 	in.AccountConfigDir = res.ConfigDir
 	return in, nil
+}
+
+// requirePicker refuses an `auto` account when there is no picker to resolve
+// it through. Separate from resolveAccount so run() can make this refusal
+// before the reachability probe without running the pick itself.
+func requirePicker(in plan.Input, src picker.Source) error {
+	if in.AccountPin == clauthAuto && src == nil {
+		return fmt.Errorf("--account auto needs an account picker: set `[clauth] picker` in config.toml to an executable implementing the picker protocol")
+	}
+	return nil
 }
 
 // accountLaunch is `[clauth] launch`, mapped to plan's enum -- the same
