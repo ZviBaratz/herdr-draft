@@ -309,9 +309,10 @@ Layering, outermost to innermost:
   which by then was false about the tree (24 lines in `*.go` citing the
   legacy commit against 15 citing `v0.9.0` — Go files only; a repo-wide
   grep also counts the prose, this bullet included). Eleven comments used
-  to cite `/home/zvi/Projects/herdr/...`, a tree nobody else has — the claims were
-  correct and unverifiable at the same time, which is the worst of both.
-  A citation that only resolves on one laptop is not a citation.
+  to cite `/home/zvi/Projects/herdr/...`, a tree nobody else has — the
+  claims were correct and unverifiable at the same time, which is the
+  worst of both. A citation that only resolves on one laptop is not a
+  citation.
 - **`plan.Build` stays pure.** It performs no I/O and never touches a
   `herdrc.Runner`; anything Build needs to decide (is this a git repo, what
   is the invoking pane id) must already be resolved by the caller
