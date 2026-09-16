@@ -286,13 +286,16 @@ keybinding and CLI are the only discovery surfaces (see
 [[keys.command]]
 key = "prefix+n"
 type = "plugin_action"
-command = "draft.open"
+command = "zvibaratz.draft.open"
 description = "new session"
 ```
 
-`draft.open` is herdr's qualified id for herdr-draft's one action (plugin
-id `draft`, action id `open`, from `herdr-plugin.toml`). You can also
-invoke it directly from a shell:
+`zvibaratz.draft.open` is herdr's qualified id for herdr-draft's one
+action: plugin id `zvibaratz.draft` and action id `open`, both from
+`herdr-plugin.toml`. herdr matches a `plugin_action` keybind against the
+bare action id *or* the qualified one, and the qualified form is the one
+worth binding — `open` on its own is generic enough that another plugin
+could answer to it. You can also invoke it directly from a shell:
 
 ```bash
 herdr plugin pane open --plugin zvibaratz.draft --entrypoint open
@@ -522,7 +525,9 @@ herdr plugin config-dir zvibaratz.draft
   in manual mode. It must be usable as the leading part of a git ref
   (`git check-ref-format`'s rules, minus the ones a prefix is exempt from:
   a trailing `/` is fine, and an explicit empty value means "no prefix"),
-  and it may not start with `-`, which the herdr CLI would read as a flag.
+  and it may not start with `-`, which would reach *git's* own option
+  parser: herdr builds `git worktree add -b <branch> <path> <base>` with no
+  `--` terminator.
   An unusable value is ignored and the default takes over; it never stops
   herdr-draft from opening. The popup shows the reason on the `worktree`
   row's panel, and `herdr-draft create` prints it on stderr — except in a

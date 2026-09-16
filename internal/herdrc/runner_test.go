@@ -848,8 +848,9 @@ func assertNeverExecuted(t *testing.T, argvLog string) {
 // TestCLIRunnerRefusesFlagValueReadAsAnotherFlag covers every `--flag
 // value` pair CLIRunner builds from a variable, one row each: a value
 // beginning with "-" must be refused before anything is executed, because
-// herdr's parser would read it as another flag (and herdr has no
-// `--flag=value` form to disambiguate it with -- see appendFlag).
+// herdr re-emits it into a `git worktree add` built with no `--`
+// terminator, where git reads it as an option -- see appendFlag for the
+// herdr v0.9.0 sources and for why no spelling on this side disarms it.
 //
 // Not in the table, for lack of a way to reach them: AgentPrompt's
 // --timeout (its `WaitTimeout > 0` guard already excludes every value that

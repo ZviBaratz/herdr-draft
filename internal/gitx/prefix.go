@@ -35,10 +35,14 @@ const forbiddenRefRunes = " ~^:?*[\\"
 // Implemented:
 //
 //   - Ours, not git's: the prefix may not start with "-". Git accepts a
-//     leading dash in a refname, but `--branch` and its value are separate
-//     argv elements, so a value starting with "-" is read by herdr's flag
-//     parser as another flag instead of as the branch name. That is the
-//     argument-injection surface; the git rules below only bound the rest.
+//     leading dash in a refname, and herdr's own parser is not the hazard
+//     either -- it takes the next argv element as --branch's value whatever
+//     that value starts with (herdr:src/cli/worktree.rs at v0.9.0). The
+//     hazard is what herdr then builds out of it: `git worktree add -b
+//     <branch> <path> <base>`, with no `--` terminator
+//     (herdr:src/worktree.rs:238-256 at v0.9.0), so the value reaches
+//     *git's* option parser as an option. That is the argument-injection
+//     surface; the git rules below only bound the rest.
 //   - Rule 4: no ASCII control character (NUL included), space, "~", "^"
 //     or ":" anywhere. Widened slightly: any Unicode control character
 //     (category Cc, so DEL and the C1 block too), not just the C0 range

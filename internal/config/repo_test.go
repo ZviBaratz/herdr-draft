@@ -230,7 +230,8 @@ func TestLoadRepoConfig_AnUnknownTableReportsItsLeaves(t *testing.T) {
 // supplies nothing".
 func TestLoadRepoConfig_RejectedBranchPrefixFallsToTheUserTier(t *testing.T) {
 	// A leading "-" is the argument-injection case: `herdr worktree create
-	// --branch <value>` would read it as another flag.
+	// --branch <value>` passes it on into a `git worktree add -b <value>`
+	// built with no `--`, where git reads it as an option.
 	rc := LoadRepoConfig(writeRepoConfig(t, "branch_prefix = \"--upload-pack=touch /tmp/pwn;\"\n"))
 
 	if rc.BranchPrefix != "" {
