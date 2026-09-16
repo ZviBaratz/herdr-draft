@@ -437,6 +437,59 @@ context JSON, whose pane and workspace ids are not necessarily where you
 are, rather than read one plugin's config as another's or write your state
 into its directory. It tells you which case it was, and what to export.
 
+If the thing running `create` is an *agent* rather than you, it will not
+find this section on its own. Install [the `/spawn` skill](#the-spawn-skill),
+which carries these three exports as its second paragraph.
+
+## The `/spawn` skill
+
+`herdr-draft skill` prints one `SKILL.md` to stdout. Installed into your
+personal skill directory, it makes `/spawn` invocable in every Claude Code
+session on the machine — and, more to the point, makes an agent that forms
+the intent to *hand work off* reach for `herdr-draft create` instead of
+writing a handoff document and stopping, or improvising a topology.
+
+```bash
+draft=$(find ~/.config/herdr/plugins -type f -name herdr-draft -perm -u+x | head -1)
+mkdir -p ~/.claude/skills/spawn
+"$draft" skill > ~/.claude/skills/spawn/SKILL.md
+```
+
+The directory name has to match the frontmatter `name`; both are `spawn`,
+and a test holds this section, the emitted document and the frontmatter to
+that one value.
+
+**The `find` is not decoration.** `herdr-draft` is not on `PATH` — the
+binary lives inside the plugin's install root, whose directory name
+carries a hash, and `herdr plugin list` prints the install source rather
+than the path. This is the same discovery problem the emitted document
+solves by naming its own absolute path, except that you have to solve it
+once yourself to produce the document. If you installed with
+`herdr plugin link` instead, it is `bin/herdr-draft` inside your checkout,
+and `herdr plugin list` does print that path.
+
+It covers what the sections above cover, aimed at an agent rather than at
+you: the `HERDR_PLUGIN_*` exports and what resolving without them costs,
+whether the session gets a worktree and what does not travel into one,
+which placement to pick, how to write and pipe in a prompt, confirming the
+command with the user once before running it, and reading `prompt_status`
+and the pane afterwards rather than trusting the exit code.
+
+**The emitted file is machine-specific and is not meant to be committed.**
+It names the absolute path of the binary that printed it, because the
+plugin's install root carries a hash that nothing derives from the plugin
+id — so nothing has to go on `PATH` and no agent has to go looking. The
+consequence is that **an upgrade or a reinstall that moves the binary
+invalidates the installed copy**: regenerate it with the same two lines.
+
+The file carries the version it was generated from, in its last section.
+If that does not match `herdr-draft version`, the copy is stale.
+
+`herdr-draft skill` writes nothing anywhere: it prints, and you redirect.
+If it cannot work out its own path it still prints a usable document —
+naming the plain command `herdr-draft` — and says so on **stderr**, so a
+redirect never puts a warning inside the file.
+
 ## Configuration
 
 herdr-draft reads `$HERDR_PLUGIN_CONFIG_DIR/config.toml`. Every key is

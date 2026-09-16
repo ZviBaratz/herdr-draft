@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1570,33 +1571,39 @@ func TestIssueWithoutLinear(t *testing.T) {
 
 // --- usage ----------------------------------------------------------------
 
-// flagNames is every flag this command accepts, in the order the usage
-// text lists them.
+// flagNames is every flag this command accepts, derived from the one
+// place that actually decides -- parseArgs' own flag.FlagSet, via
+// registerFlags.
 //
-// It lives here rather than beside createUsage in flags.go (#16 item 3):
-// it has never had a production reader, and its old doc comment named a
-// usage_test.go that does not exist, which is what a list nobody outside
-// one test consults looks like after a while. In a _test.go file it is
-// what the rest of this package's helpers are -- newHarness, writeConfig
-// -- a test's own data, held where the assertion that needs it is.
-//
-// Note what it does NOT protect: the list is a third hand-maintained
-// copy beside parseArgs' registrations and createUsage's prose, so a flag
-// added to the first two and not to this one still passes. Deriving it
-// from parseArgs' own flag.FlagSet would close that, and would mean
-// splitting the FlagSet construction out of parseArgs for a test's
-// benefit; left undone deliberately, not overlooked.
-var flagNames = []string{
-	"project", "title", "prompt", "branch", "base",
-	"worktree", "no-worktree", "placement", "agent", "account",
-	"issue", "json", "on-failure",
+// It used to be a hand-written slice here, with a doc comment recording
+// that deriving it would mean splitting the FlagSet construction out of
+// parseArgs "for a test's benefit; left undone deliberately". The split
+// has since happened for a reason outside this package: the spawn
+// skill's document is held to create's flag set from
+// spawnskill_contract_test.go, and a flag the document never names is a
+// flag an agent never uses. With registerFlags in hand, keeping a third
+// hand-maintained copy beside it and createUsage would be the only
+// remaining way for a new flag to slip past both.
+func flagNames() []string {
+	fs := flag.NewFlagSet("create", flag.ContinueOnError)
+	var req request
+	var worktreeOn, worktreeOff bool
+	registerFlags(fs, &req, &worktreeOn, &worktreeOff)
+
+	var names []string
+	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
+	return names
 }
 
 // TestUsageListsEveryFlag keeps the hand-written usage block honest: a
 // flag added to parseArgs and forgotten here is a flag nobody can
 // discover.
 func TestUsageListsEveryFlag(t *testing.T) {
-	for _, name := range flagNames {
+	names := flagNames()
+	if len(names) == 0 {
+		t.Fatal("registerFlags registered nothing -- this test would pass vacuously")
+	}
+	for _, name := range names {
 		if !strings.Contains(createUsage, "--"+name) {
 			t.Errorf("createUsage does not mention --%s", name)
 		}

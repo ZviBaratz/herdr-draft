@@ -112,6 +112,7 @@ func TestDispatch(t *testing.T) {
 			code := dispatch(tc.args, &stdout, &stderr,
 				func() int { popupRan = true; return 0 },
 				func(args []string) int { createRan, createArgs = true, args; return 0 },
+				func() int { t.Fatal("the skill verb ran"); return 0 },
 			)
 
 			if code != tc.wantCode {
@@ -176,5 +177,44 @@ func TestVersionStringOmitsAnUnstampedBuild(t *testing.T) {
 	build = "v0.1.0-3-gabc1234"
 	if got := versionString(); !strings.Contains(got, "v0.1.0-3-gabc1234") {
 		t.Errorf("versionString() dropped the stamped build:\n%s", got)
+	}
+}
+
+// TestDispatchRoutesSkill covers the third verb. It is a separate function
+// rather than a row in TestDispatch's table because the table's other rows
+// assert the skill verb does NOT run, and a case that inverts that reads
+// better on its own than as a fourth "want" column.
+func TestDispatchRoutesSkill(t *testing.T) {
+	var stdout, stderr strings.Builder
+	called := 0
+	skillVerb := func() int { called = 1; return 0 }
+
+	code := dispatch([]string{"skill"}, &stdout, &stderr,
+		func() int { t.Fatal("popup ran for `skill`"); return 0 },
+		func([]string) int { t.Fatal("create ran for `skill`"); return 0 },
+		skillVerb)
+
+	if code != 0 {
+		t.Errorf("dispatch(skill) = %d, want 0", code)
+	}
+	if called != 1 {
+		t.Error("dispatch did not route `skill` to the skill verb")
+	}
+}
+
+// TestRunSkillStampsTheBuildersVersion pins the one thing skill.Run itself
+// cannot: that this call site hands it herdrc.Version and not some other
+// string. Every test in package skill passes with a call site supplying
+// "dev", and the stamp is the only thing that tells a user their installed
+// copy is stale.
+func TestRunSkillStampsTheBuildersVersion(t *testing.T) {
+	var stdout, stderr strings.Builder
+
+	if code := runSkill(&stdout, &stderr); code != 0 {
+		t.Fatalf("runSkill = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), herdrc.Version) {
+		t.Errorf("the rendered skill does not carry herdrc.Version (%q) -- "+
+			"an installed copy would never look stale", herdrc.Version)
 	}
 }
