@@ -514,6 +514,71 @@ func TestCLIRunnerPaneClose(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerTabClose pins the argv: the id is POSITIONAL, not the
+// --workspace shape of `worktree remove`. It also shows a well-formed
+// envelope being accepted, but it does NOT pin that the envelope is
+// required -- runOK ignores stdout entirely, so it would pass this too.
+// TestCLIRunnerTabCloseRequiresTheJSONEnvelope is what pins that half.
+func TestCLIRunnerTabClose(t *testing.T) {
+	stdout := `{"id":"cli:tab:close","result":{"type":"ok"}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.TabClose(context.Background(), "t3"); err != nil {
+		t.Fatalf("TabClose: %v", err)
+	}
+
+	wantArgv := "tab close t3"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerTabCloseRequiresTheJSONEnvelope pins the half of the
+// two-success-shapes convention an argv assertion cannot reach. A
+// `tab close` routed through runOK passes every check in the test above:
+// runOK never reads stdout at all, so handing it a canned envelope says
+// nothing about which parser ran. The two shapes diverge only on what
+// herdr does NOT print -- so the discriminating fixture is a subcommand
+// that exits 0 saying nothing (fakeHerdrOK, the real send_ok_request
+// contract). runJSON then has no envelope to parse and must fail; runOK
+// would report success.
+//
+// Worth its own test because this is the gap Task 19 found in PaneRun,
+// with the direction reversed: a method that failed against every real
+// invocation while its own unit test passed, because the fixture modelled
+// the other success shape.
+func TestCLIRunnerTabCloseRequiresTheJSONEnvelope(t *testing.T) {
+	bin, _ := fakeHerdrOK(t)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.TabClose(context.Background(), "t3")
+	if err == nil {
+		t.Fatal("TabClose = nil against a subcommand that printed no envelope; " +
+			"`tab close` reports success as JSON (print_method_response at v0.9.0), so it has to go through runJSON")
+	}
+	if !strings.Contains(err.Error(), "parse response") {
+		t.Errorf("error = %v, want the missing envelope to be what failed", err)
+	}
+}
+
+// TestCLIRunnerTabCloseRefusesEmptyTabID mirrors
+// TestCLIRunnerPaneCloseRefusesEmptyPaneID: a caller holding no tab id must
+// not silently close whatever tab herdr would pick by default.
+func TestCLIRunnerTabCloseRefusesEmptyTabID(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.TabClose(context.Background(), "")
+	if err == nil {
+		t.Fatal("TabClose(\"\") = nil, want a refusal")
+	}
+	if !errors.Is(err, errRefused) {
+		t.Errorf("error %q is not a refusal to run (errors.Is errRefused = false)", err)
+	}
+	assertNeverExecuted(t, argvLog)
+}
+
 func TestCLIRunnerWorktreeRemove(t *testing.T) {
 	stdout := `{"id":"cli:worktree:remove","result":{"type":"worktree_removed","workspace_id":"w3","path":"/x","forced":false}}`
 	bin, argvLog := fakeHerdr(t, stdout)

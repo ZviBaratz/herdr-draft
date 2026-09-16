@@ -358,9 +358,12 @@ plain line — are where the agent ended up, which is what a script sends its
 next keystroke to. With `--worktree` and `--placement tab-here` or
 `split-here` the checkout gets a space of its own that the agent does *not*
 run in, so `--json` carries `space_workspace_id`/`space_tab_id`/
-`space_pane_id` alongside: the session `--on-failure clean` removes, and the
-one a failure message names. Both triples are always present when known, so
-comparing them tells you whether the agent is inside the space.
+`space_pane_id` alongside: the space itself, and the one a failure message
+names. Both triples are always present when known, so comparing them tells
+you whether the agent is inside the space. `--on-failure clean` removes only
+what the run actually created, which is not always the whole triple: the tab
+for a `tab-here` placement without `--worktree`, the pane for `split-here`
+without it, and the workspace or the worktree otherwise.
 
 `--placement tab-here` and `split-here` need to know where "here" is, and
 read `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID`, which herdr

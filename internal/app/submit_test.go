@@ -215,6 +215,13 @@ func (r *submitFakeRunner) PaneClose(context.Context, string) error {
 	return nil
 }
 
+func (r *submitFakeRunner) TabClose(context.Context, string) error {
+	if r.shouldFail("TabClose") {
+		return r.failErr
+	}
+	return nil
+}
+
 func (r *submitFakeRunner) WorktreeRemove(context.Context, string) error {
 	if r.shouldFail("WorktreeRemove") {
 		return r.failErr

@@ -230,6 +230,10 @@ func (r *fakeRunner) PaneClose(_ context.Context, paneID string) error {
 	return r.record("PaneClose", paneID)
 }
 
+func (r *fakeRunner) TabClose(_ context.Context, tabID string) error {
+	return r.record("TabClose", tabID)
+}
+
 func (r *fakeRunner) WorktreeRemove(_ context.Context, workspaceID string) error {
 	return r.record("WorktreeRemove", workspaceID)
 }
@@ -389,6 +393,54 @@ func TestExitOne_OnFailureCleanRemovesTheTopology(t *testing.T) {
 	}
 	if !strings.Contains(h.stderr.String(), "was removed") {
 		t.Errorf("stderr = %q, want it to say the session was removed", h.stderr)
+	}
+}
+
+// TestExitOne_OnFailureCleanRemovesOnlyTheHerePlacement is the same defect
+// at the headless verb, where it needs no keypress at all. With
+// --no-worktree and a `here` placement the plan has no space op of its own
+// -- the placement op IS the topology op, made inside the invoking
+// workspace -- so the clean used to run `herdr workspace close` on the
+// workspace the command was run FROM, killing the caller along with
+// everything else in it.
+//
+// The ids are the harness fake's own arithmetic: the invoking pane is
+// pUSER in wUSER/tUSER, and the single creation is numbered 1, so a split
+// beside pUSER answers pP1 in the invoking tab and a tab in wUSER answers
+// tT1. Those are what the clean must close, and wUSER is what it must not.
+func TestExitOne_OnFailureCleanRemovesOnlyTheHerePlacement(t *testing.T) {
+	for _, tc := range []struct {
+		placement string
+		want      string
+	}{
+		{"split-here", "PaneClose(pP1)"},
+		{"tab-here", "TabClose(tT1)"},
+	} {
+		t.Run(tc.placement, func(t *testing.T) {
+			h := newHarness(t)
+			h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wUSER", "tUSER", "pUSER"
+			h.runner.failAt = "AgentStart"
+
+			code := h.run("--title", "t", "--no-worktree", "--placement", tc.placement,
+				"--on-failure", "clean", "--json")
+			if code != ExitFailed {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+			}
+
+			var out jsonReport
+			if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+				t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+			}
+			if !out.Cleaned {
+				t.Errorf("cleaned = false -- the clean is safe now and must still happen (clean_refused = %q)", out.CleanRefused)
+			}
+			if h.runner.called("WorkspaceClose") {
+				t.Fatalf("the clean closed the invoking workspace: %v", h.runner.calls)
+			}
+			if got := h.runner.calls[len(h.runner.calls)-1]; got != tc.want {
+				t.Fatalf("calls = %v, want them to end in %s", h.runner.calls, tc.want)
+			}
+		})
 	}
 }
 
