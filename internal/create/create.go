@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ZviBaratz/herdr-draft/internal/app"
@@ -287,7 +288,8 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 		return usageError(deps.stderr(), err)
 	}
 	for _, w := range warnings {
-		fmt.Fprintf(deps.stderr(), "herdr-draft create: account picker: %s\n", w)
+		// One prefixed line each, however the picker wrapped it.
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: account picker: %s\n", strings.Join(strings.Fields(w), " "))
 	}
 	resolved.input = in
 

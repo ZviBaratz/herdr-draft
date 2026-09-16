@@ -834,13 +834,46 @@ func TestAccountPanelShowsThePickersWarnings(t *testing.T) {
 // blink out and back.
 func TestAccountPanelKeepsTheMachineLineWhileAsking(t *testing.T) {
 	f := accountFieldWithPicker(t)
-	f.SetPickerPreview(AccountPickerPreview{Profile: "alpha-1", Load1: pct(2), NCPU: pct(8), Warnings: []string{"w"}})
+	f.SetPickerPreview(AccountPickerPreview{Profile: "alpha-1", Load1: pct(2), NCPU: pct(8), Warnings: []string{"alpha-1 resets in 12m"}})
+	answered := f.PanelRows()
 	f.SetPickerPreview(AccountPickerPreview{Pending: true})
 	got := accountPanelText(f)
-	for _, want := range []string{"load 2.0 on 8 cpus", "w"} {
+	for _, want := range []string{"load 2.0 on 8 cpus", "alpha-1 resets in 12m"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("panel should still contain %q while pending:\n%s", want, got)
 		}
+	}
+	if f.PanelRows() != answered {
+		t.Errorf("PanelRows = %d while pending, want %d: the panel must not change height", f.PanelRows(), answered)
+	}
+}
+
+// The cpu count is shown whenever the picker measured it, whatever became of
+// the load beside it: a measured figure is never dropped. With no count, the
+// load stands alone rather than claiming an "unmeasured" cpu count the line
+// has no other use for.
+func TestAccountPanelShowsTheCPUCountIndependentlyOfTheLoad(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		preview AccountPickerPreview
+		want    string
+		notWant string
+	}{
+		{"load unmeasured, cpus measured", AccountPickerPreview{Profile: "a", NCPU: pct(8)}, "load unmeasured on 8 cpus", ""},
+		{"load measured, cpus unmeasured", AccountPickerPreview{Profile: "a", Load1: pct(4.37)}, "load 4.4 · swap unmeasured", "cpu"},
+		{"one cpu", AccountPickerPreview{Profile: "a", Load1: pct(0.5), NCPU: pct(1)}, "load 0.5 on 1 cpu ·", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := accountFieldWithPicker(t)
+			f.SetPickerPreview(tc.preview)
+			line := machineLine(f.preview)
+			if !strings.Contains(line, tc.want) {
+				t.Errorf("machine line %q should contain %q", line, tc.want)
+			}
+			if tc.notWant != "" && strings.Contains(line, tc.notWant) {
+				t.Errorf("machine line %q should not contain %q", line, tc.notWant)
+			}
+		})
 	}
 }
 

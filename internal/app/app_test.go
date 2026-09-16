@@ -2753,6 +2753,18 @@ func TestPreviewCarriesTheMachineAndWarningsToThePanel(t *testing.T) {
 	}
 }
 
+// A warning is picker-supplied text and the panel draws one line per warning,
+// so a multi-line one is flattened on the way in, as a refusal reason is.
+func TestPreviewFlattensAMultiLineWarning(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", Warnings: []string{"first half\n  second half"}}}
+	m := modelWithPicker(t, p, config.Config{})
+	m = runPreview(t, m, "/p/thing")
+
+	if got := fieldText(m.account, 100); !strings.Contains(got, "first half second half") {
+		t.Fatalf("the warning should arrive as one line:\n%s", got)
+	}
+}
+
 // The refusal reaches the ROW too, in the picker's own words.
 func TestPreviewRefusalReachesTheRow(t *testing.T) {
 	p := &fakePicker{err: &picker.RefusalError{Code: picker.ExitExhausted, Reason: "pool exhausted (resets 22:49)"}}

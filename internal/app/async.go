@@ -809,8 +809,22 @@ func previewFrom(res picker.Result, err error) form.AccountPickerPreview {
 		Load1:       res.Machine.Load1,
 		NCPU:        res.Machine.NCPU,
 		SwapUsedPct: res.Machine.SwapUsedPct,
-		Warnings:    res.Warnings,
+		Warnings:    flattenWarnings(res.Warnings),
 	}
+}
+
+// flattenWarnings puts each picker warning on one line, as flattenReason does
+// for a refusal: the panel draws one line per warning, and a picker's own
+// text may carry newlines. Control characters beyond whitespace are #151's.
+func flattenWarnings(ws []string) []string {
+	if len(ws) == 0 {
+		return nil
+	}
+	out := make([]string, len(ws))
+	for i, w := range ws {
+		out[i] = flattenReason(w)
+	}
+	return out
 }
 
 // --- account picker: the commit-time pick ----------------------------------

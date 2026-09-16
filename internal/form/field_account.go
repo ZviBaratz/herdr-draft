@@ -1260,10 +1260,10 @@ func (f *AccountField) panelNotes() []accountNote {
 }
 
 // machineLine renders the picker's machine figures -- `machine  load 4.4 on 8
-// cpus · swap 32%` -- or "" when it reported none of them. A figure it did not
-// measure says so rather than reading as zero: the protocol allows null for
-// every field, and "swap 0%" about a box nobody measured is a false
-// reassurance.
+// cpus · swap 32%` -- or "" when it reported none of them. A load or swap
+// figure it did not measure says so rather than reading as zero: the protocol
+// allows null for every field, and "swap 0%" about a box nobody measured is a
+// false reassurance.
 func machineLine(p AccountPickerPreview) string {
 	if p.Load1 == nil && p.NCPU == nil && p.SwapUsedPct == nil {
 		return ""
@@ -1271,14 +1271,17 @@ func machineLine(p AccountPickerPreview) string {
 	load := "load unmeasured"
 	if p.Load1 != nil {
 		load = "load " + strconv.FormatFloat(*p.Load1, 'f', 1, 64)
-		if p.NCPU != nil {
-			n := int(math.Round(*p.NCPU))
-			unit := "cpus"
-			if n == 1 {
-				unit = "cpu"
-			}
-			load += " on " + strconv.Itoa(n) + " " + unit
+	}
+	// The cpu count qualifies the load, so it is shown whenever it was
+	// measured -- even beside an unmeasured load -- and simply left off when
+	// it was not, rather than spelled "unmeasured" a second time.
+	if p.NCPU != nil {
+		n := int(math.Round(*p.NCPU))
+		unit := "cpus"
+		if n == 1 {
+			unit = "cpu"
 		}
+		load += " on " + strconv.Itoa(n) + " " + unit
 	}
 	swap := "swap unmeasured"
 	if p.SwapUsedPct != nil {

@@ -1005,8 +1005,10 @@ no, in preference to anything herdr-draft could compose itself.
 Two optional keys are shown rather than acted on. `warnings` appear on the
 `account` panel in the warning colour, one line each, and `herdr-draft
 create` prints them to stderr. `machine` appears on the panel as one dim
-line — `machine  load 4.4 on 8 cpus · swap 32%` — with any figure the picker
-sent as `null` written `unmeasured` rather than as zero. Neither ever refuses a
+line — `machine  load 4.4 on 8 cpus · swap 32%`. A load or swap figure the
+picker sent as `null` is written `unmeasured` rather than as zero; the cpu
+count is shown when it was sent and left off when it was not. Each warning is
+flattened to one line. Neither ever refuses a
 session: refusing is the picker's job, through its exit codes.
 
 Six of these keys are **required** — `profile`, `config_dir`, `reason`, and
