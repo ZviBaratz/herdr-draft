@@ -244,6 +244,21 @@ without the popup. It drives herdr exclusively through the public CLI
 - `herdr pane run` types its argv into a shell rather than exec'ing it, so
   the runner shell-quotes every element — and the argv path that has no
   shell deliberately does not.
+- **Besides Linear — which a configured key is your consent for — one
+  thing reaches the network without being asked, and it is bounded.**
+  Landing the form on a git repository runs a background `git fetch
+  --prune` there — once per repository per form open — so the base picker
+  knows about remote branches that arrived since you last fetched. It
+  contacts that repository's default remote with the credentials git would
+  normally use, *including* a `core.sshCommand` or `GIT_SSH` of your own,
+  which it resolves and appends to rather than overrides. Every git call
+  that can reach a remote runs with terminal prompts and ssh interaction
+  disabled, because git asks for a password on `/dev/tty` rather than on
+  the stdin it was handed, and inside the popup that is the terminal the
+  form is drawn on. The fetch is additionally bounded at 30 seconds, since
+  disabling prompts does not stop a configured askpass helper from opening
+  a dialog that never answers. [`SECURITY.md`](SECURITY.md) states the same
+  at greater length.
 
 ### Packaging
 
