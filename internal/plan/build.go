@@ -34,6 +34,13 @@ const (
 	// PlacementSplitHere splits the invoking pane
 	// (Input.Ctx.FocusedPaneID).
 	PlacementSplitHere
+	// PlacementTabIn opens a new tab in a workspace the caller NAMES
+	// (Input.Space) rather than the invoking one -- #128: the repository's
+	// own space, when it already has one, or any workspace `--workspace`
+	// picks. It is PlacementTabHere with a different target and is
+	// executed by the same OpTabCreate; only where the workspace id comes
+	// from differs.
+	PlacementTabIn
 )
 
 // LaunchMode selects how a pinned claude account reaches the pane.
@@ -82,6 +89,12 @@ type Input struct {
 	// UseWorktree && !IsGitRepo.
 	IsGitRepo bool
 	Placement Placement
+	// Space is the open workspace PlacementTabIn puts the agent's tab in
+	// (FindSpace's answer, or an explicit --workspace). Consulted for that
+	// placement only; Build refuses PlacementTabIn with an empty Space,
+	// because guessing a destination is the failure requireContext exists
+	// to refuse for the `here` placements, one layer down.
+	Space     Space
 	AgentKind string
 	ExtraArgs []string
 	// AccountPin is a clauth account pin, or "" for the active/unpinned
@@ -216,6 +229,9 @@ func Build(in Input) ([]Op, error) {
 	if in.AccountPin != "" && in.AgentKind != claudeAgentKind {
 		return nil, fmt.Errorf("plan: build: account pinning is only supported for the %q agent kind, got %q", claudeAgentKind, in.AgentKind)
 	}
+	if in.Placement == PlacementTabIn && in.Space.WorkspaceID == "" {
+		return nil, fmt.Errorf("plan: build: placement tab-in needs an open workspace to place the tab in, and none was named")
+	}
 
 	ops := append(topologyOp(in), launchOps(in)...)
 	if in.Prompt != "" {
@@ -298,23 +314,29 @@ func topologyOp(in Input) []Op {
 // performs no I/O and never touches a Runner (CLAUDE.md); it states the
 // INTENT and Execute resolves it.
 //
-// Workspace/PaneID always name the INVOKING pane's own workspace/pane
-// (Input.Ctx), never a worktree's -- placing the agent somewhere other than
-// the worktree's own space is exactly what this op is for.
+// Workspace/PaneID name the INVOKING pane's own workspace/pane (Input.Ctx)
+// for the two `here` placements, and the NAMED workspace (Input.Space) for
+// PlacementTabIn -- never a worktree's: placing the agent somewhere other
+// than the worktree's own space is exactly what this op is for.
 func placementOp(in Input, cwd string, cwdFromCheckout bool) (Op, bool) {
-	switch in.Placement {
-	case PlacementTabHere:
+	tab := func(workspace string) (Op, bool) {
 		return Op{
 			Kind:  OpTabCreate,
 			Label: "creating tab",
 			Tab: &herdrc.TabCreateReq{
-				Workspace: in.Ctx.WorkspaceID,
+				Workspace: workspace,
 				Cwd:       cwd,
 				Label:     in.Title,
 				Focus:     true,
 			},
 			CwdFromCheckout: cwdFromCheckout,
 		}, true
+	}
+	switch in.Placement {
+	case PlacementTabHere:
+		return tab(in.Ctx.WorkspaceID)
+	case PlacementTabIn:
+		return tab(in.Space.WorkspaceID)
 	case PlacementSplitHere:
 		return Op{
 			Kind:  OpPaneSplit,

@@ -122,19 +122,26 @@ prevent.
 
 | value | where it lands | when it is right |
 |---|---|---|
-| `new-space` | a new top-level workspace | long-running, independent work the user will come back to |
+| `tab-in` | a new tab in the workspace already holding the project's checkout | the default whenever the repository has a space open: work that belongs with the repo, not beside you |
+| `new-space` | a new top-level workspace | long-running, independent work the user will come back to, in a repository with no space open |
 | `tab-here` | a new tab in your workspace | related work they want beside this one |
 | `split-here` | a split beside your pane | short work they want to watch |
 
 `tab-here` and `split-here` mean *your* workspace, read from the
 `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID` that herdr sets in
-every pane. `new-space` needs none of them.
+every pane. `new-space` and `tab-in` need none of them.
 
-**The limit worth knowing:** "here" is fixed by the pane you are running
-in, so the only two destinations are a brand-new workspace and the one you
-are already in. A third — some *other* workspace that already exists —
-cannot be named at all. If that is where the work belongs, say so rather
-than quietly putting it somewhere else.
+**Leave `--placement` off unless you mean it.** With nothing passed, `create`
+picks `tab-in` when `herdr workspace list` already shows a workspace on the
+project's checkout, and `new-space` when it does not — so the repository's
+own space collects its sessions as tabs instead of a new top-level space
+appearing per task. Pass `--placement new-space` to insist on a space of
+its own.
+
+**Any other existing workspace can be named outright:** `--workspace <id>`
+(ids from `herdr workspace list`) puts the tab in that workspace and implies
+`tab-in`. A script running in one space can therefore start a session in
+another without pretending to be a pane there.
 
 With a worktree and a `here` placement, the checkout gets a workspace of
 its own *as well*, and the agent runs in your workspace, not in it. That

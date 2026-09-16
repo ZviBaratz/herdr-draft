@@ -37,6 +37,26 @@ var placementChips = []widgets.Chip{
 	{ID: "split-here", Label: "split here", FocusHint: "splits this pane in two"},
 }
 
+// tabInChipID is the fourth chip's ID (plan.PlacementTabIn, config
+// vocabulary "tab-in"). The chip itself is built per project by
+// tabInChip, because its label names the space -- "tab in herdr-draft" --
+// and it is only offered while such a space is open (SetSpace).
+const tabInChipID = "tab-in"
+
+// tabInLabelWidth bounds how much of a space's label the chip carries.
+// Space labels are free text (a Linear title, say) and the chip row is
+// one line; the row shows the same label, so a long one is truncated the
+// same way in both places rather than wrapping the row.
+const tabInLabelWidth = 28
+
+func tabInChip(spaceLabel string) widgets.Chip {
+	return widgets.Chip{
+		ID:        tabInChipID,
+		Label:     "tab in " + keepHead(spaceLabel, tabInLabelWidth),
+		FocusHint: "opens a tab in the space already holding this repository",
+	}
+}
+
 // placementWorktreeHint and placementWorktreeDisclosure are placement
 // spec §6.1's worktree-on half of the two-column hint table.
 // placementWorktreeHint replaces FocusHint's own wording per chip (the
@@ -51,6 +71,8 @@ func placementWorktreeHint(chipID string) string {
 	switch chipID {
 	case "tab-here":
 		return "the agent opens a tab here, on the worktree's checkout"
+	case tabInChipID:
+		return "the agent opens a tab in that space, on the worktree's checkout"
 	case "split-here":
 		return "the agent splits this pane, onto the worktree's checkout"
 	default: // "new"
@@ -76,6 +98,11 @@ type PlacementField struct {
 	palette    theme.Palette
 	worktreeOn bool
 
+	// offered is the chip list currently loaded into chips: placementChips
+	// alone, or placementChips plus tabInChip while SetSpace has named an
+	// open space. Kept so SetValue knows how far Next() has to walk.
+	offered []widgets.Chip
+
 	// provenance is SetProvenance's config-file name, "" for a selection no
 	// config file chose. See SetProvenance.
 	provenance string
@@ -85,8 +112,27 @@ type PlacementField struct {
 // styled from palette.
 func NewPlacementField(palette theme.Palette) *PlacementField {
 	f := &PlacementField{chips: widgets.NewChipRow(palette), palette: palette}
-	f.chips.SetChips(placementChips)
+	f.offered = placementChips
+	f.chips.SetChips(f.offered)
 	return f
+}
+
+// SetSpace offers -- or withdraws -- the fourth chip, `tab in <label>`,
+// for the open workspace already holding the selected project (#128;
+// defaults.Resolved.Space). "" means there is none: the chip goes, and a
+// cursor that sat on it lands back on "new space", which is what
+// Value() reads for a chip that is not there. The selection otherwise
+// survives, by ID, so re-running this on every project change (the
+// app's applyProjectDefaults) never moves a chip the user chose.
+func (f *PlacementField) SetSpace(label string) {
+	selected := f.chips.Selected().ID
+	if strings.TrimSpace(label) == "" {
+		f.offered = placementChips
+	} else {
+		f.offered = append(append([]widgets.Chip{}, placementChips...), tabInChip(label))
+	}
+	f.chips.SetChips(f.offered)
+	f.chips.SelectID(selected)
 }
 
 // ID identifies this Section for form.go's zoneFor.
@@ -164,7 +210,7 @@ func (f *PlacementField) SetWorktreeOn(on bool) {
 // pre-select the field it configures.
 func (f *PlacementField) SetValue(v plan.Placement) {
 	id := placementChipID(v)
-	for range placementChips {
+	for range f.offered {
 		if f.chips.Selected().ID == id {
 			return
 		}
@@ -192,6 +238,8 @@ func placementChipID(v plan.Placement) string {
 		return "tab-here"
 	case plan.PlacementSplitHere:
 		return "split-here"
+	case plan.PlacementTabIn:
+		return tabInChipID
 	default:
 		return "new"
 	}
@@ -206,6 +254,8 @@ func (f *PlacementField) Value() plan.Placement {
 		return plan.PlacementTabHere
 	case "split-here":
 		return plan.PlacementSplitHere
+	case tabInChipID:
+		return plan.PlacementTabIn
 	default:
 		return plan.PlacementNewSpace
 	}

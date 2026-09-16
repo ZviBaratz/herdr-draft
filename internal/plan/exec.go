@@ -1673,7 +1673,7 @@ func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) er
 	}
 
 	switch in.Placement {
-	case PlacementTabHere:
+	case PlacementTabHere, PlacementTabIn:
 		if err := r.TabClose(ctx, created.TabID); err != nil {
 			return fmt.Errorf("plan: clean: close tab: %w", err)
 		}
