@@ -19,16 +19,34 @@ sandbox plugin code.** A plugin installed from the marketplace runs with
 your full privileges, and that is true of this one. The rest of this file
 is the surface, stated so you can audit it before deciding.
 
-### It runs a command you configure
+### It runs commands you configure
 
-`[linear] api_key_cmd` is argv that herdr-draft executes to obtain your
-Linear API key — the `pass show ...` shape is the intended use. It is run
-directly, with no shell, so nothing in it is word-split or glob-expanded,
-and it carries a `//nolint:gosec` at the call site precisely because
-running it is the feature rather than an oversight
-(`internal/linear/client.go`).
+Three keys in `config.toml` name something to run, and they are not run the
+same way.
 
-**A repository cannot set it.** See the trust boundary below.
+- `[linear] api_key_cmd` is argv that herdr-draft executes to obtain your
+  Linear API key — the `pass show ...` shape is the intended use. It is run
+  directly, with no shell, so nothing in it is word-split or glob-expanded,
+  and it carries a `//nolint:gosec` at the call site precisely because
+  running it is the feature rather than an oversight
+  (`internal/linear/client.go`).
+- `[clauth] picker` is an executable implementing the [account picker
+  protocol](README.md#account-picker-protocol), and it runs more often than
+  the other two. Opening the popup runs it twice — a probe, then a
+  `--dry-run` preview for the opening project — and every project change
+  runs another preview, whether or not the `account` row is on `auto`.
+  Submitting runs it once more, for real, when the row *is* on `auto`; and
+  `herdr-draft create --account auto` runs it once. It is argv with no shell
+  either, and every call is bounded by a 30-second deadline. herdr-draft
+  never goes looking for a picker, so one that merely happens to sit on your
+  `PATH` under the expected name is not run: it does nothing unless this key
+  names it (`internal/picker/cli.go`).
+- `[clauth] launcher` is the one that is **typed into a shell** rather than
+  executed. See the paragraph below.
+
+**A repository cannot set any of them.** See the trust boundary below: the
+five keys a `.herdr-draft.toml` may set are named there, and none of these
+is among them.
 
 ### It handles a credential
 
@@ -43,16 +61,57 @@ returns are cached in your plugin state directory.
 
 ### It passes your values to subprocesses as argv
 
-herdr-draft drives `herdr`, `git` and `clauth` as child processes, never a
-shell, and several arguments derive from what you type — a branch name
-from a title, a base ref, a project path.
+herdr-draft drives `herdr`, `git` and `clauth` as child processes, and
+several arguments derive from what you type — a branch name from a title,
+a base ref, a project path. Every one of those invocations is argv, with no
+shell anywhere. One path is not, and it has its own paragraph below.
 
 The hardening is at the boundary rather than sprinkled over call sites:
-`appendFlag` refuses any value beginning with `-`, which the herdr CLI
-would otherwise read as another flag, and it returns an error rather than
-dropping the argument, so a caller that ignored it cannot silently run a
-command with different meaning. `branch_prefix` is validated wherever it
+`appendFlag` refuses any value beginning with `-`, and it returns an error
+rather than dropping the argument, so a caller that ignored it cannot
+silently run a command with different meaning. What that refusal protects
+is **git**, not herdr. herdr's own parsers take the next argv element as a
+flag's value whatever it starts with
+([`src/cli/worktree.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/worktree.rs#L104-L119)),
+so a leading `-` is no danger there. The danger is the command herdr builds
+from those two values, `git worktree add -b <branch> <path> <base>`
+([`src/worktree.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/worktree.rs#L238-L256)),
+which a `-`-leading value reaches by one of two routes (measured on
+git 2.53.0):
+
+- `<base>` is a positional with **no `--` terminator** before it, so
+  `git worktree add` itself reads a `-`-leading base as an option.
+- `<branch>` is safe from that parser as `-b`'s argument, but `git worktree
+  add` hands it on to a `git branch` child, which reads it as an option. A
+  `--` would not close this route.
+
+That is the argument-injection surface, and `--base` and `--branch` are why
+the refusal is kept. It is also why `branch_prefix` is validated wherever it
 comes from — it reaches `herdr worktree create --branch <value>` as argv.
+
+### Except one path, which is typed into your shell
+
+`herdr pane run` does not exec. It joins its argv with single spaces and
+sends the resulting string to the pane as input followed by Enter, so the
+argv structure is gone before anything runs and the pane's own interactive
+shell re-parses it. Launching a pinned Claude account is the only thing
+herdr-draft does that way, and three configured values travel that route:
+`[clauth] launcher`'s template, the `CLAUDE_CONFIG_DIR=<dir>` assignment
+that `[clauth] launch = "wrapper"` prepends, and your agent's
+`[agents] extra_args`.
+
+The mitigation is that `CLIRunner.PaneRun` shell-quotes every element
+before handing it to herdr, so a value that is one word in the argv is
+still one word after the pane's shell has read it
+(`internal/herdrc/runner.go`). The variable *name* in an assignment prefix
+is the half that cannot be quoted — quote it and it stops being an
+assignment — so it is held to `[A-Za-z_][A-Za-z0-9_]*` instead. Every name
+herdr-draft passes today is a compile-time constant; the check is for the
+caller that comes later.
+
+This is also why the same values must **not** be quoted on the other path:
+`herdr agent start` takes `extra_args` as an argv vector with no shell
+anywhere, and quoting them there would corrupt them.
 
 ### It reads a file that arrives with `git clone`
 

@@ -35,9 +35,14 @@ const forbiddenRefRunes = " ~^:?*[\\"
 // Implemented:
 //
 //   - Ours, not git's: the prefix may not start with "-". Git accepts a
-//     leading dash in a refname, but `--branch` and its value are separate
-//     argv elements, so a value starting with "-" is read by herdr's flag
-//     parser as another flag instead of as the branch name. That is the
+//     leading dash in a refname, and herdr's own parser is not the hazard
+//     either -- it takes the next argv element as --branch's value whatever
+//     that value starts with (herdr:src/cli/worktree.rs at v0.9.0). The
+//     hazard is what herdr builds next, `git worktree add -b <branch> <path>
+//     <base>` (herdr:src/worktree.rs:238-256 at v0.9.0): worktree add
+//     accepts the value as -b's argument, then hands it on to a `git branch`
+//     child that reads it as an option (measured on git 2.53.0). A `--`
+//     would not help; the child parses its own argv. That is the
 //     argument-injection surface; the git rules below only bound the rest.
 //   - Rule 4: no ASCII control character (NUL included), space, "~", "^"
 //     or ":" anywhere. Widened slightly: any Unicode control character
@@ -90,7 +95,7 @@ func ValidateBranchPrefix(prefix string) error {
 	}
 
 	if strings.HasPrefix(prefix, "-") {
-		return errors.New(`starts with "-", which the herdr CLI reads as a flag rather than a branch name`)
+		return errors.New(`starts with "-", which git would read as an option rather than a branch name`)
 	}
 
 	for _, r := range prefix {

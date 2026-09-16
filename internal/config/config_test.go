@@ -107,9 +107,10 @@ func tomlBasicString(s string) string {
 // TestLoad_InvalidBranchPrefix_FallsBackWithAReason is the degrade path for
 // issue #13: branch_prefix is prepended raw by gitx.BranchSlug and the
 // result reaches `herdr worktree create --branch <value>` as an argv
-// element, so a prefix starting with "-" is read by herdr's flag parser as
-// a flag. A bad value is a typo in the user's own file, though, so it
-// degrades -- the built-in default takes over and the reason rides along on
+// element, which herdr passes on to `git worktree add -b` and from there to
+// a `git branch` child that reads a "-"-leading value as an option. A bad
+// value is a typo in the user's own file, though, so it degrades -- the
+// built-in default takes over and the reason rides along on
 // BranchPrefixWarning -- rather than refusing startup.
 //
 // One case per rule; gitx.ValidateBranchPrefix's own test covers the rules

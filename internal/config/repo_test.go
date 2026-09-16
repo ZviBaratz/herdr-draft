@@ -229,8 +229,9 @@ func TestLoadRepoConfig_AnUnknownTableReportsItsLeaves(t *testing.T) {
 // is how that is expressed -- defaults.Resolve reads "" as "this tier
 // supplies nothing".
 func TestLoadRepoConfig_RejectedBranchPrefixFallsToTheUserTier(t *testing.T) {
-	// A leading "-" is the argument-injection case: `herdr worktree create
-	// --branch <value>` would read it as another flag.
+	// A leading "-" is the argument-injection case: herdr passes --branch to
+	// `git worktree add -b`, which hands it on to a `git branch` child that
+	// reads it as an option.
 	rc := LoadRepoConfig(writeRepoConfig(t, "branch_prefix = \"--upload-pack=touch /tmp/pwn;\"\n"))
 
 	if rc.BranchPrefix != "" {

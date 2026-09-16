@@ -1293,7 +1293,8 @@ func TestFailureLineNamesTheSpaceNotTheAgent(t *testing.T) {
 // --- the argv boundary (issue #14) ----------------------------------------
 
 // TestBranchLeadingDash pins that internal/herdrc's argv refusal -- a flag
-// value the herdr CLI would read as another flag -- surfaces here as a
+// value git would end up reading as an option once herdr passes it on (see
+// appendFlag for the route) -- surfaces here as a
 // plain exit 1 with a readable reason, not as a panic, a confusing wrap,
 // or an attempt to run herdr with a mangled command line.
 //
