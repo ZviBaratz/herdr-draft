@@ -845,7 +845,7 @@ func assertNeverExecuted(t *testing.T, argvLog string) {
 	}
 }
 
-// TestCLIRunnerRefusesFlagValueReadAsAnotherFlag covers every `--flag
+// TestCLIRunnerRefusesDashLeadingFlagValues covers every `--flag
 // value` pair CLIRunner builds from a variable, one row each: a value
 // beginning with "-" must be refused before anything is executed. For
 // --branch and --base the reason is concrete: herdr hands both to `git
@@ -859,7 +859,7 @@ func assertNeverExecuted(t *testing.T, argvLog string) {
 // could render with a leading "-") and AgentRead's --source/--format
 // (string literals). TestAppendFlag covers the shared funnel those go
 // through.
-func TestCLIRunnerRefusesFlagValueReadAsAnotherFlag(t *testing.T) {
+func TestCLIRunnerRefusesDashLeadingFlagValues(t *testing.T) {
 	tests := []struct {
 		name  string
 		flag  string
