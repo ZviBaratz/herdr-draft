@@ -34,14 +34,14 @@ const (
 // Render returns the skill document with binPath and version substituted.
 //
 // binPath is baked in rather than left as a bare command name because the
-// binary is NOT on PATH and cannot be discovered: it lives inside the
-// plugin's install root, which for a marketplace install is
-// ~/.config/herdr/plugins/github/<plugin_id>-<hash>/ and carries a hash
-// that is not derivable from the plugin id (spec §2.2). The binary
-// printing the document is the one thing that reliably knows where it is,
-// so it says so. The consequence is deliberate: the rendered file is
-// machine-specific and is regenerated after an upgrade or a reinstall
-// that moves it.
+// binary is NOT on PATH: it lives inside the plugin's install root, which
+// herdr owns. Finding that root takes a `herdr plugin list --json` lookup
+// (its `plugin_root`; spec §2.2's claim that there was no such lookup is
+// corrected there, #167), and the binary printing the document already
+// knows the answer, so it says so and no agent has to repeat the lookup.
+// The consequence is deliberate: the rendered file is machine-specific,
+// and is regenerated after an upgrade, when its version is stale, or after
+// a switch between a GitHub install and a linked one, which moves it.
 func Render(binPath, version string) string {
 	out := strings.ReplaceAll(spawnSkillDoc, binPlaceholder, binPath)
 	return strings.ReplaceAll(out, versionPlaceholder, version)

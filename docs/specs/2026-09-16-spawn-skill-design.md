@@ -141,6 +141,22 @@ The root is not discoverable from the CLI in the general case:
 A locally linked install (`herdr plugin link`) does show its path, but that
 is the developer's case, not a user's.
 
+> **Correction, 2026-09-16 (#167).** The first two bullets are wrong about
+> herdr `v0.9.0`, this plugin's floor, and this section is left as written
+> because it is a dated record. `herdr plugin list` takes `--json` and
+> `--plugin <id>`, and every entry carries `plugin_root`, for a GitHub
+> install as much as a linked one; it answers without a running server too
+> ([`src/cli/plugin.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/plugin.rs),
+> `plugin_list`). The directory hash is derived from the plugin id: it is
+> the first six bytes of its SHA-256
+> ([`src/api/schema/plugins.rs#L150-L160`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/api/schema/plugins.rs#L150-L160)),
+> so a GitHub install's root does not move across reinstalls. That is
+> herdr's internal layout, not an interface to derive paths from; the
+> interface is `plugin_root`. §3.1's decision survives the correction on
+> its own terms: an emitted skill that names its binary still spares every
+> agent the lookup. The upstream request §5 proposes is about the *state*
+> directory, which `plugin list` does not report, and still stands.
+
 ### 2.3 herdr's own skill occupies the niche and steers away
 
 `herdr --skill` — installed at `~/.claude/skills/herdr/SKILL.md` — says:
