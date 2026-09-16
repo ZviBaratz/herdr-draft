@@ -1115,12 +1115,17 @@ func (r *CLIRunner) PaneClose(ctx context.Context, paneID string) error {
 // through the other's parser is a bug this codebase has already shipped
 // (CLAUDE.md, #72's family), so it is recorded here rather than re-derived.
 //
-// One cascade the caller does not have to fear: handle_tab_close closes
-// the whole workspace when ws.tabs.len() <= 1
+// One cascade, and why the caller can live with it: handle_tab_close
+// closes the whole WORKSPACE when ws.tabs.len() <= 1
 // (herdr:src/app/api/tabs.rs at v0.9.0). Clean's only caller for this is a
 // `tab here` placement, whose tab was created in Input.Ctx.WorkspaceID --
-// a workspace that by construction already holds the INVOKING pane's own
-// tab. Closing ours always leaves that one behind.
+// a workspace that by construction already held the INVOKING pane's own
+// tab, so normally closing ours leaves that one behind and the cascade
+// does not fire. Not "always", though: the popup's failure screen can sit
+// there for minutes, and a user who closes the invoking tab meanwhile
+// makes ours the last one. The close is still right when that happens --
+// by then the workspace holds nothing but what this create made, which is
+// exactly what Clean was asked to remove.
 //
 // The empty-id guard mirrors PaneClose's: a caller holding no tab id must
 // not silently close whatever tab herdr would pick by default.

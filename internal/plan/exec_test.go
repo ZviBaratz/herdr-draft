@@ -1193,14 +1193,14 @@ func TestCleanNewSpaceClosesTheWorkspaceItCreated(t *testing.T) {
 }
 
 // TestCleanHerePlacementRemovesOnlyWhatItCreated pins the defect that held
-// the v0.1.0 tag. With UseWorktree off and a `here` placement, build.go's topologyOp returns the placement
-// op as the ONLY op: there is no separate space op, so the "space" this
-// create made is a tab or a pane inside the INVOKING workspace
-// (placementOp targets Input.Ctx, always). ExecResult.Created.WorkspaceID
-// is therefore the user's own workspace, and the WorkspaceClose that is
-// right for a new space closed it with every tab, pane and agent in it --
-// on the popup's `c remove it` keypress, or with no keypress at all under
-// `create --on-failure clean`.
+// the v0.1.0 tag. With UseWorktree off and a `here` placement, build.go's
+// topologyOp returns the placement op as the ONLY op: there is no separate
+// space op, so the "space" this create made is a tab or a pane inside the
+// INVOKING workspace (placementOp targets Input.Ctx, always).
+// ExecResult.Created.WorkspaceID is therefore the user's own workspace,
+// and the WorkspaceClose that is right for a new space closed it with
+// every tab, pane and agent in it -- on the popup's `c remove it`
+// keypress, or with no keypress at all under `create --on-failure clean`.
 //
 // Created.WorkspaceID deliberately equals Ctx.WorkspaceID in both rows,
 // because that is what a real `here` plan produces; a fixture that let
