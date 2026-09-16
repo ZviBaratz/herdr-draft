@@ -14,6 +14,7 @@ package defaults
 
 import (
 	"github.com/ZviBaratz/herdr-draft/internal/config"
+	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
@@ -38,9 +39,23 @@ const (
 	// whatever the user last happened to do in some OTHER repository.
 	TierRepoConfig
 	// TierProjectMemory is projects.json[key]: the user's last choice in
-	// THIS project. Highest, because it is both deliberate and recent,
-	// where the repo default is what a NEW checkout should start from.
+	// THIS project. Highest of the configured and remembered tiers,
+	// because it is both deliberate and recent, where the repo default is
+	// what a NEW checkout should start from.
 	TierProjectMemory
+	// TierOpenWorkspace is `herdr workspace list`: the one tier that is a
+	// fact about the machine right now rather than a file. It decides ONE
+	// field, placement, and only in two shapes (Resolve's last block):
+	// `new-space` from config.toml, last-used.json or projects.json yields
+	// to `tab in <space>` when the project already has a space open, and a
+	// remembered `tab-in` falls back to `new-space` when it no longer does.
+	// A `here` placement, and a `.herdr-draft.toml` that says new-space,
+	// both stand -- one is a choice about this pane, the other a team's
+	// committed statement. The three it overrides could only ever have
+	// said new-space because that was the sole sensible answer before this
+	// placement existed; honouring them would leave the default inert on
+	// any machine that had used herdr-draft before (rabota-v2 C10).
+	TierOpenWorkspace
 )
 
 // String names the tier in the vocabulary the panel and `create --json`
@@ -55,6 +70,8 @@ func (t Tier) String() string {
 		return ".herdr-draft.toml"
 	case TierProjectMemory:
 		return "projects.json"
+	case TierOpenWorkspace:
+		return "herdr workspace list"
 	default:
 		return "built-in"
 	}
@@ -116,6 +133,18 @@ type Sources struct {
 	//
 	// Empty means "do not validate", for a caller that has no kind list.
 	KnownAgentKinds []string
+
+	// Workspaces is the `herdr workspace list` snapshot TierOpenWorkspace
+	// reads, with ProjectDir (the resolved project directory) and RepoRoot
+	// (its repository root, "" when unknown or not a repository) as the
+	// two paths plan.FindSpace matches against it. Nil Workspaces, or a
+	// project with no open space, leaves every other tier's answer exactly
+	// as it was; both the form (Bootstrap's own WorkspaceList) and headless
+	// `create` supply the same snapshot, which is what keeps the two
+	// choosing the same space.
+	Workspaces []herdrc.WorkspaceInfo
+	ProjectDir string
+	RepoRoot   string
 }
 
 // Resolved is one resolution of every layered default, plus where each
@@ -131,6 +160,12 @@ type Resolved struct {
 	// Placement is the default for where the agent's pane lands -- worktree
 	// or not (placement spec §6.1: a worktree no longer forces a new space).
 	Placement plan.Placement
+	// Space is the open workspace already holding the project's checkout
+	// (plan.FindSpace over Sources.Workspaces), or the zero value when there
+	// is none. Reported whenever it exists, not only when Placement is
+	// PlacementTabIn: the form offers the `tab in <space>` chip off it even
+	// when a remembered `here` placement kept the cursor elsewhere.
+	Space plan.Space
 	// AgentKind is the default agent kind. "" means "no tier supplied one",
 	// which leaves the form on its own first favorite.
 	AgentKind string
@@ -248,6 +283,19 @@ func Resolve(s Sources) Resolved {
 		r.setString(FieldBaseRef, &r.BaseRef, s.Project.Base, TierProjectMemory)
 	}
 
+	// --- TierOpenWorkspace: `herdr workspace list` -----------------------
+	// See the Tier's own comment for what yields and what stands.
+	if sp, ok := plan.FindSpace(s.Workspaces, s.ProjectDir, s.RepoRoot); ok {
+		r.Space = sp
+		if r.Placement == plan.PlacementNewSpace && r.From[FieldPlacement] != TierRepoConfig {
+			r.Placement = plan.PlacementTabIn
+			r.From[FieldPlacement] = TierOpenWorkspace
+		}
+	} else if r.Placement == plan.PlacementTabIn {
+		r.Placement = plan.PlacementNewSpace
+		r.From[FieldPlacement] = TierOpenWorkspace
+	}
+
 	return r
 }
 
@@ -310,7 +358,7 @@ func kindKnown(known []string, kind string) bool {
 }
 
 // ParsePlacement reads spec §12's config.toml `default_placement`
-// vocabulary ("new-space"/"tab-here"/"split-here") into internal/plan's own
+// vocabulary ("new-space"/"tab-here"/"split-here"/"tab-in") into internal/plan's own
 // Placement enum. ok is false for "" (the key is absent) and for any
 // unrecognized value (a typo must not override a lower tier).
 //
@@ -329,6 +377,8 @@ func ParsePlacement(s string) (plan.Placement, bool) {
 		return plan.PlacementTabHere, true
 	case "split-here":
 		return plan.PlacementSplitHere, true
+	case "tab-in":
+		return plan.PlacementTabIn, true
 	default:
 		return plan.PlacementNewSpace, false
 	}
@@ -344,6 +394,8 @@ func PlacementValue(p plan.Placement) string {
 		return "tab-here"
 	case plan.PlacementSplitHere:
 		return "split-here"
+	case plan.PlacementTabIn:
+		return "tab-in"
 	default:
 		return "new-space"
 	}

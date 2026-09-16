@@ -47,6 +47,7 @@ type request struct {
 	branch    string
 	base      string
 	placement string
+	workspace string
 	agent     string
 	account   string
 	issue     string
@@ -79,8 +80,13 @@ flags:
   --base REF         worktree base ref (default: HEAD)
   --worktree         create a git worktree
   --no-worktree      do not create a worktree
-  --placement WHERE  new-space | tab-here | split-here; where the agent's
-                     pane lands (a worktree still gets its own new space too)
+  --placement WHERE  new-space | tab-here | split-here | tab-in; where the
+                     agent's pane lands (a worktree still gets its own new
+                     space too). tab-in is a tab in the workspace already
+                     holding the project's checkout, and is the default
+                     whenever one is open
+  --workspace ID     the workspace tab-in opens its tab in, instead of the
+                     one holding the project (implies --placement tab-in)
   --agent KIND       agent kind to start, e.g. claude
   --account NAME     clauth account to pin (claude only); "auto" asks the
                      configured [clauth] picker to choose
@@ -123,6 +129,7 @@ func registerFlags(fs *flag.FlagSet, req *request, worktreeOn, worktreeOff *bool
 	fs.BoolVar(worktreeOn, "worktree", false, "")
 	fs.BoolVar(worktreeOff, "no-worktree", false, "")
 	fs.StringVar(&req.placement, "placement", "", "")
+	fs.StringVar(&req.workspace, "workspace", "", "")
 	fs.StringVar(&req.agent, "agent", "", "")
 	fs.StringVar(&req.account, "account", "", "")
 	fs.StringVar(&req.issue, "issue", "", "")
@@ -186,7 +193,15 @@ func parseArgs(args []string) (request, error) {
 func (r request) validate() error {
 	if r.set["placement"] {
 		if _, ok := defaults.ParsePlacement(r.placement); !ok {
-			return fmt.Errorf("unknown --placement %q: expected new-space, tab-here or split-here", r.placement)
+			return fmt.Errorf("unknown --placement %q: expected new-space, tab-here, split-here or tab-in", r.placement)
+		}
+	}
+	if r.set["workspace"] {
+		if strings.TrimSpace(r.workspace) == "" {
+			return fmt.Errorf("--workspace needs a workspace id (herdr workspace list)")
+		}
+		if r.set["placement"] && r.placement != "tab-in" {
+			return fmt.Errorf("--workspace names where --placement tab-in opens its tab; it does not apply to --placement %s", r.placement)
 		}
 	}
 	switch r.onFailure {

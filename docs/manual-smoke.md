@@ -6,7 +6,7 @@ version(s) you intend to support, before publishing. It exercises the real
 popup, the real herdr CLI, and (for Path B) a real clauth profile — nothing
 here is mocked.
 
-Twelve cells and a 10b: the original four (Path A/B × worktree on/off), plus
+Fourteen cells and a 10b: the original four (Path A/B × worktree on/off), plus
 three that cover what v2 added — the headless `create`, the repo-level
 `.herdr-draft.toml`, and per-project memory — plus two that cover what the
 placement spec added: placement honored under a worktree, and the reuse
@@ -16,6 +16,9 @@ Cell 10 spends real model quota on its payload, so it is the one to decide
 about deliberately rather than by default. The last two cover how a pinned
 account is launched: the account picker with the wrapper launch, and a
 `[clauth] launcher` of your own.
+The thirteenth asks whether the spawn skill actually fires, and the
+fourteenth is the placement that puts a session in the repository's own
+space as a tab (#128).
 
 ---
 
@@ -1396,6 +1399,73 @@ environment variables, so an agent that exports in one call and creates in
 the next resolves from built-in defaults while looking like it did
 everything right. The tell is on `create`'s first stderr line. That window
 is the whole reason the skill's second section says "in the same command".
+
+**Unrun.** Nothing here has been observed; do not write a result you did
+not see.
+
+## What tab-in added
+
+### Cell 14 — a tab in the repository's own space (#128)
+
+**Why this cell exists.** Everything the resolver decides is pinned by
+tests against a fake `workspace list`: which workspace matches, which
+tiers yield, what the JSON says. None of them can tell you whether the
+tab herdr actually creates lands in the space the form named, whether the
+sidebar shows no new top-level space, or what the form reads at the
+keyboard. Those three are this cell.
+
+**Setup:** a throwaway repo, and a workspace already open on its PRIMARY
+checkout — `herdr[S] workspace create --cwd /var/tmp/hd-smoke-14 --label
+smoke14`. Note its id. Then open the form from a pane in a DIFFERENT
+workspace (the disposable session's root workspace is fine), so that
+"here" and "the repo's space" are not the same place.
+
+**Steps, form:** `project` → the throwaway repo; worktree **off**. Read the
+`placement` row before touching it.
+
+**Expected:** the row reads `tab in smoke14` without any input from you,
+and its panel says the space already holds the repository. `←`/`→` still
+reaches `new space`, `tab here` and `split here`; the chip count is four.
+Submit. `herdr[S] workspace list --json` must show the SAME number of
+workspaces as before the submit, `smoke14` with `tab_count` one higher, and
+the agent's pane inside it — not a new top-level space, and not a tab in
+the pane you submitted from.
+
+**Steps, headless (from any pane, plugin env exported as Cell 5 does):**
+
+```bash
+herdr-draft create --project /var/tmp/hd-smoke-14 --title "probe 14" --no-worktree --json
+```
+
+**Expected:** `"placement": "tab-in"`, `"provenance": {"placement": "herdr
+workspace list", …}`, and `workspace_id` equal to `smoke14`'s id. Then the
+two ways round it:
+
+```bash
+herdr-draft create --project /var/tmp/hd-smoke-14 --title "probe 14b" --no-worktree --placement new-space --json   # a new space, as asked
+herdr-draft create --project /var/tmp/hd-smoke-14 --title "probe 14c" --no-worktree --workspace <root-ws-id> --json  # a tab in a space YOU named
+```
+
+The second must put its tab in the workspace you named (`workspace_id`
+equals it; `provenance.placement` is `flag`), and it must work with
+`HERDR_WORKSPACE_ID`/`HERDR_TAB_ID`/`HERDR_PANE_ID` all unset — `tab-in`
+reads none of them, which is the whole of #128.
+
+**Worktree on (the disclosed cost).** Repeat the form walk with worktree
+**on**. The panel adds "the worktree also keeps a space of its own", and
+that is what happens: the checkout opens as a grouped space under
+`smoke14`'s repository, and the agent's tab lands in `smoke14` on the
+checkout's path. `--json` therefore carries two different triples
+(`space_*` for the checkout's space, `workspace_id`/`tab_id`/`pane_id` for
+the agent). This is placement spec §5.3 unchanged; the plan that asked for
+this cell wanted the worktree to cost no space at all, and §7.3/§8.4
+record why that needs herdr's `worktree create --no-open` rather than a
+`git worktree add` behind herdr's back.
+
+**Also record:** close `smoke14` and re-open the form on the same repo. The
+row must read `new space` again and the chip count must be three — the
+memory files remember `tab-in`, and the resolver has to drop it once the
+space is gone rather than leave the cursor on a chip that is not there.
 
 **Unrun.** Nothing here has been observed; do not write a result you did
 not see.

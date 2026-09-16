@@ -90,7 +90,7 @@ fixed whatever has focus and whatever the window height is.
 | `prompt` | the first line, plus a dim ` +N more` | — |
 | `project` | the path, `~`-shortened | `invalid` / `not a repository` |
 | `worktree` | `on · <branch> ← <base>`, `on · from <base>` before a title exists to derive a branch from, or `off` | `not a git repository` |
-| `placement` | `new space` / `tab here` / `split here` | — |
+| `placement` | `new space` / `tab here` / `split here` / `tab in <space>` | — |
 | `agent` | `claude` | — |
 | `account` | `personal · Max 20x · 5h 12% · 7d 40%`, or `active · …` when nothing is pinned | `account pinning only applies to claude` |
 
@@ -316,8 +316,8 @@ git log -1 --format=%B | herdr-draft create --title "revert" --prompt -
 
 Flags mirror the form's fields: `--project`, `--title`, `--prompt` (`-`
 reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
-`--placement`, `--agent`, `--account`, `--issue`, `--json`, `--on-failure
-keep|clean`. `herdr-draft create --help` lists them.
+`--placement`, `--workspace`, `--agent`, `--account`, `--issue`, `--json`,
+`--on-failure keep|clean`. `herdr-draft create --help` lists them.
 
 **Anything you don't pass resolves exactly the way the form resolves it** —
 see [Where defaults come from](#where-defaults-come-from); the command and
@@ -421,8 +421,10 @@ without it, and the workspace or the worktree otherwise.
 read `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID`, which herdr
 sets in every pane's shell — regardless of `--worktree`, since placement
 now decides where the AGENT'S pane lands even when the worktree gets its
-own new space alongside it. Only `new-space` needs none of them. A missing
-one is named exactly.
+own new space alongside it. `new-space` needs none of them, and neither does
+`tab-in`, which names its workspace outright: the one already holding the
+project's checkout, or whatever `--workspace <id>` says. A missing one is
+named exactly.
 
 **Export the plugin environment.** herdr sets those three pane variables
 but not `HERDR_PLUGIN_CONFIG_DIR` / `HERDR_PLUGIN_STATE_DIR`, which it
@@ -536,7 +538,7 @@ herdr plugin config-dir zvibaratz.draft
 - `default_worktree` (default: `true`) — whether the worktree row starts on
   or off for a git target.
 - `default_placement` (default: `"new-space"`) — where the agent's own pane
-  lands: `new-space`, `tab-here`, or `split-here`. This applies whether or
+  lands: `new-space`, `tab-here`, `split-here`, or `tab-in`. This applies whether or
   not the worktree row is on: a worktree always gets its own new space for
   the checkout regardless, and placement separately decides where the
   agent runs, which can be that same new space or a tab/split on the
@@ -816,10 +818,11 @@ and `branch` colors branch names, as herdr does.
 ## Where defaults come from
 
 Every row the form opens on, and every flag you leave off `create`, is
-resolved through the same five tiers. **Highest first:**
+resolved through the same tiers. **Highest first:**
 
 | Tier | What it is |
 |---|---|
+| `herdr workspace list` | the workspace already holding this project — placement only, see below |
 | `projects.json` | your last choice in *this* project |
 | `.herdr-draft.toml` | the repository's committed default |
 | `last-used.json` | your last choice anywhere |
@@ -829,6 +832,17 @@ resolved through the same five tiers. **Highest first:**
 A team's committed default beats whatever you last did in some *other*
 repository, and loses to what you last did in this one. `⌃R ⌃R` clears back
 to the repository default.
+
+One tier is not a file. When the project's checkout already has a workspace
+open, `new space` from `config.toml`, `last-used.json` and `projects.json`
+yields to `tab in <that space>`, so the repository's own space collects its
+sessions as tabs instead of a new top-level space appearing per task; a
+remembered `tab in` falls back to `new space` once the space is gone. A
+`here` placement stands (it is a choice about this pane), a
+`.herdr-draft.toml` that says `new-space` stands (it is a team's statement),
+and `--placement` or the chip row always wins. A worktree still gets its own
+grouped space either way; only the agent's tab moves. `create --json`
+attributes the value to `herdr workspace list`.
 
 Not every tier can supply every value. `.herdr-draft.toml` never chooses
 your agent (that is a machine decision, not a repository one), and

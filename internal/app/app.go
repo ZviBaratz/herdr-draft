@@ -897,6 +897,13 @@ func New(s Setup) Model {
 		Config:          s.Config,
 		Global:          s.State,
 		KnownAgentKinds: m.agentKinds,
+		// The open-workspace tier (#128) reads the same snapshot the
+		// title panel and the dir candidates do. The repository root is
+		// not known yet -- the dir check resolves it -- so only an exact
+		// checkout match can fire here; applyProjectDefaults re-resolves
+		// with the root once the check lands.
+		Workspaces: s.Workspaces,
+		ProjectDir: pathx.ExpandTilde(m.dir.Value()),
 	})
 	// config.toml's refused branch_prefix (#123), on the panel of the branch
 	// it would have shaped. It waits for the resolution above because whether
@@ -914,7 +921,10 @@ func New(s Setup) Model {
 	// not interact at all now, so there is no "snap back to New space" for
 	// a later worktree state to undo. SetValue is also a no-op when the
 	// chip cursor already sits on the resolved value, which is what makes
-	// the unconditional call safe on its own terms too.
+	// the unconditional call safe on its own terms too. SetSpace first:
+	// the `tab in <space>` chip has to exist before SetValue can land on
+	// it.
+	m.placement.SetSpace(m.resolved.Space.Label)
 	m.placement.SetValue(m.resolved.Placement)
 
 	// Linear (spec §6 field 1): rendered only when Linear is configured --
@@ -1507,6 +1517,7 @@ func (m Model) buildPlanInput() plan.Input {
 		UseWorktree:      m.worktree.Enabled() && m.worktree.On(),
 		IsGitRepo:        m.worktree.Enabled(), // WorktreeField.Enabled() IS "is the target a git repo" (its own doc comment).
 		Placement:        m.placement.Value(),
+		Space:            m.resolved.Space,
 		AgentKind:        m.agent.Value(),
 		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],
 		AccountPin:       m.accountPin(),
@@ -1787,6 +1798,15 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	m.projectKey = key
 	m.repoConfig = repo
 	entry, have := m.projects.Get(key)
+	// The memory key IS the repository root for a repository (projectMemoryKey:
+	// canonicalised, so a symlinked checkout compares the way herdr reports
+	// it), and the canonical path otherwise -- which FindSpace's second
+	// pass would only misread as a root if a workspace's primary checkout
+	// were that exact non-repository path, which cannot happen.
+	repoRoot := ""
+	if isGitRepo {
+		repoRoot = key
+	}
 	m.resolved = defaults.Resolve(defaults.Sources{
 		Config:          m.cfg,
 		Global:          m.state,
@@ -1794,6 +1814,9 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 		Project:         entry,
 		HaveProject:     have,
 		KnownAgentKinds: m.agentKinds,
+		Workspaces:      m.workspaces,
+		ProjectDir:      pathx.ExpandTilde(m.dir.Value()),
+		RepoRoot:        repoRoot,
 	})
 
 	// The worktree toggle goes first, and syncDerivedInertness runs right
@@ -1817,6 +1840,11 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	}
 	m.syncDerivedInertness()
 
+	// The `tab in <space>` chip follows the PROJECT, not the user: it is
+	// offered or withdrawn on every project change regardless of
+	// placementTouched (SetSpace keeps any other chip the user chose), and
+	// only the CURSOR move below is the user's to have overridden.
+	m.placement.SetSpace(m.resolved.Space.Label)
 	if !m.placementTouched {
 		m.placement.SetValue(m.resolved.Placement)
 	}

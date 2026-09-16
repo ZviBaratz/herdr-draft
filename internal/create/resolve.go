@@ -55,6 +55,18 @@ type tiers struct {
 	// directory has no identity to remember.
 	projectKey string
 	isGitRepo  bool
+	// repoRoot is the repository root behind projectDir, "" when it is not
+	// a repository or the root could not be resolved -- plan.FindSpace's
+	// second path, so a project inside a repository still finds the
+	// repository's own space.
+	repoRoot string
+	// workspaces is the `herdr workspace list` snapshot the open-workspace
+	// tier reads (defaults.Sources.Workspaces). nil when herdr could not be
+	// asked: that leaves every other tier's answer standing, and run()'s
+	// reachability probe -- still the LAST pre-flight step, so a flag typo
+	// needs no running herdr to be reported -- is what turns an unreachable
+	// herdr into exit 3.
+	workspaces []herdrc.WorkspaceInfo
 }
 
 // resolution is everything run() needs after the request has met the
@@ -118,6 +130,9 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		Project:         t.entry,
 		HaveProject:     t.haveEntry,
 		KnownAgentKinds: kinds,
+		Workspaces:      t.workspaces,
+		ProjectDir:      t.projectDir,
+		RepoRoot:        t.repoRoot,
 	})
 	// A line on stderr, because a create that silently used a different
 	// prefix than the config file asks for is a create whose branch nobody
@@ -220,10 +235,18 @@ func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, proje
 			repoRoot = root
 		}
 	}
+	t.repoRoot = repoRoot
 	t.projectKey = projectMemoryKey(projectDir, repoRoot)
 	t.repo = deps.repoConfig()(repoRoot)
 	t.state, t.projects = loadMemory(env.StateDir)
 	t.entry, t.haveEntry = t.projects.Get(t.projectKey)
+	// The same snapshot app.Bootstrap takes at form-open, so the form and
+	// this verb resolve `tab in <space>` from one list (equivalence_test.go
+	// hands both sides one fake runner). An error is not fatal HERE -- see
+	// tiers.workspaces.
+	if ws, err := deps.Runner.WorkspaceList(ctx); err == nil {
+		t.workspaces = ws
+	}
 	return t
 }
 
@@ -413,6 +436,24 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		placement = p
 		prov[defaults.FieldPlacement] = provenanceFlag
 	}
+	// The space tab-in aims at: the resolver's (the workspace already
+	// holding this project), or the one --workspace names outright. The
+	// flag implies the placement -- naming a destination and then not
+	// using it is not a request anyone means -- and validate() has already
+	// refused it alongside any OTHER explicit placement. #128 asked for
+	// exactly this flag; it is the first that names a workspace other than
+	// the invoking one, and equivalence_test.go treats it as a flag
+	// (provenance "flag"), not as context.
+	space := res.Space
+	if req.set["workspace"] {
+		named, ok := workspaceByID(t.workspaces, req.workspace)
+		if !ok {
+			return plan.Input{}, nil, fmt.Errorf("unknown --workspace %q: no open workspace has that id (herdr workspace list)", req.workspace)
+		}
+		space = named
+		placement = plan.PlacementTabIn
+		prov[defaults.FieldPlacement] = provenanceFlag
+	}
 
 	kind, err := agentKind(req, res, kinds, prov)
 	if err != nil {
@@ -427,6 +468,7 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		UseWorktree:   useWorktree,
 		IsGitRepo:     t.isGitRepo,
 		Placement:     placement,
+		Space:         space,
 		AgentKind:     kind,
 		ExtraArgs:     t.cfg.Agents.ExtraArgs[kind],
 		AccountPin:    accountPin(req, t.cfg, kind),
@@ -685,8 +727,32 @@ func requireContext(hctx herdrc.Context, in plan.Input) error {
 		if hctx.FocusedPaneID == "" {
 			return fmt.Errorf("HERDR_PANE_ID is not set: --placement split-here splits the pane it is run from")
 		}
+	case plan.PlacementTabIn:
+		// Not a context requirement -- tab-in needs none of the three
+		// pane variables, which is the whole point of #128 -- but the
+		// same kind of refusal: a destination this command would have to
+		// guess. plan.Build refuses it too; this names the remedy.
+		if in.Space.WorkspaceID == "" {
+			return fmt.Errorf("no open workspace holds %s: --placement tab-in needs one; name it with --workspace <id> (herdr workspace list), or use --placement new-space", in.ProjectDir)
+		}
 	}
 	return nil
+}
+
+// workspaceByID finds the open workspace --workspace names, so the plan
+// carries its label as well as its id and the report can say where the
+// tab went in the same words the form would.
+func workspaceByID(workspaces []herdrc.WorkspaceInfo, id string) (plan.Space, bool) {
+	for _, w := range workspaces {
+		if w.WorkspaceID == id {
+			label := strings.TrimSpace(w.Label)
+			if label == "" {
+				label = id
+			}
+			return plan.Space{WorkspaceID: id, Label: label}, true
+		}
+	}
+	return plan.Space{}, false
 }
 
 // provenanceFlag is the one provenance value spec §10's tier names cannot
