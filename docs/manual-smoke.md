@@ -1503,6 +1503,22 @@ not see.
 
 ## Recorded runs
 
+### placement tab-in (#128) — 2026-09-16
+
+herdr 0.9.0, `zvi/placement-existing-workspace` at `afab907`, built from a local
+worktree and not merged. Route B (the real form) against the real
+`~/Projects/herdr-draft` checkout, which workspace `wG` already held; the form
+was opened from a pane in a different workspace, so "here" and "the repo's
+space" were not the same place.
+
+| Cell | Result |
+|---|---|
+| 14 — a tab in the repository's own space | **partial: the form's default is confirmed, the submit path is not.** With `project` = the repo and worktree off, the `placement` row read `tab in <space>` with no input at all — the resolver's answer reaching the keyboard, which is the one thing the `tabin_test.go` fakes cannot show. The form was then dismissed with esc. Everything after the submit is therefore **unexercised**: the workspace count staying level, `tab_count` going up by one, and the pane landing inside the existing space. Cell 14's own setup (a throwaway repo and a dedicated `smoke14` workspace) was not used either — this was the live repo. |
+
+The unexercised half is the half that touches herdr rather than the form, so
+treat #128's sidebar behaviour as **untested at the keyboard** until a run
+follows the cell as written.
+
 ### herdr 0.9.0 — 2026-09-08/09
 
 herdr 0.9.0, clauth 0.15.1, plugin at `d15255f`. Run via Route A0 (headless
