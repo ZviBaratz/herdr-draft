@@ -1842,6 +1842,19 @@ func TestCreateRefusesBeforeCreatingAnythingWhenThePickerRefuses(t *testing.T) {
 	}
 }
 
+// ... and it is a usage error even with herdr down. It is a fault in the
+// command or the config, which needs no pick to find, so it must not wait for
+// the reachability probe: exit 3 tells an agent "nothing was created; stop",
+// when what it needs to hear is "fix the command".
+func TestCreateRejectsAutoWithNoPickerBeforeTheReachabilityProbe(t *testing.T) {
+	h := newHarness(t)
+	h.runner.listErr = errors.New("connection refused")
+
+	if code := h.run("--title", "fix login", "--account", "auto", "--no-worktree"); code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+}
+
 // `--account auto` with no picker configured is a usage error, not a silent
 // fallback to the active account: the user named a resolution strategy this
 // install does not have.

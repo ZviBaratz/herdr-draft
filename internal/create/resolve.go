@@ -63,9 +63,9 @@ type tiers struct {
 	// workspaces is the `herdr workspace list` snapshot the open-workspace
 	// tier reads (defaults.Sources.Workspaces). nil when herdr could not be
 	// asked: that leaves every other tier's answer standing, and run()'s
-	// reachability probe -- still the LAST pre-flight step, so a flag typo
-	// needs no running herdr to be reported -- is what turns an unreachable
-	// herdr into exit 3.
+	// reachability probe -- after every check that needs no herdr, so a flag
+	// typo needs no running herdr to be reported -- is what turns an
+	// unreachable herdr into exit 3.
 	workspaces []herdrc.WorkspaceInfo
 }
 
@@ -83,9 +83,12 @@ type resolution struct {
 	env Env
 }
 
-// resolveRequest is the whole pre-flight: locate the project, load every
-// tier, resolve the layered defaults through internal/defaults, apply the
-// explicit flags on top, and refuse anything that cannot work.
+// resolveRequest is the first half of the pre-flight: locate the project,
+// load every tier, resolve the layered defaults through internal/defaults,
+// apply the explicit flags on top, and refuse anything that is wrong with
+// the request itself. The half that needs herdr, or spends something --
+// the plan check, the reachability probe, the form's duplicate and auth
+// refusals, and the `auto` pick -- is run()'s, in that order (#145).
 //
 // The order matters in one place only: the project directory has to be
 // known before any tier can be loaded, because two of the five tiers
@@ -515,9 +518,10 @@ func agentKind(req request, res defaults.Resolved, kinds []string, prov map[stri
 // when clauth is enabled and names a real profile rather than the "active"
 // sentinel.
 //
-// An explicit --account is passed through even for a non-claude kind,
-// deliberately: plan.Build's own refusal names the rule, which is more
-// useful than silently dropping the flag.
+// An explicit --account naming a profile is passed through even for a
+// non-claude kind, deliberately: plan.Build's own refusal names the rule,
+// which is more useful than silently dropping the flag. `active` names no
+// profile, so it is no pin for any kind (#146).
 //
 // `auto` is returned UNRESOLVED, as the sentinel: resolving it runs a
 // subprocess, and this function is pure so that every precedence rule stays
@@ -580,8 +584,8 @@ func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan
 	if in.AccountPin != clauthAuto {
 		return in, nil
 	}
-	if src == nil {
-		return in, fmt.Errorf("--account auto needs an account picker: set `[clauth] picker` in config.toml to an executable implementing the picker protocol")
+	if err := requirePicker(in, src); err != nil {
+		return in, err
 	}
 	res, err := src.Pick(ctx, in.ProjectDir, picker.Options{Strict: true})
 	if err != nil {
@@ -590,6 +594,16 @@ func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan
 	in.AccountPin = res.Profile
 	in.AccountConfigDir = res.ConfigDir
 	return in, nil
+}
+
+// requirePicker refuses an `auto` account when there is no picker to resolve
+// it through. Separate from resolveAccount so run() can make this refusal
+// before the reachability probe without running the pick itself.
+func requirePicker(in plan.Input, src picker.Source) error {
+	if in.AccountPin == clauthAuto && src == nil {
+		return fmt.Errorf("--account auto needs an account picker: set `[clauth] picker` in config.toml to an executable implementing the picker protocol")
+	}
+	return nil
 }
 
 // accountLaunch is `[clauth] launch`, mapped to plan's enum -- the same

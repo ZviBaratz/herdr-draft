@@ -256,6 +256,13 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	if _, err := plan.Build(resolved.input); err != nil {
 		return usageError(deps.stderr(), err)
 	}
+	// `auto` with no picker to ask is a fault in the command or the config,
+	// so it is reported here, ahead of the probe, as it was when the pick ran
+	// inside resolveRequest: with herdr also down, exit 3 would tell the
+	// caller to stop when the remedy is to fix the invocation.
+	if err := requirePicker(resolved.input, accountPicker(resolved.tiers.cfg, deps)); err != nil {
+		return usageError(deps.stderr(), err)
+	}
 
 	// The reachability probe (spec §13's exit 3) comes after every check
 	// that needs no herdr -- a typo in a flag should not need a running
