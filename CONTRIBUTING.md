@@ -105,15 +105,20 @@ Two spellings: `herdr:src/cli.rs at <pin>` for a passing reference, or a
 full `https://github.com/herdrdev/herdr/blob/<pin>/...#L123` URL where a
 reader will want to go look. The pin is always the herdr release this
 plugin's floor names (`min_herdr_version` in `herdr-plugin.toml`), so it
-moves when the floor does. Citations anchored to the first pin,
-`b1ff4582e9688f52ffb943cfa8bee4871ae122e4` (`herdr:src/cli.rs` with no ref,
-or `blob/b1ff4582/`), are **legacy**: that commit differs from the current
-pin in the prompt-wait semantics several comments depend on — so a legacy
-citation is still a valid statement about *that* commit, not necessarily
-about the herdr this plugin runs against. Migrate one to the current pin,
-re-reading the cited lines at the new ref, when you touch the code around
-it; do not write a new one. A citation that resolves only on one machine is
-not a citation.
+moves when the floor does. That key holds a bare version and herdr's tags
+carry a `v`, so the pin is tagged `v<version>` — a bare `blob/X.Y.Z/` URL
+is a 404.
+
+A citation anchored to **any ref other than the current pin** is
+**legacy**: still a valid statement about *that* ref, not necessarily
+about the herdr this plugin runs against. The first and most common
+example is the first pin, `b1ff4582e9688f52ffb943cfa8bee4871ae122e4`
+(`herdr:src/cli.rs` with no ref, or `blob/b1ff4582/`), which differs from
+the pin that replaced it in the prompt-wait semantics several comments
+depend on. Every citation of the current pin joins it the moment the floor
+moves. Migrate a legacy citation to the current pin, re-reading the cited
+lines at the new ref, when you touch the code around it; do not write a
+new one. A citation that resolves only on one machine is not a citation.
 
 **The current pin is the `v0.9.0` tag**
 (`b99002ac99b09e00b4ca692436cb15a6b0d676f1`), 59 commits ahead of
