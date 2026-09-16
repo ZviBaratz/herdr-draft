@@ -292,18 +292,23 @@ Layering, outermost to innermost:
   three it was, purely so `CleanCheck` names the right evidence; the
   exported flag stays the posture every other package reads.
 - **Citations into herdr's source name a pinned ref, never a local
-  path.** The current pin is the **`v0.9.0`** tag
-  (`b99002ac99b09e00b4ca692436cb15a6b0d676f1`), the herdr release this
-  plugin's floor names. Two spellings: the `herdr:src/cli.rs at v0.9.0`
-  shorthand for a passing reference, and a full
-  `https://github.com/herdrdev/herdr/blob/v0.9.0/...#L123` URL where a
-  reader will actually want to go look. Citations anchored to
+  path.** The pin is the herdr release this plugin's floor names
+  (`min_herdr_version` in `herdr-plugin.toml`), tagged `v<version>` — the
+  key has no `v` and herdr's tags do, so `blob/X.Y.Z/` is a 404. It is
+  written down — tag, commit SHA, distance from the first pin — in exactly
+  one place: `CONTRIBUTING.md`'s "Spec citations". Read it there and bump
+  it there; do not restate it here. Two spellings: the
+  `herdr:src/cli.rs at <pin>` shorthand for a passing reference, and a
+  full `https://github.com/herdrdev/herdr/blob/<pin>/...#L123` URL where a
+  reader will actually want to go look. A citation anchored to **any ref
+  other than the current pin** is **legacy** — still a valid statement
+  about *that* ref, not necessarily about the herdr this plugin runs
+  against — and every citation of the current pin becomes one the moment
+  the floor moves. The first and most common example is
   `b1ff4582e9688f52ffb943cfa8bee4871ae122e4` (`herdr:src/cli.rs` with no
-  ref, or `blob/b1ff4582/`) are **legacy**: that commit was the first pin,
-  it is 59 commits behind `v0.9.0`, and it differs in the prompt-wait
-  semantics several comments depend on — so a legacy citation is still a
-  valid statement about *that* commit, not necessarily about the herdr
-  this plugin runs against. Migrate one to `v0.9.0`, re-reading the cited
+  ref, or `blob/b1ff4582/`): the first pin, which differs from the pin
+  that replaced it in the prompt-wait semantics several comments depend
+  on. Migrate a legacy citation to the current pin, re-reading the cited
   lines at the new ref, when you touch the code around it; do not write a
   new one. Until 2026-09-16 this bullet named `b1ff4582` as the only pin,
   which by then was false about the tree (24 lines in `*.go` citing the

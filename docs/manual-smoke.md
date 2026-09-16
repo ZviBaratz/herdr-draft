@@ -130,7 +130,7 @@ a pane id of its own.
 
 **Route A0 — a headless disposable server, no config change.** The block above
 is on the **TUI**. `herdr server` returns from
-[`main.rs`](https://github.com/herdrdev/herdr/blob/b1ff4582/src/main.rs#L588)
+[`main.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/main.rs#L545-L546)
 into `server::headless::run_server()` *before* `exit_if_nested_disabled` is
 ever reached, so a headless session starts from inside a herdr pane with
 nothing enabled and nothing edited:
