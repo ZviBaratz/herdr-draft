@@ -249,20 +249,30 @@ rather than reasoning backwards from what you assume went wrong:
 | value | what it tells you | what to do |
 |---|---|---|
 | `sent` | the prompt reached the agent | nothing |
-| `unsent` | the text is not in front of the agent, or went out and left no trace | **read the pane first**, then resend `unsent_prompt` |
+| `unsent` | the text is not in front of the agent — which is not the same as never typed | **read the pane first**, then resend `unsent_prompt` |
 | `unconfirmed` | delivery is **unknown**; it may have arrived in full | **read the pane. Never resend.** The text is under `unconfirmed_prompt` |
 
-`unsent` is not permission to resend blind. It covers a guard that refused
-to send because the pane was showing a dialog, and it covers a send that
-went out and left no trace on the screen afterwards. Resending into the
-first types your prompt into a dialog, where the trailing Enter answers
-whichever option is highlighted; in the second there may be no agent left
-to receive it. So read the pane, clear what it is showing or tell the user
-about it, and only then resend.
+`unsent` is not permission to resend blind. It covers three shapes, and
+only one of them is the simple one:
+
+- **a guard refused to send**, because the pane was showing a blocking
+  dialog or had not finished painting. Resending types your prompt into
+  that dialog, where the trailing Enter answers whichever option is
+  highlighted.
+- **the send went out and left no trace** on the screen afterwards. There
+  may be no agent left to receive a second copy.
+- **the run stopped before the prompt step**, so nothing was typed. Here
+  there may be no pane to read at all, if it failed before one was made.
+
+So read the pane, clear whatever it is showing or hand that to the user,
+and only then resend. If there is no pane, there is nothing to clear and
+the text is simply yours to reuse.
 
 `unconfirmed` is not a failure. It means nothing observed confirms delivery
 and nothing observed rules it out. Resending on that is how an agent that
-is already working gets its instructions twice.
+is already working gets its instructions twice — and note that the text may
+have gone out **more than once** already, so a pane showing two copies of
+the prompt is a thing this status covers rather than a second bug to chase.
 
 `--on-failure keep` is the default and is the right one for you: a
 half-built session a human can open and look at is worth more than a tidy
