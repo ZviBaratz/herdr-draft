@@ -42,7 +42,7 @@ same way.
   `PATH` under the expected name is not run: it does nothing unless this key
   names it (`internal/picker/cli.go`).
 - `[clauth] launcher` is the one that is **typed into a shell** rather than
-  executed. See the paragraph below.
+  executed. See the section on `herdr pane run` below.
 
 **A repository cannot set any of them.** See the trust boundary below: the
 five keys a `.herdr-draft.toml` may set are named there, and none of these
@@ -64,7 +64,8 @@ returns are cached in your plugin state directory.
 herdr-draft drives `herdr`, `git` and `clauth` as child processes, and
 several arguments derive from what you type — a branch name from a title,
 a base ref, a project path. Every one of those invocations is argv, with no
-shell anywhere. Two paths are not, and each has its own section below.
+shell anywhere. Two paths do involve a shell; neither changes that claim for
+the values you type, and each has its own section below.
 
 The hardening is at the boundary rather than sprinkled over call sites:
 `appendFlag` refuses any value beginning with `-`, and it returns an error
@@ -122,21 +123,30 @@ drawn on. git does not exec that variable; it runs it through a shell
 (`internal/gitx/repo.go`, `nonInteractiveEnv`).
 
 **Nothing you type into the form reaches that string.** It is built from
-exactly two things: the ssh command git would have used anyway, and a
-fixed `-oBatchMode=yes` appended to it. The first is resolved in git's own
-precedence order — your `GIT_SSH_COMMAND`, then your `GIT_SSH`, then
-`core.sshCommand` — and falls back to plain `ssh` (`effectiveSSHCommand`).
-Two of those three sources are shell-parsed by git already, so passing
-them on changes nothing about what runs; git would have handed your
-`core.sshCommand` to a shell with or without this plugin. `GIT_SSH` is the
-one git treats as a bare program path, so it is shell-quoted before it is
-folded in, and a path with a space in it stays one word.
+exactly two things: an ssh command taken from your own environment or git
+configuration, and a fixed `-oBatchMode=yes` appended to it. git's own
+precedence order for that command is your `GIT_SSH_COMMAND`, then
+`core.sshCommand`, then your `GIT_SSH`, then plain `ssh`, and those are the
+only sources `effectiveSSHCommand` reads. Two of the three are shell-parsed
+by git already, so passing them on changes nothing about what runs; git
+would have handed your `core.sshCommand` to a shell with or without this
+plugin. `GIT_SSH` is the one git treats as a bare program path, so it is
+shell-quoted before it is folded in, and a path with a space in it stays
+one word.
+
+One discrepancy, stated because this section is meant to be auditable:
+with `GIT_SSH` and `core.sshCommand` both set and `GIT_SSH_COMMAND` unset,
+`effectiveSSHCommand` currently picks `GIT_SSH` where git would pick
+`core.sshCommand`. That can make a background fetch use a different ssh
+than a `git fetch` you ran yourself. It cannot put a typed value in the
+string, since both candidates are yours.
 
 The project path you pick decides only *which* repository's configuration
-that read consults, never what it says, and it is not a clone-borne input
-either: `git clone` does not copy a repository's `.git/config`, so
-`core.sshCommand` can only come from configuration written on your own
-machine.
+that read consults, never what it says. `git clone` does not copy
+`.git/config`, so a cloned repository cannot supply `core.sshCommand`; a
+repository whose `.git/` directory you copied from elsewhere — a tarball, an
+`rsync`, an unpacked CI artefact — can, exactly as it could for a
+`git fetch` you ran yourself.
 
 ### It reads a file that arrives with `git clone`
 
