@@ -527,12 +527,12 @@ herdr plugin config-dir zvibaratz.draft
   a trailing `/` is fine, and an explicit empty value means "no prefix"),
   and it may not start with `-`: herdr passes the branch to `git worktree
   add -b`, which accepts it but hands it on to a `git branch` child that
-  reads it as an option.
-  An unusable value is ignored and the default takes over; it never stops
-  herdr-draft from opening. The popup shows the reason on the `worktree`
-  row's panel, and `herdr-draft create` prints it on stderr — except in a
-  repository whose `.herdr-draft.toml` sets its own `branch_prefix`, which
-  would have overridden this key even if it were valid.
+  reads it as an option. An unusable value is ignored and the default takes
+  over; it never stops herdr-draft from opening. The popup shows the reason
+  on the `worktree` row's panel, and `herdr-draft create` prints it on
+  stderr — except in a repository whose `.herdr-draft.toml` sets its own
+  `branch_prefix`, which would have overridden this key even if it were
+  valid.
 - `default_worktree` (default: `true`) — whether the worktree row starts on
   or off for a git target.
 - `default_placement` (default: `"new-space"`) — where the agent's own pane

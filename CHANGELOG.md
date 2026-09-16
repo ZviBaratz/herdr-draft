@@ -156,8 +156,9 @@ without the popup. It drives herdr exclusively through the public CLI
   `launch = "wrapper"` is ignored. That, a malformed `launcher` and an
   unrecognised `launch` are each reported, on the `account` row's panel in
   the popup and on stderr by `herdr-draft create`; a malformed `launcher`
-  beside `"wrapper"` is reported as both malformed and ignored. The popup also reports the launch it
-  performed, including when wrapper mode fell back for want of a `config_dir`.
+  beside `"wrapper"` is reported as both malformed and ignored. The popup
+  also reports the launch it performed, including when wrapper mode fell
+  back for want of a `config_dir`.
 - `[palette]` overrides individual theme fields when herdr's own theme
   cannot be resolved from a static config file. Every region that marks
   something — rules, the focused row's fill, input backgrounds — has a

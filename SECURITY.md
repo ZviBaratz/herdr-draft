@@ -37,11 +37,10 @@ same way.
   runs another preview, whether or not the `account` row is on `auto`.
   Submitting runs it once more, for real, when the row *is* on `auto`; and
   `herdr-draft create --account auto` runs it once. It is argv with no shell
-  either,
-  and every call is bounded by a 30-second deadline. herdr-draft never goes
-  looking for a picker, so one that merely happens to sit on your `PATH`
-  under the expected name is not run: it does nothing unless this key names
-  it (`internal/picker/cli.go`).
+  either, and every call is bounded by a 30-second deadline. herdr-draft
+  never goes looking for a picker, so one that merely happens to sit on your
+  `PATH` under the expected name is not run: it does nothing unless this key
+  names it (`internal/picker/cli.go`).
 - `[clauth] launcher` is the one that is **typed into a shell** rather than
   executed. See the paragraph below.
 
@@ -77,8 +76,8 @@ flag's value whatever it starts with
 so a leading `-` is no danger there. The danger is the command herdr builds
 from those two values, `git worktree add -b <branch> <path> <base>`
 ([`src/worktree.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/worktree.rs#L238-L256)),
-which a `-`-leading value reaches by one of two routes (measured on git
-2.53.0):
+which a `-`-leading value reaches by one of two routes (measured on
+git 2.53.0):
 
 - `<base>` is a positional with **no `--` terminator** before it, so
   `git worktree add` itself reads a `-`-leading base as an option.
@@ -87,9 +86,8 @@ which a `-`-leading value reaches by one of two routes (measured on git
   `--` would not close this route.
 
 That is the argument-injection surface, and `--base` and `--branch` are why
-the refusal is kept. It is also why `branch_prefix` is validated
-wherever it comes from — it reaches `herdr worktree create --branch
-<value>` as argv.
+the refusal is kept. It is also why `branch_prefix` is validated wherever it
+comes from — it reaches `herdr worktree create --branch <value>` as argv.
 
 ### Except one path, which is typed into your shell
 
