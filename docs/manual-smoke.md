@@ -1353,15 +1353,21 @@ paragraph of English, and nothing in this repository can assert it.
 the one cell that deliberately touches it.
 
 ```bash
-herdr-draft skill > /tmp/spawn-SKILL.md    # inspect it first
+draft=$(find ~/.config/herdr/plugins -type f -name herdr-draft -perm -u+x | head -1)
+echo "$draft"                              # empty means a linked install: use bin/herdr-draft
+"$draft" skill > /tmp/spawn-SKILL.md       # inspect it first
 head -5 /tmp/spawn-SKILL.md                # must start with the `---` fence
 mkdir -p ~/.claude/skills/spawn
 cp /tmp/spawn-SKILL.md ~/.claude/skills/spawn/SKILL.md
 ```
 
+**The `find` is half the cell.** `herdr-draft` is not on `PATH`, so
+locating it is the first thing any user has to do, and it is the step the
+README can get wrong without any test noticing. Record what it printed.
+
 Check the path it baked in is the one you expect — `grep -m1 create
 ~/.claude/skills/spawn/SKILL.md` — and that the version in its last
-section matches `herdr-draft version`.
+section matches what `"$draft" version` prints.
 
 **Step 2 — the trigger.** Open a *fresh* Claude Code session in a herdr
 pane (a skill added mid-session is not seen). Ask for a handoff in words
@@ -1382,10 +1388,14 @@ onto the Agent tool's in-process subagents is the misfire that would
 discredit the skill fastest, and section 1 of the document exists to
 prevent it.
 
-**Step 3 — the environment half.** If it did fire, watch whether the agent
-exports the three `HERDR_PLUGIN_*` variables before running `create`, or
-runs it bare and gets the built-in-defaults line on stderr. That is the
-whole reason the skill's second section is where it is.
+**Step 3 — the environment half.** If it did fire, watch whether the three
+`HERDR_PLUGIN_*` exports and the `create` went out in **one** tool call.
+Exports in a separate call do not count and are the failure to look for:
+Claude Code's Bash tool keeps the working directory between calls but not
+environment variables, so an agent that exports in one call and creates in
+the next resolves from built-in defaults while looking like it did
+everything right. The tell is on `create`'s first stderr line. That window
+is the whole reason the skill's second section says "in the same command".
 
 **Unrun.** Nothing here has been observed; do not write a result you did
 not see.

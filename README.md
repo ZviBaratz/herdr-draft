@@ -450,11 +450,23 @@ the intent to *hand work off* reach for `herdr-draft create` instead of
 writing a handoff document and stopping, or improvising a topology.
 
 ```bash
+draft=$(find ~/.config/herdr/plugins -type f -name herdr-draft -perm -u+x | head -1)
 mkdir -p ~/.claude/skills/spawn
-herdr-draft skill > ~/.claude/skills/spawn/SKILL.md
+"$draft" skill > ~/.claude/skills/spawn/SKILL.md
 ```
 
-The directory name has to match the frontmatter `name`; both are `spawn`.
+The directory name has to match the frontmatter `name`; both are `spawn`,
+and a test holds this section, the emitted document and the frontmatter to
+that one value.
+
+**The `find` is not decoration.** `herdr-draft` is not on `PATH` — the
+binary lives inside the plugin's install root, whose directory name
+carries a hash, and `herdr plugin list` prints the install source rather
+than the path. This is the same discovery problem the emitted document
+solves by naming its own absolute path, except that you have to solve it
+once yourself to produce the document. If you installed with
+`herdr plugin link` instead, it is `bin/herdr-draft` inside your checkout,
+and `herdr plugin list` does print that path.
 
 It covers what the sections above cover, aimed at an agent rather than at
 you: the `HERDR_PLUGIN_*` exports and what resolving without them costs,

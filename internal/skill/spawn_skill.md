@@ -12,12 +12,12 @@ user where it is.
 One command does all of it:
 
 ```bash
-{{HERDR_DRAFT_BIN}} create [flags]
+"{{HERDR_DRAFT_BIN}}" create [flags]
 ```
 
-`{{HERDR_DRAFT_BIN}} create --help` is the authority on the flags. This
-document is the authority on *which* flags to reach for and what has to be
-true before you run it.
+`"{{HERDR_DRAFT_BIN}}" create --help` is the authority on the flags. This
+document is the authority on *which* flags to reach for, what has to be
+true before you run it, and what the result actually tells you.
 
 ## 1. What this is, and what it is not
 
@@ -34,6 +34,11 @@ up in a fresh session", "run this in parallel while I do the other thing",
 or "write the handoff for the next agent" — that is a session, and this is
 how to make one.
 
+It is also not the only answer. If the user asked for a handoff *document*
+— something to paste into a session they will start later, or somewhere
+else, or by hand — then write the file and create nothing. Section 7 says
+how to tell the two apart without guessing.
+
 The precondition:
 
 ```bash
@@ -43,19 +48,26 @@ test "${HERDR_ENV:-}" = 1
 If that fails you are not inside herdr, nothing below applies, and you
 should say so rather than improvise.
 
-## 2. Export the plugin environment first
+## 2. Export the plugin environment, in the same command
 
-**Do this before anything else.** herdr gives the three `HERDR_PLUGIN_*`
-variables only to a plugin it launched itself. Your pane is not that, so
-they are either unset or — measured live — set and pointing at a
-*different* plugin that happens to have launched something in your
-lineage.
+**This is the step that goes wrong.** herdr gives the three
+`HERDR_PLUGIN_*` variables only to a plugin it launched itself. Your pane
+is not that, so they are either unset, or set and pointing at a *different*
+plugin's directories.
 
 ```bash
 export HERDR_PLUGIN_ID="zvibaratz.draft"
 export HERDR_PLUGIN_CONFIG_DIR="$(herdr plugin config-dir zvibaratz.draft)"
 export HERDR_PLUGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/zvibaratz.draft"
+"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree
 ```
+
+**Run that whole block as one command.** Your shell does not survive
+between tool calls — environment variables set in one call are gone by the
+next, even though the working directory persists. Exporting in one call and
+running the create in the next gets you exactly the failure the exports
+exist to prevent, quietly enough that you would report success. Every
+example further down is the last line of this block; keep them together.
 
 `HERDR_PLUGIN_ID` is the load-bearing one. It is the only variable that
 says *whose* the other two directories are, and without it herdr-draft
@@ -63,22 +75,18 @@ refuses to trust them — a directory inherited from another plugin's pane
 would otherwise have that plugin's configuration read as this one's. A
 missing id and a wrong id are treated identically, on purpose.
 
-When they are missing you get this on the first line of stderr, and it is
-worth recognising rather than reading past:
+**What skipping it costs.** No `config.toml`, no `last-used.json`, no
+`projects.json`: no pinned account, no remembered placement for this
+project, no Linear key, no configured agent arguments, no configured
+timeouts. The session is still made — from built-in defaults, which are
+almost certainly not what the user configured.
 
-> `herdr-draft create: the HERDR_PLUGIN_* environment here does not say
-> whose it is -- HERDR_PLUGIN_ID is not set, so it is not demonstrably
-> "zvibaratz.draft"'s -- ignoring it and resolving from built-in defaults;
-> export HERDR_PLUGIN_ID=… together with HERDR_PLUGIN_CONFIG_DIR=$(herdr
-> plugin config-dir …) and HERDR_PLUGIN_STATE_DIR to resolve exactly what
-> the form resolves`
-
-That is not a warning you can skip. It means no `config.toml`, no
-`last-used.json`, no `projects.json`: **no pinned account, no remembered
-placement for this project, no Linear key, no configured agent arguments,
-no configured timeouts.** The session still gets made — from built-in
-defaults, which are almost certainly not what the user configured. If you
-have already created one without exporting these, say so.
+You are told, on the first line of stderr, but the wording depends on which
+variables were wrong, so match on the shared part rather than on a whole
+sentence. The line begins `herdr-draft create:` and says it is **resolving
+from built-in defaults** or **resolving without your config.toml and
+remembered defaults**, then names what to export. If you see it, the
+session you just made ignored the user's configuration — say so.
 
 ## 3. What the session starts from
 
@@ -89,11 +97,13 @@ you are doing right now.
 - `--worktree` / `--no-worktree` choose explicitly. Leave both off and the
   user's own default applies.
 - `--branch NAME` names the branch. Left off, it is derived from the title.
-- `--base REF` is what the branch is cut from. Left off, it is `HEAD` —
-  which is *your current commit*, not the repository's default branch. If
-  you are on a feature branch and the new work should start from `main`,
-  pass it.
-- `--project DIR` is the repository. Left off, it is the working directory.
+- `--base REF` is what the branch is cut from. Left off it resolves like
+  every other unset value — usually `HEAD`, which is *your current commit*,
+  though a repository's own `.herdr-draft.toml` can set a different
+  default. If you are on a feature branch and the new work should start
+  from `main`, pass it rather than assume.
+- `--project DIR` is the repository. Left off, it resolves to the working
+  directory.
 
 **Uncommitted work does not travel.** A worktree is cut from a commit, so
 anything you have edited and not committed is invisible to the new agent.
@@ -120,15 +130,15 @@ prevent.
 `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID` that herdr sets in
 every pane. `new-space` needs none of them.
 
-**The limit worth knowing (#128):** "here" is fixed by the pane you are
-running in, so the only two destinations are a brand-new workspace and the
-one you are already in. A third — some *other* workspace that already
-exists — cannot be named at all. If that is where the work belongs, say so
-rather than quietly putting it somewhere else.
+**The limit worth knowing:** "here" is fixed by the pane you are running
+in, so the only two destinations are a brand-new workspace and the one you
+are already in. A third — some *other* workspace that already exists —
+cannot be named at all. If that is where the work belongs, say so rather
+than quietly putting it somewhere else.
 
 With a worktree and a `here` placement, the checkout gets a workspace of
 its own *as well*, and the agent runs in your workspace, not in it. That
-is why §8's two id triples are not the same thing.
+is why section 8's two id triples are not the same thing.
 
 ## 5. Agent and account
 
@@ -150,17 +160,23 @@ If the user has not said anything about accounts, pass neither flag.
 `--prompt` is the first thing the new agent is told. `--prompt -` reads it
 from stdin, which is how anything longer than a sentence gets in.
 
-Keep the whole invocation on one line. For a sentence or two, pass it
-inline:
+For a sentence or two, a **quoted** heredoc — `<<'EOF'`, not `<<EOF`, so
+that a `$`, a backtick or a quote in the text reaches the agent instead of
+being expanded by your own shell:
 
 ```bash
-{{HERDR_DRAFT_BIN}} create --title "triage the flaky CI job" --no-worktree --placement split-here --prompt "Look at the last three failures of the nightly job on main and tell me whether they share a cause."
+# with section 2's three exports above it, in the same command
+"{{HERDR_DRAFT_BIN}}" create --title "triage the flaky CI job" --no-worktree --placement split-here --prompt - <<'EOF'
+Look at the last three failures of the nightly job on main and tell me
+whether they share a cause.
+EOF
 ```
 
 For a real handoff, **write it to a durable file first and pipe that in**:
 
 ```bash
-{{HERDR_DRAFT_BIN}} create --title "fix the login redirect loop" --worktree --base main --placement new-space --prompt - < ~/handoffs/login-redirect.md
+# with section 2's three exports above it, in the same command
+"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree --base main --placement new-space --prompt - < ~/handoffs/login-redirect.md
 ```
 
 Two reasons, both practical: the user can read the brief before the
@@ -191,11 +207,18 @@ placement is a word, but a command is reviewable.
 
 Put the one you would run first, and beside it the two nearest
 alternatives: usually the other worktree answer and the other placement.
-Then honour whichever they pick. Do not ask again, and do not ask a
-second question about a flag they did not raise.
 
-If they gave you the whole topology already ("split it beside me, no
-worktree"), they have answered; run it.
+**Offer "write the brief to a file and create nothing" as one of the
+options whenever the user's own words asked for a document** — "write a
+handoff", "draft a prompt I can paste", "write this up for the next
+session". They may want the file and no session, and putting it on the
+list is the only way to find out without guessing. Show the path you would
+write.
+
+Then honour whichever they pick. Do not ask again, and do not ask a second
+question about a flag they did not raise. If they already gave you the
+whole topology ("split it beside me, no worktree"), they have answered;
+run it.
 
 ## 8. Read the result
 
@@ -220,24 +243,32 @@ checkout got, which is a different place whenever a worktree was combined
 with a `here` placement.
 
 **`prompt_status` is the field that matters**, and it has three values, not
-two:
+two. Each is a statement about what you *know*, so act on the last column
+rather than reasoning backwards from what you assume went wrong:
 
-| value | means | what to do |
+| value | what it tells you | what to do |
 |---|---|---|
-| `sent` | the agent acknowledged it | nothing |
-| `unsent` | it never arrived | resend it; the text comes back as `unsent_prompt` |
-| `unconfirmed` | delivery could not be confirmed | **read the pane. Never resend.** The text is under `unconfirmed_prompt` |
+| `sent` | the prompt reached the agent | nothing |
+| `unsent` | the text is not in front of the agent, or went out and left no trace | **read the pane first**, then resend `unsent_prompt` |
+| `unconfirmed` | delivery is **unknown**; it may have arrived in full | **read the pane. Never resend.** The text is under `unconfirmed_prompt` |
 
-`unconfirmed` is not a failure. It means the confirmation timed out while
-the agent was demonstrably busy — very often because the agent was already
-several tool calls into the prompt and slow to paint its status. Resending
-is how a working agent gets its instructions twice.
+`unsent` is not permission to resend blind. It covers a guard that refused
+to send because the pane was showing a dialog, and it covers a send that
+went out and left no trace on the screen afterwards. Resending into the
+first types your prompt into a dialog, where the trailing Enter answers
+whichever option is highlighted; in the second there may be no agent left
+to receive it. So read the pane, clear what it is showing or tell the user
+about it, and only then resend.
 
-`--on-failure keep` is the default and is the right one for you. A
+`unconfirmed` is not a failure. It means nothing observed confirms delivery
+and nothing observed rules it out. Resending on that is how an agent that
+is already working gets its instructions twice.
+
+`--on-failure keep` is the default and is the right one for you: a
 half-built session a human can open and look at is worth more than a tidy
-machine, and `--on-failure clean` on an `unconfirmed` prompt would kill an
-agent mid-turn — herdr-draft refuses that combination for exactly that
-reason.
+machine. Passing `--on-failure clean` does not override that for an
+`unconfirmed` prompt — the clean is refused at failure time and the session
+kept, with the reason under `clean_refused`.
 
 **Finish by looking at the pane**, not by trusting the exit status:
 
@@ -254,24 +285,29 @@ needs from you.
 ## Precedence over herdr's own skill
 
 herdr's skill says to default to a sibling pane in the current tab and the
-current directory, and not to create a workspace, tab or worktree unless
+current directory, and not to make a workspace, tab or worktree unless
 asked. That is right for the case it is about: putting a command or an
 agent into the space you are already in.
 
 **When the ask is "hand this work to another agent", this skill wins.** A
 handoff is the case where a worktree and a topology of its own are the
-point, not an unrequested flourish. `herdr agent start` by hand stays
-correct for a pane that already exists.
+point, not an unrequested flourish.
+
+Two things stay with herdr's rule. `herdr agent start` by hand is still
+correct for a pane that already exists. And an explicit request for a
+sibling pane in the current directory is honoured as asked — either
+through herdr's own skill, or through this one with `--no-worktree
+--placement split-here`, which builds the same topology.
 
 ---
 
 Generated from herdr-draft {{VERSION}}. Compare that against what
-`{{HERDR_DRAFT_BIN}} version` prints, and if they differ this file is
-stale — regenerate it:
+`"{{HERDR_DRAFT_BIN}}" version` prints; if they differ, this file is stale.
+To regenerate it:
 
 ```bash
 mkdir -p ~/.claude/skills/spawn
-{{HERDR_DRAFT_BIN}} skill > ~/.claude/skills/spawn/SKILL.md
+"{{HERDR_DRAFT_BIN}}" skill > ~/.claude/skills/spawn/SKILL.md
 ```
 
 The path above is this machine's. Reinstalling or upgrading the plugin can

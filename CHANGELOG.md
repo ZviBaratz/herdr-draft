@@ -90,7 +90,8 @@ without the popup. It drives herdr exclusively through the public CLI
   is ours, so a shell inside another plugin's pane cannot have its config
   read as this plugin's or its state written into.
 - **`herdr-draft skill` prints an agent skill for driving all of the
-  above.** Redirect it into `~/.claude/skills/spawn/SKILL.md` and an agent
+  above.** Redirect it into `~/.claude/skills/spawn/SKILL.md` (the README
+  has the recipe, `find` included, since the binary is not on `PATH`) and an agent
   asked to hand work off creates a session instead of writing a handoff
   document and stopping. It carries the `HERDR_PLUGIN_*` exports, the
   placement choice, the prompt, and how to read `prompt_status` and the

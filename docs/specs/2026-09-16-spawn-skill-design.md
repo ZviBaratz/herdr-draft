@@ -1,9 +1,15 @@
 # herdr-draft — the `/spawn` skill: making agents aware of herdr-draft
 
 - **Date:** 2026-09-16
-- **Status:** design approved 2026-09-16; implementation not started.
+- **Status:** design approved 2026-09-16; implemented 2026-09-16 (PR #133).
   Scheduled into **v0.1.0**, holding the tag for one more PR (owner's
   decision, 2026-09-16, over a recommendation to defer to 0.2.0).
+  Two implementation departures from what is written below, both
+  deliberate: §3 says the verb needs no injected function, and `dispatch`
+  takes one anyway so the routing stays testable the way its other two
+  verbs are; and §8.1's "every `create` flag" is enforced against
+  `parseArgs`' own `flag.FlagSet` rather than against `createUsage`'s
+  prose, which is stricter than this document asked for.
 - **Supersedes:** nothing. This is new surface. `herdr-draft help`'s usage
   block gains a verb and `README.md` gains a section; neither is a
   correction.
