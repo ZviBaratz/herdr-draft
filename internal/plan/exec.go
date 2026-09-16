@@ -831,8 +831,8 @@ func explainPromptKilledAgent(err error) error {
 // popup's own line, CleanCheck's refusal -- all branch on
 // ExecResult.PromptUnconfirmed instead of reading any of this text.
 func explainStalledPrompt(err error) error {
-	return fmt.Errorf("the agent was still not accepting input, so the prompt was probably not delivered -- "+
-		"read the pane before pasting it, in case a copy arrived late: %w", err)
+	return fmt.Errorf("the agent was still not accepting input, so the prompt was probably not processed -- "+
+		"but two sends have gone out: read the pane before pasting it, in case a copy arrived late: %w", err)
 }
 
 // explainUnconfirmedPrompt rewrites a prompt-wait timeout into the only

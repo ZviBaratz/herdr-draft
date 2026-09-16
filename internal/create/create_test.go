@@ -923,6 +923,18 @@ func TestStalledPromptIsRetriedThenReportedUnconfirmed(t *testing.T) {
 		t.Errorf("unsent_prompt = %q, want it absent -- that key is what tells a script to resend",
 			out.UnsentPrompt)
 	}
+	// The `error` field is the loudest surface -- what a human reads first
+	// and what a script logs -- and it carries herdrc's own sentinel text
+	// wrapped inside plan's. Three of the four surfaces were corrected
+	// first and this one was left asserting the opposite, so the same
+	// object said "nothing was delivered" and "delivery is unconfirmed" at
+	// once. Asserted on the retracted claim itself, not on the word
+	// "delivered", which CleanCheck's timeout reason uses correctly.
+	for _, retracted := range []string{"nothing was delivered", "not delivered", "was not sent"} {
+		if strings.Contains(out.Error, retracted) {
+			t.Errorf("error field claims %q after two sends:\n%s", retracted, out.Error)
+		}
+	}
 
 	// The same run without --json, because the prompt text and its
 	// instruction are written to stderr only in human mode.
