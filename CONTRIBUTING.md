@@ -100,8 +100,19 @@ Most non-trivial doc comments cite a spec section or a live-checkpoint
 finding. **Read them before changing the code they sit on** — they usually
 record a non-obvious constraint rather than restating the code.
 
-Citations into herdr's own source name a pinned commit
-(`b1ff4582e9688f52ffb943cfa8bee4871ae122e4`), never a local path. A
+Citations into herdr's own source name a pinned ref, never a local path.
+The current pin is the **`v0.9.0`** tag
+(`b99002ac99b09e00b4ca692436cb15a6b0d676f1`), the herdr release this
+plugin's floor names: `herdr:src/cli.rs at v0.9.0` for a passing
+reference, or a full `https://github.com/herdrdev/herdr/blob/v0.9.0/...#L123`
+URL where a reader will want to go look. Citations anchored to
+`b1ff4582e9688f52ffb943cfa8bee4871ae122e4` (`herdr:src/cli.rs` with no ref,
+or `blob/b1ff4582/`) are **legacy**: that commit was the first pin, it is
+59 commits behind `v0.9.0`, and it differs in the prompt-wait semantics
+several comments depend on — so a legacy citation is still a valid
+statement about *that* commit, not necessarily about the herdr this plugin
+runs against. Migrate one to `v0.9.0`, re-reading the cited lines at the
+new ref, when you touch the code around it; do not write a new one. A
 citation that resolves only on one machine is not a citation.
 
 ## Commits and pull requests
@@ -144,7 +155,7 @@ the reason this section exists rather than a comment somewhere.
 It is load-bearing rather than ceremony. herdr has no `plugin update`
 command — its verbs are `install`, `uninstall`, `link`, `list`,
 `config-dir`, `unlink`, `enable`, `disable`, `action`, `log` and `pane`
-([`herdr:src/cli/plugin.rs`](https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/plugin.rs#L26))
+([`herdr:src/cli/plugin.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/plugin.rs#L25-L36))
 — so `herdr plugin install owner/repo --ref <tag>` is the documented way to
 pin or refresh an install, and it needs something to point at. And
 `just build` stamps `git describe --tags --always --dirty` into the binary:

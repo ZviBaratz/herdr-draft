@@ -90,7 +90,7 @@ That is the argument-injection surface, and `--base` and `--branch` are why
 the refusal is kept. It is also why `branch_prefix` is validated wherever it
 comes from — it reaches `herdr worktree create --branch <value>` as argv.
 
-### Except one path, which is typed into your shell
+### `herdr pane run`, which types into your shell
 
 `herdr pane run` does not exec. It joins its argv with single spaces and
 sends the resulting string to the pane as input followed by Enter, so the
