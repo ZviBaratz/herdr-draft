@@ -139,7 +139,8 @@ that read consults, never what it says. `git clone` does not copy
 `.git/config`, so a cloned repository cannot supply `core.sshCommand`; a
 repository whose `.git/` directory you copied from elsewhere — a tarball, an
 `rsync`, an unpacked CI artefact — can, exactly as it could for a
-`git fetch` you ran yourself.
+`git fetch` you ran yourself, except that the popup starts this fetch on
+its own as soon as you pick the project.
 
 ### It reads a file that arrives with `git clone`
 
