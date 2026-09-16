@@ -10,6 +10,8 @@ package skill
 
 import (
 	_ "embed"
+	"fmt"
+	"io"
 	"strings"
 )
 
@@ -43,4 +45,31 @@ const (
 func Render(binPath, version string) string {
 	out := strings.ReplaceAll(spawnSkillDoc, binPlaceholder, binPath)
 	return strings.ReplaceAll(out, versionPlaceholder, version)
+}
+
+// fallbackBinName is what the document says when os.Executable fails --
+// rare (it needs a platform that cannot answer at all), and survivable:
+// the reader gets a working document naming a command they can put on
+// PATH themselves, rather than no document.
+const fallbackBinName = "herdr-draft"
+
+// Run is the `skill` verb. It writes the rendered document to stdout and
+// returns 0.
+//
+// exe is os.Executable in production and a fake in tests. When it fails,
+// the document is still written -- with fallbackBinName -- and the reason
+// goes to STDERR, never stdout: the documented install is
+// `herdr-draft skill > ~/.claude/skills/spawn/SKILL.md`, so a warning on
+// stdout would land inside the skill file, above its frontmatter fence,
+// and break the file this verb exists to produce.
+func Run(stdout, stderr io.Writer, exe func() (string, error), version string) int {
+	bin, err := exe()
+	if err != nil {
+		bin = fallbackBinName
+		fmt.Fprintf(stderr,
+			"herdr-draft skill: could not resolve this binary's own path (%v) -- the document names %q instead; put the binary on PATH under that name, or edit the path in the installed file\n",
+			err, fallbackBinName)
+	}
+	fmt.Fprint(stdout, Render(bin, version))
+	return 0
 }

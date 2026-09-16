@@ -29,6 +29,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/create"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
+	"github.com/ZviBaratz/herdr-draft/internal/skill"
 )
 
 // defaultHerdrBin/defaultClauthBin are the PATH-relative fallbacks used
@@ -41,14 +42,15 @@ const (
 	defaultClauthBin = "clauth"
 )
 
-// usage is the whole binary's own help: two entry points, one line each.
-// The create verb's own flags live in internal/create, printed by
+// usage is the whole binary's own help: one line per entry point. The
+// create verb's own flags live in internal/create, printed by
 // `herdr-draft create --help`.
 const usage = `herdr-draft -- herdr's new-session plugin
 
 usage:
   herdr-draft                 open the new-session popup (how herdr launches it)
   herdr-draft create [flags]  create a session without the popup
+  herdr-draft skill           print the agent skill; see README
   herdr-draft version         print the version
   herdr-draft help            print this
 
@@ -128,28 +130,31 @@ func clauthStatusFilePath() string {
 }
 
 func main() {
-	os.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr, runPopup, runCreate))
+	os.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr, runPopup, runCreate,
+		func() int { return runSkill(os.Stdout, os.Stderr) }))
 }
 
 // dispatch routes a command line to its verb and returns the process exit
 // code (v2 spec §13: "main.go dispatches on os.Args[1]: absent means the
 // popup, exactly as today; an unknown verb prints usage and exits 2").
 //
-// popup and createVerb are passed in rather than called directly so this
-// -- the one piece of routing logic in package main -- is testable without
-// starting a tea.Program or talking to herdr.
+// popup, createVerb and skillVerb are passed in rather than called
+// directly so this -- the one piece of routing logic in package main -- is
+// testable without starting a tea.Program or talking to herdr.
 //
 // `help`/`-h`/`--help` are not "unknown verbs": they print the usage on
 // stdout and exit 0, the way asking a program for its help always should,
 // and the way Go's own flag package treats -h. Only a verb this binary
 // does not have exits 2.
-func dispatch(args []string, stdout, stderr io.Writer, popup func() int, createVerb func(args []string) int) int {
+func dispatch(args []string, stdout, stderr io.Writer, popup func() int, createVerb func(args []string) int, skillVerb func() int) int {
 	if len(args) == 0 {
 		return popup()
 	}
 	switch args[0] {
 	case "create":
 		return createVerb(args[1:])
+	case "skill":
+		return skillVerb()
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -212,6 +217,15 @@ func runPopup() int {
 		return 1
 	}
 	return 0
+}
+
+// runSkill is the production `skill` verb: the real executable path and
+// the real version. Writers are parameters rather than os.Stdout/os.Stderr
+// captured inside, so TestRunSkillStampsTheBuildersVersion can pin the one
+// thing skill.Run itself cannot -- that this call site passes
+// herdrc.Version and not some other string.
+func runSkill(stdout, stderr io.Writer) int {
+	return skill.Run(stdout, stderr, os.Executable, herdrc.Version)
 }
 
 // runCreate is spec §13's headless verb. The plugin context is read here
