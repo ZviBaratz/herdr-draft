@@ -413,7 +413,17 @@ const promptStalledCode = "agent_prompt_stalled"
 // not yet accepting input. herdr types, nothing happens, and the pane is left
 // with an empty buffer and no turn -- so a caller that waits a moment and
 // sends again delivers the prompt exactly once rather than not at all.
-var ErrPromptStalled = errors.New("the agent was not accepting input yet, so nothing was delivered")
+//
+// "processed", not "delivered", and the one word is the whole point (#132).
+// herdr writes the prompt text and Enter BEFORE it starts watching for an
+// effect (herdr v0.9.0, src/api/wait.rs: prompt_agent dispatches the send,
+// then enters the AGENT_PROMPT_EFFECT_TIMEOUT_MS wait that raises this
+// code), so a stall says nothing about whether the text landed. This string
+// is not internal -- it is wrapped into what `create` prints as its `error`
+// field and twice on stderr, in the same report whose prompt_status says
+// delivery is unconfirmed -- so a "nothing was delivered" here contradicted
+// the rest of the object out loud.
+var ErrPromptStalled = errors.New("the agent was not accepting input yet, so nothing was processed")
 
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement
 // focus as two explicit mutually exclusive flags rather than a single

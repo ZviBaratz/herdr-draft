@@ -1043,6 +1043,15 @@ the text **was typed** and the submission did not complete. "Prompt not sent
 — saved for manual paste" is subtly wrong for that code, and a user who
 believes it pastes the prompt a second time.
 
+**Retired as of #132** — kept here because it is what the trap looked like,
+and because the reasoning is what to re-check if the wording ever drifts
+back. A stall is now sent once more after a short pause, on both the popup
+and headless `create`; one that survives that retry is reported as
+**unconfirmed**, not unsent, so neither path shows that line any more. What
+you should see instead is "delivery unconfirmed — read the pane" in the
+popup and `prompt_status: "unconfirmed"` from `create`. A run that still
+says "not sent" for `agent_prompt_stalled` is a regression, not a trap.
+
 ### Cell 10b — the same question from the other side (#108)
 
 #73 is a report of success for a prompt that never landed. **#108 is the

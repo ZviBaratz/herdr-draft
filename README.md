@@ -326,31 +326,69 @@ ones you passed). It never prompts. Exit codes:
 | 3 | herdr is unreachable |
 
 **A prompt has three fates, not two.** `prompt_status` names which:
-`sent`, `unsent`, or `unconfirmed`. The third is `herdr agent prompt
---wait` giving up before the agent's status changed, which is *not* proof
-the prompt failed to arrive — herdr 0.9.0 completes that wait only on
-observed working-or-blocked activity, so a large prompt into an agent slow
-to paint its transition times out while running perfectly well.
+`sent`, `unsent`, or `unconfirmed`. The third means delivery is unknown,
+and it is reached three ways:
+
+- **the wait gave up.** `herdr agent prompt --wait` returned before the
+  agent's status changed, which is *not* proof the prompt failed to
+  arrive — herdr 0.9.0 completes that wait only on observed
+  working-or-blocked activity, so a large prompt into an agent slow to
+  paint its transition times out while running perfectly well.
+- **the send stalled twice.** A *stall* is herdr seeing no working and no
+  blocked activity at all after a send — positive evidence the agent
+  processed nothing, which is why herdr-draft pauses a couple of seconds
+  and sends once more. If that stalls too, it stops. herdr writes the
+  prompt text and Enter before it starts watching, so two sends later
+  "it never arrived" is not something this command knows, and the pane
+  may hold two copies.
+- **something failed after the text had already gone out.** Once herdr has
+  typed the prompt, nothing later in the same step can put delivery back to
+  "never arrived". In practice this is the retry above meeting a dialog: the
+  first send stalls because the agent's screen had not finished painting,
+  and by the time the retry looks, the dialog is up — so herdr-draft
+  correctly refuses to type into it, having already typed once.
 
 Read `prompt_status` rather than inferring from the other fields:
 
 | `prompt_status` | `prompt_sent` | the text comes back as | what to do |
 |---|---|---|---|
 | `sent` | `true` | — | nothing |
-| `unsent` | `false` | `unsent_prompt` | resend it; it never arrived |
-| `unconfirmed` | *absent* | `unconfirmed_prompt` | **read the pane first** |
+| `unsent` | `false` | `unsent_prompt` | **read the pane first**, then resend |
+| `unconfirmed` | *absent* | `unconfirmed_prompt` | **read the pane. Never resend.** |
+
+**`unsent` is not permission to resend blind.** It means the text is not in
+front of the agent — not that it was never typed — and it covers three
+shapes:
+
+- **the guard refused to send**, because the pane was showing a blocking
+  dialog or had not painted yet. Resending types the prompt into that
+  dialog, where the trailing Enter answers whichever option is highlighted.
+  That is the failure #116 exists to prevent, arriving through the front
+  door.
+- **the send went out and left no trace** on the screen afterwards. There
+  may be no agent left to receive a second copy.
+- **the plan stopped before the prompt step**, so nothing was typed — and
+  there may be no pane to read at all, if it failed before one was made.
+
+So read the pane, clear whatever it is showing or hand it to someone who
+can, and only then resend. If there is no pane, there is nothing to clear
+and the text is simply yours to reuse.
 
 `prompt_sent` is absent for `unconfirmed` because neither `true` nor
-`false` is a statement this command can make. And the text comes back
-under a different key on purpose: `unsent_prompt` means "this failure
-destroyed your work, here it is back", so a caller that does the
-documented thing with it — paste it into the pane — is how a working agent
-gets its instructions twice. On `unconfirmed`, check the pane before
-resending anything.
+`false` is a statement this command can make. The two keys carry different
+instructions, which is why the text comes back under one or the other:
+`unsent_prompt` is text to put back in front of the agent once you have
+looked at the pane, while `unconfirmed_prompt` may **already** be in front
+of it. Resending that one is how an agent that is working gets its
+instructions twice.
 
 `--on-failure clean` is **refused** for an `unconfirmed` prompt, with the
-reason in `clean_refused`: the session may have an agent working in it
-right now, and cleaning up would kill it mid-turn.
+reason in `clean_refused` — which names whichever of the three shapes it
+was. After a wait that gave up, the session may have an agent working in
+it right now and cleaning up would kill it mid-turn. After two stalls, or
+after any failure that followed a send, what the pane holds is unknown and
+worth reading before anything is removed. The ids are still reported in
+every case, so nothing is stranded without a way back to it.
 
 **The reported ids name the agent, not the worktree.**
 `workspace_id`/`tab_id`/`pane_id` — and `workspace=`/`tab=`/`pane=` on the
@@ -653,8 +691,12 @@ inside it only when `picker` is set and its probe succeeded.
   take five minutes to report. Set it to `0` to switch the wait off and
   fail immediately instead.
 
-  Only the popup waits. Headless `create` has nobody at the keyboard, so
-  it keeps failing fast with the reason, and there is no flag for it.
+  Only the popup waits for **you**. Headless `create` has nobody at the
+  keyboard, so it keeps failing fast with the reason, and there is no flag
+  for it. This budget covers that wait alone: the short pause before a
+  stalled prompt is sent again waits for a terminal to finish painting,
+  not for a person, so it happens on both paths and setting this to `0`
+  does not switch it off.
 
 ### `[worktree]`
 

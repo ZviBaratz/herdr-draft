@@ -185,9 +185,10 @@ without the popup. It drives herdr exclusively through the public CLI
   nothing else for a second or so before an agent's own screen appears,
   which no signature will ever match, so the pane is read again *after* the
   send: a create is only called clean once the pane says the prompt landed. An agent that has stopped answering, or a dialog still up with no
-  trace of the prompt on it, is a failure with the prompt saved. It never
-  resends: the prompt goes out once, and everything after that only decides
-  what to tell you.
+  trace of the prompt on it, is a failure with the prompt saved. This check
+  never resends: text has already gone out, so a second copy is the injury
+  it exists to report. The one failure that does get another send is a
+  *stall* — see below — and it is the only one.
 - **A first-run trust dialog is a pause, not a failure.** Every worktree is
   a directory the agent has never been trusted in, so its first launch there
   meets a confirmation screen and herdr refuses to call the launch ready.
@@ -198,7 +199,8 @@ without the popup. It drives herdr exclusively through the public CLI
   that runs out, or when the agent stops running because the dialog was
   declined, it falls back to the failure screen with the prompt saved.
   Headless `create` deliberately keeps failing fast, because a script has
-  nobody at the keyboard.
+  nobody at the keyboard. That budget covers waiting on a *person* and
+  nothing else.
 
   The wait covers the dialog wherever it stops the run. herdr may recognise
   the screen and refuse the launch, or it may call the agent ready and leave
@@ -211,11 +213,25 @@ without the popup. It drives herdr exclusively through the public CLI
   A prompt that herdr reports as *stalled* — it saw the agent do nothing at
   all — is sent once more after a short pause, through the same dialog
   guard. That is the one prompt failure which is positive evidence nothing
-  was delivered, and for about a second after a trust dialog clears it is
+  was *processed*, and for about a second after a trust dialog clears it is
   the ordinary outcome: herdr calls the agent ready while its interface is
-  still coming up. It is deliberately not the same as a prompt whose
-  confirmation merely timed out, which means the agent *was* working and is
-  never resent.
+  still coming up. The pause waits for a terminal to paint rather than for
+  a person, so this retry is not on `trust_wait_ms` and both the popup and
+  headless `create` take it. It is deliberately not the same as a prompt
+  whose confirmation merely timed out, which means the agent *was* working
+  and is never resent.
+
+  A stall that survives the retry is reported as **unconfirmed**, not
+  unsent: herdr writes the prompt text and Enter before it starts watching,
+  so after two sends the pane may hold two copies and "it never arrived" is
+  not something this command knows. `--on-failure clean` is refused, and
+  both the popup and `create` say to read the pane before resending.
+
+  That posture is **sticky**. Once the text has gone out, nothing later in
+  the same step reports the prompt as unsent or permits the clean — which
+  matters most when the retry itself is refused, the first send having
+  stalled against a screen that had not painted and the dialog being up by
+  the time the retry looks.
 - `herdr pane run` types its argv into a shell rather than exec'ing it, so
   the runner shell-quotes every element — and the argv path that has no
   shell deliberately does not.
