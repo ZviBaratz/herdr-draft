@@ -508,9 +508,10 @@ func sshRepo(t *testing.T) string {
 // review's finding 1. git picks its ssh in a three-step order --
 // GIT_SSH_COMMAND, then core.sshCommand, then GIT_SSH (connect.c at
 // v2.53.0; see effectiveSSHCommand) -- and setting GIT_SSH_COMMAND
-// unconditionally outranks and silently discards the other two. A user with a per-repo `core.sshCommand = ssh -i ~/.ssh/work_key`
-// would have had the popup's fetch fall back to the default key and fail,
-// silently, because the fetch is best-effort.
+// unconditionally outranks and silently discards the other two. A user
+// with a per-repo `core.sshCommand = ssh -i ~/.ssh/work_key` would have
+// had the popup's fetch fall back to the default key and fail, silently,
+// because the fetch is best-effort.
 //
 // Each case asserts BOTH halves: the user's own command still ran (the
 // stub logged something), and it ran non-interactively (BatchMode=yes
@@ -565,10 +566,12 @@ func TestFetchPruneUsesTheConfiguredSSHCommand(t *testing.T) {
 		if err := FetchPrune(context.Background(), repo); err == nil {
 			t.Fatalf("FetchPrune with a failing ssh stub = nil error, want the stub's failure")
 		}
-		check(t, winnerLog)
+		// Before check, and fatal: were GIT_SSH to run instead, check's own
+		// "fell back to a plain ssh" would misdescribe what happened.
 		if _, err := os.Stat(loserLog); err == nil {
-			t.Errorf("GIT_SSH ran instead of core.sshCommand; git itself only reads GIT_SSH when core.sshCommand is unset")
+			t.Fatalf("GIT_SSH ran instead of core.sshCommand; git itself only reads GIT_SSH when core.sshCommand is unset")
 		}
+		check(t, winnerLog)
 	})
 
 	t.Run("GIT_SSH_COMMAND still wins over both", func(t *testing.T) {
