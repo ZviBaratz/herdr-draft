@@ -279,6 +279,14 @@ func (m *mockRunner) PaneClose(ctx context.Context, paneID string) error {
 	return nil
 }
 
+func (m *mockRunner) TabClose(ctx context.Context, tabID string) error {
+	m.record("TabClose", tabID)
+	if m.shouldFail("TabClose") {
+		return m.failErr
+	}
+	return nil
+}
+
 func (m *mockRunner) WorktreeRemove(ctx context.Context, workspaceID string) error {
 	m.record("WorktreeRemove", workspaceID)
 	if m.shouldFail("WorktreeRemove") {
@@ -1162,7 +1170,13 @@ func TestCleanWorktreeCallsWorktreeRemove(t *testing.T) {
 	}
 }
 
-func TestCleanNonWorktreeCallsWorkspaceClose(t *testing.T) {
+// TestCleanNewSpaceClosesTheWorkspaceItCreated covers the one non-worktree
+// plan whose space really is a workspace of its own: PlacementNewSpace,
+// where the workspace in Created is one topologyOp asked herdr to open and
+// closing it removes exactly what the create made. The `here` placements
+// are the case this name used to cover and must not -- see
+// TestCleanHerePlacementRemovesOnlyWhatItCreated.
+func TestCleanNewSpaceClosesTheWorkspaceItCreated(t *testing.T) {
 	m := &mockRunner{}
 	in := validInput()
 	in.UseWorktree = false
@@ -1175,6 +1189,76 @@ func TestCleanNonWorktreeCallsWorkspaceClose(t *testing.T) {
 	want := []string{"WorkspaceClose(ws-2)"}
 	if !reflect.DeepEqual(m.calls, want) {
 		t.Fatalf("calls = %v, want %v", m.calls, want)
+	}
+}
+
+// TestCleanHerePlacementRemovesOnlyWhatItCreated pins the defect that held
+// the v0.1.0 tag. With UseWorktree off and a `here` placement, build.go's topologyOp returns the placement
+// op as the ONLY op: there is no separate space op, so the "space" this
+// create made is a tab or a pane inside the INVOKING workspace
+// (placementOp targets Input.Ctx, always). ExecResult.Created.WorkspaceID
+// is therefore the user's own workspace, and the WorkspaceClose that is
+// right for a new space closed it with every tab, pane and agent in it --
+// on the popup's `c remove it` keypress, or with no keypress at all under
+// `create --on-failure clean`.
+//
+// Created.WorkspaceID deliberately equals Ctx.WorkspaceID in both rows,
+// because that is what a real `here` plan produces; a fixture that let
+// them differ would let the old WorkspaceClose pass.
+func TestCleanHerePlacementRemovesOnlyWhatItCreated(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		placement Placement
+		want      []string
+	}{
+		{"tab here", PlacementTabHere, []string{"TabClose(tab-NEW)"}},
+		{"split here", PlacementSplitHere, []string{"PaneClose(pane-NEW)"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &mockRunner{}
+			in := validInput()
+			in.UseWorktree = false
+			in.Placement = tc.placement
+			in.Ctx = herdrc.Context{WorkspaceID: "ws-USER", FocusedPaneID: "pane-USER"}
+			created := herdrc.CreatedTopology{WorkspaceID: "ws-USER", TabID: "tab-NEW", PaneID: "pane-NEW"}
+			result := ExecResult{Created: &created, AgentAt: &created}
+
+			if err := Clean(context.Background(), m, in, result); err != nil {
+				t.Fatalf("Clean: %v", err)
+			}
+			if !reflect.DeepEqual(m.calls, tc.want) {
+				t.Fatalf("calls = %v, want %v", m.calls, tc.want)
+			}
+		})
+	}
+}
+
+// TestCleanRefusesToCloseTheInvokingWorkspace pins the guard rather than
+// the dispatch: with the dispatch above correct this state is unreachable,
+// and that is exactly why it is worth a test -- "never close the workspace
+// the popup was opened from" is the invariant this broke, and it should hold
+// against whatever the next placement or the next topology shape does,
+// not only against the two rows enumerated today. The fixture reaches it
+// the only way left: a new-space plan whose Created names Ctx's workspace,
+// which herdr cannot produce and a future refactor could.
+func TestCleanRefusesToCloseTheInvokingWorkspace(t *testing.T) {
+	m := &mockRunner{}
+	in := validInput()
+	in.UseWorktree = false
+	in.Placement = PlacementNewSpace
+	in.Ctx = herdrc.Context{WorkspaceID: "ws-USER", FocusedPaneID: "pane-USER"}
+	created := herdrc.CreatedTopology{WorkspaceID: "ws-USER", TabID: "tab-NEW", PaneID: "pane-NEW"}
+	result := ExecResult{Created: &created, AgentAt: &created}
+
+	err := Clean(context.Background(), m, in, result)
+	if err == nil {
+		t.Fatalf("Clean closed the invoking workspace instead of refusing it; calls = %v", m.calls)
+	}
+	if !strings.Contains(err.Error(), "ws-USER") {
+		t.Errorf("error = %v, want it to name the workspace it refused to close", err)
+	}
+	if len(m.calls) != 0 {
+		t.Fatalf("calls = %v, want none -- the guard has to refuse before anything is closed", m.calls)
 	}
 }
 

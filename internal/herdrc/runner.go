@@ -137,6 +137,12 @@ type Runner interface {
 	// Created.PaneID -- the common case, where there is nothing extra to
 	// close.
 	PaneClose(ctx context.Context, paneID string) error
+	// TabClose runs `herdr tab close <tab_id>`. Clean needs it because
+	// with the worktree off and a `here` placement, the space Execute
+	// created IS a tab inside the INVOKING workspace, so a tab is what
+	// there is to remove -- WorkspaceClose would take the user's own
+	// workspace, and everything else in it, along with it.
+	TabClose(ctx context.Context, tabID string) error
 	WorktreeRemove(ctx context.Context, workspaceID string) error
 	WorkspaceClose(ctx context.Context, workspaceID string) error
 }
@@ -1094,6 +1100,35 @@ func (r *CLIRunner) PaneClose(ctx context.Context, paneID string) error {
 		return fmt.Errorf("%w pane close: no pane id to close", errRefused)
 	}
 	_, err := r.runJSON(ctx, "pane", "close", paneID)
+	return err
+}
+
+// TabClose runs `herdr tab close <tab_id>`. Positional, like `pane close`
+// and unlike the --workspace of WorktreeRemove.
+//
+// runJSON, not runOK: at v0.9.0 `tab_close` prints through
+// print_method_response, the JSON-envelope helper, exactly as `pane_close`
+// does -- https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/runtime.rs#L69.
+// Probed live against the installed 0.9.0 with an id that does not exist:
+// exit 1, empty stdout, the error envelope on stderr. Which of herdr's two
+// success shapes a subcommand uses is not guessable and routing one
+// through the other's parser is a bug this codebase has already shipped
+// (CLAUDE.md, #72's family), so it is recorded here rather than re-derived.
+//
+// One cascade the caller does not have to fear: handle_tab_close closes
+// the whole workspace when ws.tabs.len() <= 1
+// (herdr:src/app/api/tabs.rs at v0.9.0). Clean's only caller for this is a
+// `tab here` placement, whose tab was created in Input.Ctx.WorkspaceID --
+// a workspace that by construction already holds the INVOKING pane's own
+// tab. Closing ours always leaves that one behind.
+//
+// The empty-id guard mirrors PaneClose's: a caller holding no tab id must
+// not silently close whatever tab herdr would pick by default.
+func (r *CLIRunner) TabClose(ctx context.Context, tabID string) error {
+	if tabID == "" {
+		return fmt.Errorf("%w tab close: no tab id to close", errRefused)
+	}
+	_, err := r.runJSON(ctx, "tab", "close", tabID)
 	return err
 }
 

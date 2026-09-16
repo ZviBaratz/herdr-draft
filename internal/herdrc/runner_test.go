@@ -514,6 +514,43 @@ func TestCLIRunnerPaneClose(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerTabClose pins the two things about `tab close` that are not
+// guessable and that this codebase has got wrong before for other
+// subcommands: the id is POSITIONAL (not the --workspace shape of
+// `worktree remove`), and success arrives as a JSON envelope, so a
+// well-formed envelope must be accepted rather than parsed as output.
+func TestCLIRunnerTabClose(t *testing.T) {
+	stdout := `{"id":"cli:tab:close","result":{"type":"ok"}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.TabClose(context.Background(), "t3"); err != nil {
+		t.Fatalf("TabClose: %v", err)
+	}
+
+	wantArgv := "tab close t3"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerTabCloseRefusesEmptyTabID mirrors
+// TestCLIRunnerPaneCloseRefusesEmptyPaneID: a caller holding no tab id must
+// not silently close whatever tab herdr would pick by default.
+func TestCLIRunnerTabCloseRefusesEmptyTabID(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.TabClose(context.Background(), "")
+	if err == nil {
+		t.Fatal("TabClose(\"\") = nil, want a refusal")
+	}
+	if !errors.Is(err, errRefused) {
+		t.Errorf("error %q is not a refusal to run (errors.Is errRefused = false)", err)
+	}
+	assertNeverExecuted(t, argvLog)
+}
+
 func TestCLIRunnerWorktreeRemove(t *testing.T) {
 	stdout := `{"id":"cli:worktree:remove","result":{"type":"worktree_removed","workspace_id":"w3","path":"/x","forced":false}}`
 	bin, argvLog := fakeHerdr(t, stdout)

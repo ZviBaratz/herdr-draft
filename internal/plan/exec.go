@@ -1458,6 +1458,24 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 // own (a reuse correction, or a placement op moving the agent elsewhere --
 // placement spec §5.1/§5.2/§5.3), that claimed pane is closed FIRST, so
 // nothing is left running an agent in a directory about to be deleted.
+//
+// What "the space" is depends on the plan, and this used to get it wrong.
+// With UseWorktree off and a `here` placement, build.go's topologyOp
+// returns the placement op as the ONLY op -- there is no separate space
+// op, so the space is a tab or a pane inside the INVOKING workspace
+// (placementOp always targets Input.Ctx). Created.WorkspaceID is then the
+// user's own workspace, and closing it took every other tab, pane and
+// agent in it: the popup offers that on a keypress whose label promises
+// the opposite, and `create --on-failure clean` did it with no keypress at
+// all. So the close is targeted at what the create actually made:
+//
+//	!UseWorktree + tab here    -> TabClose(Created.TabID)
+//	!UseWorktree + split here  -> PaneClose(Created.PaneID)
+//	!UseWorktree + new space   -> WorkspaceClose(Created.WorkspaceID)
+//	UseWorktree  (any)         -> WorktreeRemove(Created.WorkspaceID)
+//
+// CleanCheck still allows every non-worktree plan, because with this
+// dispatch the clean really does remove only what the create made.
 func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) error {
 	if result.Created == nil {
 		return fmt.Errorf("plan: clean: nothing was created")
@@ -1475,6 +1493,30 @@ func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) er
 			return fmt.Errorf("plan: clean: remove worktree: %w", err)
 		}
 		return nil
+	}
+
+	switch in.Placement {
+	case PlacementTabHere:
+		if err := r.TabClose(ctx, created.TabID); err != nil {
+			return fmt.Errorf("plan: clean: close tab: %w", err)
+		}
+		return nil
+	case PlacementSplitHere:
+		if err := r.PaneClose(ctx, created.PaneID); err != nil {
+			return fmt.Errorf("plan: clean: close pane: %w", err)
+		}
+		return nil
+	}
+
+	// Unreachable once the dispatch above is right, and written anyway:
+	// "never close the workspace the popup was opened from" is the
+	// invariant this broke, and it should survive the next placement or the
+	// next change to what topologyOp returns rather than being re-derived
+	// from them. Refusing leaves litter; closing loses the user's work.
+	if created.WorkspaceID != "" && created.WorkspaceID == in.Ctx.WorkspaceID {
+		return fmt.Errorf(
+			"plan: clean: refusing to close %s -- it is the workspace this create was invoked from, "+
+				"not one this create made", created.WorkspaceID)
 	}
 	if err := r.WorkspaceClose(ctx, created.WorkspaceID); err != nil {
 		return fmt.Errorf("plan: clean: close workspace: %w", err)
