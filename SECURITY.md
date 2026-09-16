@@ -134,13 +134,6 @@ plugin. `GIT_SSH` is the one git treats as a bare program path, so it is
 shell-quoted before it is folded in, and a path with a space in it stays
 one word.
 
-One discrepancy, stated because this section is meant to be auditable:
-with `GIT_SSH` and `core.sshCommand` both set and `GIT_SSH_COMMAND` unset,
-`effectiveSSHCommand` currently picks `GIT_SSH` where git would pick
-`core.sshCommand`. That can make a background fetch use a different ssh
-than a `git fetch` you ran yourself. It cannot put a typed value in the
-string, since both candidates are yours.
-
 The project path you pick decides only *which* repository's configuration
 that read consults, never what it says. `git clone` does not copy
 `.git/config`, so a cloned repository cannot supply `core.sshCommand`; a
