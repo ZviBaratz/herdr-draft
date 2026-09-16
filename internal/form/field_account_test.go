@@ -761,3 +761,129 @@ func TestAccountField_NotesYieldToTheCursorRow(t *testing.T) {
 		t.Errorf("an unavailable account panel drew a note:\n%s", got)
 	}
 }
+
+// --- the picker's machine figures and warnings (#165) ----------------------
+
+// panelText is the whole focused panel, uncoloured, at the height the field
+// asks for.
+func accountPanelText(f *AccountField) string {
+	return ansi.Strip(f.Panel(80, f.PanelRows()))
+}
+
+// The protocol has carried `machine` and `warnings` since the picker was
+// specified, and the popup decoded both and drew neither: a person deciding
+// whether to start one more session could only learn the box was loaded when
+// the picker refused outright.
+func TestAccountPanelShowsThePickersMachineFigures(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	f.SetPickerPreview(AccountPickerPreview{
+		Profile: "alpha-1", Load1: pct(4.37), NCPU: pct(8), SwapUsedPct: pct(32),
+	})
+	got := accountPanelText(f)
+	for _, want := range []string{"load 4.4 on 8 cpus", "swap 32%"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("panel should contain %q:\n%s", want, got)
+		}
+	}
+}
+
+// An unmeasured figure reads as unmeasured and a measured zero as zero: the
+// protocol allows null for every field, and "0% swap" about a box whose swap
+// nobody measured would be a false reassurance.
+func TestAccountPanelSaysWhichMachineFiguresAreUnmeasured(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	f.SetPickerPreview(AccountPickerPreview{Profile: "alpha-1", SwapUsedPct: pct(0)})
+	got := accountPanelText(f)
+	for _, want := range []string{"load unmeasured", "swap 0%"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("panel should contain %q:\n%s", want, got)
+		}
+	}
+}
+
+// A picker that reports no machine at all adds no line: a row of three
+// "unmeasured" is noise about a picker that simply does not do this.
+func TestAccountPanelOmitsTheMachineLineWhenNothingWasReported(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	before := f.PanelRows()
+	f.SetPickerPreview(AccountPickerPreview{Profile: "alpha-1"})
+	if got := accountPanelText(f); strings.Contains(got, accountMachineLabel) {
+		t.Fatalf("no machine figures, but the panel has a machine line:\n%s", got)
+	}
+	if f.PanelRows() != before {
+		t.Fatalf("PanelRows = %d, want %d: nothing was added", f.PanelRows(), before)
+	}
+}
+
+func TestAccountPanelShowsThePickersWarnings(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	before := f.PanelRows()
+	f.SetPickerPreview(AccountPickerPreview{
+		Profile: "alpha-1", Load1: pct(1), Warnings: []string{"alpha-1 resets in 12m"},
+	})
+	if got := accountPanelText(f); !strings.Contains(got, "alpha-1 resets in 12m") {
+		t.Fatalf("panel should carry the picker's warning:\n%s", got)
+	}
+	if want := before + 2; f.PanelRows() != want {
+		t.Fatalf("PanelRows = %d, want %d: one warning and one machine line", f.PanelRows(), want)
+	}
+}
+
+// A project change sends the preview back to pending for the length of one
+// picker call. The machine did not change in that time, so its line must not
+// blink out and back.
+func TestAccountPanelKeepsTheMachineLineWhileAsking(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	f.SetPickerPreview(AccountPickerPreview{Profile: "alpha-1", Load1: pct(2), NCPU: pct(8), Warnings: []string{"alpha-1 resets in 12m"}})
+	answered := f.PanelRows()
+	f.SetPickerPreview(AccountPickerPreview{Pending: true})
+	got := accountPanelText(f)
+	for _, want := range []string{"load 2.0 on 8 cpus", "alpha-1 resets in 12m"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("panel should still contain %q while pending:\n%s", want, got)
+		}
+	}
+	if f.PanelRows() != answered {
+		t.Errorf("PanelRows = %d while pending, want %d: the panel must not change height", f.PanelRows(), answered)
+	}
+}
+
+// The cpu count is shown whenever the picker measured it, whatever became of
+// the load beside it: a measured figure is never dropped. With no count, the
+// load stands alone rather than claiming an "unmeasured" cpu count the line
+// has no other use for.
+func TestAccountPanelShowsTheCPUCountIndependentlyOfTheLoad(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		preview AccountPickerPreview
+		want    string
+		notWant string
+	}{
+		{"load unmeasured, cpus measured", AccountPickerPreview{Profile: "a", NCPU: pct(8)}, "load unmeasured on 8 cpus", ""},
+		{"load measured, cpus unmeasured", AccountPickerPreview{Profile: "a", Load1: pct(4.37)}, "load 4.4 · swap unmeasured", "cpu"},
+		{"one cpu", AccountPickerPreview{Profile: "a", Load1: pct(0.5), NCPU: pct(1)}, "load 0.5 on 1 cpu ·", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := accountFieldWithPicker(t)
+			f.SetPickerPreview(tc.preview)
+			line := machineLine(f.preview)
+			if !strings.Contains(line, tc.want) {
+				t.Errorf("machine line %q should contain %q", line, tc.want)
+			}
+			if tc.notWant != "" && strings.Contains(line, tc.notWant) {
+				t.Errorf("machine line %q should not contain %q", line, tc.notWant)
+			}
+		})
+	}
+}
+
+// A refusal replaces the figures rather than keeping stale ones beside a
+// reason that may be about them.
+func TestAccountPanelDropsTheMachineLineOnARefusal(t *testing.T) {
+	f := accountFieldWithPicker(t)
+	f.SetPickerPreview(AccountPickerPreview{Profile: "alpha-1", Load1: pct(2)})
+	f.SetPickerPreview(AccountPickerPreview{Refusal: "pool exhausted"})
+	if got := accountPanelText(f); strings.Contains(got, accountMachineLabel) {
+		t.Fatalf("a refusal must not keep the previous machine line:\n%s", got)
+	}
+}

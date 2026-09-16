@@ -293,7 +293,7 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	// counterpart of formPlanInputAuto's ResolveAccount. Without it the
 	// command side would hand back the sentinel and the auto test would be
 	// comparing the pick against nothing.
-	in, err := resolveAccount(context.Background(), resolved.input, accountPicker(resolved.tiers.cfg, Deps{Picker: c.picker}))
+	in, _, err := resolveAccount(context.Background(), resolved.input, accountPicker(resolved.tiers.cfg, Deps{Picker: c.picker}))
 	if err != nil {
 		t.Fatalf("resolveAccount: %v", err)
 	}

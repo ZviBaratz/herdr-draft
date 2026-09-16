@@ -436,6 +436,18 @@ func TestFrames_AccountAutoPicked(t *testing.T) {
 		}), 101, 30)
 }
 
+// TestFrames_AccountAutoPickedWithMachine is the picked state as a picker that
+// reports its host draws it (#165): one warning in the warning tone, and the
+// machine figures dim beneath it, above the legend.
+func TestFrames_AccountAutoPickedWithMachine(t *testing.T) {
+	assertFrame(t, "account-auto-picked-machine-101x30",
+		buildAccountAutoForm(theme.Default(), AccountPickerPreview{
+			Profile: "alpha", Tier: "Max", FiveHourPct: pct(3), WeeklyPct: pct(11),
+			Load1: pct(4.37), NCPU: pct(8), SwapUsedPct: pct(32),
+			Warnings: []string{"alpha resets in 12m"},
+		}), 101, 30)
+}
+
 // TestFrames_AccountAutoRefused is the state this row exists for: the picker
 // ran, said no, and said why. Nothing here may read "unavailable".
 func TestFrames_AccountAutoRefused(t *testing.T) {

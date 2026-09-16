@@ -2734,6 +2734,37 @@ func TestANonRefusalPickerFailureStillReachesTheRow(t *testing.T) {
 	}
 }
 
+// The picker's machine figures and warnings reach the panel (#165). They were
+// decoded into picker.Result from the start and dropped here, in previewFrom.
+func TestPreviewCarriesTheMachineAndWarningsToThePanel(t *testing.T) {
+	p := &fakePicker{res: picker.Result{
+		Profile:  "alpha-1",
+		Machine:  picker.Machine{Load1: fptr(4.37), NCPU: fptr(8), SwapUsedPct: fptr(32)},
+		Warnings: []string{"alpha-1 resets in 12m"},
+	}}
+	m := modelWithPicker(t, p, config.Config{})
+	m = runPreview(t, m, "/p/thing")
+
+	got := fieldText(m.account, 100)
+	for _, want := range []string{"load 4.4 on 8 cpus", "swap 32%", "alpha-1 resets in 12m"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the account panel should contain %q:\n%s", want, got)
+		}
+	}
+}
+
+// A warning is picker-supplied text and the panel draws one line per warning,
+// so a multi-line one is flattened on the way in, as a refusal reason is.
+func TestPreviewFlattensAMultiLineWarning(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", Warnings: []string{"first half\n  second half"}}}
+	m := modelWithPicker(t, p, config.Config{})
+	m = runPreview(t, m, "/p/thing")
+
+	if got := fieldText(m.account, 100); !strings.Contains(got, "first half second half") {
+		t.Fatalf("the warning should arrive as one line:\n%s", got)
+	}
+}
+
 // The refusal reaches the ROW too, in the picker's own words.
 func TestPreviewRefusalReachesTheRow(t *testing.T) {
 	p := &fakePicker{err: &picker.RefusalError{Code: picker.ExitExhausted, Reason: "pool exhausted (resets 22:49)"}}
@@ -2855,3 +2886,5 @@ func TestFetchPruneRunsUnderADeadline(t *testing.T) {
 		t.Errorf("FetchPrune's context had %s left, want roughly fetchPruneTimeout (%s)", budget, fetchPruneTimeout)
 	}
 }
+
+func fptr(v float64) *float64 { return &v }
