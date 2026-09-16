@@ -855,10 +855,10 @@ func TestBlockedStartIsExplainedHeadlessly(t *testing.T) {
 //
 // These three close a coverage gap: nothing in this package drove a stall at
 // all, so the popup-only retry and the "unsent" label a surviving stall wore
-// were both invisible from here. They cost about two
-// seconds each in real time -- plan.promptRetrySettle is that package's own
-// unexported var, and the settle is deliberately not an ExecOpts knob, since
-// the whole point of the fix is that both paths retry identically.
+// were both invisible from here. They cost about two seconds each in real
+// time: plan.promptRetrySettle is that package's own unexported var, and the
+// settle is deliberately not an ExecOpts knob, since the whole point of the
+// fix is that both paths retry identically.
 
 // stalledPromptErr is herdr's agent_prompt_stalled as internal/herdrc
 // classifies it: `agent prompt` observed no working and no blocked state at
