@@ -168,18 +168,9 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		return resolution{}, err
 	}
 
-	// An `auto` account is turned into a real profile HERE, inside the
-	// resolution the equivalence test compares against the form's -- which is
-	// the point: a plan.Input field only one path can fill is exactly the
-	// drift that test exists to catch, and `auto` adds two of them.
-	//
-	// It is also before anything is created, so a refusal costs no worktree,
-	// no workspace and no pane: the whole of the contract the spec states for
-	// the picker's exit 2/3/4.
-	in, err = resolveAccount(ctx, in, accountPicker(cfg, deps))
-	if err != nil {
-		return resolution{}, err
-	}
+	// An `auto` account is still the sentinel here: turning it into a profile
+	// runs the picker for real and writes its ledger, so it waits for every
+	// refusal that can be known without it -- see run() (#145).
 	return resolution{input: in, tiers: t, provenance: prov, env: env}, nil
 }
 
@@ -534,6 +525,11 @@ func agentKind(req request, res defaults.Resolved, kinds []string, prov map[stri
 // name, once, at the point the request is otherwise complete.
 func accountPin(req request, cfg config.Config, kind string) string {
 	if req.set["account"] {
+		// `active` means no pin wherever it is written, the flag included:
+		// passed through, it typed `clauth start active` into the pane (#146).
+		if req.account == clauthActive {
+			return ""
+		}
 		return req.account
 	}
 	if kind != claudeKind {

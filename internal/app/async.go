@@ -554,15 +554,26 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 // label as its Label -- an empty title never collides (nothing would be
 // created with that label yet).
 func workspaceLabelTaken(workspaces []herdrc.WorkspaceInfo, label string) bool {
+	_, taken := WorkspaceLabelled(workspaces, label)
+	return taken
+}
+
+// WorkspaceLabelled is workspaceLabelTaken's comparison, returning the
+// workspace that carries label. Exported for internal/create, whose
+// pre-flight refuses the same duplicate the form's submit does (#147): one
+// comparison shared by both is what stops the two refusals drifting, and
+// no plan.Input field records the verdict for equivalence_test.go to catch
+// them by.
+func WorkspaceLabelled(workspaces []herdrc.WorkspaceInfo, label string) (herdrc.WorkspaceInfo, bool) {
 	if strings.TrimSpace(label) == "" {
-		return false
+		return herdrc.WorkspaceInfo{}, false
 	}
 	for _, w := range workspaces {
 		if w.Label == label {
-			return true
+			return w, true
 		}
 	}
-	return false
+	return herdrc.WorkspaceInfo{}, false
 }
 
 func (m Model) handleTitleDebounce(msg titleDebounceMsg) (Model, tea.Cmd) {

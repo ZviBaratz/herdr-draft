@@ -152,7 +152,7 @@ is why section 8's two id triples are not the same thing.
 - `--agent KIND` picks which agent to start — `claude`, or whatever else
   the user has configured. Left off, their default applies.
 - `--account NAME` pins a clauth account, and applies to `claude` only.
-  Left off, whatever account is active is used.
+  Left off, or given as `active`, whatever account is active is used.
 - `--account auto` asks the user's configured account picker to choose one
   for this project. It is a real call with real consequences: a picker
   that hands out accounts from a pool **spends one** when it runs. Do not
@@ -235,7 +235,7 @@ run it.
 |---|---|---|
 | 0 | created | report where it is |
 | 1 | the plan started and failed | the session may half-exist; look at it |
-| 2 | bad usage, or a request that cannot be resolved | fix the command and re-run |
+| 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, and a pinned account clauth reports as signed out | fix the command and re-run |
 | 3 | herdr is unreachable | nothing was created; stop |
 
 `--json` prints one object instead of a human line, and is the right

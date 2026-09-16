@@ -243,5 +243,11 @@ func runCreate(args []string) int {
 	}, create.Deps{
 		Runner: herdrRunner(),
 		Git:    app.NewGitSource(),
+		// The popup's own loader, so a profile the account row would mark
+		// signed out is refused here too (#147).
+		Clauth: app.NewClauthSource(clauth.LoadOpts{
+			StatusFile: clauthStatusFilePath(),
+			CLIBin:     defaultClauthBin,
+		}),
 	})
 }
