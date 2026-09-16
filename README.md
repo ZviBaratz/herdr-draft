@@ -466,23 +466,25 @@ the intent to *hand work off* reach for `herdr-draft create` instead of
 writing a handoff document and stopping, or improvising a topology.
 
 ```bash
-draft=$(find ~/.config/herdr/plugins -type f -name herdr-draft -perm -u+x | head -1)
+root=$(herdr plugin list --json --plugin zvibaratz.draft | jq -r '.result.plugins[0].plugin_root // empty')
 mkdir -p ~/.claude/skills/spawn
-"$draft" skill > ~/.claude/skills/spawn/SKILL.md
+"$root/bin/herdr-draft" skill > ~/.claude/skills/spawn/SKILL.md
 ```
 
 The directory name has to match the frontmatter `name`; both are `spawn`,
 and a test holds this section, the emitted document and the frontmatter to
 that one value.
 
-**The `find` is not decoration.** `herdr-draft` is not on `PATH` — the
-binary lives inside the plugin's install root, whose directory name
-carries a hash, and `herdr plugin list` prints the install source rather
-than the path. This is the same discovery problem the emitted document
-solves by naming its own absolute path, except that you have to solve it
-once yourself to produce the document. If you installed with
-`herdr plugin link` instead, it is `bin/herdr-draft` inside your checkout,
-and `herdr plugin list` does print that path.
+**The lookup is not decoration.** `herdr-draft` is not on `PATH`: the
+binary is built into `bin/` inside the plugin's install root, and herdr
+owns where that root is. `herdr plugin list --json` reports it as
+`plugin_root`, for a GitHub install and a `herdr plugin link` checkout
+alike, and works without a running herdr server. That is the one answer
+to rely on, in a script as much as here. Do not search
+`~/.config/herdr/plugins` for the binary instead: more than one copy can
+be there, and the directory layout is herdr's to change. The emitted
+document names its own absolute path so that no agent has to repeat this
+lookup.
 
 It covers what the sections above cover, aimed at an agent rather than at
 you: the `HERDR_PLUGIN_*` exports and what resolving without them costs,
@@ -492,11 +494,13 @@ command with the user once before running it, and reading `prompt_status`
 and the pane afterwards rather than trusting the exit code.
 
 **The emitted file is machine-specific and is not meant to be committed.**
-It names the absolute path of the binary that printed it, because the
-plugin's install root carries a hash that nothing derives from the plugin
-id — so nothing has to go on `PATH` and no agent has to go looking. The
-consequence is that **an upgrade or a reinstall that moves the binary
-invalidates the installed copy**: regenerate it with the same two lines.
+It names the absolute path of the binary that printed it, so nothing has
+to go on `PATH` and no agent has to go looking. herdr puts a GitHub
+install in a directory named for the plugin id, so upgrading with
+`herdr plugin install … --ref` keeps that path. Switching between a
+GitHub install and `herdr plugin link` moves it. **Regenerate the copy
+after any upgrade anyway**, with the same three lines: what it says about
+the command changes with the version.
 
 The file carries the version it was generated from, in its last section.
 If that does not match `herdr-draft version`, the copy is stale.

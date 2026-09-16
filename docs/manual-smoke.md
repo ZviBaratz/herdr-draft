@@ -1356,17 +1356,21 @@ paragraph of English, and nothing in this repository can assert it.
 the one cell that deliberately touches it.
 
 ```bash
-draft=$(find ~/.config/herdr/plugins -type f -name herdr-draft -perm -u+x | head -1)
-echo "$draft"                              # empty means a linked install: use bin/herdr-draft
+root=$(herdr plugin list --json --plugin zvibaratz.draft | jq -r '.result.plugins[0].plugin_root // empty')
+draft="$root/bin/herdr-draft"
+echo "$draft"                              # a GitHub install or a linked checkout, both answer here
 "$draft" skill > /tmp/spawn-SKILL.md       # inspect it first
 head -5 /tmp/spawn-SKILL.md                # must start with the `---` fence
 mkdir -p ~/.claude/skills/spawn
 cp /tmp/spawn-SKILL.md ~/.claude/skills/spawn/SKILL.md
 ```
 
-**The `find` is half the cell.** `herdr-draft` is not on `PATH`, so
+**The lookup is half the cell.** `herdr-draft` is not on `PATH`, so
 locating it is the first thing any user has to do, and it is the step the
 README can get wrong without any test noticing. Record what it printed.
+Until #167 this cell used a `find` over `~/.config/herdr/plugins`, on the
+premise that herdr reported no install path; `herdr plugin list --json`
+does, as `plugin_root`.
 
 Check the path it baked in is the one you expect — `grep -m1 create
 ~/.claude/skills/spawn/SKILL.md` — and that the version in its last
