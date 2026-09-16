@@ -113,10 +113,15 @@ func nonInteractiveEnv(base []string, ssh string) []string {
 
 // effectiveSSHCommand answers which ssh git would run for repoDir if we
 // changed nothing, in git's own order: the GIT_SSH_COMMAND variable, then
-// the GIT_SSH variable, then core.sshCommand, then plain ssh
-// (git-config(1), core.sshCommand: config "is overridden when the
-// environment variable is set"). "" is never returned; the caller gets
-// something it can append an option to.
+// core.sshCommand, then the GIT_SSH variable, then plain ssh. That order is
+// git's connect.c at v2.53.0: get_ssh_command() returns GIT_SSH_COMMAND and
+// then core.sshcommand, and only when both are unset does git_connect()
+// fall back to getenv("GIT_SSH")
+// (https://github.com/git/git/blob/v2.53.0/connect.c#L1152-L1163 and
+// #L1379-L1391). GIT_SSH ranking above the config was #130's mistake: a
+// global GIT_SSH wrapper then overrode a per-repo core.sshCommand, which
+// plain git never does. "" is never returned; the caller gets something it
+// can append an option to.
 //
 // GIT_SSH is quoted and the other two are not, and that asymmetry is git's
 // rather than a choice here: git treats GIT_SSH as one bare program path
@@ -126,8 +131,9 @@ func nonInteractiveEnv(base []string, ssh string) []string {
 //
 // The config read is a plain local `git config` -- no network, nothing to
 // prompt for -- and is deliberately NOT routed through runGit, which calls
-// this: that would recurse. It is skipped when either variable is set, so
-// it is the price of the default case, and that price is not nothing:
+// this: that would recurse. It is skipped only when GIT_SSH_COMMAND is
+// set -- a GIT_SSH no longer skips it, because the config outranks it --
+// so it is the price of every other case, and that price is not nothing:
 // measured here at a median of 19ms (p90 26ms), it roughly doubles the
 // wall time of every runGit call. It is paid because the alternative is
 // overriding the user's ssh, it is paid on a tea.Cmd goroutine rather than
@@ -151,11 +157,11 @@ func effectiveSSHCommand(ctx context.Context, base []string, repoDir string) str
 			gitSSH = v
 		}
 	}
-	if gitSSH != "" {
-		return shellQuote(gitSSH)
-	}
 	if v := configValue(ctx, base, repoDir, "core.sshCommand"); v != "" {
 		return v
+	}
+	if gitSSH != "" {
+		return shellQuote(gitSSH)
 	}
 	return "ssh"
 }

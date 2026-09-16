@@ -506,9 +506,9 @@ func sshRepo(t *testing.T) string {
 
 // TestFetchPruneUsesTheConfiguredSSHCommand is the regression pin for the
 // review's finding 1. git picks its ssh in a three-step order --
-// GIT_SSH_COMMAND, then GIT_SSH, then core.sshCommand -- and setting
-// GIT_SSH_COMMAND unconditionally outranks and silently discards the other
-// two. A user with a per-repo `core.sshCommand = ssh -i ~/.ssh/work_key`
+// GIT_SSH_COMMAND, then core.sshCommand, then GIT_SSH (connect.c at
+// v2.53.0; see effectiveSSHCommand) -- and setting GIT_SSH_COMMAND
+// unconditionally outranks and silently discards the other two. A user with a per-repo `core.sshCommand = ssh -i ~/.ssh/work_key`
 // would have had the popup's fetch fall back to the default key and fail,
 // silently, because the fetch is best-effort.
 //
@@ -552,6 +552,23 @@ func TestFetchPruneUsesTheConfiguredSSHCommand(t *testing.T) {
 			t.Fatalf("FetchPrune with a failing ssh stub = nil error, want the stub's failure")
 		}
 		check(t, log)
+	})
+
+	t.Run("core.sshCommand outranks GIT_SSH", func(t *testing.T) {
+		isolateGitConfig(t)
+		winner, winnerLog := sshStub(t, filepath.Join(t.TempDir(), "winner"))
+		loser, loserLog := sshStub(t, filepath.Join(t.TempDir(), "loser"))
+		t.Setenv("GIT_SSH", loser)
+		repo := sshRepo(t)
+		gitRun(t, repo, "config", "core.sshCommand", winner)
+
+		if err := FetchPrune(context.Background(), repo); err == nil {
+			t.Fatalf("FetchPrune with a failing ssh stub = nil error, want the stub's failure")
+		}
+		check(t, winnerLog)
+		if _, err := os.Stat(loserLog); err == nil {
+			t.Errorf("GIT_SSH ran instead of core.sshCommand; git itself only reads GIT_SSH when core.sshCommand is unset")
+		}
 	})
 
 	t.Run("GIT_SSH_COMMAND still wins over both", func(t *testing.T) {
@@ -679,9 +696,40 @@ func TestEffectiveSSHCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("GIT_SSH outranks config and is quoted", func(t *testing.T) {
-		got := effectiveSSHCommand(ctx, []string{"GIT_SSH=/opt/my ssh/bin/ssh"}, "")
-		if got != `'/opt/my ssh/bin/ssh'` {
+	t.Run("GIT_SSH_COMMAND outranks core.sshCommand and GIT_SSH", func(t *testing.T) {
+		isolateGitConfig(t)
+		repo := mkRepo(t)
+		gitRun(t, repo, "config", "core.sshCommand", "ssh -i /k/from-config")
+		base := append(os.Environ(), "GIT_SSH=/opt/git-ssh", "GIT_SSH_COMMAND=ssh -i /k/from-env")
+
+		if got := effectiveSSHCommand(ctx, base, repo); got != "ssh -i /k/from-env" {
+			t.Errorf("effectiveSSHCommand = %q, want GIT_SSH_COMMAND's value", got)
+		}
+	})
+
+	// The case #130 shipped wrong: GIT_SSH was returned before the config
+	// was ever read, so a per-repo core.sshCommand lost to a global
+	// GIT_SSH wrapper -- the opposite of what plain git does.
+	t.Run("core.sshCommand outranks GIT_SSH", func(t *testing.T) {
+		isolateGitConfig(t)
+		repo := mkRepo(t)
+		gitRun(t, repo, "config", "core.sshCommand", "ssh -i /k/from-config")
+		base := append(os.Environ(), "GIT_SSH=/opt/git-ssh")
+
+		if got := effectiveSSHCommand(ctx, base, repo); got != "ssh -i /k/from-config" {
+			t.Errorf("effectiveSSHCommand = %q, want the repository's core.sshCommand -- git reads GIT_SSH only when core.sshCommand is unset", got)
+		}
+	})
+
+	t.Run("GIT_SSH when core.sshCommand is unset, quoted", func(t *testing.T) {
+		isolateGitConfig(t)
+		// A real repository with no core.sshCommand, not "": the config is
+		// now read before GIT_SSH is consulted, and "" would read whatever
+		// repository the test happens to run inside.
+		repo := mkRepo(t)
+		base := append(os.Environ(), "GIT_SSH=/opt/my ssh/bin/ssh")
+
+		if got := effectiveSSHCommand(ctx, base, repo); got != `'/opt/my ssh/bin/ssh'` {
 			t.Errorf("effectiveSSHCommand = %q, want the path quoted -- git never splits GIT_SSH, but it does shell-parse the GIT_SSH_COMMAND this becomes", got)
 		}
 	})
