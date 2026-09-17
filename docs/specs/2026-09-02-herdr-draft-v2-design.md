@@ -334,6 +334,11 @@ so one `⇧⇥` reaches it. This order is declared in exactly one place,
 > state a value can be in, and "unset" is a state a *derived* value reaches
 > too, not only a typed one.
 
+> **Extended, reap spec (2026-09-17).** The `prompt` row also reads a dim
+> ` · reap when done` when the prompt will end with pane-reaper's
+> instruction, and its panel opens with a `keep · reap` line over the
+> textarea. See `docs/specs/2026-09-17-pane-reaper-ready-design.md` §5.
+
 Panels: `issue`, `project`, `agent`, `account` show their candidate list;
 `prompt` shows the textarea; `title` shows its verdict line; `placement`
 shows its chips with a per-choice explanation; `worktree` shows a three-part
@@ -461,6 +466,9 @@ Mostly unchanged, so muscle memory survives.
 > `ZoneCreate` stayed with it: it is still the ring's last stop, still the
 > zone `↵` submits from, and still carries `button:create`.
 
+> **Extended, reap spec (2026-09-17).** `⌃X` in the prompt toggles
+> `keep · reap` (that document's §5.2).
+
 ## 9. Degradation
 
 > **SUPERSEDED by v3 spec §7.** The five steps below survive as the first six
@@ -580,6 +588,9 @@ Forbidden and ignored with a visible note:
 - `[linear] api_key` and `api_key_cmd` — a credential, and a command.
 - All of `[clauth]`, `[timeouts]` and `[palette]`.
 
+> **Extended, reap spec (2026-09-17).** `[reaper]` is forbidden too: it
+> would add an instruction to your agent's prompt (that document's §6.3).
+
 **`branch_prefix` must be validated wherever it comes from.** `gitx.BranchSlug`
 prepends it raw and the result reaches `herdr worktree create --branch <v>`
 as argv. That is a latent argument-injection surface in the *existing*
@@ -630,6 +641,9 @@ channel send.
 `--no-worktree`, `--placement`, `--agent`, `--account`, `--issue`, `--json`,
 `--on-failure keep|clean`. Unset flags resolve through §10's resolver, so the
 command and the form produce the same session from the same inputs.
+
+> **Extended, reap spec (2026-09-17).** `--reap` / `--no-reap` (that
+> document's §7).
 
 Run from a plain shell inside a herdr pane there is no
 `HERDR_PLUGIN_CONTEXT_JSON`, so context comes from `HERDR_WORKSPACE_ID` /

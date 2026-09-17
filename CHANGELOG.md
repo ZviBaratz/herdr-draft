@@ -44,6 +44,12 @@ without the popup. It drives herdr exclusively through the public CLI
   session after the first in a repository.
 - **A selected Linear issue seeds title, branch and prompt**, unless you
   have already typed over them.
+- **The prompt panel can end the prompt with pane-reaper's instruction.**
+  A `keep · reap` line over the textarea, flipped with `⌃X` or a click,
+  asks the agent to mark its own pane ready once its work is saved, so the
+  pane-reaper plugin can close it. Off by default. It is never added to an
+  empty prompt or a slash command, and the row reads `· reap when done`
+  only when it will really be sent.
 - Candidate lists are tables: aligned columns, a right-flush status word, a
   live match count, a scrollbar once the list outgrows the window, and the
   matched run drawn in the accent colour.
@@ -66,8 +72,8 @@ without the popup. It drives herdr exclusively through the public CLI
   scripts and for agents already running inside one.
 - Flags mirror the form's fields: `--project`, `--title`, `--prompt` (`-`
   reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
-  `--placement`, `--workspace`, `--agent`, `--account`, `--issue`, `--json`,
-  `--on-failure keep|clean`.
+  `--reap` / `--no-reap`, `--placement`, `--workspace`, `--agent`,
+  `--account`, `--issue`, `--json`, `--on-failure keep|clean`.
 - **`--placement tab-in` and `--workspace <id>`** place the agent's tab in a
   workspace other than the invoking one — the one already holding the
   project (the default when there is one), or any open workspace by id —
@@ -140,18 +146,23 @@ without the popup. It drives herdr exclusively through the public CLI
   file arrives with `git clone`, so it may only choose among values you
   could already have picked in the form yourself, and may never name a
   command, a path outside the repository, or a credential. Anything
-  rejected is reported rather than silently dropped.
+  rejected is reported rather than silently dropped. `[reaper]` is refused
+  with its own reason: it would add an instruction to your agent's prompt.
 - Read from the *origin* repository root and re-read when the project row
   changes.
 
 ### Configuration and appearance
 
 - `config.toml`, all keys optional and unknown keys ignored, with
-  `[linear]`, `[clauth]`, `[agents]`, `[timeouts]`, `[worktree]` and
-  `[palette]` sections.
+  `[linear]`, `[clauth]`, `[agents]`, `[timeouts]`, `[worktree]`, `[reaper]`
+  and `[palette]` sections.
 - `[worktree] trust_repository` is deliberately `config.toml`-only: it
   waives git's ownership check for one request, so a cloned repository must
   not be able to assert its own trustworthiness.
+- `[reaper] mark_ready` turns the prompt's `reap` on by default for the
+  popup and `create` alike. It is `config.toml`-only, and never remembered
+  from a submit: one reaped session must not make the next one reap, and
+  orchestrator sessions must never close themselves.
 - An optional **account picker protocol**: herdr-draft can hand "which Claude
   account should this session use?" to any executable implementing a small
   documented contract (`--dir <path> --json [--strict] [--dry-run]`, one JSON
