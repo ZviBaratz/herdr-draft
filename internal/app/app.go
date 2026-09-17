@@ -1503,6 +1503,7 @@ func (m Model) PlanInput() plan.Input { return m.buildPlanInput() }
 // (spec §9) -- called only once checkSubmitValidation has cleared every
 // blocking condition.
 func (m Model) buildPlanInput() plan.Input {
+	useWorktree := m.worktree.Enabled() && m.worktree.On()
 	return plan.Input{
 		// Expanded here, at the boundary where the project directory stops
 		// being text the user typed and becomes an argument for herdr's CLI
@@ -1510,13 +1511,16 @@ func (m Model) buildPlanInput() plan.Input {
 		// leading "~" server-side, but `herdr workspace create --cwd` and
 		// `herdr pane split --cwd` do not -- see internal/pathx's own
 		// package doc.
-		ProjectDir:       pathx.ExpandTilde(m.dir.Value()),
-		Title:            m.title.Value(),
-		Branch:           m.worktree.Branch(),
-		BaseRef:          m.worktree.Base(),
-		UseWorktree:      m.worktree.Enabled() && m.worktree.On(),
-		IsGitRepo:        m.worktree.Enabled(), // WorktreeField.Enabled() IS "is the target a git repo" (its own doc comment).
-		Placement:        m.placement.Value(),
+		ProjectDir:  pathx.ExpandTilde(m.dir.Value()),
+		Title:       m.title.Value(),
+		Branch:      m.worktree.Branch(),
+		BaseRef:     m.worktree.Base(),
+		UseWorktree: useWorktree,
+		IsGitRepo:   m.worktree.Enabled(), // WorktreeField.Enabled() IS "is the target a git repo" (its own doc comment).
+		// The chip keeps whatever was chosen or remembered, so turning the
+		// worktree off shows it again; with a worktree it does not apply
+		// (placement spec §14).
+		Placement:        plan.EffectivePlacement(useWorktree, m.placement.Value()),
 		Space:            m.resolved.Space,
 		AgentKind:        m.agent.Value(),
 		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],

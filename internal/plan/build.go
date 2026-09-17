@@ -43,6 +43,23 @@ const (
 	PlacementTabIn
 )
 
+// EffectivePlacement is the placement a session actually gets: chosen,
+// unless it has a worktree, in which case always PlacementNewSpace -- the
+// worktree's own space, which herdr groups under the repository's in its
+// sidebar (placement spec §14).
+//
+// It is the ONE statement of that rule. The form (app's buildPlanInput)
+// and headless `create` (buildInput) both route their placement through it
+// before building, so a remembered or configured placement can never pull
+// a worktree session out of its space on one path and not the other, and
+// Build refuses an Input that skipped it.
+func EffectivePlacement(useWorktree bool, chosen Placement) Placement {
+	if useWorktree {
+		return PlacementNewSpace
+	}
+	return chosen
+}
+
 // LaunchMode selects how a pinned claude account reaches the pane.
 //
 // The zero value is LaunchClauthStart, and that is load-bearing rather than

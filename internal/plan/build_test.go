@@ -41,6 +41,21 @@ func kindsOf(ops []Op) []OpKind {
 	return out
 }
 
+// TestEffectivePlacement_AWorktreeSessionRunsInItsOwnSpace pins placement
+// spec §14's rule at the one place both callers take it from: with a
+// worktree, whatever placement was chosen or remembered, the session runs
+// in the worktree's own space; without one, the choice stands untouched.
+func TestEffectivePlacement_AWorktreeSessionRunsInItsOwnSpace(t *testing.T) {
+	for _, p := range []Placement{PlacementNewSpace, PlacementTabHere, PlacementSplitHere, PlacementTabIn} {
+		if got := EffectivePlacement(true, p); got != PlacementNewSpace {
+			t.Errorf("EffectivePlacement(worktree, %v) = %v, want %v", p, got, PlacementNewSpace)
+		}
+		if got := EffectivePlacement(false, p); got != p {
+			t.Errorf("EffectivePlacement(no worktree, %v) = %v, want it unchanged", p, got)
+		}
+	}
+}
+
 func TestBuildWorktreePinPrompt(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
