@@ -905,6 +905,12 @@ func New(s Setup) Model {
 		Workspaces: s.Workspaces,
 		ProjectDir: pathx.ExpandTilde(m.dir.Value()),
 	})
+	// The pane-reaper toggle's default (reap spec §6.1). Applied once, here:
+	// its chain is built-in then config.toml, neither of which changes with
+	// the project row, so applyProjectDefaults deliberately never touches it
+	// and a user's ⌃X survives a project change. ⌃R ⌃R comes back through
+	// this line.
+	m.prompt.SetMarkReady(m.resolved.MarkReady)
 	// config.toml's refused branch_prefix (#123), on the panel of the branch
 	// it would have shaped. It waits for the resolution above because whether
 	// it applies is a question about the resolved prefix -- see
@@ -1529,6 +1535,9 @@ func (m Model) buildPlanInput() plan.Input {
 		AccountConfigDir: m.autoPick.ConfigDir,
 		Launcher:         m.cfg.Clauth.Launcher,
 		Prompt:           m.prompt.Value(),
+		// The toggle's position, not whether the instruction is appended --
+		// plan.PromptText decides that for both callers (reap spec §7.2).
+		MarkReady:        m.prompt.MarkReady(),
 		Ctx:              m.ctx,
 		DetectionTimeout: time.Duration(m.cfg.Timeouts.DetectionMS) * time.Millisecond,
 		PromptTimeout:    time.Duration(m.cfg.Timeouts.PromptWaitMS) * time.Millisecond,

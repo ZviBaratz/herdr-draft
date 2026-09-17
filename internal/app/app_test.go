@@ -2888,3 +2888,42 @@ func TestFetchPruneRunsUnderADeadline(t *testing.T) {
 }
 
 func fptr(v float64) *float64 { return &v }
+
+// TestNew_SeedsTheReapFromTheResolvedDefault is reap spec §6.1 at the form:
+// off with nothing configured, on when config.toml says so, and carried to
+// plan.Input as the toggle's position.
+func TestNew_SeedsTheReapFromTheResolvedDefault(t *testing.T) {
+	off := newTestModel(t, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	if off.prompt.MarkReady() {
+		t.Error("with no [reaper] table the prompt's toggle is reap, want keep")
+	}
+	if off.PlanInput().MarkReady {
+		t.Error("PlanInput().MarkReady = true with nothing configured")
+	}
+
+	on := newTestModel(t, testSetup{
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo"},
+		Config: config.Config{Reaper: config.ReaperConfig{MarkReady: ptrBool(true)}},
+	})
+	if !on.prompt.MarkReady() {
+		t.Error("[reaper] mark_ready = true left the toggle on keep")
+	}
+	if !on.PlanInput().MarkReady {
+		t.Error("PlanInput().MarkReady = false with [reaper] mark_ready = true")
+	}
+}
+
+// TestHandleClearRequested_ResetsTheReap: ⌃R ⌃R rebuilds through New, which
+// reseeds the toggle from config rather than keeping the user's flip.
+func TestHandleClearRequested_ResetsTheReap(t *testing.T) {
+	m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.prompt.Toggle()
+	if !m.prompt.MarkReady() {
+		t.Fatal("test setup: Toggle() did not select reap")
+	}
+	next, _ := m.Update(form.ClearRequestedMsg{})
+	m = next.(Model)
+	if m.prompt.MarkReady() {
+		t.Error("the toggle survived ⌃R ⌃R, want it back on the resolved keep")
+	}
+}
