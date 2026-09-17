@@ -425,6 +425,21 @@ func TestLoadRepoConfig_ForbidsWorktreeTrustRepository(t *testing.T) {
 	assertForbidden(t, "[worktree]\ntrust_repository = true\n", "worktree")
 }
 
+// TestLoadRepoConfig_ForbidsReaper is reap spec §6.3: a file that arrives
+// with `git clone` must not decide what an agent is told, nor close panes
+// on every machine that clones it -- linear.prompt_template's argument. The
+// flat allow-list already rejects the table, and even an unlisted key gets
+// the generic "not a key a repository may set" note -- so what this pins is
+// the SPECIFIC reason, which is the part that teaches where the boundary is.
+func TestLoadRepoConfig_ForbidsReaper(t *testing.T) {
+	const body = "[reaper]\nmark_ready = true\n"
+	assertForbidden(t, body, "reaper")
+	notes := LoadRepoConfig(writeRepoConfig(t, body)).Notes
+	if hits := notesMentioning(notes, "instruction to your agent's prompt"); len(hits) != 1 {
+		t.Errorf("notes = %q, want the reaper note to give its own reason", notes)
+	}
+}
+
 // TestLoadRepoConfig_ForbiddenWorktreeDoesNotShadowDefaultWorktree guards
 // the collision the two names invite. `default_worktree` is ALLOWED and
 // top-level; `worktree` is a FORBIDDEN table. deniedFor matches a table

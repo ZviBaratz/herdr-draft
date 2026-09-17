@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -65,6 +66,44 @@ var promptPlaceholderLadder = []string{
 	"optional",
 }
 
+// The pane-reaper keep · reap line (reap spec §5): two chips on the panel's
+// first line, and a dim hint saying what the choice does to THIS prompt.
+const (
+	promptReapChipKeep   = "keep"
+	promptReapChipReap   = "reap"
+	promptReapZonePrefix = "chip:prompt:"
+
+	// promptReapRowSuffix follows ` +N more`, and like it is dim: it
+	// qualifies the value rather than being a second one.
+	promptReapRowSuffix = " · reap when done"
+
+	promptReapHintOff   = "reap asks the agent to mark this pane ready for pane-reaper once it is done"
+	promptReapHintOn    = "the prompt ends with pane-reaper's instruction to mark this pane ready"
+	promptReapHintEmpty = "no prompt, so there is nothing to add pane-reaper's instruction to"
+	promptReapHintSlash = "a slash command takes no instruction -- it would arrive as its arguments"
+)
+
+// promptReapChipsWidth is the chip row's rendered width, derived from the
+// label constants rather than hand-synced (final-fixes F4): a relabel that
+// changed this arithmetic by hand could silently clip the chips. It mirrors
+// chiprow.go's MarkedView layout -- each chip padded with a leading and
+// trailing space, joined by a single "·" separator -- measured with
+// lipgloss.Width rather than len() because "·" is a multi-byte rune whose
+// byte length is not its cell width, plus one more cell so the hint text
+// below does not touch the chip.
+var promptReapChipsWidth = lipgloss.Width(" "+promptReapChipKeep+" ") +
+	lipgloss.Width("·") +
+	lipgloss.Width(" "+promptReapChipReap+" ") +
+	1
+
+// promptReapChips are keep first, so a fresh ChipRow -- cursor on chip 0 --
+// is off, which is reap spec §3.1's default before the app seeds anything.
+// `keep` is hspawn's own word for the opt-out (`--keep`).
+var promptReapChips = []widgets.Chip{
+	{ID: promptReapChipKeep, Label: promptReapChipKeep},
+	{ID: promptReapChipReap, Label: promptReapChipReap},
+}
+
 // PromptField is the form's `prompt` row (v2 spec §6): an optional
 // multi-line textarea, delivered post-launch via `herdr agent prompt
 // --wait` (spec §9 step 3) -- this package has no opinion on delivery,
@@ -87,6 +126,7 @@ var promptPlaceholderLadder = []string{
 type PromptField struct {
 	palette theme.Palette
 	area    *widgets.PromptArea
+	reap    *widgets.ChipRow
 	focused bool
 	touched bool
 }
@@ -103,7 +143,9 @@ func NewPromptField(palette theme.Palette) *PromptField {
 	// The ground is PanelBG -- Panel draws the textarea inside the detail
 	// panel, never in the stack row.
 	area.SetFill(palette.InputFill(palette.PanelBG))
-	return &PromptField{palette: palette, area: area}
+	reap := widgets.NewChipRow(palette)
+	reap.SetChips(promptReapChips)
+	return &PromptField{palette: palette, area: area, reap: reap}
 }
 
 // ID identifies this Section for form.go's zoneFor.
@@ -149,6 +191,14 @@ func (f *PromptField) Blur() {
 // the text content) rather than editing anything, so it must never flip
 // Touched() the way a genuine edit does.
 func (f *PromptField) Update(msg tea.Msg) tea.Cmd {
+	// A click on a keep · reap chip selects it (reap spec §5.2); form.go's
+	// zonePanel branch is what forwards a panel click here. Anything else
+	// falls through to the textarea exactly as before.
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		if _, hit := f.reap.SelectAt(click, promptReapZonePrefix); hit {
+			return nil
+		}
+	}
 	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
 		switch wheelDelta(wheel) {
 		case -1:
@@ -187,6 +237,64 @@ func (f *PromptField) Value() string { return f.area.Value() }
 // inserted a newline) since construction -- never reset once true, mirroring
 // field_title.go's TitleField.Touched().
 func (f *PromptField) Touched() bool { return f.touched }
+
+// MarkReady reports whether reap is selected: the toggle's POSITION, which
+// app hands to plan.Input.MarkReady. Whether the instruction is actually
+// appended is plan.PromptText's decision (reap spec §7.2).
+func (f *PromptField) MarkReady() bool { return f.reap.Selected().ID == promptReapChipReap }
+
+// SetMarkReady selects reap (on) or keep. The app calls it once, from the
+// resolved default, in New; nothing re-seeds it, because its only tiers do
+// not change with the project row (reap spec §5.2).
+func (f *PromptField) SetMarkReady(on bool) {
+	id := promptReapChipKeep
+	if on {
+		id = promptReapChipReap
+	}
+	f.reap.SelectID(id)
+}
+
+// Toggle implements form.go's toggler capability (⌃X in ZonePrompt).
+func (f *PromptField) Toggle() { f.reap.Next() }
+
+// reapHint is the panel line's explanation for the current choice over the
+// current text -- reap spec §5.3's table, asking the same plan.ReapApplies
+// Build does so the panel cannot promise what the plan will not send.
+func (f *PromptField) reapHint() string {
+	if !f.MarkReady() {
+		return promptReapHintOff
+	}
+	v := f.area.Value()
+	switch {
+	case strings.TrimSpace(v) == "":
+		return promptReapHintEmpty
+	case !plan.ReapApplies(v):
+		return promptReapHintSlash
+	default:
+		return promptReapHintOn
+	}
+}
+
+// reapLine is the panel's first line: the chips in the chip column every
+// panel chip row uses (panelChipRow), then the hint, fitted to w so the hint
+// elides and the chips survive.
+//
+// The hint is cut with keepHead BEFORE fitLine rather than left to
+// fitLine's own MaxWidth, for the reason every other eliding hint in this
+// package does it (field_issue.go's panelHint, field_placement.go's Row,
+// field_account.go's noteLines): MaxWidth clips mid-word with nothing to
+// show for it, while keepHead marks the cut with an ellipsis, which is
+// what reap spec §5.1's mockup draws and what §5.4 means by "the hint
+// elides at its tail".
+func (f *PromptField) reapLine(w int) string {
+	chips := f.reap.MarkedView(promptReapChipsWidth, promptReapZonePrefix)
+	if idx := strings.IndexByte(chips, '\n'); idx >= 0 {
+		chips = chips[:idx]
+	}
+	lead := panelChipRow(chips) + " "
+	hint := keepHead(f.reapHint(), w-lipgloss.Width(lead))
+	return fitLine(lead+dimHint(f.palette).Render(hint), w)
+}
 
 // SetValue replaces the textarea's text, honoring the same
 // touched-vs-preselected rule field_worktree.go's WorktreeField.SetBranch
@@ -239,6 +347,11 @@ func (f *PromptField) Row(w int) string {
 	if more > 0 {
 		suffix = dimText(f.palette).Render(" +" + strconv.Itoa(more) + " more")
 	}
+	if f.MarkReady() && plan.ReapApplies(f.area.Value()) {
+		// A row states what the session will be (v2 spec §3 rule 1), so
+		// this appears only when the instruction will really be sent.
+		suffix += dimText(f.palette).Render(promptReapRowSuffix)
+	}
 	body := lipgloss.NewStyle().Foreground(f.palette.Text).
 		Render(keepHead(first, w-lipgloss.Width(suffix)))
 	return fitLine(body+suffix, w)
@@ -261,10 +374,11 @@ func promptSummary(value string) (first string, more int) {
 	return first, more
 }
 
-// Panel is the textarea itself, indented into the panel's own gutter and
-// sized to exactly the h rows the layout kept for it. SetRows is applied
-// here per render for the same reason View applies it: the widget caches
-// no geometry of its own.
+// Panel is the keep · reap line over the textarea (reap spec §5.1). The line
+// goes FIRST because PanelRows grows with the text: a line under the
+// textarea would move down the screen as the user typed newlines. With a
+// one-row panel the textarea keeps the row -- it is where the user types,
+// and the row still states the choice (reap spec §5.4).
 //
 // The WRAP measure is clamped to promptPanelMaxWidth while the panel line
 // itself is still padded to the panel's full width, so the prose stops at
@@ -274,25 +388,30 @@ func (f *PromptField) Panel(w, h int) string {
 	if h < 1 {
 		h = 1
 	}
-	f.area.SetRows(h)
+	lines := make([]string, 0, h)
+	textRows := h
+	if h >= 2 {
+		lines = append(lines, f.reapLine(w))
+		textRows = h - 1
+	}
+	f.area.SetRows(textRows)
 	inner := panelInner(w)
 	if inner > promptPanelMaxWidth {
 		inner = promptPanelMaxWidth
 	}
 	rendered := strings.Split(f.area.View(inner), "\n")
-	lines := make([]string, 0, h)
-	for i := 0; i < h && i < len(rendered); i++ {
+	for i := 0; i < textRows && i < len(rendered); i++ {
 		lines = append(lines, panelText(rendered[i], w))
 	}
 	return panelBlock(w, h, lines...)
 }
 
-// PanelRows grows with the text: enough rows for the whole prompt plus
-// one to type the next line into, never fewer than promptPanelMinRows and
-// never more than promptPanelMaxRows.
+// PanelRows grows with the text: one row per line, one to type the next
+// line into, and one for the keep · reap line -- never fewer than
+// promptPanelMinRows and never more than promptPanelMaxRows.
 func (f *PromptField) PanelRows() int {
 	lines := strings.Count(f.area.Value(), "\n") + 1
-	want := lines + 1
+	want := lines + 2
 	if want < promptPanelMinRows {
 		want = promptPanelMinRows
 	}

@@ -88,6 +88,7 @@ const (
 	FieldBaseRef          = "base"
 	FieldLinearBranchName = "linear_branch_name"
 	FieldTrustRepository  = "trust_repository"
+	FieldMarkReady        = "mark_ready"
 )
 
 // Sources is every tier Resolve consults, each already loaded by the
@@ -205,6 +206,15 @@ type Resolved struct {
 	// nobody set, and a security-relaxing one at that.
 	TrustRepository bool
 
+	// MarkReady is the pane-reaper toggle's default position (reap spec
+	// §6.1): built-in false, then config.toml's [reaper] mark_ready, and
+	// nothing above. It has a form control, unlike TrustRepository, and
+	// skips memory anyway: v2 spec §10 remembers every submit, so one
+	// `--reap` would make every later session reap -- orchestrators
+	// included, which pane-reaper's contract says must never mark
+	// themselves. .herdr-draft.toml refuses it (repo.go).
+	MarkReady bool
+
 	// From maps each Field* key to the tier that supplied its value.
 	// Always fully populated: a value no tier supplied is attributed to
 	// TierBuiltin.
@@ -232,6 +242,7 @@ func Resolve(s Sources) Resolved {
 			FieldBaseRef:          TierBuiltin,
 			FieldLinearBranchName: TierBuiltin,
 			FieldTrustRepository:  TierBuiltin,
+			FieldMarkReady:        TierBuiltin,
 		},
 	}
 
@@ -252,6 +263,9 @@ func Resolve(s Sources) Resolved {
 	// this wrong would make `create --json` print `from config.toml` for a
 	// value no config.toml has ever contained.
 	r.setBool(FieldTrustRepository, &r.TrustRepository, s.Config.Worktree.TrustRepository, TierUserConfig)
+	// Pointer-attributed like trust_repository above, and for the same
+	// reason: nothing supplies a default, so nil must stay built-in.
+	r.setBool(FieldMarkReady, &r.MarkReady, s.Config.Reaper.MarkReady, TierUserConfig)
 
 	// --- TierGlobalMemory: last-used.json --------------------------------
 	r.setBool(FieldWorktree, &r.UseWorktree, s.Global.LastWorktree, TierGlobalMemory)

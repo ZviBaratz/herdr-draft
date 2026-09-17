@@ -137,7 +137,13 @@ type Input struct {
 	// the pinned-claude path, the one place AccountPin is used at all.
 	Launcher []string
 
-	Prompt                          string
+	Prompt string
+	// MarkReady is the pane-reaper toggle's POSITION (reap spec §7.2): the
+	// form's `keep · reap` chips, or `create --reap`/`--no-reap`, over the
+	// resolved default. It is not "the instruction was appended" -- Build
+	// decides that, once, from this and Prompt (PromptText), so the two
+	// callers compare positions and cannot append differently.
+	MarkReady                       bool
 	Ctx                             herdrc.Context
 	DetectionTimeout, PromptTimeout time.Duration
 	TrustRepository                 bool
@@ -248,7 +254,7 @@ func Build(in Input) ([]Op, error) {
 			Kind:  OpAgentPrompt,
 			Label: "sending prompt",
 			Prompt: &herdrc.AgentPromptReq{
-				Text:        in.Prompt,
+				Text:        PromptText(in),
 				WaitTimeout: in.PromptTimeout,
 			},
 			// Not the prompt's own wait (that is WaitTimeout above): this is

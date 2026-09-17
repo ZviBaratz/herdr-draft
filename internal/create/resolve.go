@@ -171,6 +171,10 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		return resolution{}, err
 	}
 
+	if w := reapWarning(req, in); w != "" {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
+	}
+
 	// An `auto` account is still the sentinel here: turning it into a profile
 	// runs the picker for real and writes its ledger, so it waits for every
 	// refusal that can be known without it -- see run() (#145).
@@ -471,6 +475,15 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		return plan.Input{}, nil, err
 	}
 
+	// The pane-reaper toggle (reap spec §7.2): a flag wins, else the
+	// resolver's config.toml-or-built-in answer. Its position, not whether
+	// the instruction is appended -- plan.PromptText decides that.
+	markReady := res.MarkReady
+	if req.reap != nil {
+		markReady = *req.reap
+		prov[defaults.FieldMarkReady] = provenanceFlag
+	}
+
 	return plan.Input{
 		ProjectDir:    t.projectDir,
 		Title:         title,
@@ -489,9 +502,10 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		// which is the invariant working: a launcher (or a launch mode) the
 		// popup honours and this verb ignores would put the two on different
 		// accounts for one config.
-		Launcher: t.cfg.Clauth.Launcher,
-		Prompt:   promptText(prompt, issue, t.cfg),
-		Ctx:      hctx,
+		Launcher:  t.cfg.Clauth.Launcher,
+		Prompt:    promptText(prompt, issue, t.cfg),
+		MarkReady: markReady,
+		Ctx:       hctx,
 
 		DetectionTimeout: time.Duration(t.cfg.Timeouts.DetectionMS) * time.Millisecond,
 		PromptTimeout:    time.Duration(t.cfg.Timeouts.PromptWaitMS) * time.Millisecond,
@@ -787,6 +801,20 @@ func refuseWorktreePlacement(req request, placement plan.Placement, worktreeFrom
 		return fmt.Errorf("--placement %s needs --no-worktree: %s", defaults.PlacementValue(placement), why)
 	}
 	return nil
+}
+
+// reapWarning names why an explicit --reap will not append anything (reap
+// spec §7.3). Not a refusal, because the form does not refuse the same
+// toggle, and only for the FLAG: a config.toml default nobody asked for on
+// this command line is not news when it does not apply.
+func reapWarning(req request, in plan.Input) string {
+	if req.reap == nil || !*req.reap || plan.ReapApplies(in.Prompt) {
+		return ""
+	}
+	if strings.TrimSpace(in.Prompt) == "" {
+		return "--reap has no effect: there is no prompt to add pane-reaper's instruction to"
+	}
+	return "--reap has no effect: a prompt starting with / is a slash command, and the instruction would reach it as arguments"
 }
 
 // workspaceByID finds the open workspace --workspace names, so the plan

@@ -247,6 +247,23 @@ type WorktreeConfig struct {
 	TrustRepository *bool `toml:"trust_repository"`
 }
 
+// ReaperConfig is the optional `[reaper]` table (reap spec §6.2): whether a
+// session's prompt ends with pane-reaper's instruction to mark the pane
+// ready once the agent's work is saved.
+type ReaperConfig struct {
+	// MarkReady turns the `keep · reap` toggle and `create --reap` on by
+	// default. Absent means off (reap spec §3.1).
+	//
+	// A POINTER for WorktreeConfig.TrustRepository's reason: nil and false
+	// must stay distinguishable, or the resolver would attribute a false to
+	// config.toml for a file with no [reaper] table at all.
+	//
+	// config.toml-only. A repository can never set it (repo.go's
+	// repoDeniedKeys), and neither memory file remembers it: one use would
+	// otherwise become every later session's default (reap spec §6.1).
+	MarkReady *bool `toml:"mark_ready"`
+}
+
 // TimeoutsConfig is the optional `[timeouts]` table (spec §12).
 type TimeoutsConfig struct {
 	DetectionMS  int `toml:"detection_ms"`
@@ -301,6 +318,7 @@ type Config struct {
 	Agents   AgentsConfig   `toml:"agents"`
 	Timeouts TimeoutsConfig `toml:"timeouts"`
 	Worktree WorktreeConfig `toml:"worktree"`
+	Reaper   ReaperConfig   `toml:"reaper"`
 
 	// Palette is the optional `[palette]` table: an escape hatch for
 	// overriding herdr theme colors when detection is wrong (spec §7,

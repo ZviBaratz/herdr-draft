@@ -203,6 +203,11 @@ type (
 	// deliberately" contract.
 	newliner interface{ InsertNewline() }
 
+	// toggler lets the Prompt-zone Section flip its keep · reap chips on
+	// MapKey's ActionToggle (⌃X, reap spec §5.2). Shaped like newliner, for
+	// newliner's reason: the field owns the state, the grammar owns the key.
+	toggler interface{ Toggle() }
+
 	// footerHinter supplies the focused section's OWN key rungs, widest
 	// first; the form appends the constant tail and picks a rung that
 	// fits (footer.go's footerRungsFor/fitFooter). v2 spec §5 adds this
@@ -644,6 +649,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case ActionNewline:
 		if nl, ok := m.ring.current().(newliner); ok {
 			nl.InsertNewline()
+		}
+		return m, nil
+	case ActionToggle:
+		if tg, ok := m.ring.current().(toggler); ok {
+			tg.Toggle()
 		}
 		return m, nil
 	case ActionSubmit:

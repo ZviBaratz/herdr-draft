@@ -567,6 +567,7 @@ func TestExitTwo_BadEnumValues(t *testing.T) {
 		{"placement", []string{"--title", "t", "--placement", "sideways"}, "unknown --placement"},
 		{"on-failure", []string{"--title", "t", "--on-failure", "burn"}, "unknown --on-failure"},
 		{"contradiction", []string{"--title", "t", "--worktree", "--no-worktree"}, "contradict"},
+		{"reap contradiction", []string{"--title", "t", "--reap", "--no-reap"}, "--reap and --no-reap contradict"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
@@ -2261,5 +2262,104 @@ func TestCreateAutoPicksNothingForARequestItThenRefuses(t *testing.T) {
 				t.Fatalf("the picker was called %d time(s) for a create that was then refused", len(p.calls))
 			}
 		})
+	}
+}
+
+// TestParseArgs_ReapIsATriState is reap spec §7.1: the --worktree pair's
+// shape, including the inversion of --no-reap=false.
+func TestParseArgs_ReapIsATriState(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want *bool
+	}{
+		{"neither", []string{"--title", "t"}, nil},
+		{"--reap", []string{"--title", "t", "--reap"}, boolp(true)},
+		{"--no-reap", []string{"--title", "t", "--no-reap"}, boolp(false)},
+		{"--reap=false", []string{"--title", "t", "--reap=false"}, boolp(false)},
+		{"--no-reap=false", []string{"--title", "t", "--no-reap=false"}, boolp(true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := parseArgs(tc.args)
+			if err != nil {
+				t.Fatalf("parseArgs: %v", err)
+			}
+			switch {
+			case tc.want == nil && req.reap != nil:
+				t.Errorf("reap = %v, want unset", *req.reap)
+			case tc.want != nil && (req.reap == nil || *req.reap != *tc.want):
+				t.Errorf("reap = %v, want %v", req.reap, *tc.want)
+			}
+		})
+	}
+}
+
+// TestReap_AppendsTheInstructionAndReportsIt: the sent text carries the
+// sentence, and --json says the pane will mark itself, attributed to the flag.
+func TestReap_AppendsTheInstructionAndReportsIt(t *testing.T) {
+	h := newHarness(t)
+	code := h.run("--title", "t", "--no-worktree", "--prompt", "look at the login redirect loop", "--reap", "--json")
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if calls := strings.Join(h.runner.calls, "\n"); !strings.Contains(calls, "look at the login redirect loop\n\n"+plan.ReapInstruction) {
+		t.Errorf("calls = %v, want the prompt followed by the reap instruction", h.runner.calls)
+	}
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if !out.MarkReady {
+		t.Error("mark_ready = false, want true: the instruction was appended")
+	}
+	if got := out.Provenance["mark_ready"]; got != provenanceFlag {
+		t.Errorf("provenance.mark_ready = %q, want %q", got, provenanceFlag)
+	}
+}
+
+// TestReap_AFlagThatCannotApplySaysSo is reap spec §7.3: not refused, since
+// the form does not refuse it, but not silent either.
+func TestReap_AFlagThatCannotApplySaysSo(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"no prompt", []string{"--title", "t", "--no-worktree", "--reap"}, "there is no prompt"},
+		{"slash command", []string{"--title", "t", "--no-worktree", "--reap", "--prompt", "/loop 5m"}, "slash command"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			if code := h.run(tc.args...); code != ExitOK {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+			}
+			if !strings.Contains(h.stderr.String(), "--reap has no effect: ") || !strings.Contains(h.stderr.String(), tc.want) {
+				t.Errorf("stderr = %q, want a --reap has no effect note naming %q", h.stderr, tc.want)
+			}
+		})
+	}
+}
+
+// TestReap_ConfigDefaultThatCannotApplyIsSilent: nobody asked on this command
+// line, so its not applying is not news (reap spec §7.3). It also pins the
+// provenance side of the same case: with neither `--reap` nor `--no-reap`
+// given, `mark_ready` is attributed to config.toml (the tier this test's
+// own config sets it from), never to `flag` (the other tests here only pin
+// the flag case).
+func TestReap_ConfigDefaultThatCannotApplyIsSilent(t *testing.T) {
+	h := newHarness(t)
+	writeConfig(t, h.env.ConfigDir, "[reaper]\nmark_ready = true\n")
+	if code := h.run("--title", "t", "--no-worktree", "--json"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if strings.Contains(h.stderr.String(), "--reap") {
+		t.Errorf("stderr = %q, want no --reap note for a config default", h.stderr)
+	}
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if got := out.Provenance["mark_ready"]; got != "config.toml" {
+		t.Errorf("provenance.mark_ready = %q, want config.toml (no flag was given)", got)
 	}
 }

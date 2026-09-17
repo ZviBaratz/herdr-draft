@@ -87,7 +87,7 @@ fixed whatever has focus and whatever the window height is.
 |---|---|---|
 | `issue` | `ENG-101 · fix login redirect loop`, or `none` | `unavailable  <reason>` |
 | `title` | what you typed, or a dim `untitled` | — |
-| `prompt` | the first line, plus a dim ` +N more` | — |
+| `prompt` | the first line, plus a dim ` +N more`, and a dim ` · reap when done` when the prompt will end with pane-reaper's instruction | — |
 | `project` | the path, `~`-shortened | `invalid` / `not a repository` |
 | `worktree` | `on · <branch> ← <base>`, `on · from <base>` before a title exists to derive a branch from, or `off` | `not a git repository` |
 | `placement` | `new space` / `tab here` / `split here` / `tab in <space>` | `the worktree's own space`, whenever the worktree is on |
@@ -106,8 +106,9 @@ than a wall. herdr clamps it down to the terminal and never up, so an 80×24
 terminal gets a full-screen popup rather than an overflow.
 
 **One panel**, under the second rule, belonging to the focused row and to no
-other: the candidate list for `issue`, `project`, `agent` and `account`; the
-textarea for `prompt`; the verdict line (`branch will be …`) plus the
+other: the candidate list for `issue`, `project`, `agent` and `account`; a
+`keep · reap` line over the textarea for `prompt` (see
+[`[reaper]`](#reaper)); the verdict line (`branch will be …`) plus the
 sessions that were open when the form opened, for `title`; a three-part
 `off · on` / `branch` / `base` editor for `worktree`. Branch and base are not
 rows of their own — they are parts of the worktree row's panel, so a form
@@ -134,6 +135,7 @@ in the row order is spent on a button.
 | `↵` | create, from a non-empty title, from the prompt, or from the button; advance from anywhere else |
 | `⌃S` | create, from anywhere |
 | `⌃J` (or `⇧↵`, `⌥↵`) | newline in the prompt |
+| `⌃X` | in the prompt: `keep` or `reap` — whether the prompt ends with pane-reaper's instruction |
 | `⌃R` `⌃R` | clear back to the resolved defaults |
 | `esc` / `⌃C` | cancel |
 
@@ -316,8 +318,9 @@ git log -1 --format=%B | herdr-draft create --title "revert" --prompt -
 
 Flags mirror the form's fields: `--project`, `--title`, `--prompt` (`-`
 reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
-`--placement`, `--workspace`, `--agent`, `--account`, `--issue`, `--json`,
-`--on-failure keep|clean`. `herdr-draft create --help` lists them.
+`--reap` / `--no-reap`, `--placement`, `--workspace`, `--agent`, `--account`,
+`--issue`, `--json`, `--on-failure keep|clean`. `herdr-draft create --help`
+lists them.
 
 **Anything you don't pass resolves exactly the way the form resolves it** —
 see [Where defaults come from](#where-defaults-come-from); the command and
@@ -330,7 +333,8 @@ Progress goes to stderr, one line per step; the result to stdout, or a
 single JSON object with `--json` (which also carries a prompt the dialog
 guard withheld, since a headless caller has no pane to recover it from, and
 a `provenance` map naming the tier each value came from — `flag` for the
-ones you passed). It never prompts. Exit codes:
+ones you passed). A `mark_ready: true` means the prompt carried
+pane-reaper's instruction. It never prompts. Exit codes:
 
 | Code | Meaning |
 |---|---|
@@ -793,6 +797,35 @@ inside it only when `picker` is set and its probe succeeded.
   and neither `last-used.json` nor `projects.json` remembers it, because
   those remember what you *chose in the form* and there is no row for this.
 
+### `[reaper]`
+
+- `mark_ready` (default: `false`) — start the prompt panel's toggle on
+  `reap`, and make `create` behave as if `--reap` were passed. A reaped
+  session's prompt ends with one fixed sentence asking the agent to run
+  `herdr pane report-metadata "$HERDR_PANE_ID" --source pane-reaper --token pane_reaper=ready`
+  as the last command of its final turn, once its work is saved.
+
+  That token is read by **pane-reaper**, a separate herdr plugin that closes
+  a pane its agent has marked ready once it goes idle. Without pane-reaper
+  running, the sentence costs one harmless command and nothing closes. The
+  sentence is never added to an empty prompt or to one starting with `/`,
+  because a slash command would receive it as arguments.
+
+  Closing the pane is all pane-reaper does: a worktree session's checkout
+  and the branch it created survive that close and are yours to remove.
+
+  Leave it off if you start orchestrator or `/loop` sessions from the
+  popup: those must never close themselves, and a default is easy to forget
+  about. `⌃X` in the prompt, or `--reap` / `--no-reap`, decides one session.
+
+  It is `config.toml`-only. A repository cannot set it, and neither memory
+  file remembers it: one reaped session would otherwise make every later
+  one reap.
+
+  pane-reaper lives in the public
+  [quantivly/dotfiles](https://github.com/quantivly/dotfiles/tree/main/config/herdr/plugins/local/pane-reaper)
+  repository; install it with `herdr plugin link <clone>/config/herdr/plugins/local/pane-reaper`.
+
 ### `[palette]`
 
 Optional escape hatch when herdr's own theme can't be read correctly (see
@@ -862,7 +895,8 @@ your agent (that is a machine decision, not a repository one), and
 actually settled — the worktree toggle, the placement, the agent kind, and
 the base ref for the project you were in. A selected Linear issue overrides
 title, branch and prompt on top of all of it, unless you have already typed
-over them.
+over them. The prompt's `keep · reap` toggle comes from `config.toml` or
+the built-in alone.
 
 Per-project memory re-applies when you change the project row, for every
 field you have not touched yourself. It is keyed by the **git repository
@@ -912,6 +946,7 @@ other key `config.toml` accepts — `[agents.extra_args]` (it becomes part
 of a launched agent's command line), `[agents] favorites`/`default` (a
 repository doesn't choose which agent runs on your machine), `[linear]
 prompt_template` (it would become the agent's first instruction),
+`[reaper]` (it would add an instruction to your agent's prompt),
 `[linear] api_key`/`api_key_cmd` (a credential, and a command), and all of
 `[clauth]`, `[timeouts]`, `[palette]` and `[worktree]` (a repository does
 not decide that it is trusted — `trust_repository` waives a git safety

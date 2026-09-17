@@ -114,11 +114,11 @@ func zoneRungs(zone FocusZone) []string {
 		}
 		return []string{"⌃S create now · ⇥ for the prompt", "⇥ for the prompt"}
 	case ZonePrompt:
-		// One key, because one key is what is surprising here: ↵ creates
-		// (the button says so, and v2 spec §8 makes it true from this
-		// zone specifically), so the newline needs somewhere to live and
-		// nothing else about the prompt needs teaching.
-		return []string{"⌃J newline"}
+		// Two keys, and the narrow rung keeps ⌃J: ↵ creates from this zone
+		// (v2 spec §8), so the newline is the one a user cannot do without,
+		// while the keep · reap line is on screen in the panel even when
+		// its chord is not (reap spec §5.2).
+		return []string{"⌃J newline · ⌃X keep or reap", "⌃J newline"}
 	case ZoneWorktree:
 		return []string{"↑↓ part · ←→ toggle", "↑↓ part"}
 	case ZoneBranch:

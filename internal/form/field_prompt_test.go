@@ -163,3 +163,114 @@ func TestPromptField_NoPanicOnDegenerateWidth(t *testing.T) {
 	_ = f.Row(-3)
 	_ = f.Panel(-3, f.PanelRows())
 }
+
+func TestPromptField_ImplementsToggler(t *testing.T) {
+	var s Section = NewPromptField(theme.Default())
+	if _, ok := s.(toggler); !ok {
+		t.Fatalf("*PromptField does not implement toggler")
+	}
+}
+
+// TestPromptField_ReapDefaultsToKeep is reap spec §3.1 at the field: a fresh
+// field is off until the app seeds it (Task 4) or the user flips it.
+func TestPromptField_ReapDefaultsToKeep(t *testing.T) {
+	f := NewPromptField(theme.Default())
+	if f.MarkReady() {
+		t.Fatal("fresh PromptField.MarkReady() = true, want keep")
+	}
+	f.SetMarkReady(true)
+	if !f.MarkReady() {
+		t.Fatal("SetMarkReady(true) did not select reap")
+	}
+	f.Toggle()
+	if f.MarkReady() {
+		t.Fatal("Toggle() from reap did not return to keep")
+	}
+}
+
+// TestPromptField_RowStatesTheReapOnlyWhenItWillBeSent is reap spec §5.3's
+// table: a row states what the session will be (v2 spec §3 rule 1), so the
+// suffix appears exactly when plan.PromptText will append.
+func TestPromptField_RowStatesTheReapOnlyWhenItWillBeSent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		on    bool
+		want  bool
+	}{
+		{"keep", "fix it", false, false},
+		{"reap over a prompt", "fix it\nand more", true, true},
+		{"reap over nothing", "", true, false},
+		{"reap over a slash command", "/loop 5m", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewPromptField(theme.Default())
+			f.SetValue(tc.value, false)
+			f.SetMarkReady(tc.on)
+			row := ansi.Strip(f.Row(70))
+			if got := strings.Contains(row, "reap when done"); got != tc.want {
+				t.Errorf("Row(70) = %q, contains \"reap when done\" = %v, want %v", row, got, tc.want)
+			}
+			if tc.want && !strings.Contains(row, "+1 more") {
+				t.Errorf("Row(70) = %q, want the +N more count kept beside the suffix", row)
+			}
+		})
+	}
+}
+
+// TestPromptField_PanelLeadsWithTheReapLine pins reap spec §5.1: the chips
+// are the panel's FIRST line, so they do not move as the textarea grows,
+// and the text starts on the line below.
+func TestPromptField_PanelLeadsWithTheReapLine(t *testing.T) {
+	f := NewPromptField(theme.Default())
+	f.SetValue("first line of the prompt", false)
+	lines := strings.Split(ansi.Strip(f.Panel(80, f.PanelRows())), "\n")
+	if len(lines) != f.PanelRows() {
+		t.Fatalf("Panel produced %d lines, want PanelRows() = %d", len(lines), f.PanelRows())
+	}
+	if !strings.Contains(lines[0], "keep") || !strings.Contains(lines[0], "reap") {
+		t.Errorf("panel line 0 = %q, want the keep · reap chips", lines[0])
+	}
+	if !strings.Contains(lines[1], "first line of the prompt") {
+		t.Errorf("panel line 1 = %q, want the textarea's first line", lines[1])
+	}
+}
+
+// TestPromptField_PanelHintSaysWhyTheReapWillNotBeSent is the panel half of
+// reap spec §5.3's table.
+func TestPromptField_PanelHintSaysWhyTheReapWillNotBeSent(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		on          bool
+		want        string
+	}{
+		{"keep", "fix it", false, promptReapHintOff},
+		{"reap", "fix it", true, promptReapHintOn},
+		{"reap over nothing", "", true, promptReapHintEmpty},
+		{"reap over a slash command", "/loop", true, promptReapHintSlash},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewPromptField(theme.Default())
+			f.SetValue(tc.value, false)
+			f.SetMarkReady(tc.on)
+			first := strings.SplitN(ansi.Strip(f.Panel(200, f.PanelRows())), "\n", 2)[0]
+			if !strings.Contains(first, tc.want) {
+				t.Errorf("panel line 0 = %q, want it to carry %q", first, tc.want)
+			}
+		})
+	}
+}
+
+// TestPromptField_OneRowPanelKeepsTheTextarea is reap spec §5.4: when the
+// region leaves one row, it goes to the text being typed, not the toggle.
+func TestPromptField_OneRowPanelKeepsTheTextarea(t *testing.T) {
+	f := NewPromptField(theme.Default())
+	f.SetValue("only line", false)
+	panel := ansi.Strip(f.Panel(80, 1))
+	if strings.Contains(panel, "reap") {
+		t.Errorf("Panel(80, 1) = %q, want the textarea alone", panel)
+	}
+	if !strings.Contains(panel, "only line") {
+		t.Errorf("Panel(80, 1) = %q, want the prompt text", panel)
+	}
+}

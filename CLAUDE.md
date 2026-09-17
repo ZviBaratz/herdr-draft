@@ -334,7 +334,9 @@ Layering, outermost to innermost:
   memory tiers are refused because they remember what the user *chose in
   the form* and no row offers this. There is deliberately no
   `--trust-repository` flag on `create` either: every flag there has a form
-  row behind it, and `equivalence_test.go` is what would break first.
+  control behind it — a row, or a control in a row's panel like the prompt's
+  `keep · reap` (reap spec) — and `equivalence_test.go` is what would break
+  first.
   (Until 2026-09-08 this convention said the opposite — leave the key
   unwired, because the 0.8.2 floor predated the flag. herdr 0.9.0 and the
   floor bump retired that.)
