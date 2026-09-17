@@ -308,6 +308,10 @@ so one `⇧⇥` reaches it. This order is declared in exactly one place,
 > the sentence it once held only survives as the worktree-on hint for the
 > `new space` chip specifically, not as a fixed outcome the whole row is
 > stuck showing. See that document's §6.1 and §12.
+>
+> **Reversed again, placement spec §14 (2026-09-17).** With a worktree the
+> row is inert once more, and now reads `the worktree's own space` rather
+> than the sentence above. See that document's §14.
 
 > **SUPERSEDED by v3 spec §10.** The `account` row above is wrong in three
 > ways. It shows `ok` — an auth status — *instead of* utilization whenever a

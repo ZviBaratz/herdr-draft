@@ -1,9 +1,10 @@
 # herdr-draft — placement under a worktree, and who owns the agent's pane
 
 - **Date:** 2026-09-03
-- **Status:** design approved 2026-09-03 (§5 through §8); implementation
-  not started. §11's taste-call items (1-5, 7) carry recommendations and are
-  not blockers; item 6 (the incident's cause) is resolved.
+- **Status:** design approved 2026-09-03 (§5 through §8) and implemented.
+  **§14 (2026-09-17) reverses §5.3 and §6.1 for a worktree:** a worktree
+  session runs in its own space again, and placement applies only without
+  one. Read §14 before §5.3.
 - **Supersedes:**
   - `internal/plan/build.go:19-21` — the `Placement` type's doc sentence
     "It is ignored when `Input.UseWorktree` is set -- worktree creation
@@ -1198,3 +1199,93 @@ how it measures); `--trust-repository` stays unwired; the five-key
   behaviour would differ per configuration; consistent behaviour with one
   disclosed pane beats inconsistent behaviour with sometimes none. §8.4 is
   the real fix.
+
+## 14. Reversed: a worktree session runs in its own space (2026-09-17)
+
+§5.3 let a placement move a worktree session's agent out of the worktree's
+space, at the disclosed cost of one idle shell (§4, §11 item 1). #128 then
+added `tab in <space>` and made it the default whenever the repository's
+space is open, with or without a worktree. Measured on herdr v0.9.0 in
+disposable sessions, the two together do three things §5.3 did not
+anticipate. So the rule is back to what v1 said, for a different reason.
+
+### 14.1 What was measured
+
+- **The idle space is the default path.** A first `worktree create` in a
+  repository makes (or marks) the repository's parent space,
+  `ensure_source_parent_membership`
+  ([`worktrees.rs#L404-L429`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/api/worktrees.rs#L404-L429)).
+  From the second create on, `plan.FindSpace` sees it and the resolver
+  promotes `new-space` to `tab-in`. So with every value left at its
+  default, each session after the first put its agent in a tab of the
+  parent, and left the worktree's own space holding herdr's shell (plus any
+  plugin pane, such as reviewr's). §11 item 2's accepted risk ("a reader
+  who never focuses placement never sees the disclosure") became the common
+  case, because nobody chose the placement.
+- **`tab in` buys nothing under a worktree.** herdr's sidebar already nests
+  a linked worktree's space under the repository's
+  ([`client/shell/sidebar.rs#L448-L535`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/client/shell/sidebar.rs#L448-L535)),
+  which is the grouping #128 wanted. `tab in` adds an empty nested entry,
+  named for the task, and moves the agent's status off it.
+- **It sets up a close of the wrong workspace in herdr itself.**
+  `open_workspace_idx_for_checkout` matches a workspace whose *first tab's*
+  root pane sits in a checkout, even one carrying its own parent membership
+  ([`worktrees.rs#L596-L624`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/api/worktrees.rs#L596-L624),
+  [`workspace.rs#L1015-L1024`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/workspace.rs#L1015-L1024)).
+  Once the agent's tab is the parent's first tab, the sequence runs:
+  1. `herdr worktree open` answers `already_open` and re-stamps the parent
+     as that worktree's space
+     ([`worktrees.rs#L113-L145`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/api/worktrees.rs#L113-L145)).
+     herdr's UI "open worktree" sends the same request.
+  2. `herdr worktree remove` on the parent then closes the repository's own
+     space.
+
+  Reproduced end to end. This is §2.1's rule 4 and §8.2's bug, reached
+  through herdr's `open` rather than through herdr-draft's next create. §5.3's
+  "closed under repetition" argument covered only the latter. It needs no
+  plugin at all: a shell tab in the repository's space that `cd`s into a
+  checkout is enough. Filed upstream as
+  [herdrdev/herdr#4293](https://github.com/herdrdev/herdr/issues/4293).
+
+### 14.2 The rule
+
+**With a worktree, the session runs in the worktree's own space, and
+placement does not apply. Without one, placement decides where the session
+goes, exactly as before, `tab in` included.** `plan.EffectivePlacement` is
+the one statement of it. The form and `create` both route the placement
+through it before building, and `plan.Build` refuses an Input with a
+worktree and any other placement.
+
+- **The form:** the placement row goes inert under a worktree and names
+  the consequence, as v2 §6's row did. The chip keeps what was chosen or
+  remembered, so turning the worktree off shows it again.
+- **`create`:** an explicit `--placement` other than `new-space`, or any
+  `--workspace`, is refused with a worktree (exit 2, naming
+  `--no-worktree`). #145-147's rule is that `create` refuses what the form
+  refuses. A remembered or configured placement is not refused. It simply
+  does not apply, and `--json` attributes the placement to `worktree`.
+- **Memory:** a worktree submit records the worktree and keeps the
+  placement both memory files already held (`defaults.RememberedPlacement`).
+  Nobody chose a placement for it. Recording its `new-space` instead would
+  overwrite a placement remembered from a session without a worktree, and
+  would turn "nothing recorded" into a `new-space` that outranks
+  `config.toml`'s `default_placement`. The pre-§6.1 behaviour did exactly
+  that.
+- **Provenance:** the inert panel carries no `from .herdr-draft.toml` line,
+  since it shows no value to attribute; `create --json` says `worktree`.
+
+### 14.3 What this supersedes, and what stands
+
+| where | status |
+|---|---|
+| §5.3, the worktree rows of its op table and its worked example | superseded: a worktree plan is `OpWorktreeCreate` alone, and `Op.CwdFromCheckout` goes with the ops that needed it |
+| §6.1, the worktree-on column of the hint table and the disclosure line | superseded: the row is inert under a worktree |
+| §6.3, `--placement split-here --worktree` "is now a request herdr-draft can honour" | superseded: refused |
+| §9's frame list for a live placement row under a worktree | superseded by frames of the inert row |
+| §11 items 1 and 2 | answered the other way, for the reasons in 14.1 |
+| §12's row deleting `provenanceWorktree` | reversed: it returns, and `create --json` attributes a worktree session's placement to `worktree` |
+| §6.4's "every value ever persisted by a worktree user is `new-space`" | no longer made true going forward: a worktree submit now keeps the placement it found (14.2) |
+| §5.1 (space vs agent pane), §5.2 (reuse correction), §5.4 (keep-or-clean) | **stand**: a reused space still gets a claimed tab, so the agent's ids and the space's can still differ |
+| §8.1 and §8.2 (herdr bugs) | stand; §8.2's family is filed as [herdrdev/herdr#4293](https://github.com/herdrdev/herdr/issues/4293), through `worktree open` (14.1) |
+| §8.4 (`--no-open`) | no longer needed by herdr-draft |
+| #128's `tab in <space>` and its default | stand for a session without a worktree |

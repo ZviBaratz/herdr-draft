@@ -165,11 +165,11 @@ func TestDirResult_MemoryReAppliesAcrossASecondProjectChange(t *testing.T) {
 		if got := m.worktree.On(); got != worktreeOn {
 			t.Errorf("at %s: worktree on = %v, want %v", where, got, worktreeOn)
 		}
-		// Placement is meaningful in both worktree states (placement spec
-		// §6.1: a worktree no longer overrides it), so memory has to
-		// round-trip it whether the remembered worktree toggle is on or
-		// off -- unconditionally, unlike the worktree-off-only check this
-		// replaced.
+		// The chip round-trips in both worktree states. Under a worktree
+		// the plan does not use it (placement spec §14,
+		// plan.EffectivePlacement), but the field keeps it, so turning the
+		// worktree off shows the remembered choice rather than a reset --
+		// which is why this stays unconditional.
 		if got := m.placement.Value(); got != placement {
 			t.Errorf("at %s: placement = %v, want %v", where, got, placement)
 		}
@@ -360,7 +360,7 @@ func TestSubmit_RecordsProjectMemory(t *testing.T) {
 		AgentKind:   "codex",
 		Placement:   plan.PlacementTabHere,
 		BaseRef:     "develop",
-		UseWorktree: true,
+		UseWorktree: false, // a worktree submit keeps the placement instead: TestSubmit_AWorktreeSubmitLeavesThePlacementMemoryAlone
 	}
 
 	_, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{FailedIndex: -1}})
@@ -379,8 +379,8 @@ func TestSubmit_RecordsProjectMemory(t *testing.T) {
 	if entry.Placement != "tab-here" {
 		t.Errorf("entry.Placement = %q, want %q", entry.Placement, "tab-here")
 	}
-	if entry.Worktree == nil || !*entry.Worktree {
-		t.Errorf("entry.Worktree = %v, want a recorded true", entry.Worktree)
+	if entry.Worktree == nil || *entry.Worktree {
+		t.Errorf("entry.Worktree = %v, want a recorded false", entry.Worktree)
 	}
 	if entry.Base != "develop" {
 		t.Errorf("entry.Base = %q, want %q", entry.Base, "develop")

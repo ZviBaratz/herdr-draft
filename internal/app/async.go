@@ -1296,15 +1296,16 @@ func (m Model) persistStateCmd() tea.Cmd {
 		st.TouchRecent(dir)
 	}
 	st.LastKind = m.submitInput.AgentKind
-	st.LastPlacement = defaults.PlacementValue(m.submitInput.Placement)
+	st.LastPlacement = defaults.RememberedPlacement(m.submitInput, m.state.LastPlacement)
 	useWorktree := m.submitInput.UseWorktree
 	st.LastWorktree = &useWorktree
 
 	projectKey := m.projectKey
+	previous, _ := m.projects.Get(projectKey)
 	projects := m.projects.Touched(projectKey, config.ProjectDefaults{
 		Kind:      m.submitInput.AgentKind,
 		Worktree:  &useWorktree,
-		Placement: defaults.PlacementValue(m.submitInput.Placement),
+		Placement: defaults.RememberedPlacement(m.submitInput, previous.Placement),
 		Base:      m.submitInput.BaseRef,
 	}, time.Now())
 

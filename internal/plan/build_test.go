@@ -41,6 +41,21 @@ func kindsOf(ops []Op) []OpKind {
 	return out
 }
 
+// TestEffectivePlacement_AWorktreeSessionRunsInItsOwnSpace pins placement
+// spec §14's rule at the one place both callers take it from: with a
+// worktree, whatever placement was chosen or remembered, the session runs
+// in the worktree's own space; without one, the choice stands untouched.
+func TestEffectivePlacement_AWorktreeSessionRunsInItsOwnSpace(t *testing.T) {
+	for _, p := range []Placement{PlacementNewSpace, PlacementTabHere, PlacementSplitHere, PlacementTabIn} {
+		if got := EffectivePlacement(true, p); got != PlacementNewSpace {
+			t.Errorf("EffectivePlacement(worktree, %v) = %v, want %v", p, got, PlacementNewSpace)
+		}
+		if got := EffectivePlacement(false, p); got != p {
+			t.Errorf("EffectivePlacement(no worktree, %v) = %v, want it unchanged", p, got)
+		}
+	}
+}
+
 func TestBuildWorktreePinPrompt(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
@@ -136,82 +151,26 @@ func TestBuildWorktreeActiveClaude(t *testing.T) {
 	}
 }
 
-func TestBuildWorktreeTabHere(t *testing.T) {
-	in := validInput()
-	in.UseWorktree = true
-	in.Placement = PlacementTabHere
-
-	ops, err := Build(in)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-
-	want := []OpKind{OpWorktreeCreate, OpTabCreate, OpAgentStart}
-	if got := kindsOf(ops); !reflect.DeepEqual(got, want) {
-		t.Fatalf("op kinds = %v, want %v", got, want)
-	}
-
-	wt := ops[0].Worktree
-	if wt == nil {
-		t.Fatal("ops[0].Worktree is nil")
-	}
-	if wt.Focus {
-		t.Error("worktree op Focus = true, want false: a placement op follows and owns focus")
-	}
-
-	tab := ops[1].Tab
-	if tab == nil {
-		t.Fatal("ops[1].Tab is nil")
-	}
-	if tab.Workspace != in.Ctx.WorkspaceID {
-		t.Errorf("Tab.Workspace = %q, want %q (the INVOKING workspace, not the worktree's)", tab.Workspace, in.Ctx.WorkspaceID)
-	}
-	if tab.Cwd != "" {
-		t.Errorf("Tab.Cwd = %q, want empty -- Execute fills it from the worktree's CheckoutPath at runtime", tab.Cwd)
-	}
-	if tab.Label != in.Title {
-		t.Errorf("Tab.Label = %q, want %q", tab.Label, in.Title)
-	}
-	if !tab.Focus {
-		t.Error("Tab.Focus = false, want true: the placement op is what owns focus now")
-	}
-	if !ops[1].CwdFromCheckout {
-		t.Error("ops[1].CwdFromCheckout = false, want true")
-	}
-}
-
-func TestBuildWorktreeSplitHere(t *testing.T) {
-	in := validInput()
-	in.UseWorktree = true
-	in.Placement = PlacementSplitHere
-
-	ops, err := Build(in)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-
-	want := []OpKind{OpWorktreeCreate, OpPaneSplit, OpAgentStart}
-	if got := kindsOf(ops); !reflect.DeepEqual(got, want) {
-		t.Fatalf("op kinds = %v, want %v", got, want)
-	}
-	if ops[0].Worktree.Focus {
-		t.Error("worktree op Focus = true, want false")
-	}
-	split := ops[1].Split
-	if split == nil {
-		t.Fatal("ops[1].Split is nil")
-	}
-	if split.PaneID != in.Ctx.FocusedPaneID {
-		t.Errorf("Split.PaneID = %q, want %q (the INVOKING pane)", split.PaneID, in.Ctx.FocusedPaneID)
-	}
-	if split.Direction != defaultSplitDirection {
-		t.Errorf("Split.Direction = %q, want %q", split.Direction, defaultSplitDirection)
-	}
-	if split.Cwd != "" {
-		t.Errorf("Split.Cwd = %q, want empty", split.Cwd)
-	}
-	if !split.Focus || !ops[1].CwdFromCheckout {
-		t.Error("Split.Focus/CwdFromCheckout: want true/true")
+// TestBuild_RefusesAWorktreeWithAnyOtherPlacement: a worktree session runs
+// in its own space (placement spec §14), and both callers route their
+// placement through EffectivePlacement before building. An Input that
+// skipped it is refused, not quietly repaired: repairing it here would let
+// the caller's plan.Input -- what `create --json` reports and what the
+// memory files record -- disagree with what was built.
+func TestBuild_RefusesAWorktreeWithAnyOtherPlacement(t *testing.T) {
+	for _, p := range []Placement{PlacementTabHere, PlacementSplitHere, PlacementTabIn} {
+		in := validInput()
+		in.UseWorktree = true
+		in.Placement = p
+		in.Space = Space{WorkspaceID: "wG", Label: "herdr-draft"} // so tab-in is refused for the worktree, not the missing space
+		ops, err := Build(in)
+		if err == nil {
+			t.Errorf("Build(worktree, %v) = %v ops, want an error", p, kindsOf(ops))
+			continue
+		}
+		if !strings.Contains(err.Error(), "worktree") {
+			t.Errorf("Build(worktree, %v) error = %q, want it to name the worktree", p, err)
+		}
 	}
 }
 
@@ -229,10 +188,7 @@ func TestBuildWorktreeNewSpaceUnchanged(t *testing.T) {
 		t.Fatalf("op kinds = %v, want %v -- new-space placement must not append anything", got, want)
 	}
 	if !ops[0].Worktree.Focus {
-		t.Error("worktree op Focus = false, want true: no placement op follows, so the worktree owns focus exactly as before")
-	}
-	if ops[0].CwdFromCheckout {
-		t.Error("the worktree op itself must never carry CwdFromCheckout -- it is the SOURCE of the checkout path, not a consumer of it")
+		t.Error("worktree op Focus = false, want true: the worktree's space is where the session runs, so it owns focus")
 	}
 }
 

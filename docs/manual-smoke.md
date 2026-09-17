@@ -9,7 +9,8 @@ here is mocked.
 Fourteen cells and a 10b: the original four (Path A/B × worktree on/off), plus
 three that cover what v2 added — the headless `create`, the repo-level
 `.herdr-draft.toml`, and per-project memory — plus two that cover what the
-placement spec added: placement honored under a worktree, and the reuse
+placement spec added: a worktree session keeping its own space (placement
+spec §14, which reversed the placement honored there before), and the reuse
 path. The tenth is the one the 0.9.0 floor exists for, a large multi-line
 prompt (#73), and 10b asks the same question from the other side (#108).
 Cell 10 spends real model quota on its payload, so it is the one to decide
@@ -424,15 +425,12 @@ popup path.
    on the chips. Confirm **on**, a seeded branch, and a base list carrying
    `HEAD (<branch>)` first. While the base list is on screen the `base` part
    line is empty: the list is what says which base is selected.
-7. `⇥` to **placement**. It is now LIVE even with the worktree on
-   (placement spec §6.1) — `←→` through all three chips. Confirm each
-   chip's row label changes (`new space` / `tab here` / `split here`) and
-   that the panel's hint follows it (`the worktree opens as its own
-   space` / `the agent opens a tab here, on the worktree's checkout` /
-   `the agent splits this pane, onto the worktree's checkout`), with `the
-   worktree also keeps a space of its own` appearing under the panel's
-   hint for the two non-default chips only. Leave it on whichever chip you
-   want to actually submit with — this is no longer a read-only row.
+7. **placement** is not a stop with the worktree on: the `⇥` from step 6
+   lands on **agent**, and the row reads `the worktree's own space`
+   (placement spec §14). Clicking it shows `turn the worktree off to choose`
+   and the footer `nothing to set here`. To see its chips, turn the worktree
+   off in step 6 and back on again. The row keeps whatever chip was chosen
+   while the worktree was off.
 8. `⇥` to **agent**. Leave the default favorite (`claude` unless your config
    changes it). `←→` walks the favorites, `↑↓` the full kind list.
 9. `⇥` to **account**. Walk the list with `↑↓` if you like, but **do not
@@ -499,8 +497,8 @@ with the dialog still up, in which case the launch row goes green and the
 first only through headless probes, so expect the shape above — but a `…` on
 the launch row is the same feature, not a different result.
 
-With a `here` placement herdr has already moved you to the agent's pane, so
-the dialog is in front of you. Answer it (`↓`, `↵` for "Yes, I trust this
+herdr has already moved you to the agent's pane (the worktree's space is
+created with `Focus: true`), so the dialog is in front of you. Answer it (`↓`, `↵` for "Yes, I trust this
 folder"). **Press nothing in the popup** — that is the whole of #115.
 
 **Then read the pane, not the report.** `herdr[S] pane read <pane-id>
@@ -537,11 +535,11 @@ longer running* — and no instruction to answer a dialog that is gone.
 > **On the fallback path, answer the gate BEFORE you go and look at the
 > pane.** This no longer applies to the ordinary run — since #115 the popup
 > waits and closes itself, and there is no gate to answer — but it still
-> applies whenever the wait ends in the failure screen. With a `here`
-> placement the agent's tab or split is created with `Focus: true`
-> (`placementOp`, build.go) — deliberately, since that is where the agent
-> lands — so herdr moves you to the new pane while the popup is still up
-> with its keep-or-remove choice unanswered. On the 2026-09-09 run that
+> applies whenever the wait ends in the failure screen. The space the agent
+> runs in is created with `Focus: true` (`topologyOp`, build.go) —
+> deliberately, since that is where the agent lands — so herdr moves you to
+> the new pane while the popup is still up with its keep-or-remove choice
+> unanswered. On the 2026-09-09 run that
 > produced a genuinely confusing artifact: a `k` pressed while looking at
 > the pane went to the **agent**, whose startup banner came out `kclaude:`,
 > and the gate was answered only by a second `k` after switching back.
@@ -698,7 +696,7 @@ export HERDR_BIN_PATH=/nonexistent/herdr
 | Probe | Expected |
 |---|---|
 | `herdr-draft create --no-worktree` | `a title is required: pass --title, or --issue to take one from Linear` → **exit 2** |
-| `herdr-draft create --title x --placement nowhere` | `unknown --placement "nowhere": expected new-space, tab-here or split-here`, then the usage block → **exit 2** |
+| `herdr-draft create --title x --placement nowhere` | `unknown --placement "nowhere": expected new-space, tab-here, split-here or tab-in`, then the usage block → **exit 2** |
 | `herdr-draft create --title x --no-worktree --placement tab-here` | `HERDR_WORKSPACE_ID is not set: --placement tab-here creates the tab in the workspace this pane belongs to` → **exit 2** (the missing variable is named exactly) |
 | `herdr-draft create --title x --no-worktree --placement new-space` | `herdr unreachable: herdr workspace list: ...` → **exit 3** |
 | `herdr-draft bogus` | the top-level usage block → **exit 2**; `herdr-draft help` prints the same at **exit 0** |
@@ -740,10 +738,9 @@ contaminate the JSON.
 
 The three ids name **where the agent is**, and `space_workspace_id` /
 `space_tab_id` / `space_pane_id` beside them name the space `--on-failure
-clean` acts on (#99). This cell runs `--worktree` with the default
-placement, where the two are the same triple twice over — Cell 8's
-combination is the one that separates them, and the one to read this
-against.
+clean` acts on (#99). This cell runs `--worktree`, where the two are the
+same triple twice over — Cell 9's reuse path is the only one that separates
+them since placement spec §14, and the one to read this against.
 Tear the created topology down as in Cell 1.
 
 ### Cell 6 — a `.herdr-draft.toml` with a forbidden key
@@ -808,50 +805,70 @@ fields the user has not touched.
 
 ## What the placement spec added
 
-### Cell 8 — worktree on, placement tab here
+### Cell 8 — worktree on: the session keeps its own space
 
-**Setup:** fresh throwaway repo, worktree on (the default), placement
-`tab here`.
+**Why this cell exists.** Before placement spec §14, a worktree combined
+with a placement put the agent's tab outside the worktree's space and left
+that space holding an idle shell. Once #128 made `tab in <repo>` the
+default, that happened to every worktree session after the first in a
+repository. Measured on herdr 0.9.0 it also set up herdr's own `worktree
+open` to take over the repository's space ([herdrdev/herdr#4293](https://github.com/herdrdev/herdr/issues/4293)).
+This cell checks that the default path no longer does any of it.
 
-**Steps:** same walk as Cell 1 through step 6 (worktree on), then step 7
-(placement) left on `tab here`, then submit.
+**Setup:** fresh throwaway repo with no workspace open on it, invoked from a
+pane in a different workspace.
 
-**Expected:** TWO new containers, not one — the worktree's own new
-workspace (an idle shell, no agent) and a new TAB in the workspace you
-were ALREADY in, with the agent running there instead. `herdr[S]
-workspace list` should show one more workspace for the worktree itself,
-**plus** one more still for the origin repo if it was not already open
-when you started this cell: `worktree create` opens it too, as
-`ensure_source_parent_membership`'s side effect (design doc §2.7;
-`plan.Clean`'s doc comment records the same thing, and deliberately
-leaves that workspace alone). Against the fresh throwaway repo this
-cell's own setup calls for, that means **two** new workspaces, not one —
-reading it as one would mistake this cell's own setup for a failure.
+**Steps:**
+
+1. Create once through the form, worktree on (the default), everything else
+   left alone. herdr opens **two** workspaces on this first worktree create
+   in the repository: the repository's own (an idle shell,
+   `ensure_source_parent_membership`'s side effect — design doc §2.7;
+   `plan.Clean` deliberately leaves it) and the session's space, nested
+   under it.
+2. Open the form again on the same repository. The `placement` row reads
+   `the worktree's own space` before you touch anything. `⇥` goes from
+   `worktree` straight to `agent`. Clicking the row shows `turn the worktree
+   off to choose` in the panel and `nothing to set here` in the footer.
+3. Turn the worktree off. The row now reads `tab in <repo>`: #128's
+   default, since step 1 made the repository's space one herdr recognises.
+   Turn it back on, type a title and submit.
+
+**Expected:** exactly **one** new workspace, nested under the repository's,
+with the agent's pane in it. The progress stack has no `creating tab` step,
+and neither the repository's space nor the one you invoked from gains a tab.
+
+**Headless** (plugin env exported as Cell 5 does):
+
+```bash
+herdr-draft create --project <repo> --title "cell 8b" --worktree --json
+herdr-draft create --project <repo> --title "cell 8c" --worktree --placement tab-here
+```
+
+The first reports `"placement": "new-space"`, `provenance.placement` as
+`worktree`, and `workspace_id` equal to `space_workspace_id`. The second
+exits 2 naming `--no-worktree`, and creates nothing.
 
 **Count panes with other plugins in mind.** Plugin install/link state is
 global, so a Route A0 session inherits every plugin installed for your normal
 one — and three of them subscribe to `worktree.created`. One,
 `persiyanov.reviewr`, answers it by *opening a pane*
 (`[[events]] on = "worktree.created"`, `command = ["bash", "herdr/pane.sh",
-"auto-open"]`), so the worktree's own workspace holds **two** idle shells
-rather than the one this cell describes. Confirmed independent of
-herdr-draft: a bare `herdr worktree create` reproduces it, and the plan only
-ever issues the two calls its progress stack shows. Check
-`herdr[S] plugin list` before treating a surplus container as a finding, and
-count what changed rather than the absolute total.
-`herdr[S] tab list --workspace <your original workspace>` should show one
-more tab than before, and that tab's pane is running the agent. This is
-placement spec §5.3's disclosed cost — the idle shell in the worktree's
-own workspace is not a bug.
+"auto-open"]`), so the worktree's own workspace can hold reviewr's pane
+beside the agent's. Confirmed independent of herdr-draft: a bare `herdr
+worktree create` reproduces it, and the plan only ever issues the calls its
+progress stack shows. Check `herdr[S] plugin list` before treating a
+surplus pane or container as a finding, and count what changed rather than
+the absolute total.
 
-Run this cell **headlessly** (Route A0) and expect step 3 (starting the
+Run this cell **headlessly** (Route A0) and expect step 2 (starting the
 agent) to fail with `agent_not_ready` **every time you run this cell**, on
 every machine — not just the first. #115 changed the popup and deliberately
 left `create` alone (its decision 2), so this cell's expected result is
 unchanged; the popup's version of the same moment is Cell 1's pause. If you
 walk this cell through the popup instead, expect Cell 1's waiting row here
-too, and check that the agent lands in the invoking workspace rather than
-the worktree's before you answer the dialog. The
+too, and check that the agent is in the worktree's own space before you
+answer the dialog. The
 worktree checkout is created by the run itself, so it is always a path
 Claude Code has never seen and there is nothing to pre-trust in advance
 (see "Claude Code's trust prompt is a precondition"). Its first-run trust
@@ -859,10 +876,8 @@ prompt blocks it, and herdr's own `agent start` refuses outright rather
 than herdr-draft sending a prompt into it — the same class of blocking
 dialog `internal/plan/dialog.go` exists to catch, just refused one layer
 higher up here. That failure does not invalidate the cell: confirm
-instead that the two containers above exist, that the agent's pane is in
-the invoking workspace rather than the worktree's, and that its cwd is
-the worktree checkout; `--on-failure keep`'s report naming the SPACE
-(not an agent pane) is the same evidence read a different way.
+instead that the one new workspace above exists and that the agent's pane
+is inside it, on the worktree checkout.
 
 **Read the failure message itself — it is part of what this cell
 checks** (#90). herdr's own text is "blocked during startup", which
@@ -927,16 +942,14 @@ written for:
 # after Cell 8, with its worktree workspace still open
 rm -rf /home/zvi/.herdr/worktrees/<repo>/<branch-slug>
 git -C <repo> worktree prune
-# then create the SAME branch again, placement new-space so the worktree op
-# is itself the agent's pane -- the only shape in which the correction fires
+# then create the SAME branch again
 herdr-draft create --project <repo> --title "<a different title>" \
-    --branch <same branch> --worktree --placement new-space --json
+    --branch <same branch> --worktree --json
 ```
 
-`--placement new-space` is load-bearing: with `tab here` or `split here` a
-placement op follows and *it* decides where the agent goes, so `plan.Execute`
-deliberately skips the claim (`exec.go`, "a claim in the reused workspace
-would be litter").
+No `--placement` is needed. Since placement spec §14 a worktree session has
+no placement op, so the worktree op is always the agent's pane and the
+correction fires whenever herdr reuses a workspace.
 
 **Passed on 0.9.0.** herdr reused the open workspace, and the correction
 claimed a fresh **tab** in it — the agent landed in a new pane, and the first
@@ -1419,8 +1432,19 @@ sidebar shows no new top-level space, or what the form reads at the
 keyboard. Those three are this cell.
 
 **Setup:** a throwaway repo, and a workspace already open on its PRIMARY
-checkout — `herdr[S] workspace create --cwd /var/tmp/hd-smoke-14 --label
-smoke14`. Note its id. Then open the form from a pane in a DIFFERENT
+checkout that herdr counts as the repository's. A plain `workspace create
+--cwd` is **not** enough on its own. herdr's `workspace list` carries a
+`worktree` object only for a workspace with worktree membership, and
+`plan.FindSpace` matches on that, so `tab in` is neither offered nor
+accepted for it. Mark it with `worktree open` on the primary checkout, which
+answers `already_open: true` and keeps the label:
+
+```bash
+herdr[S] workspace create --cwd /var/tmp/hd-smoke-14 --label smoke14 --no-focus
+herdr[S] worktree open --cwd /var/tmp/hd-smoke-14 --path /var/tmp/hd-smoke-14 --no-focus
+```
+
+A first `worktree create` in the repository marks one too. Note its id. Then open the form from a pane in a DIFFERENT
 workspace (the disposable session's root workspace is fine), so that
 "here" and "the repo's space" are not the same place.
 
@@ -1455,24 +1479,23 @@ equals it; `provenance.placement` is `flag`), and it must work with
 `HERDR_WORKSPACE_ID`/`HERDR_TAB_ID`/`HERDR_PANE_ID` all unset — `tab-in`
 reads none of them, which is the whole of #128.
 
-**Worktree on (the disclosed cost).** Repeat the form walk with worktree
-**on**. The panel adds "the worktree also keeps a space of its own", and
-that is what happens: the checkout opens as a grouped space under
-`smoke14`'s repository, and the agent's tab lands in `smoke14` on the
-checkout's path. `--json` therefore carries two different triples
-(`space_*` for the checkout's space, `workspace_id`/`tab_id`/`pane_id` for
-the agent). This is placement spec §5.3 unchanged; the plan that asked for
-this cell wanted the worktree to cost no space at all, and §7.3/§8.4
-record why that needs herdr's `worktree create --no-open` rather than a
-`git worktree add` behind herdr's back.
+**Worktree on.** Repeat the form walk with the worktree **on**. The row
+reads `the worktree's own space`, not `tab in smoke14`. The submit opens
+one new space nested under `smoke14` with the agent in it, and adds no tab
+to `smoke14` (placement spec §14). Headlessly, `create --worktree --json`
+reports equal agent and `space_*` triples.
 
-**Also record:** close `smoke14` and re-open the form on the same repo. The
-row must read `new space` again and the chip count must be three — the
-memory files remember `tab-in`, and the resolver has to drop it once the
-space is gone rather than leave the cursor on a chip that is not there.
+**Also record:** close `smoke14`, re-open the form on the same repo, and
+turn the worktree off (the worktree-on submit above left it remembered on).
+The row must read `new space` and the chip count must be three. The memory
+files still remember `tab-in` — a worktree submit keeps the placement it
+found (placement spec §14.2) — so this is the resolver dropping it once the
+space is gone, rather than leaving the cursor on a chip that is not there.
 
-**Unrun.** Nothing here has been observed; do not write a result you did
-not see.
+**Partly run.** The setup's `worktree open` step, the headless `tab-in`
+default, and the headless worktree-on result were observed on 2026-09-17
+(Recorded runs). The form walk, the two `create` variants, and "Also
+record" were not. Do not write a result you did not see.
 
 ## After the matrix
 
@@ -1506,6 +1529,26 @@ not see.
   alongside the release.
 
 ## Recorded runs
+
+### a worktree session keeps its own space (placement spec §14) — 2026-09-17
+
+herdr 0.9.0, `zvi/worktree-owns-its-space` at `66c3070` plus the `create
+--help` wording of the commit that records this run, built into a scratch
+directory. Route A0 (a headless disposable
+server), with the form run inside one of its panes (Route B's variables set
+by a launcher script) and a scratch state dir. `[agents] favorites =
+["nosuchkind"]`: every create stops at `starting agent` with herdr's
+`unsupported_agent_kind`, so this checks topology and form, not agents, and
+spent no account quota. No trust prompt was reached.
+
+| Cell | Result |
+|---|---|
+| 8, headless | **as expected.** The first `create --worktree` in a fresh repo opened the parent (idle shell) and the session's own nested space. The second opened exactly one nested space with the agent's pane in it, `placement` `new-space` from `worktree`, and the agent and space triples equal. `--worktree --placement tab-here` exited 2 with `--placement tab-here needs --no-worktree: a worktree session runs in the worktree's own space, which herdr groups under the repository's`. `--no-worktree` with the parent open still went `tab-in` the parent. `--on-failure clean` removed the worktree's space. |
+| 8, form | **as expected, one gap.** The row read `the worktree's own space` on open. `⇥` from `worktree` landed on `agent`. Turning the worktree off made the row read `tab in hdux-repo`, and turning it back on restored the inert row. A submit showed two steps (`worktree`, then the failed agent), with no tab step, and added exactly one workspace, nested, holding the agent's pane, while the parent and invoking workspaces were unchanged. **Not checked:** the click-focused panel and footer, which a headless pane cannot click. `field_placement_test.go` and the `placement-panel-worktree-80x24` frame pin them. |
+| 14, setup | **the corrected setup works.** A plain `workspace create --cwd … --label smoke14` had `worktree: null`. `worktree open --cwd <repo> --path <repo> --no-focus` answered `already_open: true` for it, label kept, and after that `--no-worktree` defaulted `tab-in` `smoke14`, and `--worktree` opened one space nested under it. |
+
+Teardown: every workspace, worktree, branch and both throwaway repos
+removed; `herdr session list` back to `default`; `pgrep -x herdr-draft` 0.
 
 ### placement tab-in (#128) — 2026-09-16
 

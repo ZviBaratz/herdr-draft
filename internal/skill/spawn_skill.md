@@ -118,7 +118,13 @@ prevent.
 
 ## 4. Where the pane goes
 
-`--placement` decides where the agent's pane lands.
+**With a worktree there is nothing to choose.** A worktree session runs in
+the worktree's own space, which herdr's sidebar groups under the
+repository's. `--placement` other than `new-space`, and `--workspace`, are
+refused with a worktree (exit 2), so leave both off.
+
+Without one (`--no-worktree`), `--placement` decides where the session's
+pane lands.
 
 | value | where it lands | when it is right |
 |---|---|---|
@@ -131,21 +137,17 @@ prevent.
 `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID` that herdr sets in
 every pane. `new-space` and `tab-in` need none of them.
 
-**Leave `--placement` off unless you mean it.** With nothing passed, `create`
-picks `tab-in` when `herdr workspace list` already shows a workspace on the
-project's checkout, and `new-space` when it does not — so the repository's
-own space collects its sessions as tabs instead of a new top-level space
-appearing per task. Pass `--placement new-space` to insist on a space of
-its own.
+**Leave `--placement` off unless you mean it.** With nothing passed and no
+worktree, `create` picks `tab-in` when `herdr workspace list` already shows a
+workspace on the project's checkout, and `new-space` when it does not — so
+the repository's own space collects its sessions as tabs instead of a new
+top-level space appearing per task. Pass `--placement new-space` to insist
+on a space of its own.
 
 **Any other existing workspace can be named outright:** `--workspace <id>`
 (ids from `herdr workspace list`) puts the tab in that workspace and implies
 `tab-in`. A script running in one space can therefore start a session in
 another without pretending to be a pane there.
-
-With a worktree and a `here` placement, the checkout gets a workspace of
-its own *as well*, and the agent runs in your workspace, not in it. That
-is why section 8's two id triples are not the same thing.
 
 ## 5. Agent and account
 
@@ -183,7 +185,7 @@ For a real handoff, **write it to a durable file first and pipe that in**:
 
 ```bash
 # with section 2's three exports above it, in the same command
-"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree --base main --placement new-space --prompt - < ~/handoffs/login-redirect.md
+"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree --base main --prompt - < ~/handoffs/login-redirect.md
 ```
 
 Two reasons, both practical: the user can read the brief before the
@@ -213,7 +215,8 @@ show the **exact command** for each option rather than a label — a
 placement is a word, but a command is reviewable.
 
 Put the one you would run first, and beside it the two nearest
-alternatives: usually the other worktree answer and the other placement.
+alternatives: usually the other worktree answer and, for a session without
+a worktree, the other placement.
 
 **Offer "write the brief to a file and create nothing" as one of the
 options whenever the user's own words asked for a document** — "write a
@@ -243,11 +246,12 @@ choice whenever you are going to act on the result. Note that on exit 2
 and exit 3 it prints **nothing** on stdout, so a pipe into `jq` gets empty
 input — read the exit status before you read the JSON.
 
-**The ids name the agent, not the worktree.** `workspace_id`, `tab_id` and
+**The ids name the agent, not the space.** `workspace_id`, `tab_id` and
 `pane_id` are where the agent actually is, which is what you address next.
 `space_workspace_id`, `space_tab_id` and `space_pane_id` are the space the
-checkout got, which is a different place whenever a worktree was combined
-with a `here` placement.
+run established. They differ only when herdr answered with a workspace
+that was already open for the checkout, and the agent was given a fresh
+tab in it.
 
 **`prompt_status` is the field that matters**, and it has three values, not
 two. Each is a statement about what you *know*, so act on the last column

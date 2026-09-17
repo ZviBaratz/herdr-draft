@@ -58,6 +58,10 @@ func TestFormAndCommandProduceTheSamePlan(t *testing.T) {
 		lastUsed   string
 		projects   string
 		repo       config.RepoConfig
+		// workspaces is what `herdr workspace list` reports to both sides:
+		// the tier (TierOpenWorkspace) that is a fact about the machine
+		// rather than a file.
+		workspaces []herdrc.WorkspaceInfo
 		// args are the command's flags; the form is driven with the
 		// equivalent user input (the title, always) and nothing else.
 		args []string
@@ -88,15 +92,15 @@ prompt_wait_ms = 22000
 				`":{"kind":"codex","worktree":true,"placement":"tab-here","base":"main","seen":"2026-09-01T00:00:00Z"}}}`,
 			repo: config.RepoConfig{BranchPrefix: "team/"},
 			args: []string{"--title", title},
-			// projects.json wins the toggle, the kind, the base AND the
-			// placement; .herdr-draft.toml wins the prefix over
-			// config.toml. Before placement spec, a worktree forced
-			// PlacementNewSpace here regardless of what every tier
-			// remembered -- it no longer does, and tab-here is now a real
-			// placement under a worktree (placement spec §5.3/§6.3).
+			// projects.json wins the toggle, the kind and the base;
+			// .herdr-draft.toml wins the prefix over config.toml. Its
+			// remembered tab-here does NOT apply: a worktree session runs
+			// in the worktree's own space (placement spec §14), so both
+			// paths must turn a remembered placement into new-space, not
+			// just one of them.
 			want: plan.Input{
 				Branch: "team/fix-login-redirect-loop", BaseRef: "main",
-				UseWorktree: true, Placement: plan.PlacementTabHere,
+				UseWorktree: true, Placement: plan.PlacementNewSpace,
 				AgentKind: "codex", ExtraArgs: []string{"--full-auto"},
 				DetectionTimeout: 11 * time.Second, PromptTimeout: 22 * time.Second,
 			},
@@ -194,6 +198,47 @@ trust_repository = true
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
+		{
+			// #128's default, unchanged where it belongs: no worktree, and
+			// the repository's own space is open, so the agent's tab goes
+			// there.
+			name: "no worktree and the repository's space is open: a tab in it",
+			configTOML: `
+branch_prefix = "zvi/"
+default_worktree = false
+[agents]
+favorites = ["claude"]
+`,
+			workspaces: repoSpaceOpen(projectDir),
+			args:       []string{"--title", title},
+			want: plan.Input{
+				Branch:    "zvi/fix-login-redirect-loop",
+				Placement: plan.PlacementTabIn, Space: plan.Space{WorkspaceID: "wR", Label: "thing"},
+				AgentKind:        "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
+			// The defect the review measured (placement spec §14): with a
+			// worktree, the open repository space used to default the
+			// agent into a tab there and leave the worktree's own space
+			// holding an idle shell. Both paths must now keep the agent in
+			// the worktree's space.
+			name: "a worktree and the repository's space is open: still its own space",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+`,
+			workspaces: repoSpaceOpen(projectDir),
+			args:       []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, Space: plan.Space{WorkspaceID: "wR", Label: "thing"},
+				AgentKind:        "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configDir, stateDir := t.TempDir(), t.TempDir()
@@ -212,6 +257,7 @@ trust_repository = true
 				contextJSON: contextJSON,
 				projectDir:  projectDir,
 				repoConfig:  repoConfig,
+				workspaces:  tc.workspaces,
 				args:        tc.args,
 			})
 			fromForm := formPlanInput(t, formCase{
@@ -219,6 +265,7 @@ trust_repository = true
 				stateDir:    stateDir,
 				contextJSON: contextJSON,
 				repoConfig:  repoConfig,
+				workspaces:  tc.workspaces,
 				title:       title,
 			})
 
@@ -253,6 +300,7 @@ type commandCase struct {
 	contextJSON         string
 	projectDir          string
 	repoConfig          func(string) config.RepoConfig
+	workspaces          []herdrc.WorkspaceInfo
 	args                []string
 	picker              picker.Source
 }
@@ -265,6 +313,8 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	if err != nil {
 		t.Fatalf("parseArgs(%v): %v", c.args, err)
 	}
+	runner := newFakeRunner()
+	runner.workspaces = c.workspaces
 	resolved, err := resolveRequest(context.Background(), req, Env{
 		ConfigDir:   c.configDir,
 		StateDir:    c.stateDir,
@@ -276,7 +326,7 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 		// learned that absent is not the same as matching.
 		PluginID: pluginID,
 	}, Deps{
-		Runner:     newFakeRunner(),
+		Runner:     runner,
 		Git:        newFakeGit(),
 		RepoConfig: c.repoConfig,
 		Stdin:      strings.NewReader(""),
@@ -314,6 +364,7 @@ type formCase struct {
 	configDir, stateDir string
 	contextJSON         string
 	repoConfig          func(string) config.RepoConfig
+	workspaces          []herdrc.WorkspaceInfo
 	title               string
 	picker              picker.Source
 	// clauthStatus is what makes the account row exist at all (app.New's own
@@ -360,6 +411,7 @@ func formModel(t *testing.T, c formCase) app.Model {
 			Clauth: app.NewClauthSource(clauth.LoadOpts{}),
 		},
 		Ctx:          hctx,
+		Workspaces:   c.workspaces,
 		Config:       cfg,
 		State:        state,
 		Projects:     projects,
@@ -513,6 +565,14 @@ func (formGit) CurrentBranch(context.Context, string) (string, error)      { ret
 func (formGit) FetchPrune(context.Context, string) error                   { return nil }
 
 func boolp(b bool) *bool { return &b }
+
+// repoSpaceOpen is a `herdr workspace list` in which the project's primary
+// checkout already has a space herdr has marked as the repository's own --
+// the only kind plan.FindSpace can see.
+func repoSpaceOpen(projectDir string) []herdrc.WorkspaceInfo {
+	return []herdrc.WorkspaceInfo{{WorkspaceID: "wR", Label: "thing", Worktree: &herdrc.ContextWorktree{
+		RepoRoot: projectDir, CheckoutPath: projectDir, RepoName: "thing"}}}
+}
 
 func mustContext(t *testing.T, raw string) herdrc.Context {
 	t.Helper()

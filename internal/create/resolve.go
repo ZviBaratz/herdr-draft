@@ -376,9 +376,8 @@ func projectMemoryKey(projectDir, repoRoot string) string {
 // Every field follows the same rule: an explicitly given flag wins;
 // otherwise the resolver's answer applies, in the same shape the form
 // would have applied it (a worktree only where one is possible, a
-// placement carried through unchanged either way -- placement spec §6.1
-// means a worktree no longer overrides it -- an agent kind falling
-// through to the first favorite).
+// placement that only applies without one -- placement spec §14 -- an
+// agent kind falling through to the first favorite).
 func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, issue *linear.Issue, prompt explicitPrompt, hctx herdrc.Context, deps Deps) (plan.Input, map[string]string, error) {
 	prov := provenanceOf(res)
 
@@ -438,6 +437,19 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	// exactly this flag; it is the first that names a workspace other than
 	// the invoking one, and equivalence_test.go treats it as a flag
 	// (provenance "flag"), not as context.
+	// A worktree session runs in the worktree's own space (placement spec
+	// §14), so a placement or a destination given outright asks for
+	// something it cannot have. Refused rather than dropped: the form
+	// offers no such combination, and #145-147's rule is that `create`
+	// refuses what the form refuses. A REMEMBERED placement is different --
+	// nobody asked for it on this command line -- and simply does not apply
+	// (below). Checked before --workspace's id is looked up, so a caller is
+	// not sent to fix an id that could never be used.
+	if useWorktree {
+		if err := refuseWorktreePlacement(req, placement, prov[defaults.FieldWorktree]); err != nil {
+			return plan.Input{}, nil, err
+		}
+	}
 	space := res.Space
 	if req.set["workspace"] {
 		named, ok := workspaceByID(t.workspaces, req.workspace)
@@ -448,6 +460,11 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		placement = plan.PlacementTabIn
 		prov[defaults.FieldPlacement] = provenanceFlag
 	}
+
+	if useWorktree && !req.set["placement"] {
+		prov[defaults.FieldPlacement] = provenanceWorktree
+	}
+	placement = plan.EffectivePlacement(useWorktree, placement)
 
 	kind, err := agentKind(req, res, kinds, prov)
 	if err != nil {
@@ -753,6 +770,25 @@ func requireContext(hctx herdrc.Context, in plan.Input) error {
 	return nil
 }
 
+// refuseWorktreePlacement names what is wrong with an explicit --workspace
+// or a non-new-space --placement under a worktree, and the remedy. Where the
+// worktree came from is part of the sentence when it was not the flag,
+// because a caller who never typed --worktree cannot otherwise tell why a
+// placement they did type is being refused.
+func refuseWorktreePlacement(req request, placement plan.Placement, worktreeFrom string) error {
+	why := "a worktree session runs in the worktree's own space, which herdr groups under the repository's"
+	if worktreeFrom != provenanceFlag {
+		why += " -- and the worktree is on here from " + worktreeFrom
+	}
+	switch {
+	case req.set["workspace"]:
+		return fmt.Errorf("--workspace needs --no-worktree: %s", why)
+	case req.set["placement"] && placement != plan.PlacementNewSpace:
+		return fmt.Errorf("--placement %s needs --no-worktree: %s", defaults.PlacementValue(placement), why)
+	}
+	return nil
+}
+
 // workspaceByID finds the open workspace --workspace names, so the plan
 // carries its label as well as its id and the report can say where the
 // tab went in the same words the form would.
@@ -769,9 +805,14 @@ func workspaceByID(workspaces []herdrc.WorkspaceInfo, id string) (plan.Space, bo
 	return plan.Space{}, false
 }
 
-// provenanceFlag is the one provenance value spec §10's tier names cannot
-// express: a value the caller gave outright on the command line.
-const provenanceFlag = "flag"
+// provenanceFlag and provenanceWorktree are the two provenance values
+// spec §10's tier names cannot express: a value the caller gave outright
+// on the command line, and the one value a worktree decides by itself
+// (placement spec §14: a worktree session's placement is its own space).
+const (
+	provenanceFlag     = "flag"
+	provenanceWorktree = "worktree"
+)
 
 // provenanceOf turns the resolver's own tier attribution into the string
 // map --json prints (spec §10: "the resolver reports which tier supplied

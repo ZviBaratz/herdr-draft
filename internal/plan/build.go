@@ -16,13 +16,11 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 )
 
-// Placement selects where a session's AGENT PANE attaches relative to the
-// invoking pane (spec §9, extended by placement spec §5.3): under a plain
-// (non-worktree) creation it is the only op; under a worktree it is a
-// second op appended after the worktree's own creation, which still always
-// happens and still always gets its own new workspace -- Placement now
-// decides where the AGENT runs, not whether the checkout gets a space of
-// its own.
+// Placement selects where a session WITHOUT a worktree attaches relative
+// to the invoking pane (spec §9). A worktree session always runs in the
+// worktree's own new space (placement spec §14): callers route the
+// placement through EffectivePlacement, and Build refuses any other
+// combination.
 type Placement int
 
 const (
@@ -42,6 +40,23 @@ const (
 	// from differs.
 	PlacementTabIn
 )
+
+// EffectivePlacement is the placement a session actually gets: chosen,
+// unless it has a worktree, in which case always PlacementNewSpace -- the
+// worktree's own space, which herdr groups under the repository's in its
+// sidebar (placement spec §14).
+//
+// It is the ONE statement of that rule. The form (app's buildPlanInput)
+// and headless `create` (buildInput) both route their placement through it
+// before building, so a remembered or configured placement can never pull
+// a worktree session out of its space on one path and not the other, and
+// Build refuses an Input that skipped it.
+func EffectivePlacement(useWorktree bool, chosen Placement) Placement {
+	if useWorktree {
+		return PlacementNewSpace
+	}
+	return chosen
+}
 
 // LaunchMode selects how a pinned claude account reaches the pane.
 //
@@ -196,15 +211,6 @@ type Op struct {
 	// it would have been right by coincidence, and silently wrong the day
 	// another kind gains an account-pinned launch.
 	AgentKind string
-
-	// CwdFromCheckout tells Execute to fill this op's Cwd from the SPACE
-	// op's CheckoutPath, which Build cannot know: only OpTabCreate and
-	// OpPaneSplit ever set it, and only as placement spec §5.3's
-	// build-time placement op appended after a worktree create. Build
-	// performs no I/O and never touches a Runner (CLAUDE.md), so it
-	// cannot resolve a checkout path itself -- it states the INTENT and
-	// Execute resolves it once the worktree op's own response is in hand.
-	CwdFromCheckout bool
 }
 
 // defaultSplitDirection is the direction Build requests for
@@ -228,6 +234,9 @@ func Build(in Input) ([]Op, error) {
 	}
 	if in.AccountPin != "" && in.AgentKind != claudeAgentKind {
 		return nil, fmt.Errorf("plan: build: account pinning is only supported for the %q agent kind, got %q", claudeAgentKind, in.AgentKind)
+	}
+	if in.UseWorktree && in.Placement != PlacementNewSpace {
+		return nil, fmt.Errorf("plan: build: a worktree session runs in the worktree's own space, so placement %s does not apply -- route it through EffectivePlacement first", placementName(in.Placement))
 	}
 	if in.Placement == PlacementTabIn && in.Space.WorkspaceID == "" {
 		return nil, fmt.Errorf("plan: build: placement tab-in needs an open workspace to place the tab in, and none was named")
@@ -254,22 +263,19 @@ func Build(in Input) ([]Op, error) {
 	return ops, nil
 }
 
-// topologyOp returns the op or ops that establish where a session lives:
-// the SPACE (always first, and always what makes the checkout exist when
-// UseWorktree is set) and, when Placement asks for something other than
-// a worktree's own new workspace, a second op that places the AGENT'S
-// pane relative to the invoking pane instead (placement spec §5.1/§5.3).
+// topologyOp returns the op that establishes where a session lives: the
+// worktree's own new space when UseWorktree is set, the placement op when
+// a placement asks for a position beside something, and a new workspace
+// otherwise.
 //
-// Before placement spec: worktree creation always won over Placement
-// outright, and a worktree was always a new workspace regardless of where
-// the form said to place it. That is superseded -- see the design doc's
-// §12 for the exact sentence and where it lived.
+// Placement spec §5.3 once appended a second op after a worktree create to
+// put the agent somewhere else; §14 reversed that, and Build refuses the
+// combination before this runs. Execute still treats the first topology op
+// as the space and the last as the agent's pane (topologyIndices), which
+// with one op is the same op.
 func topologyOp(in Input) []Op {
 	if in.UseWorktree {
-		// Empty Cwd with CwdFromCheckout set: the checkout does not exist
-		// yet, so only Execute can fill it in.
-		placement, hasPlacement := placementOp(in, "", true)
-		worktree := Op{
+		return []Op{{
 			Kind:  OpWorktreeCreate,
 			Label: "creating worktree",
 			Worktree: &herdrc.WorktreeCreateReq{
@@ -277,17 +283,13 @@ func topologyOp(in Input) []Op {
 				Branch:          in.Branch,
 				Base:            in.BaseRef,
 				Label:           in.Title,
-				Focus:           !hasPlacement,
+				Focus:           true,
 				TrustRepository: in.TrustRepository,
 			},
-		}
-		if !hasPlacement {
-			return []Op{worktree}
-		}
-		return []Op{worktree, placement}
+		}}
 	}
 
-	if placement, ok := placementOp(in, in.ProjectDir, false); ok {
+	if placement, ok := placementOp(in); ok {
 		return []Op{placement}
 	}
 	return []Op{{
@@ -301,35 +303,25 @@ func topologyOp(in Input) []Op {
 	}}
 }
 
-// placementOp returns the op that attaches the agent's pane relative to the
-// invoking pane -- (Op{}, false) for PlacementNewSpace, which asks for a
-// space of its own rather than a position beside anything.
-//
-// The two callers differ only in where the new pane's cwd comes from, which
-// is the whole reason this is one function rather than two: a plain creation
-// knows the directory outright (in.ProjectDir), while under a worktree only
-// Execute can know it -- the checkout does not exist until herdr makes it --
-// so the op carries an empty Cwd plus CwdFromCheckout and Execute fills it
-// from the space op's own CheckoutPath (placement spec §5.1/§5.3). Build
-// performs no I/O and never touches a Runner (CLAUDE.md); it states the
-// INTENT and Execute resolves it.
+// placementOp returns the op that attaches the session's pane relative to
+// the invoking pane, in the project directory -- (Op{}, false) for
+// PlacementNewSpace, which asks for a space of its own rather than a
+// position beside anything.
 //
 // Workspace/PaneID name the INVOKING pane's own workspace/pane (Input.Ctx)
 // for the two `here` placements, and the NAMED workspace (Input.Space) for
-// PlacementTabIn -- never a worktree's: placing the agent somewhere other
-// than the worktree's own space is exactly what this op is for.
-func placementOp(in Input, cwd string, cwdFromCheckout bool) (Op, bool) {
+// PlacementTabIn.
+func placementOp(in Input) (Op, bool) {
 	tab := func(workspace string) (Op, bool) {
 		return Op{
 			Kind:  OpTabCreate,
 			Label: "creating tab",
 			Tab: &herdrc.TabCreateReq{
 				Workspace: workspace,
-				Cwd:       cwd,
+				Cwd:       in.ProjectDir,
 				Label:     in.Title,
 				Focus:     true,
 			},
-			CwdFromCheckout: cwdFromCheckout,
 		}, true
 	}
 	switch in.Placement {
@@ -344,13 +336,28 @@ func placementOp(in Input, cwd string, cwdFromCheckout bool) (Op, bool) {
 			Split: &herdrc.PaneSplitReq{
 				PaneID:    in.Ctx.FocusedPaneID,
 				Direction: defaultSplitDirection,
-				Cwd:       cwd,
+				Cwd:       in.ProjectDir,
 				Focus:     true,
 			},
-			CwdFromCheckout: cwdFromCheckout,
 		}, true
 	default:
 		return Op{}, false
+	}
+}
+
+// placementName names p for an error message, in config.toml's own
+// vocabulary (defaults.PlacementValue's, which this pure package cannot
+// import).
+func placementName(p Placement) string {
+	switch p {
+	case PlacementTabHere:
+		return "tab-here"
+	case PlacementSplitHere:
+		return "split-here"
+	case PlacementTabIn:
+		return "tab-in"
+	default:
+		return "new-space"
 	}
 }
 

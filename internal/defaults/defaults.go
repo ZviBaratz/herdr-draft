@@ -157,8 +157,11 @@ type Resolved struct {
 	// can only apply it once the project directory is known to be a git
 	// repository (form.WorktreeField.SetOn's own precondition).
 	UseWorktree bool
-	// Placement is the default for where the agent's pane lands -- worktree
-	// or not (placement spec §6.1: a worktree no longer forces a new space).
+	// Placement is the default for where the agent's pane lands when there
+	// is no worktree. It is resolved either way, so the form's chip can
+	// hold it while a worktree is on; with a worktree the session runs in
+	// its own space regardless (placement spec §14, plan.EffectivePlacement,
+	// applied by both callers after the worktree toggle is final).
 	Placement plan.Placement
 	// Space is the open workspace already holding the project's checkout
 	// (plan.FindSpace over Sources.Workspaces), or the zero value when there
@@ -382,6 +385,24 @@ func ParsePlacement(s string) (plan.Placement, bool) {
 	default:
 		return plan.PlacementNewSpace, false
 	}
+}
+
+// RememberedPlacement is the placement a successful submit records in
+// last-used.json and projects.json, given what that file held before.
+//
+// A worktree session has no placement -- it runs in the worktree's own space
+// whatever the chip said (placement spec §14) -- so it records nothing new
+// and keeps previous. Recording its "new-space" instead would overwrite the
+// placement a session without a worktree remembered, and would turn
+// "nothing recorded" into a remembered new-space that outranks
+// config.toml's default_placement for every later session. The form
+// (app.persistStateCmd) and `create` (remember) both call this, so the two
+// paths cannot record differently.
+func RememberedPlacement(in plan.Input, previous string) string {
+	if in.UseWorktree {
+		return previous
+	}
+	return PlacementValue(in.Placement)
 }
 
 // PlacementValue is ParsePlacement's inverse: it names p in the same

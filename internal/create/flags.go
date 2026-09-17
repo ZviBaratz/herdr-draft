@@ -80,13 +80,15 @@ flags:
   --base REF         worktree base ref (default: HEAD)
   --worktree         create a git worktree
   --no-worktree      do not create a worktree
-  --placement WHERE  new-space | tab-here | split-here | tab-in; where the
-                     agent's pane lands (a worktree still gets its own new
-                     space too). tab-in is a tab in the workspace already
-                     holding the project's checkout, and is the default
-                     whenever one is open
+  --placement WHERE  new-space | tab-here | split-here | tab-in; where a
+                     session without a worktree lands. tab-in is a tab in
+                     the workspace already holding the project's checkout,
+                     and is the default whenever one is open. A worktree
+                     session runs in the worktree's own space, so with a
+                     worktree only new-space is accepted
   --workspace ID     the workspace tab-in opens its tab in, instead of the
-                     one holding the project (implies --placement tab-in)
+                     one holding the project (implies --placement tab-in;
+                     needs --no-worktree)
   --agent KIND       agent kind to start, e.g. claude
   --account NAME     clauth account to pin (claude only); "auto" asks the
                      configured [clauth] picker to choose
@@ -103,7 +105,8 @@ exit codes:
 
 tab-here and split-here need herdr's own pane environment
 (HERDR_WORKSPACE_ID / HERDR_TAB_ID / HERDR_PANE_ID), which herdr sets for
-every pane, worktree or not. Only a new space needs none of it.
+every pane. new-space and tab-in need none of it, and neither does a
+worktree session, which always runs in its own space.
 `
 
 // registerFlags builds create's flag set, binding every flag to the

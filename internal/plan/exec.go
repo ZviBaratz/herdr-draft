@@ -93,12 +93,12 @@ type Progress struct {
 // topology Clean acts on -- and is nil until that op succeeds; its PaneID
 // is no longer necessarily where the agent runs (placement spec §5.1).
 // AgentAt is where the launch ops actually put the agent -- workspace, tab
-// and pane -- and is equal to Created unless a placement op (§5.3) or a
-// reuse correction (§5.2) moved it; nil until a topology op has succeeded.
-// It is a whole topology rather than a pane id because a placement op can
-// move all three at once: placementOp always targets Input.Ctx, so a
-// worktree plus `tab here` leaves the agent in the INVOKING workspace
-// while Created names the checkout's brand-new one (#99).
+// and pane -- and is equal to Created unless a reuse correction (§5.2)
+// claimed a fresh tab for it; nil until a topology op has succeeded. It is
+// a whole topology rather than a pane id because a claim moves the tab as
+// well as the pane, and a plan with a later topology op could move the
+// workspace too (#99). Build produces no such plan since placement spec
+// §14, but Execute's contract does not depend on that.
 // FailedIndex is the index of the first op that failed, or -1
 // on success. PromptText carries a prompt that never reached the agent, so
 // the caller can surface it for manual paste (spec §9 step 3); it is empty
@@ -1107,13 +1107,15 @@ func isTopologyKind(kind OpKind) bool {
 }
 
 // topologyIndices returns the index of the FIRST topology-producing op in
-// ops (always 0 by Build's own construction -- topologyOp is always
-// first) and the LAST one (placement spec §5.1's "space" and "agent
-// pane": identical, at the same index, whenever Build appended no
-// placement op after a worktree create; two different indices when it
-// did). ops with no topology-producing op at all (which Build never
-// actually returns, but Execute must not panic against a hand-built one)
-// answers (-1, -1).
+// ops and the LAST one (placement spec §5.1's "space" and "agent pane").
+// Build emits exactly one topology op, so for its plans the two are the
+// same index; placement spec §5.3 once appended a second after a worktree
+// create, and §14 removed it. The distinction is kept rather than folded
+// away because it costs nothing and is the executor's whole contract for
+// a plan that ever places the agent apart from its space again -- a herdr
+// that can create a checkout without a workspace (§8.4) would be one.
+// ops with no topology-producing op at all (which Build never returns,
+// but Execute must not panic against a hand-built one) answers (-1, -1).
 func topologyIndices(ops []Op) (space, agentPane int) {
 	space, agentPane = -1, -1
 	for i, op := range ops {
@@ -1142,8 +1144,6 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 	result := ExecResult{FailedIndex: -1}
 	spaceIdx, agentPaneIdx := topologyIndices(ops)
 
-	var created herdrc.CreatedTopology
-	haveCreated := false
 	var agentPane string
 	haveAgentPane := false
 	total := len(ops)
@@ -1256,21 +1256,13 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				if op.Tab == nil {
 					return malformedOpError(op.Kind)
 				}
-				req := *op.Tab
-				if op.CwdFromCheckout && haveCreated {
-					req.Cwd = created.CheckoutPath
-				}
-				topo, err = r.TabCreate(ctx, req)
+				topo, err = r.TabCreate(ctx, *op.Tab)
 				gotTopo = err == nil
 			case OpPaneSplit:
 				if op.Split == nil {
 					return malformedOpError(op.Kind)
 				}
-				req := *op.Split
-				if op.CwdFromCheckout && haveCreated {
-					req.Cwd = created.CheckoutPath
-				}
-				topo, err = r.PaneSplit(ctx, req)
+				topo, err = r.PaneSplit(ctx, *op.Split)
 				gotTopo = err == nil
 			case OpAgentStart:
 				if op.Agent == nil {
@@ -1447,8 +1439,6 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 
 		if gotTopo {
 			if i == spaceIdx {
-				created = topo
-				haveCreated = true
 				c := topo
 				result.Created = &c
 				if reused {
@@ -1457,8 +1447,8 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				}
 			}
 			if i == agentPaneIdx {
-				// The whole topology, not just the pane: a placement op
-				// can move the agent's workspace and tab too, and a
+				// The whole topology, not just the pane: a reuse claim
+				// (§5.2) moves the agent's tab as well as its pane, and a
 				// caller that is handed a pane id alone cannot tell which
 				// tab to address (#99).
 				at := topo
@@ -1632,9 +1622,13 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 // destroying state the user, not herdr-draft, created.
 //
 // When Execute claimed a pane for the agent that differs from the space's
-// own (a reuse correction, or a placement op moving the agent elsewhere --
-// placement spec §5.1/§5.2/§5.3), that claimed pane is closed FIRST, so
-// nothing is left running an agent in a directory about to be deleted.
+// own (a reuse correction, placement spec §5.1/§5.2), that claimed pane is
+// closed FIRST, so nothing is left running an agent in a directory about
+// to be deleted. Defensive rather than reachable from either caller today:
+// a reuse claim only happens on a reused space, which CleanCheck refuses
+// before Clean is ever called, and since placement spec §14 no plan Build
+// emits puts the agent anywhere else. It stays because the ordering is
+// the one Clean must keep the day either of those changes.
 //
 // What "the space" is depends on the plan, and this used to get it wrong.
 // With UseWorktree off and a `here` placement, build.go's topologyOp

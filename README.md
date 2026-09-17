@@ -10,7 +10,7 @@ new session                                                  herdr-draft · main
   prompt     Work on ENG-101: Fix login redirect loop
   project    ~/Projects/herdr-draft
   worktree   on · zvi/fix-login-redirect-loop ← main
-  placement  new space
+  placement  the worktree's own space
   agent      claude
   account    active · max · 12%
 ───────────────────────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ new session                                                  herdr-draft · main
   prompt     —
   project    ~/Projects/herdr-draft
   worktree   on · from main
-  placement  new space
+  placement  the worktree's own space
   agent      claude
   account    active · max · 12%
 ───────────────────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ fixed whatever has focus and whatever the window height is.
 | `prompt` | the first line, plus a dim ` +N more` | — |
 | `project` | the path, `~`-shortened | `invalid` / `not a repository` |
 | `worktree` | `on · <branch> ← <base>`, `on · from <base>` before a title exists to derive a branch from, or `off` | `not a git repository` |
-| `placement` | `new space` / `tab here` / `split here` / `tab in <space>` | — |
+| `placement` | `new space` / `tab here` / `split here` / `tab in <space>` | `the worktree's own space`, whenever the worktree is on |
 | `agent` | `claude` | — |
 | `account` | `personal · Max 20x · 5h 12% · 7d 40%`, or `active · …` when nothing is pinned | `account pinning only applies to claude` |
 
@@ -404,24 +404,28 @@ after any failure that followed a send, what the pane holds is unknown and
 worth reading before anything is removed. The ids are still reported in
 every case, so nothing is stranded without a way back to it.
 
-**The reported ids name the agent, not the worktree.**
+**The reported ids name the agent, not the space.**
 `workspace_id`/`tab_id`/`pane_id` — and `workspace=`/`tab=`/`pane=` on the
 plain line — are where the agent ended up, which is what a script sends its
-next keystroke to. With `--worktree` and `--placement tab-here` or
-`split-here` the checkout gets a space of its own that the agent does *not*
-run in, so `--json` carries `space_workspace_id`/`space_tab_id`/
-`space_pane_id` alongside: the space itself, and the one a failure message
-names. Both triples are always present when known, so comparing them tells
-you whether the agent is inside the space. `--on-failure clean` removes only
-what the run actually created, which is not always the whole triple: the tab
-for a `tab-here` placement without `--worktree`, the pane for `split-here`
-without it, and the workspace or the worktree otherwise.
+next keystroke to. `--json` also carries `space_workspace_id`/`space_tab_id`/
+`space_pane_id`: the space the run established, and the one a failure
+message names. The two differ in one case. When herdr answers `worktree
+create` with a workspace that was already open for that checkout, the agent
+gets a fresh tab in it rather than whatever pane herdr handed back. Both
+triples are always present when known, so comparing them tells you whether
+the agent is where the space's own pane is. `--on-failure clean` removes
+only what the run actually created: the tab for `tab-here` or `tab-in`, the
+pane for `split-here`, and the workspace or the worktree otherwise.
+
+**A worktree session runs in the worktree's own space**, which herdr's
+sidebar groups under the repository's. `--placement` therefore applies only
+with `--no-worktree`. With a worktree, `--placement` other than `new-space`,
+and `--workspace`, are refused (exit 2) rather than silently dropped, and a
+remembered or configured placement simply does not apply.
 
 `--placement tab-here` and `split-here` need to know where "here" is, and
 read `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID`, which herdr
-sets in every pane's shell — regardless of `--worktree`, since placement
-now decides where the AGENT'S pane lands even when the worktree gets its
-own new space alongside it. `new-space` needs none of them, and neither does
+sets in every pane's shell. `new-space` needs none of them, and neither does
 `tab-in`, which names its workspace outright: the one already holding the
 project's checkout, or whatever `--workspace <id>` says. A missing one is
 named exactly.
@@ -541,12 +545,10 @@ herdr plugin config-dir zvibaratz.draft
   valid.
 - `default_worktree` (default: `true`) — whether the worktree row starts on
   or off for a git target.
-- `default_placement` (default: `"new-space"`) — where the agent's own pane
-  lands: `new-space`, `tab-here`, `split-here`, or `tab-in`. This applies whether or
-  not the worktree row is on: a worktree always gets its own new space for
-  the checkout regardless, and placement separately decides where the
-  agent runs, which can be that same new space or a tab/split on the
-  invoking pane instead.
+- `default_placement` (default: `"new-space"`) — where a session without a
+  worktree lands: `new-space`, `tab-here`, `split-here`, or `tab-in`. With
+  the worktree row on it does not apply: a worktree session always runs in
+  the worktree's own space, which herdr groups under the repository's.
 
 Both are *defaults*, and a later tier can override them — see
 [Where defaults come from](#where-defaults-come-from).
@@ -844,9 +846,15 @@ sessions as tabs instead of a new top-level space appearing per task; a
 remembered `tab in` falls back to `new space` once the space is gone. A
 `here` placement stands (it is a choice about this pane), a
 `.herdr-draft.toml` that says `new-space` stands (it is a team's statement),
-and `--placement` or the chip row always wins. A worktree still gets its own
-grouped space either way; only the agent's tab moves. `create --json`
-attributes the value to `herdr workspace list`.
+and `--placement` or the chip row always wins. `create --json` attributes the
+value to `herdr workspace list`.
+
+None of that applies to a worktree session. It runs in the worktree's own
+space, which herdr's sidebar already nests under the repository's, so it
+gets the grouping a `tab in` would have given it without leaving an empty
+space behind. The placement row goes inert, keeping its value for when the
+worktree is turned off, and `create --json` attributes the placement to
+`worktree`.
 
 Not every tier can supply every value. `.herdr-draft.toml` never chooses
 your agent (that is a machine decision, not a repository one), and

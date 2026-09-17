@@ -916,10 +916,10 @@ func New(s Setup) Model {
 	// last-used.json: the two folded-in Task 20 gaps this task's brief
 	// names ("[clauth] default and a non-default [default_placement] have
 	// no pre-selection path"). Applying it here, before resolved.UseWorktree
-	// is known to have landed on or off, needs no care about that ordering
-	// any more (placement spec §6.1): Placement and the worktree toggle do
-	// not interact at all now, so there is no "snap back to New space" for
-	// a later worktree state to undo. SetValue is also a no-op when the
+	// is known to have landed on or off, needs no care about that ordering:
+	// a worktree makes the row inert without moving the chip (placement
+	// spec §14), so there is no "snap back to New space" for a later
+	// worktree state to undo. SetValue is also a no-op when the
 	// chip cursor already sits on the resolved value, which is what makes
 	// the unconditional call safe on its own terms too. SetSpace first:
 	// the `tab in <space>` chip has to exist before SetValue can land on
@@ -1503,6 +1503,7 @@ func (m Model) PlanInput() plan.Input { return m.buildPlanInput() }
 // (spec §9) -- called only once checkSubmitValidation has cleared every
 // blocking condition.
 func (m Model) buildPlanInput() plan.Input {
+	useWorktree := m.worktree.Enabled() && m.worktree.On()
 	return plan.Input{
 		// Expanded here, at the boundary where the project directory stops
 		// being text the user typed and becomes an argument for herdr's CLI
@@ -1510,13 +1511,16 @@ func (m Model) buildPlanInput() plan.Input {
 		// leading "~" server-side, but `herdr workspace create --cwd` and
 		// `herdr pane split --cwd` do not -- see internal/pathx's own
 		// package doc.
-		ProjectDir:       pathx.ExpandTilde(m.dir.Value()),
-		Title:            m.title.Value(),
-		Branch:           m.worktree.Branch(),
-		BaseRef:          m.worktree.Base(),
-		UseWorktree:      m.worktree.Enabled() && m.worktree.On(),
-		IsGitRepo:        m.worktree.Enabled(), // WorktreeField.Enabled() IS "is the target a git repo" (its own doc comment).
-		Placement:        m.placement.Value(),
+		ProjectDir:  pathx.ExpandTilde(m.dir.Value()),
+		Title:       m.title.Value(),
+		Branch:      m.worktree.Branch(),
+		BaseRef:     m.worktree.Base(),
+		UseWorktree: useWorktree,
+		IsGitRepo:   m.worktree.Enabled(), // WorktreeField.Enabled() IS "is the target a git repo" (its own doc comment).
+		// The chip keeps whatever was chosen or remembered, so turning the
+		// worktree off shows it again; with a worktree it does not apply
+		// (placement spec §14).
+		Placement:        plan.EffectivePlacement(useWorktree, m.placement.Value()),
 		Space:            m.resolved.Space,
 		AgentKind:        m.agent.Value(),
 		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],
@@ -1659,11 +1663,12 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	// against what the app last put there (snapshotAppliedDefaults), so a
 	// value that moved without the app moving it moved because the user
 	// did. syncDerivedInertness at the bottom of this function used to be
-	// able to move Placement on its own, back before a worktree turning on
-	// snapped it to New space (placement spec §6.1 removed that snap along
-	// with the inertness it protected); the snapshot still refreshes AFTER
-	// it rather than here, since nothing is gained by moving a snapshot
-	// call for a dependency that went away.
+	// able to move Placement on its own, back when a worktree turning on
+	// snapped it to New space. Placement spec §14 brought the inertness
+	// back WITHOUT the snap -- PlacementField.Value() is the chip either
+	// way, and plan.EffectivePlacement applies the worktree rule at build
+	// time -- so that dependency is still gone; the snapshot refreshes
+	// AFTER it regardless.
 	m.noteUserEdits()
 
 	if typed := m.dir.Typed(); typed != m.lastDirTyped {
@@ -1771,10 +1776,11 @@ func (m *Model) noteUserEdits() {
 // snapshotting before that call would have left the snapshot holding a
 // placement the field no longer showed, reading as a user edit on the very
 // next reactToChanges and permanently stopping per-project memory from
-// re-applying to it. Placement spec §6.1 removed that move -- worktree
-// state no longer changes what Placement holds -- but the ordering costs
-// nothing to keep and stays, in case a future dynamic field reintroduces
-// the same shape of dependency.
+// re-applying to it. Worktree state no longer changes what Placement
+// holds -- placement spec §14's inert row keeps the chip, and
+// plan.EffectivePlacement applies the rule at build time -- but the
+// ordering costs nothing to keep and stays, in case a future dynamic field
+// reintroduces the same shape of dependency.
 func (m *Model) snapshotAppliedDefaults() {
 	m.appliedWorktreeOn = m.worktree.On()
 	m.appliedPlacement = m.placement.Value()
@@ -1821,8 +1827,9 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 
 	// The worktree toggle goes first, and syncDerivedInertness runs right
 	// after it -- but this specific pairing is not load-bearing for
-	// anything it touches. PlacementField does not need it (placement
-	// spec §6.1: its chips accept input regardless of worktree state).
+	// anything it touches. PlacementField does not need it: its setters
+	// below apply whether or not it is inert (placement spec §14 keeps the
+	// inert state in the field, not in its chip row, for exactly that).
 	// AccountField's inert condition follows the agent KIND -- which this
 	// first call reads STALE, since SetKind runs below it -- so Account's
 	// correctness comes from the SECOND syncDerivedInertness call at the
@@ -2056,20 +2063,23 @@ func (m *Model) supplyDirCandidates(candidates []string) {
 	m.dir.SetCandidates(m.dirCandVersion, candidates)
 }
 
-// syncDerivedInertness re-applies AccountField's own DYNAMIC inert
-// condition (spec §6 field 7 -- "inert while X", checked continuously,
-// unlike the STATIC preconditions that gate whether a field is
-// constructed at all) from AgentField's current state, and tells
-// PlacementField whether a worktree is on so its ROW WORDING can follow
-// (placement spec §6.1) -- Placement itself is never inert any more,
-// since plan.Build now honors it under a worktree too. Cheap and
-// synchronous (no I/O), so it is safe to call unconditionally on every
+// syncDerivedInertness re-applies the two DYNAMIC inert conditions (spec
+// §6 field 7 -- "inert while X", checked continuously, unlike the STATIC
+// preconditions that gate whether a field is constructed at all):
+// AccountField's, from AgentField's current state, and PlacementField's,
+// from whether the plan will have a worktree (placement spec §14). Cheap
+// and synchronous (no I/O), so it is safe to call unconditionally on every
 // reactToChanges pass and from the async dirResultMsg handler (which
 // moves WorktreeField.On() outside of reactToChanges' own diff, via
 // SetOn -- see handleDirResult), rather than needing its own
 // diff-gating.
+//
+// Placement follows Enabled() && On(), the exact conjunction
+// buildPlanInput uses for UseWorktree, and not On() alone: a project that
+// is not a repository keeps the toggle's "on" underneath its inert
+// worktree row, and its plan still honours the placement.
 func (m *Model) syncDerivedInertness() {
-	m.placement.SetWorktreeOn(m.worktree.On())
+	m.placement.SetWorktreeOn(m.worktree.Enabled() && m.worktree.On())
 	m.lastWorktreeOn = m.worktree.On()
 	if m.account != nil {
 		m.account.SetAgentIsClaude(m.agent.Value() == claudeKind)

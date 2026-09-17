@@ -464,7 +464,7 @@ func remember(resolved resolution, now time.Time) {
 		st.TouchRecent(in.ProjectDir)
 	}
 	st.LastKind = in.AgentKind
-	st.LastPlacement = defaults.PlacementValue(in.Placement)
+	st.LastPlacement = defaults.RememberedPlacement(in, resolved.tiers.state.LastPlacement)
 	useWorktree := in.UseWorktree
 	st.LastWorktree = &useWorktree
 	_ = config.SaveState(stateDir, st)
@@ -472,10 +472,11 @@ func remember(resolved resolution, now time.Time) {
 	if resolved.tiers.projectKey == "" {
 		return
 	}
+	previous, _ := resolved.tiers.projects.Get(resolved.tiers.projectKey)
 	projects := resolved.tiers.projects.Touched(resolved.tiers.projectKey, config.ProjectDefaults{
 		Kind:      in.AgentKind,
 		Worktree:  &useWorktree,
-		Placement: defaults.PlacementValue(in.Placement),
+		Placement: defaults.RememberedPlacement(in, previous.Placement),
 		Base:      in.BaseRef,
 	}, now)
 	_ = config.SaveProjects(stateDir, projects)

@@ -26,11 +26,9 @@ import (
 // ("chip:placement:tab-here") read the same vocabulary a config author
 // already uses.
 //
-// FocusHint is the chip's WORKTREE-OFF explanation (placement spec §6.1's
-// two-column table); placementWorktreeHint below picks the worktree-on
-// wording for the same chip, since under a worktree each choice means
-// something different -- "tab here" opens a tab on the WORKTREE's
-// checkout, not on the plain project directory.
+// FocusHint is each chip's one-line explanation. There is no worktree-on
+// wording: under a worktree no chip applies (placement spec §14), and the
+// row goes inert instead.
 var placementChips = []widgets.Chip{
 	{ID: "new", Label: "new space", FocusHint: "opens a new workspace of its own"},
 	{ID: "tab-here", Label: "tab here", FocusHint: "opens a tab beside this pane's tab"},
@@ -57,30 +55,16 @@ func tabInChip(spaceLabel string) widgets.Chip {
 	}
 }
 
-// placementWorktreeHint and placementWorktreeDisclosure are placement
-// spec §6.1's worktree-on half of the two-column hint table.
-// placementWorktreeHint replaces FocusHint's own wording per chip (the
-// worktree's checkout, not the plain project directory, is what gets
-// attached); placementWorktreeDisclosure is a SEPARATE second line, shown
-// only for the two non-default chips, naming the fact the row does not
-// restate (v2 spec §3 rule 1: the WORKTREE row, one line up, already
-// says a worktree exists -- repeating that here would say the same thing
-// twice, three lines apart, which v2 spec §3 rule 5's copy pass exists to
-// delete).
-func placementWorktreeHint(chipID string) string {
-	switch chipID {
-	case "tab-here":
-		return "the agent opens a tab here, on the worktree's checkout"
-	case tabInChipID:
-		return "the agent opens a tab in that space, on the worktree's checkout"
-	case "split-here":
-		return "the agent splits this pane, onto the worktree's checkout"
-	default: // "new"
-		return "the worktree opens as its own space"
-	}
-}
+// placementInertHint is the row under a worktree: where the session goes,
+// which is the consequence the row states (v3 spec §3 rule 1). Placement
+// spec §14 put it back after §6.1 had removed v2's version of it.
+const placementInertHint = "the worktree's own space"
 
-const placementWorktreeDisclosure = "the worktree also keeps a space of its own"
+// placementInertPanelHint is the panel in the same state. It differs from
+// the row on purpose: the row states the consequence, and the panel, being
+// the chooser, says what gives the reader the choice back -- one sentence
+// twice, three lines apart, would say neither (v2 spec §3 rule 5).
+const placementInertPanelHint = "turn the worktree off to choose"
 
 // placementRowLabel is v2's row label (v2 spec §6). It is also the widest
 // label in the stack, and therefore what rowlayout.go's labelColWidth is
@@ -88,10 +72,10 @@ const placementWorktreeDisclosure = "the worktree also keeps a space of its own"
 const placementRowLabel = "placement"
 
 // PlacementField is the form's Placement Section (spec §6 field 5): a
-// one-line row naming where a creation will attach relative to the
-// invoking pane (internal/plan.Placement) -- worktree on or off alike,
-// placement spec §6.1 -- over a panel holding the three chips and the
-// selected chip's own explanation.
+// one-line row naming where a creation without a worktree will attach
+// relative to the invoking pane (internal/plan.Placement), over a panel
+// holding the chips and the selected chip's own explanation. With a
+// worktree it is inert (placement spec §14).
 type PlacementField struct {
 	chips      *widgets.ChipRow
 	focused    bool
@@ -138,14 +122,12 @@ func (f *PlacementField) SetSpace(label string) {
 // ID identifies this Section for form.go's zoneFor.
 func (f *PlacementField) ID() string { return "placement" }
 
-// Enabled reports that Placement always takes a real focus stop (placement
-// spec §6.1): it used to go present-but-inert whenever the worktree toggle
-// was on, because worktree creation ignored it outright. It no longer
-// does -- plan.Build now honors Placement under a worktree too, routing
-// the AGENT'S pane through it while the worktree still gets its own
-// space regardless (placement spec §5.3) -- so there is no state left in
-// which choosing a placement is meaningless.
-func (f *PlacementField) Enabled() bool { return true }
+// Enabled reports whether Placement takes a focus stop: not while a
+// worktree is on, because a worktree session runs in the worktree's own
+// space whatever is chosen here (placement spec §14,
+// plan.EffectivePlacement). The row stays drawn, present-but-inert, and
+// says so.
+func (f *PlacementField) Enabled() bool { return !f.worktreeOn }
 
 // Focus gives the field input focus. ChipRow has no Focus/Blur of its own
 // (widgets/chiprow.go's own package doc) -- focused is tracked only for
@@ -164,7 +146,14 @@ func (f *PlacementField) Blur() { f.focused = false }
 // is ignored: MapKey never forwards Tab/Enter/Esc/etc. here as
 // ActionNone (ZonePlacement is a plain, non-picker, non-title,
 // non-prompt zone), so nothing else is expected to reach this Update.
+//
+// Under a worktree it ignores everything. The row can still be focused by
+// a click (form.go's FocusByID ignores Enabled), and a keypress there must
+// not quietly move a choice that does not apply.
 func (f *PlacementField) Update(msg tea.Msg) tea.Cmd {
+	if f.worktreeOn {
+		return nil
+	}
 	if click, ok := msg.(tea.MouseClickMsg); ok {
 		f.chips.SelectAt(click, "chip:"+f.ID()+":")
 		return nil
@@ -182,14 +171,18 @@ func (f *PlacementField) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// SetWorktreeOn records whether a worktree is on, which changes what the
-// SAME three chips mean (placement spec §6.1) but no longer disables them
-// or resets the selection: before placement spec, a worktree ignored
-// Placement outright, so SetWorktreeOn(true) snapped the cursor back to
-// "New space" and refused all further input (widgets.ChipRow.SetInert).
-// plan.Build now honors whatever the user picked either way, so the
-// selection must survive the toggle exactly like every other field's
-// state does.
+// SetWorktreeOn records whether a worktree is on, which makes the field
+// inert (placement spec §14) without touching the selection: the chip
+// keeps what was chosen or remembered, and shows it again when the
+// worktree goes off. plan.EffectivePlacement, not this field, is what
+// turns it into new-space for the plan.
+//
+// Deliberately NOT widgets.ChipRow.SetInert, which the pre-§6.1 version of
+// this method used. That mode makes SelectID and Next no-ops, and the app
+// applies remembered placements (SetValue, SetSpace) whether or not a
+// worktree is on; under it they would be silently dropped. The v2 version
+// could live with that only because it also snapped the cursor to "new
+// space", which is the reset this version exists not to do.
 func (f *PlacementField) SetWorktreeOn(on bool) {
 	f.worktreeOn = on
 }
@@ -266,63 +259,82 @@ func (f *PlacementField) Value() plan.Placement {
 // Label is v2's row label (v2 spec §6's field table).
 func (f *PlacementField) Label() string { return placementRowLabel }
 
-// Row names the selected placement (placement spec §6.1): worktree off,
-// v2's own lowercase vocabulary unchanged; worktree on, the SAME chip
-// label, since the row states its own consequence and "a worktree
-// exists" is already stated one row up by the worktree row itself.
+// Row names the selected placement in v2's own lowercase vocabulary, or --
+// under a worktree, where no placement applies -- states where the session
+// goes instead, dim (v2 spec §6's present-but-inert row; placement spec
+// §14).
 func (f *PlacementField) Row(w int) string {
 	if w < 1 {
 		w = 1
+	}
+	if f.worktreeOn {
+		return fitLine(dimHint(f.palette).Render(keepHead(placementInertHint, w)), w)
 	}
 	return fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(keepHead(f.chips.Selected().Label, w)), w)
 }
 
 // Panel is the chip row plus, beneath it, the one-line explanation of
-// whichever chip is selected -- worktree off, the chip's own FocusHint
-// unchanged; worktree on, placementWorktreeHint's own wording for the
-// SAME chip, plus a second disclosure line for the two non-default chips
-// (placement spec §6.1).
+// whichever chip is selected -- or, under a worktree, the sentence that
+// gives the reader the choice back and a blank line where the explanation
+// would be, since there is no choice to explain (placement spec §14).
 func (f *PlacementField) Panel(w, h int) string {
-	v := f.chips.MarkedView(panelChipWidth(w), "chip:"+f.ID()+":")
-	// MarkedView appends the selected chip's FocusHint as a second line
-	// of its own, WITHOUT the panel's gutter. Taking only the first line
-	// here and re-composing the hint through panelText below is what
-	// keeps it aligned with every other panel line.
-	if idx := strings.IndexByte(v, '\n'); idx >= 0 {
-		v = v[:idx]
-	}
-
-	selected := f.chips.Selected().ID
-	hint := f.chips.Selected().FocusHint
+	var lines []string
 	if f.worktreeOn {
-		hint = placementWorktreeHint(selected)
-	}
-
-	lines := []string{
-		panelChipRow(v),
-		panelText(dimHint(f.palette).Render(hint), w),
-	}
-	if f.worktreeOn && selected != "new" {
-		lines = append(lines, panelText(dimHint(f.palette).Render(placementWorktreeDisclosure), w))
+		// Composed like any other panel text: only a LIVE chip row pays for
+		// one of the gutter's two cells itself (panelChipRow).
+		lines = []string{panelText(dimHint(f.palette).Render(placementInertPanelHint), w), ""}
+	} else {
+		v := f.chips.MarkedView(panelChipWidth(w), "chip:"+f.ID()+":")
+		// MarkedView appends the selected chip's FocusHint as a second
+		// line of its own, WITHOUT the panel's gutter. Taking only the
+		// first line here and re-composing the hint through panelText
+		// below is what keeps it aligned with every other panel line.
+		if idx := strings.IndexByte(v, '\n'); idx >= 0 {
+			v = v[:idx]
+		}
+		lines = []string{
+			panelChipRow(v),
+			panelText(dimHint(f.palette).Render(f.chips.Selected().FocusHint), w),
+		}
 	}
 	// Last, so a region too short for it drops the provenance rather than
 	// the chooser: panelBlock truncates from the bottom, and a note about
 	// where a value came from is worth less than the control that changes
 	// it.
-	if f.provenance != "" {
+	if f.showsProvenance() {
 		lines = append(lines, provenanceLine(f.provenance, w, f.palette))
 	}
 	return panelBlock(w, h, lines...)
 }
 
-// PanelRows is two -- the chips and their explanation -- plus one more
-// under a worktree for the two non-default chips' disclosure line
-// (placement spec §6.1), plus the provenance line when a config file
-// chose the selection.
+// showsProvenance reports whether the panel carries the provenance line:
+// only while it shows the value a config file chose. The inert panel shows
+// none -- a worktree session runs in its own space whatever the file said
+// -- so attributing one there would claim a choice nothing is honouring,
+// and `create --json` attributes the same state to "worktree".
+func (f *PlacementField) showsProvenance() bool {
+	return f.provenance != "" && !f.worktreeOn
+}
+
+// PanelRows is two -- the chips and their explanation, or under a worktree
+// the inert line and its blank -- plus the provenance line when a config
+// file chose the selection and the panel shows it (showsProvenance).
 func (f *PlacementField) PanelRows() int {
-	rows := 2
-	if f.worktreeOn && f.chips.Selected().ID != "new" {
-		rows++
+	if f.showsProvenance() {
+		return 2 + provenanceRows(f.provenance)
 	}
-	return rows + provenanceRows(f.provenance)
+	return 2
+}
+
+// FooterRungs implements form.go's footerHinter for the one state
+// footer.go's per-ZONE table cannot see: under a worktree this row is
+// inert and ignores its keys, so the table's "←→ choose" would promise a
+// key that does nothing -- and a worktree is the default configuration's
+// resting state, not an edge case. Same sentence as field_worktree.go's
+// non-git rung.
+func (f *PlacementField) FooterRungs() []string {
+	if f.worktreeOn {
+		return []string{"nothing to set here"}
+	}
+	return nil
 }

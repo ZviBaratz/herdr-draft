@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -73,24 +72,24 @@ func TestPlacementField_SetSpaceWithdrawsAndKeepsOtherChoices(t *testing.T) {
 	}
 }
 
-// TestPlacementField_TabInUnderWorktreeDiscloses: the chip is a non-default
-// one, so under a worktree it gets the same "the worktree also keeps a
-// space of its own" line the other two non-default chips get, and a hint
-// naming the checkout.
-func TestPlacementField_TabInUnderWorktreeDiscloses(t *testing.T) {
+// TestPlacementField_TabInIsKeptUnderAWorktreeButNotShown: a worktree
+// session never takes a tab in the repository's space (placement spec
+// §14), so the row stops naming it; the chosen chip survives underneath and
+// comes back when the worktree is turned off.
+func TestPlacementField_TabInIsKeptUnderAWorktreeButNotShown(t *testing.T) {
 	f := NewPlacementField(theme.Default())
 	f.SetSpace("herdr-draft")
 	f.SetValue(plan.PlacementTabIn)
 	f.SetWorktreeOn(true)
-	panel := ansi.Strip(f.Panel(80, f.PanelRows()))
-	if !strings.Contains(panel, placementWorktreeDisclosure) {
-		t.Errorf("panel under worktree = %q, want the worktree disclosure", panel)
+	if got := rowText(f.Row(60)); strings.Contains(got, "tab in") {
+		t.Errorf("Row(60) under a worktree = %q, still names the repository's space", got)
 	}
-	if !strings.Contains(panel, "worktree's checkout") {
-		t.Errorf("panel under worktree = %q, want the hint to name the worktree's checkout", panel)
+	if got := f.Value(); got != plan.PlacementTabIn {
+		t.Errorf("Value() under a worktree = %v, want the chosen %v kept", got, plan.PlacementTabIn)
 	}
-	if f.PanelRows() != 3 {
-		t.Errorf("PanelRows() = %d, want 3 (chips, hint, disclosure)", f.PanelRows())
+	f.SetWorktreeOn(false)
+	if got := rowText(f.Row(60)); got != "tab in herdr-draft" {
+		t.Errorf("Row(60) with the worktree off again = %q, want %q", got, "tab in herdr-draft")
 	}
 }
 

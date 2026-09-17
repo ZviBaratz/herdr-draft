@@ -518,12 +518,11 @@ func TestExitOne_OnFailureCleanRefusesAReusedSpace(t *testing.T) {
 	// seeding that same id into the before-list is what makes Execute's
 	// reuse comparison fire for WorktreeCreate's own return value.
 	h.runner.workspaces = []herdrc.WorkspaceInfo{{WorkspaceID: "wS1", Label: "somebody-else"}}
-	// The worktree op is both the space op and the agent-pane op here (no
-	// separate placement -- "a worktree with tab-here still needs the
-	// workspace id", per TestLazyContext_OnlyTheHerePlacementsNeedIt
-	// above), so the reuse claim's TabCreate runs inside this same step
-	// and its failure is what Task 3 taught Execute to still report the
-	// space for.
+	// The worktree op is both the space op and the agent-pane op (since
+	// placement spec §14 a worktree session never has a separate
+	// placement op), so the reuse claim's TabCreate runs inside this same
+	// step and its failure is what Task 3 taught Execute to still report
+	// the space for.
 	h.runner.failAt = "TabCreate"
 
 	code := h.run("--title", "t", "--worktree", "--on-failure", "clean")
@@ -641,11 +640,11 @@ func TestExitThree_HerdrUnreachable(t *testing.T) {
 // --- lazy context (spec §13) ----------------------------------------------
 
 // TestLazyContext_OnlyTheHerePlacementsNeedIt is the requirement in one
-// table: only tab-here and split-here need the herdr environment, and that
-// holds regardless of UseWorktree (placement spec §6.3) -- a new space
-// creates fine with no herdr environment at all, whether or not a worktree
-// is involved, while tab-here and split-here refuse and name the exact
-// variable they are missing, worktree or not.
+// table: only tab-here and split-here need the herdr environment -- a new
+// space creates fine with no herdr environment at all, while tab-here and
+// split-here refuse and name the exact variable they are missing. A
+// worktree never gets that far with a `here` placement: it is refused
+// first, for a reason no environment could fix (placement spec §14).
 func TestLazyContext_OnlyTheHerePlacementsNeedIt(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -660,10 +659,10 @@ func TestLazyContext_OnlyTheHerePlacementsNeedIt(t *testing.T) {
 			wantCode: ExitOK,
 		},
 		{
-			name:     "a worktree with tab-here still needs the workspace id",
+			name:     "a worktree refuses tab-here before asking for any context",
 			args:     []string{"--title", "t", "--worktree", "--placement", "tab-here"},
 			wantCode: ExitUsage,
-			wantErr:  "HERDR_WORKSPACE_ID is not set",
+			wantErr:  "--no-worktree",
 		},
 		{
 			name:     "tab-here without the workspace id",
@@ -1159,16 +1158,17 @@ default_placement = "tab-here"
 	}
 }
 
-// TestReportedIDsNameTheAgentNotTheSpace is #99. A worktree plus a `here`
-// placement is the one combination that separates the two -- placement
-// spec §6.1's headline case, and Cell 8's. The worktree op opens a whole
-// new space for the checkout; the placement op then puts the agent's pane
-// in a NEW TAB OF THE INVOKING WORKSPACE (build.go's placementOp always
-// targets Input.Ctx), so the agent shares none of the space's three ids.
+// TestReportedIDsNameTheAgentNotTheSpace is #99. The two triples separate
+// in exactly one shape since placement spec §14 kept a worktree session in
+// its own space: `worktree create` REUSES a workspace that was already
+// open for the checkout, and Execute claims a fresh tab in it for the
+// agent (placement spec §5.2) rather than typing into whatever pane herdr
+// handed back. The agent then shares the space's workspace but not its
+// tab or pane.
 //
-// With the worktree off the placement op IS the topology op, and with
-// new-space there is no placement op, so those two agree and cannot show
-// this. Nor can equivalence_test.go, which compares plan.Inputs: this is
+// reuseTheWorktreesSpace stages that: the workspace the fake's worktree
+// create returns is already in `workspace list`. Nor can
+// equivalence_test.go show this, since it compares plan.Inputs: this is
 // downstream of the plan entirely.
 //
 // What a caller does with the answer is the reason it matters: the id it
@@ -1177,10 +1177,10 @@ default_placement = "tab-here"
 // was reused, another session's pane (#99's live evidence, #91's family).
 func TestReportedIDsNameTheAgentNotTheSpace(t *testing.T) {
 	h := newHarness(t)
-	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
+	reuseTheWorktreesSpace(h)
 
 	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main",
-		"--placement", "tab-here", "--json"); code != ExitOK {
+		"--json"); code != ExitOK {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
 	}
 
@@ -1188,11 +1188,10 @@ func TestReportedIDsNameTheAgentNotTheSpace(t *testing.T) {
 	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
 	}
-	// The fake's own arithmetic: creation 1 is the worktree's space
-	// (wS1/tT1/pP1), creation 2 the claimed tab, which herdr opens inside
-	// the invoking workspace and so answers with wS9 (tT2/pP2).
-	if out.WorkspaceID != "wS9" || out.TabID != "tT2" || out.PaneID != "pP2" {
-		t.Errorf("agent ids = %q/%q/%q, want wS9/tT2/pP2 -- where the agent actually is",
+	// The fake's own arithmetic: creation 1 is the worktree's (reused)
+	// space wS1/tT1/pP1, creation 2 the tab claimed inside it (tT2/pP2).
+	if out.WorkspaceID != "wS1" || out.TabID != "tT2" || out.PaneID != "pP2" {
+		t.Errorf("agent ids = %q/%q/%q, want wS1/tT2/pP2 -- where the agent actually is",
 			out.WorkspaceID, out.TabID, out.PaneID)
 	}
 	if out.SpaceWorkspaceID != "wS1" || out.SpaceTabID != "tT1" || out.SpacePaneID != "pP1" {
@@ -1216,14 +1215,13 @@ func TestReportedIDsNameTheAgentNotTheSpace(t *testing.T) {
 // script actually reads.
 func TestHumanLineNamesTheAgentsPane(t *testing.T) {
 	h := newHarness(t)
-	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
+	reuseTheWorktreesSpace(h)
 
-	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main",
-		"--placement", "tab-here"); code != ExitOK {
+	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main"); code != ExitOK {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
 	}
 	got := strings.TrimSpace(h.stdout.String())
-	for _, want := range []string{"workspace=wS9", "tab=tT2", "pane=pP2"} {
+	for _, want := range []string{"workspace=wS1", "tab=tT2", "pane=pP2"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("stdout = %q, want it to contain %q", got, want)
 		}
@@ -1246,11 +1244,11 @@ func TestHumanLineNamesTheAgentsPane(t *testing.T) {
 // Found by mutation: the fallback passed every other test in the package.
 func TestFailureBeforeAnyAgentPaneReportsOnlyTheSpace(t *testing.T) {
 	h := newHarness(t)
-	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
-	h.runner.failAt = "TabCreate" // the placement op, after the worktree's space exists
+	reuseTheWorktreesSpace(h)
+	h.runner.failAt = "TabCreate" // the reuse claim, after the worktree's space exists
 
 	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main",
-		"--placement", "tab-here", "--json"); code != ExitFailed {
+		"--json"); code != ExitFailed {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
 	}
 	var out jsonReport
@@ -1272,20 +1270,18 @@ func TestFailureBeforeAnyAgentPaneReportsOnlyTheSpace(t *testing.T) {
 // the space's diverge, the keep-or-clean line must keep naming the SPACE.
 // It is the thing --on-failure clean would have removed and the thing a
 // person has to go close by hand, so an agent pane id there would send
-// them after the wrong container -- and docs/manual-smoke.md's Cell 8
-// reads this exact line as its evidence ("naming the SPACE (not an agent
-// pane) is the same evidence read a different way").
+// them after the wrong container.
 //
 // Found by mutation: switching this line to AgentAt left every other test
 // green, which is precisely how the opposite change gets made by someone
 // tidying #99 up later.
 func TestFailureLineNamesTheSpaceNotTheAgent(t *testing.T) {
 	h := newHarness(t)
-	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
+	reuseTheWorktreesSpace(h)
 	h.runner.failAt = "AgentStart" // after both the space and the agent's pane exist
 
 	if code := h.run("--title", "t", "--worktree", "--branch", "zvi/x", "--base", "main",
-		"--placement", "tab-here", "--on-failure", "keep"); code != ExitFailed {
+		"--on-failure", "keep"); code != ExitFailed {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
 	}
 	stderr := h.stderr.String()
@@ -1293,7 +1289,7 @@ func TestFailureLineNamesTheSpaceNotTheAgent(t *testing.T) {
 		t.Errorf("stderr = %q, want the SPACE's ids (wS1/pP1) in the kept-session line", stderr)
 	}
 	if strings.Contains(stderr, "pane pP2") {
-		t.Errorf("stderr = %q, names the AGENT's pane -- Clean acts on the space, and Cell 8 reads this line", stderr)
+		t.Errorf("stderr = %q, names the AGENT's pane -- Clean acts on the space", stderr)
 	}
 }
 
@@ -2073,6 +2069,15 @@ type fakeClauth struct {
 
 func (c *fakeClauth) Status(context.Context) (clauth.Status, error) {
 	return c.status, c.err
+}
+
+// reuseTheWorktreesSpace makes the fake's first `worktree create` answer
+// with a workspace `workspace list` already reported -- herdr's reuse
+// branch -- so Execute claims a tab in it for the agent (placement spec
+// §5.2). Since §14 that is the only way the agent's ids and the space's
+// can differ, which is what the #99 tests need.
+func reuseTheWorktreesSpace(h *harness) {
+	h.runner.workspaces = []herdrc.WorkspaceInfo{{WorkspaceID: "wS1", Label: "an older session"}}
 }
 
 // createdAnything reports whether any call that makes a session -- a

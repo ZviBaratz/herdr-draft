@@ -61,10 +61,10 @@ func (r report) ok() bool { return r.result.FailedIndex == -1 }
 //
 // The three ids name where the AGENT is (ExecResult.AgentAt), not the
 // space (#99). A caller greps `pane=` in order to send the next keystroke
-// somewhere, and with a worktree plus a `here` placement the space's pane
-// is the worktree's own idle shell -- or, when the workspace was reused,
-// a pane belonging to another session. The space's ids stay available
-// under --json's space_* keys; this line stays three ids long.
+// somewhere, and when herdr reused a workspace already open for the
+// checkout, the space's pane belongs to another session; the agent is in a
+// tab claimed beside it (placement spec §5.2). The space's ids stay
+// available under --json's space_* keys; this line stays three ids long.
 func (r report) humanLine() string {
 	parts := []string{"created"}
 	if a := r.result.AgentAt; a != nil {
@@ -164,9 +164,10 @@ type jsonReport struct {
 	// (ExecResult.AgentAt) -- the ids a caller asks a create for, since
 	// they are what it addresses next. Space* name the space the plan
 	// created and --on-failure clean acts on (ExecResult.Created), which
-	// is a different workspace, tab AND pane whenever a worktree is
-	// combined with a `here` placement, and a different tab and pane
-	// whenever the worktree's workspace was already open (#99).
+	// is a different tab and pane whenever the worktree's workspace was
+	// already open (#99). Before placement spec §14 a worktree combined with
+	// a `here` placement separated all three; that combination is refused
+	// now.
 	//
 	// Both triples are emitted whenever they are known, equal or not: a
 	// consumer comparing them learns whether the agent sits inside the

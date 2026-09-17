@@ -120,26 +120,6 @@ func TestBuild_TabInPlacesTheTabInTheNamedSpace(t *testing.T) {
 	}
 }
 
-// TestBuild_TabInUnderAWorktreeKeepsTheCheckoutsSpace: placement spec
-// §5.3 unchanged -- the worktree still opens its own grouped space, and the
-// agent's tab lands in the named space on the checkout's path.
-func TestBuild_TabInUnderAWorktreeKeepsTheCheckoutsSpace(t *testing.T) {
-	in := validInput()
-	in.UseWorktree = true
-	in.Placement = PlacementTabIn
-	in.Space = Space{WorkspaceID: "wG", Label: "herdr-draft"}
-	ops, err := Build(in)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if len(ops) < 2 || ops[0].Kind != OpWorktreeCreate || ops[1].Kind != OpTabCreate {
-		t.Fatalf("op kinds = %v, want [OpWorktreeCreate OpTabCreate ...]", kindsOf(ops))
-	}
-	if ops[1].Tab.Workspace != "wG" || !ops[1].CwdFromCheckout {
-		t.Errorf("placement op = %+v (CwdFromCheckout=%v), want Workspace wG with the cwd taken from the checkout", ops[1].Tab, ops[1].CwdFromCheckout)
-	}
-}
-
 // TestBuild_TabInWithoutASpaceIsRefused: a tab-in with no workspace to
 // aim at cannot be built. Guessing "here" is exactly what requireContext
 // exists to prevent for tab-here, and this is the same refusal one layer
