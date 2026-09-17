@@ -2341,14 +2341,25 @@ func TestReap_AFlagThatCannotApplySaysSo(t *testing.T) {
 }
 
 // TestReap_ConfigDefaultThatCannotApplyIsSilent: nobody asked on this command
-// line, so its not applying is not news (reap spec §7.3).
+// line, so its not applying is not news (reap spec §7.3). It also pins the
+// provenance side of the same case: with neither `--reap` nor `--no-reap`
+// given, `mark_ready` is attributed to config.toml (the tier this test's
+// own config sets it from), never to `flag` (the other tests here only pin
+// the flag case).
 func TestReap_ConfigDefaultThatCannotApplyIsSilent(t *testing.T) {
 	h := newHarness(t)
 	writeConfig(t, h.env.ConfigDir, "[reaper]\nmark_ready = true\n")
-	if code := h.run("--title", "t", "--no-worktree"); code != ExitOK {
+	if code := h.run("--title", "t", "--no-worktree", "--json"); code != ExitOK {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
 	}
 	if strings.Contains(h.stderr.String(), "--reap") {
 		t.Errorf("stderr = %q, want no --reap note for a config default", h.stderr)
+	}
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	if got := out.Provenance["mark_ready"]; got != "config.toml" {
+		t.Errorf("provenance.mark_ready = %q, want config.toml (no flag was given)", got)
 	}
 }
