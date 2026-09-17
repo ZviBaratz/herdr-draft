@@ -297,3 +297,25 @@ func TestMouseZones_ClickOnABaseRowSelectsItAndMovesThePart(t *testing.T) {
 		t.Fatalf("part after clicking a base row = %v, want partBase", w.part)
 	}
 }
+
+// TestMouseZones_ChipClickSelectsTheReap is reap spec §5.2's mouse half: the
+// chips are zone-marked like every panel chip row, and form.go's zonePanel
+// branch forwards the click to the focused prompt.
+func TestMouseZones_ChipClickSelectsTheReap(t *testing.T) {
+	f := NewPromptField(theme.Default())
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{f}, InitialFocusID: "prompt"})
+	m.Init()
+	_ = m.ViewAt(80, 24)
+	syncZones()
+
+	const zoneID = "chip:prompt:reap"
+	zi := widgets.Zones.Get(zoneID)
+	if zi.IsZero() {
+		t.Fatalf("zone %q never resolved after ViewAt(80, 24)'s own Scan", zoneID)
+	}
+	next, _ := m.Update(clickAt(zi.StartX, zi.StartY))
+	_ = next.(Model)
+	if !f.MarkReady() {
+		t.Fatalf("MarkReady() = false after clicking %s, want reap", zoneID)
+	}
+}

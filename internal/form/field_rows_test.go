@@ -400,9 +400,9 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			return f
 		}, 3 + titleSessionsMaxRows},
 
-		// prompt: one row per line of text plus one to type the next line
-		// into, floored at promptPanelMinRows and capped at
-		// promptPanelMaxRows.
+		// prompt: one row per line of text, one to type the next line into
+		// and one for the keep · reap line (reap spec §5.4), floored at
+		// promptPanelMinRows and capped at promptPanelMaxRows.
 		{"prompt/empty", func() Section { return NewPromptField(p) }, promptPanelMinRows},
 		{"prompt/under-the-floor", func() Section {
 			f := NewPromptField(p)
@@ -413,7 +413,7 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			f := NewPromptField(p)
 			f.SetValue(textLines(8), false)
 			return f
-		}, 8 + 1},
+		}, 8 + 2},
 		{"prompt/over-the-cap", func() Section {
 			f := NewPromptField(p)
 			f.SetValue(textLines(capOverflowItems), false)

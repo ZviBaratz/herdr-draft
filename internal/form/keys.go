@@ -132,6 +132,12 @@ const (
 	// (same division of labor as Atrium: "The app performs the rebuild --
 	// it owns the config/profiles the pickers need").
 	ActionClear
+	// ActionToggle asks the current zone's own widget to flip its one
+	// toggle (only ever returned for ZonePrompt: the pane-reaper keep ·
+	// reap chips, reap spec §5.2). It is a grammar action rather than a key
+	// forwarded to the field so the chord can never reach the textarea as
+	// input -- the same reason ⌃J is ActionNewline.
+	ActionToggle
 )
 
 // String names a KeyAction for test failure output and any future
@@ -156,6 +162,8 @@ func (a KeyAction) String() string {
 		return "ActionArmClear"
 	case ActionClear:
 		return "ActionClear"
+	case ActionToggle:
+		return "ActionToggle"
 	default:
 		return fmt.Sprintf("KeyAction(%d)", int(a))
 	}
@@ -308,6 +316,16 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 		// owns interpreting it.
 		if zone.Kind == ZonePrompt {
 			return ActionNewline, armed
+		}
+		return ActionNone, armed
+	case "ctrl+x":
+		// The prompt's keep · reap toggle (reap spec §5.2). A chord because
+		// the textarea owns every printable key and the arrows; ⌃X because
+		// nothing else binds it -- not bubbles' textarea DefaultKeyMap
+		// (charm.land/bubbles/v2@v2.1.1), not this grammar, and not herdr's
+		// default keys, which are prefix-mode apart from ctrl+v.
+		if zone.Kind == ZonePrompt {
+			return ActionToggle, armed
 		}
 		return ActionNone, armed
 	case "shift+enter":

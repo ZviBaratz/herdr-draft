@@ -1382,7 +1382,7 @@ func TestFooterRungs_PerZone(t *testing.T) {
 	want := map[ZoneKind]string{
 		ZoneIssue:     "type to filter",
 		ZoneDir:       "⇥ complete",
-		ZonePrompt:    "⌃J newline",
+		ZonePrompt:    "⌃X keep or reap",
 		ZoneWorktree:  "↑↓ part",
 		ZonePlacement: "←→ choose",
 		ZoneAgent:     "←→ favorites",
@@ -1528,5 +1528,29 @@ func TestRowStack_ClickInThePanelDoesNotMoveFocus(t *testing.T) {
 	}
 	if focused.updateCalls == before {
 		t.Errorf("the raw click was not forwarded to the focused section")
+	}
+}
+
+// TestHandleKey_CtrlXTogglesTheReapWithoutTyping is the toggler capability's
+// dispatch (reap spec §5.2): ⌃X flips the chips, and never reaches the
+// textarea as input.
+func TestHandleKey_CtrlXTogglesTheReapWithoutTyping(t *testing.T) {
+	f := NewPromptField(theme.Default())
+	f.SetValue("fix it", false)
+	m := fieldFrame(theme.Default(), f)
+
+	next, _ := m.Update(key('x', tea.ModCtrl))
+	m = next.(Model)
+	if !f.MarkReady() {
+		t.Fatal("MarkReady() = false after ⌃X, want reap")
+	}
+	if got := f.Value(); got != "fix it" {
+		t.Errorf("Value() = %q after ⌃X, want the text untouched", got)
+	}
+
+	next, _ = m.Update(key('x', tea.ModCtrl))
+	_ = next.(Model)
+	if f.MarkReady() {
+		t.Error("MarkReady() = true after a second ⌃X, want keep again")
 	}
 }

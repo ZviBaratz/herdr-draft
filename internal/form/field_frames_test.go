@@ -190,6 +190,18 @@ func TestFrames_PromptPanel(t *testing.T) {
 	assertFrame(t, "prompt-panel-80x24", buildPromptPanelForm(theme.Default()), 80, 24)
 }
 
+// TestFrames_PromptPanelReap pins the one state no other frame reaches:
+// reap selected over a real prompt, so the row carries its suffix and the
+// panel's first line its "on" hint (reap spec §5.3).
+func TestFrames_PromptPanelReap(t *testing.T) {
+	palette := theme.Default()
+	f := NewPromptField(palette)
+	f.SetValue("Work on ENG-101: Fix login redirect loop\n\nStart with the cookie the callback sets.", false)
+	f.SetMarkReady(true)
+	f.Focus()
+	assertFrame(t, "prompt-panel-reap-80x24", fieldFrame(palette, f), 80, 24)
+}
+
 // buildWorktreePanelForm is v2 spec §4's own worktree mockup: a live
 // worktree with a branch, a base list, and the part cursor moved off the
 // chips onto the branch -- the state the mockup draws.

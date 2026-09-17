@@ -213,9 +213,9 @@ func TestPromptArea_FillCoversEveryRowIncludingTheCursorLine(t *testing.T) {
 	f.Focus()
 
 	const width = 60
-	rows := strings.Split(f.Panel(width, 4), "\n")
-	if len(rows) != 4 {
-		t.Fatalf("Panel returned %d rows, want 4", len(rows))
+	rows := strings.Split(f.Panel(width, 5), "\n")
+	if len(rows) != 5 {
+		t.Fatalf("Panel returned %d rows, want 5", len(rows))
 	}
 	painted := 0
 	for i, row := range rows {

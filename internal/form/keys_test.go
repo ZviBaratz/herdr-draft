@@ -35,6 +35,7 @@ var (
 	keyCtrlS      = key('s', tea.ModCtrl)
 	keyCtrlJ      = key('j', tea.ModCtrl)
 	keyCtrlR      = key('r', tea.ModCtrl)
+	keyCtrlX      = key('x', tea.ModCtrl)
 	keyX          = rn('x')
 )
 
@@ -203,6 +204,20 @@ func TestMapKey_GrammarTable(t *testing.T) {
 			msg:  keyCtrlJ,
 			zone: FocusZone{Kind: ZonePrompt},
 			want: ActionNewline,
+		},
+		{
+			// reap spec §5.2: the textarea owns every printable key and the
+			// arrows, so the toggle needs a chord no owner binds.
+			name: "ctrl+x in the prompt toggles keep/reap",
+			msg:  keyCtrlX,
+			zone: FocusZone{Kind: ZonePrompt},
+			want: ActionToggle,
+		},
+		{
+			name: "ctrl+x outside the prompt means nothing",
+			msg:  keyCtrlX,
+			zone: FocusZone{Kind: ZoneTitle},
+			want: ActionNone,
 		},
 	}
 	for _, c := range cases {
