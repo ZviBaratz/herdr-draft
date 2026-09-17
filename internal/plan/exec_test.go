@@ -544,14 +544,31 @@ func TestExecute_WorktreeReusedClaimsAFreshTab(t *testing.T) {
 	}
 }
 
-func TestExecute_WorktreeReusedWithAPlacementOpClaimsNoTab(t *testing.T) {
-	in := validInput()
+// agentPlacedApart hand-builds a plan whose agent pane is a second topology
+// op after the worktree's space: the shape placement spec §5.3 had Build
+// produce and §14 took away. Execute's contract for that shape still
+// stands (topologyIndices' own comment says why it is kept), and the tests
+// using this are what keep it standing. The placement op carries its cwd
+// outright, since the checkout-path threading went with §5.3.
+func agentPlacedApart(t *testing.T, in Input, placement Op) []Op {
+	t.Helper()
 	in.UseWorktree = true
-	in.Placement = PlacementTabHere
+	in.Placement = PlacementNewSpace
 	ops, err := Build(in)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+	return append([]Op{ops[0], placement}, ops[1:]...)
+}
+
+func tabHereOp(in Input, cwd string) Op {
+	return Op{Kind: OpTabCreate, Label: "creating tab", Tab: &herdrc.TabCreateReq{
+		Workspace: in.Ctx.WorkspaceID, Cwd: cwd, Label: in.Title, Focus: true}}
+}
+
+func TestExecute_WorktreeReusedWithAPlacementOpClaimsNoTab(t *testing.T) {
+	in := validInput()
+	ops := agentPlacedApart(t, in, tabHereOp(in, "/tmp/wt"))
 
 	m := &mockRunner{
 		workspacesBeforeCreate: []herdrc.WorkspaceInfo{{WorkspaceID: "w9", Label: "somebody-else"}},
@@ -575,7 +592,7 @@ func TestExecute_WorktreeReusedWithAPlacementOpClaimsNoTab(t *testing.T) {
 	want := []string{
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
-		"TabCreate(" + in.Ctx.WorkspaceID + ",/tmp/wt)", // the PLACEMENT op, Cwd filled from CheckoutPath
+		"TabCreate(" + in.Ctx.WorkspaceID + ",/tmp/wt)", // the PLACEMENT op
 		"AgentStart(" + AgentName(in.Title) + "," + m.topo.PaneID + ")",
 	}
 	if !reflect.DeepEqual(m.calls, want) {
@@ -587,21 +604,15 @@ func TestExecute_WorktreeReusedWithAPlacementOpClaimsNoTab(t *testing.T) {
 }
 
 // TestExecute_AgentAtCarriesTheWholeLocationNotJustThePane is #99 at the
-// layer that knows the answer. A placement op moves the agent's WORKSPACE
-// and TAB as well as its pane, because placementOp always targets
-// Input.Ctx: with a worktree the checkout gets a brand-new space of its
-// own while `tab here` puts the agent back in the invoking workspace. A
+// layer that knows the answer. A later topology op can move the agent's
+// WORKSPACE and TAB as well as its pane -- here a tab in the invoking
+// workspace after the worktree's own space, agentPlacedApart's shape. A
 // reader that only had the pane id could not say which tab or workspace to
 // address, and the only consumer that reports an id to a caller
 // (internal/create) reported the SPACE's three instead.
 func TestExecute_AgentAtCarriesTheWholeLocationNotJustThePane(t *testing.T) {
 	in := validInput()
-	in.UseWorktree = true
-	in.Placement = PlacementTabHere
-	ops, err := Build(in)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	ops := agentPlacedApart(t, in, tabHereOp(in, "/checkout/x"))
 
 	// Three ids apart, all of them: the worktree's own new space versus a
 	// tab in the invoking workspace. A mock sharing one topo across both
@@ -702,14 +713,10 @@ func TestExecute_WorkspaceListFailureFailsTheStepBeforeAnythingIsCreated(t *test
 // finding -- the same defect class TestExecute_WorktreeReusedClaimsAFreshTab
 // had before tabTopo).
 func TestExecute_CheckoutPathSurvivesAPlacementOp(t *testing.T) {
-	// PlacementSplitHere, not reused -- the other placement op shape.
+	// A split, not reused -- the other placement op shape.
 	in := validInput()
-	in.UseWorktree = true
-	in.Placement = PlacementSplitHere
-	ops, err := Build(in)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	ops := agentPlacedApart(t, in, Op{Kind: OpPaneSplit, Label: "splitting pane", Split: &herdrc.PaneSplitReq{
+		PaneID: in.Ctx.FocusedPaneID, Direction: defaultSplitDirection, Cwd: "/checkout/x", Focus: true}})
 
 	m := &mockRunner{
 		topo:      herdrc.CreatedTopology{WorkspaceID: "wH", TabID: "tH", PaneID: "worktree-pane", CheckoutPath: "/checkout/x"},
@@ -733,12 +740,6 @@ func TestExecute_CheckoutPathSurvivesAPlacementOp(t *testing.T) {
 	// The AGENT PANE is the split's, not the worktree's.
 	if agentPaneID(result) != "split-pane" {
 		t.Errorf("AgentAt.PaneID = %q, want %q (the placement op's own pane)", agentPaneID(result), "split-pane")
-	}
-	// And the cwd threading itself, which is a DIFFERENT mechanism from the
-	// clobber above and worth keeping pinned separately.
-	want := "PaneSplit(" + in.Ctx.FocusedPaneID + ",right,/checkout/x)"
-	if !containsCall(m.calls, want) {
-		t.Fatalf("calls = %v, want it to contain %q", m.calls, want)
 	}
 }
 
