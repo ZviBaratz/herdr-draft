@@ -93,6 +93,7 @@ var repoDeniedKeys = []repoDeniedKey{
 	{"timeouts", "a repository does not set your timeouts"},
 	{"palette", "a repository does not set your colors"},
 	{"worktree", "a repository does not decide that it is trusted"},
+	{"reaper", "it would add an instruction to your agent's prompt"},
 }
 
 // init enforces the one invariant that keeps the two lists honest: nothing

@@ -600,6 +600,40 @@ func TestLoad_TrustRepositoryExplicitFalseIsNotNil(t *testing.T) {
 	}
 }
 
+// TestLoad_ReaperMarkReady pins reap spec §6.2. The key is a POINTER for
+// trust_repository's reason: a file with no [reaper] table must leave it
+// nil, so the resolver attributes the false to built-in and never to a
+// config.toml that never mentioned it.
+func TestLoad_ReaperMarkReady(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want *bool
+	}{
+		{"absent is nil", "branch_prefix = \"zvi/\"\n", nil},
+		{"true", "[reaper]\nmark_ready = true\n", func() *bool { b := true; return &b }()},
+		{"explicit false is not nil", "[reaper]\nmark_ready = false\n", func() *bool { b := false; return &b }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(tc.body), 0o600); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+			cfg, err := Load(dir)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			got := cfg.Reaper.MarkReady
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("Reaper.MarkReady = %v, want nil", *got)
+			case tc.want != nil && (got == nil || *got != *tc.want):
+				t.Errorf("Reaper.MarkReady = %v, want %v", got, *tc.want)
+			}
+		})
+	}
+}
+
 // The launch mode is a TRUST decision, not a preference: "wrapper" types a
 // bare `claude` into the pane and depends on the user's shell resolving it to
 // a wrapper function. On every machine that has no such function it is the

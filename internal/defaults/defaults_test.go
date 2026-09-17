@@ -53,6 +53,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -79,6 +80,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -111,6 +113,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -130,6 +133,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -149,6 +153,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -172,6 +177,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -189,6 +195,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -207,6 +214,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -254,6 +262,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierRepoConfig,
 				FieldLinearBranchName: TierRepoConfig,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -290,6 +299,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierProjectMemory,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -317,6 +327,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierRepoConfig,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -340,6 +351,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -359,6 +371,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierRepoConfig,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -406,6 +419,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierProjectMemory,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -432,6 +446,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierProjectMemory,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -455,6 +470,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 		{
@@ -475,6 +491,7 @@ func TestResolve_Precedence(t *testing.T) {
 				FieldBaseRef:          TierBuiltin,
 				FieldLinearBranchName: TierBuiltin,
 				FieldTrustRepository:  TierBuiltin,
+				FieldMarkReady:        TierBuiltin,
 			},
 		},
 	}
@@ -655,6 +672,48 @@ func TestResolve_TrustRepositoryComesOnlyFromConfigToml(t *testing.T) {
 		}
 		if got := r.From[FieldTrustRepository]; got != TierUserConfig {
 			t.Errorf("From[trust_repository] = %v, want %v (config.toml's own answer must stand)", got, TierUserConfig)
+		}
+	})
+}
+
+// TestResolve_MarkReadyComesOnlyFromConfigToml is reap spec §6.1's chain:
+// built-in false, then config.toml, and nothing above. Unlike
+// trust_repository there IS a form control for it; memory still may not
+// supply it, because one use would silently make every later session reap.
+func TestResolve_MarkReadyComesOnlyFromConfigToml(t *testing.T) {
+	t.Run("absent everywhere is the built-in false", func(t *testing.T) {
+		r := Resolve(Sources{})
+		if r.MarkReady {
+			t.Error("MarkReady = true with no tier set, want false")
+		}
+		if got := r.From[FieldMarkReady]; got != TierBuiltin {
+			t.Errorf("From[mark_ready] = %v, want %v", got, TierBuiltin)
+		}
+	})
+
+	t.Run("config.toml supplies it and is attributed", func(t *testing.T) {
+		r := Resolve(Sources{Config: config.Config{Reaper: config.ReaperConfig{MarkReady: boolp(true)}}})
+		if !r.MarkReady {
+			t.Error("MarkReady = false, want true from config.toml")
+		}
+		if got := r.From[FieldMarkReady]; got != TierUserConfig {
+			t.Errorf("From[mark_ready] = %v, want %v", got, TierUserConfig)
+		}
+	})
+
+	t.Run("a fully populated stack leaves config.toml's answer alone", func(t *testing.T) {
+		r := Resolve(Sources{
+			Config:      config.Config{DefaultWorktree: true, Reaper: config.ReaperConfig{MarkReady: boolp(false)}},
+			Global:      config.State{LastWorktree: boolp(true), LastPlacement: "tab-here"},
+			Repo:        config.RepoConfig{DefaultWorktree: boolp(true), DefaultPlacement: "new-space"},
+			Project:     config.ProjectDefaults{Worktree: boolp(true), Placement: "tab-here"},
+			HaveProject: true,
+		})
+		if r.MarkReady {
+			t.Error("MarkReady = true: a tier above config.toml supplied it, which none may")
+		}
+		if got := r.From[FieldMarkReady]; got != TierUserConfig {
+			t.Errorf("From[mark_ready] = %v, want %v", got, TierUserConfig)
 		}
 	})
 }
