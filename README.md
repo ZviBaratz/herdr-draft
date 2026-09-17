@@ -811,6 +811,9 @@ inside it only when `picker` is set and its probe succeeded.
   sentence is never added to an empty prompt or to one starting with `/`,
   because a slash command would receive it as arguments.
 
+  Closing the pane is all pane-reaper does: a worktree session's checkout
+  and the branch it created survive that close and are yours to remove.
+
   Leave it off if you start orchestrator or `/loop` sessions from the
   popup: those must never close themselves, and a default is easy to forget
   about. `⌃X` in the prompt, or `--reap` / `--no-reap`, decides one session.
