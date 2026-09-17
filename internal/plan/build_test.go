@@ -585,3 +585,61 @@ func TestWrapperModeDoesNotUseTheLauncher(t *testing.T) {
 		t.Fatalf("RunEnv = %v, want %v", op.RunEnv, want)
 	}
 }
+
+// promptOp returns Build's OpAgentPrompt, or nil when the plan has none.
+func promptOp(t *testing.T, in Input) *Op {
+	t.Helper()
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for i := range ops {
+		if ops[i].Kind == OpAgentPrompt {
+			return &ops[i]
+		}
+	}
+	return nil
+}
+
+// TestBuild_MarkReadyAppendsToThePromptOp is reap spec §4.2 at the one place
+// it takes effect: the text OpAgentPrompt carries is what every guard in
+// Execute reads and what herdr receives (reap spec §9.2).
+func TestBuild_MarkReadyAppendsToThePromptOp(t *testing.T) {
+	in := validInput()
+	in.Prompt = "fix the redirect loop\n"
+	in.MarkReady = true
+	op := promptOp(t, in)
+	if op == nil {
+		t.Fatal("no OpAgentPrompt")
+	}
+	if want := "fix the redirect loop\n\n" + ReapInstruction; op.Prompt.Text != want {
+		t.Errorf("prompt text = %q, want %q", op.Prompt.Text, want)
+	}
+}
+
+func TestBuild_MarkReadyOffSendsThePromptVerbatim(t *testing.T) {
+	in := validInput()
+	in.Prompt = "fix the redirect loop\n"
+	op := promptOp(t, in)
+	if op == nil || op.Prompt.Text != "fix the redirect loop\n" {
+		t.Fatalf("prompt op = %+v, want the prompt byte for byte", op)
+	}
+}
+
+func TestBuild_MarkReadyNeverAppendsToASlashCommand(t *testing.T) {
+	in := validInput()
+	in.Prompt = "/loop 5m check CI"
+	in.MarkReady = true
+	op := promptOp(t, in)
+	if op == nil || op.Prompt.Text != "/loop 5m check CI" {
+		t.Fatalf("prompt op = %+v, want the slash command untouched", op)
+	}
+}
+
+func TestBuild_MarkReadyWithNoPromptAddsNoPromptOp(t *testing.T) {
+	in := validInput()
+	in.MarkReady = true
+	if op := promptOp(t, in); op != nil {
+		t.Fatalf("prompt op = %+v, want none: there is nothing to append to", op)
+	}
+}
