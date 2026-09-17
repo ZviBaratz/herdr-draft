@@ -74,6 +74,14 @@ without the popup. It drives herdr exclusively through the public CLI
   tier each value came from.
 - Exit codes: `0` created, `1` the plan started and failed (`--on-failure`
   applied), `2` bad usage or an unresolvable request, `3` herdr unreachable.
+- **It refuses what the form refuses**, before anything is created (exit
+  `2`): a branch that already exists when a worktree would create it, a
+  title an open workspace already carries, and a pinned account clauth
+  reports as signed out (#147). The branch check matters most: herdr checks
+  an existing branch out rather than refusing it, and ignores `--base` when
+  it does. `--account auto`'s real pick runs after every other check, so a
+  refused request spends no pick (#145), and `--account active` means no
+  pin, as it does in `config.toml` (#146).
 - **A prompt has three fates, not two**: `prompt_status` is `sent`,
   `unsent` or `unconfirmed`. The third is `agent prompt --wait` giving up
   before the agent's status changed, which is not proof the prompt failed
@@ -88,7 +96,8 @@ without the popup. It drives herdr exclusively through the public CLI
   read as this plugin's or its state written into.
 - **`herdr-draft skill` prints an agent skill for driving all of the
   above.** Redirect it into `~/.claude/skills/spawn/SKILL.md` — the README
-  has the recipe, `find` included, since the binary is not on `PATH` — and
+  has the recipe, including the `herdr plugin list --json` lookup that
+  finds the binary, which is not on `PATH` (#167) — and
   an agent asked to hand work off creates a session instead of writing a
   handoff document and stopping. It carries the `HERDR_PLUGIN_*` exports
   and why they must share one command, the placement choice, the prompt,
@@ -145,7 +154,10 @@ without the popup. It drives herdr exclusively through the public CLI
   launch, and an exit code outside the documented set is reported as a
   malfunction rather than obeyed as a decision. With it configured, the
   `account` row grows an `auto` selection and `create` accepts
-  `--account auto`.
+  `--account auto`. The picker's `warnings` and `machine` figures (load,
+  cpus, swap) are shown on the `account` panel, with an unmeasured figure
+  written as such rather than as zero, and `create` prints the warnings to
+  stderr; neither ever refuses a session (#165).
 - `[clauth] launch` selects how a pinned account is launched, defaulting to
   `clauth start <profile> --`. The opt-in `"wrapper"` mode types
   `CLAUDE_CONFIG_DIR=<dir> claude` instead, which is only worth setting on a
