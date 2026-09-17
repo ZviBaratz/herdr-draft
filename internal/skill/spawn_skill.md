@@ -207,6 +207,15 @@ cannot find out on its own:
 the user has Linear configured and the work has an issue. It is a
 starting point for the prompt, not a substitute for the four things above.
 
+`--reap` ends the prompt with an instruction to mark the new pane ready
+for **pane-reaper**, which closes it once the agent has saved its work and
+gone idle. Pass it only when the user runs pane-reaper, and only for a
+worker nobody will steer afterwards — never for an orchestrator or a
+`/loop` session, which must not close themselves. It adds nothing to an
+empty prompt or a slash command. `--no-reap` turns it off where the user's
+configuration turned it on. With neither, leave the choice to that
+configuration.
+
 ## 7. Confirm once, then do it
 
 Building the command is your job. Choosing among plausible ones is the
