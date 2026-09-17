@@ -1382,7 +1382,7 @@ func TestFooterRungs_PerZone(t *testing.T) {
 	want := map[ZoneKind]string{
 		ZoneIssue:     "type to filter",
 		ZoneDir:       "⇥ complete",
-		ZonePrompt:    "⌃X keep or reap",
+		ZonePrompt:    "⌃J newline · ⌃X keep or reap",
 		ZoneWorktree:  "↑↓ part",
 		ZonePlacement: "←→ choose",
 		ZoneAgent:     "←→ favorites",
