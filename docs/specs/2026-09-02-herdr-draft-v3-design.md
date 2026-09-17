@@ -112,6 +112,10 @@ Supersedes v2 §4. At the shipped size — a 104×32 popup, so 101×30 of termin
 > the provenance cell no longer applies (the plan no longer decides
 > placement for the user). See that document's §6.1 and §12 for what
 > replaced them.
+>
+> **Reversed again, placement spec §14 (2026-09-17).** With a worktree the
+> row is inert once more, and now reads `the worktree's own space`; the
+> provenance cell still does not apply. See that document's §14.
 
 The outer box is herdr's, not ours. `▌` is the focused row's accent edge (§5);
 the fill across the rest of that row cannot be drawn in plain text.
@@ -892,6 +896,10 @@ decided" goal v2 set itself and then buried in a panel.
 > the provenance cell no longer applies (the plan no longer decides
 > placement for the user). See that document's §6.1 and §12 for what
 > replaced them.
+>
+> **Reversed again, placement spec §14 (2026-09-17).** With a worktree the
+> row is inert once more, and now reads `the worktree's own space`; the
+> provenance cell still does not apply. See that document's §14.
 
 Rendered only above a width threshold, and only for rows whose value came from
 a non-builtin tier.

@@ -1242,7 +1242,10 @@ anticipate. So the rule is back to what v1 said, for a different reason.
 
   Reproduced end to end. This is §2.1's rule 4 and §8.2's bug, reached
   through herdr's `open` rather than through herdr-draft's next create. §5.3's
-  "closed under repetition" argument covered only the latter.
+  "closed under repetition" argument covered only the latter. It needs no
+  plugin at all: a shell tab in the repository's space that `cd`s into a
+  checkout is enough. Filed upstream as
+  [herdrdev/herdr#4293](https://github.com/herdrdev/herdr/issues/4293).
 
 ### 14.2 The rule
 
@@ -1274,6 +1277,6 @@ worktree and any other placement.
 | §9's frame list for a live placement row under a worktree | superseded by frames of the inert row |
 | §11 items 1 and 2 | answered the other way, for the reasons in 14.1 |
 | §5.1 (space vs agent pane), §5.2 (reuse correction), §5.4 (keep-or-clean) | **stand**: a reused space still gets a claimed tab, so the agent's ids and the space's can still differ |
-| §8.1 and §8.2 (herdr bugs) | stand; 14.1 adds a v0.9.0 repro for §8.2's family through `worktree open` |
+| §8.1 and §8.2 (herdr bugs) | stand; §8.2's family is filed as [herdrdev/herdr#4293](https://github.com/herdrdev/herdr/issues/4293), through `worktree open` (14.1) |
 | §8.4 (`--no-open`) | no longer needed by herdr-draft |
 | #128's `tab in <space>` and its default | stand for a session without a worktree |

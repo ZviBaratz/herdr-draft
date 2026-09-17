@@ -1270,9 +1270,7 @@ func TestFailureBeforeAnyAgentPaneReportsOnlyTheSpace(t *testing.T) {
 // the space's diverge, the keep-or-clean line must keep naming the SPACE.
 // It is the thing --on-failure clean would have removed and the thing a
 // person has to go close by hand, so an agent pane id there would send
-// them after the wrong container -- and docs/manual-smoke.md's Cell 8
-// reads this exact line as its evidence ("naming the SPACE (not an agent
-// pane) is the same evidence read a different way").
+// them after the wrong container.
 //
 // Found by mutation: switching this line to AgentAt left every other test
 // green, which is precisely how the opposite change gets made by someone
@@ -1291,7 +1289,7 @@ func TestFailureLineNamesTheSpaceNotTheAgent(t *testing.T) {
 		t.Errorf("stderr = %q, want the SPACE's ids (wS1/pP1) in the kept-session line", stderr)
 	}
 	if strings.Contains(stderr, "pane pP2") {
-		t.Errorf("stderr = %q, names the AGENT's pane -- Clean acts on the space, and Cell 8 reads this line", stderr)
+		t.Errorf("stderr = %q, names the AGENT's pane -- Clean acts on the space", stderr)
 	}
 }
 

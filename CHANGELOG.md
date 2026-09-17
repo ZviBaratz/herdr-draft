@@ -34,8 +34,14 @@ without the popup. It drives herdr exclusively through the public CLI
 - **`placement` offers `tab in <space>` and defaults to it** whenever the
   project's checkout already has a workspace open (#128), so a repository's
   own space collects its sessions as tabs instead of a new top-level space
-  appearing per task. `new space` stays for a repository with none. A
-  worktree still gets its own grouped space; only the agent's tab moves.
+  appearing per task. `new space` stays for a repository with none.
+- **A worktree session always runs in the worktree's own space**, which
+  herdr's sidebar nests under the repository's. While the worktree is on,
+  the `placement` row is inert and reads `the worktree's own space`. It
+  keeps its value for when the worktree is turned off. Placing a worktree
+  session's agent elsewhere left the worktree's space holding only an idle
+  shell, and once `tab in` became the default it did so for every worktree
+  session after the first in a repository.
 - **A selected Linear issue seeds title, branch and prompt**, unless you
   have already typed over them.
 - Candidate lists are tables: aligned columns, a right-flush status word, a
@@ -65,7 +71,10 @@ without the popup. It drives herdr exclusively through the public CLI
 - **`--placement tab-in` and `--workspace <id>`** place the agent's tab in a
   workspace other than the invoking one — the one already holding the
   project (the default when there is one), or any open workspace by id —
-  with none of the three pane variables required (#128).
+  with none of the three pane variables required (#128). Like every
+  placement, they need `--no-worktree`. With a worktree, `--workspace` and
+  any `--placement` but `new-space` are refused, and a remembered placement
+  does not apply.
 - **Anything left unset resolves exactly as the form resolves it** — one
   resolver, and a test drives a real form and a real `create` request over
   the same files to keep the two from drifting.
@@ -112,10 +121,11 @@ without the popup. It drives herdr exclusively through the public CLI
   `projects.json`. A team's committed default beats what you last did in
   some *other* repository and loses to what you last did in this one.
 - One more tier is a fact about the machine, not a file: `herdr workspace
-  list`. It decides placement only — `new-space` from the three memory and
-  user-config tiers yields to `tab-in` when the project's space is open, a
-  remembered `tab-in` falls back once it is gone, and a `here` placement,
-  a `.herdr-draft.toml`, and `--placement` all stand.
+  list`. It decides placement only, for a session without a worktree:
+  `new-space` from the three memory and user-config tiers yields to
+  `tab-in` when the project's space is open, a remembered `tab-in` falls
+  back once it is gone, and a `here` placement, a `.herdr-draft.toml`, and
+  `--placement` all stand.
 - Per-project memory re-applies when you change the project row, for every
   field you have not touched yourself, and is keyed by the **git repository
   root** so a linked worktree and its origin share one memory.
