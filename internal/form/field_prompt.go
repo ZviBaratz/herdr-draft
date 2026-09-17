@@ -72,9 +72,6 @@ const (
 	promptReapChipKeep   = "keep"
 	promptReapChipReap   = "reap"
 	promptReapZonePrefix = "chip:prompt:"
-	// promptReapChipsWidth is the chip row's width: " keep " + "·" +
-	// " reap " is 13 cells, plus one so the hint does not touch the chip.
-	promptReapChipsWidth = 14
 
 	// promptReapRowSuffix follows ` +N more`, and like it is dim: it
 	// qualifies the value rather than being a second one.
@@ -85,6 +82,19 @@ const (
 	promptReapHintEmpty = "no prompt, so there is nothing to add pane-reaper's instruction to"
 	promptReapHintSlash = "a slash command takes no instruction -- it would arrive as its arguments"
 )
+
+// promptReapChipsWidth is the chip row's rendered width, derived from the
+// label constants rather than hand-synced (final-fixes F4): a relabel that
+// changed this arithmetic by hand could silently clip the chips. It mirrors
+// chiprow.go's MarkedView layout -- each chip padded with a leading and
+// trailing space, joined by a single "·" separator -- measured with
+// lipgloss.Width rather than len() because "·" is a multi-byte rune whose
+// byte length is not its cell width, plus one more cell so the hint text
+// below does not touch the chip.
+var promptReapChipsWidth = lipgloss.Width(" "+promptReapChipKeep+" ") +
+	lipgloss.Width("·") +
+	lipgloss.Width(" "+promptReapChipReap+" ") +
+	1
 
 // promptReapChips are keep first, so a fresh ChipRow -- cursor on chip 0 --
 // is off, which is reap spec §3.1's default before the app seeds anything.
