@@ -509,8 +509,11 @@ Composing anywhere later, in `Execute` or in `CLIRunner`, would leave
 the guards judging text that is not the text sent.
 
 **Accepted cost:** `promptIsVerifiable` bounds the swallowed-prompt verdict to
-`promptTraceMaxRunes = 400`. With 354 runes appended (`"\n\n"` plus the
-sentence), a marked prompt longer than about 46 runes is past the bound. For
+`promptTraceMaxRunes = 400` runes AND `promptTraceMaxLines = 10` newlines.
+With 354 runes appended (`"\n\n"` plus the sentence), a marked prompt longer
+than about 46 runes is past the rune bound; because the appended `"\n\n"`
+alone spends 2 of the 10 lines, a short prompt with 8–9 newlines of its own
+is past the line bound first. For
 marked prompts, the "dialog ate it" verdict therefore effectively applies
 only to very short prompts. The size-independent "the agent is gone" verdict
 still applies to all of them. That is the bound working as designed: a
