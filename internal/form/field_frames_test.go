@@ -29,9 +29,8 @@ import (
 // ring's first-enabled walk, because one of the fixtures below is
 // deliberately INERT (a non-git worktree) and the walk would skip
 // straight past it to the always-enabled Create section -- pinning the
-// panel of the wrong section entirely. (Placement stopped being one of
-// these: placement spec §6.1 keeps it live and reachable even under a
-// worktree.)
+// panel of the wrong section entirely. (Placement under a worktree is
+// another -- placement spec §14 -- and its frame depends on this too.)
 func fieldFrame(palette theme.Palette, s Section) Model {
 	m := New(Setup{
 		Palette:        palette,
@@ -224,19 +223,22 @@ func TestFrames_WorktreeNonGit(t *testing.T) {
 	assertFrame(t, "worktree-nongit-80x24", buildWorktreeNonGitForm(theme.Default()), 80, 24)
 }
 
-// buildPlacementPanelForm focuses PlacementField with the worktree on --
-// placement spec §6.1's live-under-worktree state, where the chips stay
-// interactive and the panel discloses the worktree's own space for the
-// two non-default chips.
-func buildPlacementPanelForm(palette theme.Palette) Model {
+// buildPlacementPanelForm focuses PlacementField with a non-default chip
+// chosen, and -- with worktreeOn -- a worktree turned on afterwards:
+// placement spec §14's inert state, reached by a click since Tab skips it.
+// The two frames are one pair on purpose: the chosen "tab here" must show
+// in the first and be absent from the second, which is the whole of what
+// the worktree does to this row.
+func buildPlacementPanelForm(palette theme.Palette, worktreeOn bool) Model {
 	f := NewPlacementField(palette)
-	f.SetWorktreeOn(true)
-	f.Update(key(tea.KeyRight, 0)) // "tab here" -- the disclosure line only shows for a non-default chip
+	f.Update(key(tea.KeyRight, 0)) // "tab here"
+	f.SetWorktreeOn(worktreeOn)
 	return fieldFrame(palette, f)
 }
 
 func TestFrames_PlacementPanel(t *testing.T) {
-	assertFrame(t, "placement-panel-80x24", buildPlacementPanelForm(theme.Default()), 80, 24)
+	assertFrame(t, "placement-panel-80x24", buildPlacementPanelForm(theme.Default(), false), 80, 24)
+	assertFrame(t, "placement-panel-worktree-80x24", buildPlacementPanelForm(theme.Default(), true), 80, 24)
 }
 
 // buildIssuePanelForm focuses IssueField over a small assigned-issue set.

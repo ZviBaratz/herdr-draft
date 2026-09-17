@@ -157,8 +157,11 @@ type Resolved struct {
 	// can only apply it once the project directory is known to be a git
 	// repository (form.WorktreeField.SetOn's own precondition).
 	UseWorktree bool
-	// Placement is the default for where the agent's pane lands -- worktree
-	// or not (placement spec §6.1: a worktree no longer forces a new space).
+	// Placement is the default for where the agent's pane lands when there
+	// is no worktree. It is resolved either way, so the form's chip can
+	// hold it while a worktree is on; with a worktree the session runs in
+	// its own space regardless (placement spec §14, plan.EffectivePlacement,
+	// applied by both callers after the worktree toggle is final).
 	Placement plan.Placement
 	// Space is the open workspace already holding the project's checkout
 	// (plan.FindSpace over Sources.Workspaces), or the zero value when there

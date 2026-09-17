@@ -439,12 +439,12 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			return d
 		}, dirPanelMaxRows},
 
-		// placement: the chip row and its explanation, plus the
-		// disclosure line a worktree adds for the two non-default chips,
-		// plus the provenance line when a config file chose the value
-		// (placement spec §6.1). field_placement_test.go's own matrix
-		// crosses all three axes; these five are the branches, so the
-		// coverage guard below has something to find.
+		// placement: the chip row and its explanation -- or, under a
+		// worktree, the inert line and its blank (placement spec §14) --
+		// plus the provenance line when a config file chose the value.
+		// field_placement_test.go's own matrix crosses all three axes;
+		// these are the branches, so the coverage guard below has
+		// something to find.
 		{"placement/off", func() Section { return NewPlacementField(p) }, 2},
 		{"placement/off-with-provenance", func() Section {
 			f := NewPlacementField(p)
@@ -463,17 +463,16 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		}, 2},
 		{"placement/on-other-chip", func() Section {
 			f := NewPlacementField(p)
+			chipsRight(f, 1) // tab here, chosen before the worktree went on
 			f.SetWorktreeOn(true)
-			chipsRight(f, 1) // tab here
 			return f
-		}, 2 + 1},
-		{"placement/on-other-chip-with-provenance", func() Section {
+		}, 2},
+		{"placement/on-with-provenance", func() Section {
 			f := NewPlacementField(p)
 			f.SetWorktreeOn(true)
-			chipsRight(f, 1)
 			f.SetProvenance(".herdr-draft.toml")
 			return f
-		}, 2 + 1 + 1},
+		}, 2 + 1},
 
 		// agent: the favorites chip row plus one line per known kind,
 		// capped at agentPanelMaxRows. With no kinds at all it still
@@ -963,18 +962,15 @@ func TestPlacementField_RowAndPanelVocabulary(t *testing.T) {
 		}
 	}
 
-	// placement spec §6.1: the field stopped going inert under a worktree.
-	// The loop above left the cursor on the last entry in want, "split
-	// here" -- SetWorktreeOn(true) must change neither the row (still the
-	// chip's own label) nor the selection, only the panel's explanation
-	// (which switches to placementWorktreeHint's worktree-on wording for
-	// the SAME chip).
+	// placement spec §14: under a worktree the row goes inert and states
+	// the consequence, and the panel says what gives the choice back. The
+	// loop above left the cursor on "split here"; that chip must not show.
 	f.SetWorktreeOn(true)
-	if got := rowText(f.Row(60)); got != "split here" {
-		t.Errorf("Row while a worktree is on = %q, want %q (unchanged -- the row states only the chip label)", got, "split here")
+	if got := rowText(f.Row(60)); got != placementInertHint {
+		t.Errorf("Row while a worktree is on = %q, want %q", got, placementInertHint)
 	}
-	if got, want := panelLineAt(f.Panel(60, 2), 1), placementWorktreeHint("split-here"); got != want {
-		t.Errorf("Panel explanation while a worktree is on = %q, want %q", got, want)
+	if got := panelLineAt(f.Panel(60, 2), 0); got != placementInertPanelHint {
+		t.Errorf("Panel while a worktree is on = %q, want %q", got, placementInertPanelHint)
 	}
 }
 

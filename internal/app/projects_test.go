@@ -165,11 +165,11 @@ func TestDirResult_MemoryReAppliesAcrossASecondProjectChange(t *testing.T) {
 		if got := m.worktree.On(); got != worktreeOn {
 			t.Errorf("at %s: worktree on = %v, want %v", where, got, worktreeOn)
 		}
-		// Placement is meaningful in both worktree states (placement spec
-		// §6.1: a worktree no longer overrides it), so memory has to
-		// round-trip it whether the remembered worktree toggle is on or
-		// off -- unconditionally, unlike the worktree-off-only check this
-		// replaced.
+		// The chip round-trips in both worktree states. Under a worktree
+		// the plan does not use it (placement spec §14,
+		// plan.EffectivePlacement), but the field keeps it, so turning the
+		// worktree off shows the remembered choice rather than a reset --
+		// which is why this stays unconditional.
 		if got := m.placement.Value(); got != placement {
 			t.Errorf("at %s: placement = %v, want %v", where, got, placement)
 		}

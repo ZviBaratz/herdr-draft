@@ -153,12 +153,10 @@ func TestRepoConfig_ReachesTheFormThroughTheDirCheck(t *testing.T) {
 		"/repo-a": {
 			BranchPrefix: "team/",
 			// Off, asserted below in its own right as the worktree half of
-			// this case (that it beats last-used.json's true). Placement
-			// no longer needs the worktree off to stay assertable --
-			// placement spec §6.1 made PlacementField live under a
-			// worktree too -- so unlike before, this value is incidental
-			// to the placement assertion below rather than load-bearing
-			// for it.
+			// this case (that it beats last-used.json's true). It is also
+			// what keeps the placement row live for the provenance
+			// assertion: under a worktree the row is inert (placement spec
+			// §14), though the chip underneath still holds the value.
 			DefaultWorktree:  ptrBool(false),
 			DefaultPlacement: "split-here",
 			DefaultBase:      "trunk",
@@ -205,10 +203,9 @@ func TestRepoConfig_SitsBetweenProjectMemoryAndLastUsed(t *testing.T) {
 			"/repo-a": {Placement: "tab-here"},
 		}),
 	}, map[string]config.RepoConfig{
-		// Worktree off for the reason the case above records: this value is
-		// incidental to the placement assertion below (placement spec §6.1
-		// keeps PlacementField live under a worktree too), not load-bearing
-		// for it.
+		// Worktree off for the reason the case above records: the chip
+		// holds the value either way, but only a live row shows it
+		// (placement spec §14).
 		"/repo-a": {DefaultWorktree: ptrBool(false), DefaultPlacement: "split-here"},
 	})
 

@@ -366,9 +366,9 @@ var frameSizes = []struct{ w, h int }{
 // a title, a branch, a resolved base list and a prompt.
 //
 // The reaction path runs for real rather than being hand-simulated: it is
-// what tells Placement whether a worktree is on (placement spec §6.1: this
-// changes what its three chips mean, not whether they take input), the
-// header's context line AND the title panel's resting note, so the frame
+// what tells Placement whether a worktree is on (placement spec §14: the
+// row goes inert under one), the header's context line AND the title
+// panel's resting note, so the frame
 // shows what a running form shows rather than a hand-assembled subset of
 // it. The Cmds it schedules are debounces nothing in these tests ever
 // fires.
@@ -400,10 +400,9 @@ func fillFrameModel(m Model, worktree bool) Model {
 //
 // The two configurations deliberately differ in more than which fields
 // exist: the full one has the worktree toggle ON (Branch and Base live,
-// Placement showing its worktree-on chip wording -- placement spec §6.1
-// keeps the field live and reachable either way), the minimal one has it
-// off (Branch and Base carry their distinct inert placeholders, Placement
-// showing its worktree-off wording). Between them the two frames cover
+// Placement inert and naming the worktree's own space -- placement spec
+// §14), the minimal one has it off (Branch and Base carry their distinct
+// inert placeholders, Placement live and naming its chip). Between them the two frames cover
 // Branch and Base's live AND inert rendering under a real budget
 // allocation.
 func TestAssembledForm_Frames(t *testing.T) {
@@ -574,29 +573,34 @@ func TestAssembledForm_ClampedToASmallTerminal(t *testing.T) {
 	}
 }
 
-// TestAssembledForm_PlacementUnderWorktree pins placement spec §6.1's
-// opening-state change directly: worktree on (config.Load's own default),
-// placement focused, each of the three chips in turn. Before placement
-// spec, all three of these frames were the SAME inert placeholder --
-// after it, each is genuinely different, which is exactly the state that
-// slipped through fifteen green commits the first time a change moved
-// the opening state and nothing pinned it (CLAUDE.md).
-func TestAssembledForm_PlacementUnderWorktree(t *testing.T) {
-	for _, chip := range []struct {
-		name  string
-		right int // how many tea.KeyRight presses select this chip
+// TestAssembledForm_PlacementWithTheRepositorysSpace pins the state the
+// worktree review measured on a real herdr and no frame had: the
+// repository's own space is open, so the resolver offers and selects
+// `tab in <space>` (#128). Without a worktree that is the row. With one,
+// the session runs in the worktree's own space (placement spec §14), so
+// the same selection must NOT show -- before §14 this was the default path
+// that left an empty nested space behind.
+//
+// The space and its selection are applied by hand, as the resolver would
+// apply them, for the reason the opening-state frame sets its async results
+// by hand: which workspace plan.FindSpace matches depends on the project
+// path, and that goes through the real home directory.
+func TestAssembledForm_PlacementWithTheRepositorysSpace(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		worktreeOn bool
 	}{
-		{"new-space", 0},
-		{"tab-here", 1},
-		{"split-here", 2},
+		{"assembled-placement-repo-space-101x30", false},
+		{"assembled-placement-repo-space-worktree-101x30", true},
 	} {
-		m := filledFrameModel(t, true, true) // full config, worktree on
+		m := filledFrameModel(t, true, tc.worktreeOn)
+		m.placement.SetSpace("herdr-draft")
+		m.placement.SetValue(plan.PlacementTabIn)
+		m.reactToChanges()
+		// FocusByID, not Tab: under a worktree the row is not a ring stop,
+		// and a click is how it would be focused.
 		m.form.FocusByID("placement")
-		for i := 0; i < chip.right; i++ {
-			next, _ := m.Update(key(tea.KeyRight, 0))
-			m = next.(Model)
-		}
-		assertAppFrame(t, "assembled-placement-worktree-"+chip.name+"-101x30", m, framePopupW, framePopupH)
+		assertAppFrame(t, tc.name, m, framePopupW, framePopupH)
 	}
 }
 
