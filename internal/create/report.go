@@ -206,6 +206,12 @@ type jsonReport struct {
 	UnsentPrompt      string `json:"unsent_prompt,omitempty"`
 	UnconfirmedPrompt string `json:"unconfirmed_prompt,omitempty"`
 
+	// MarkReady is true when the prompt carried pane-reaper's instruction,
+	// which is what a consumer means by "will this pane close itself?". The
+	// toggle's position alone does not answer that, and stays visible
+	// through provenance (reap spec §7.4).
+	MarkReady bool `json:"mark_ready,omitempty"`
+
 	OnFailure    string `json:"on_failure,omitempty"`
 	Cleaned      bool   `json:"cleaned,omitempty"`
 	CleanRefused string `json:"clean_refused,omitempty"`
@@ -225,6 +231,7 @@ func (r report) writeJSON(w io.Writer) {
 		Placement:  defaults.PlacementValue(r.input.Placement),
 		Worktree:   r.input.UseWorktree,
 		Provenance: r.provenance,
+		MarkReady:  r.input.MarkReady && plan.ReapApplies(r.input.Prompt),
 	}
 	if r.input.UseWorktree {
 		out.Branch = r.input.Branch

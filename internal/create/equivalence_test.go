@@ -199,6 +199,26 @@ trust_repository = true
 			},
 		},
 		{
+			// [reaper] mark_ready has a form control (the prompt panel's
+			// keep · reap chips) AND a flag, but with neither touched both
+			// paths must land on config.toml's answer (reap spec §6.1).
+			name: "mark_ready comes off config.toml for both paths",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+[reaper]
+mark_ready = true
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				MarkReady:        true,
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
 			// #128's default, unchanged where it belongs: no worktree, and
 			// the repository's own space is open, so the agent's tab goes
 			// there.
@@ -692,4 +712,66 @@ func formPlanInputAuto(t *testing.T, c formCase) plan.Input {
 		t.Fatalf("ResolveAccount: %v", err)
 	}
 	return m.WithAccount(res).PlanInput()
+}
+
+// TestFormAndCommandMarkReadyTheSameWay drives the toggle from BOTH sides:
+// the command by flag, the form by keystroke (⇥ to the prompt, type it, ⌃X).
+// The table above only ever compares resolved defaults; this is the case
+// where each side is TOLD, which is where a flag without a working form
+// control -- or a form control nothing reads -- would show up.
+//
+// It couples to the form's key grammar on purpose, against formCase's own
+// advice, because the claim under test is that the control exists and
+// reaches plan.Input (reap spec §3.2). The two keys it uses are the grammar's
+// most stable: ⇥ from a filled title, and the toggle's own chord.
+func TestFormAndCommandMarkReadyTheSameWay(t *testing.T) {
+	const projectDir = "/projects/thing"
+	const title = "fix login redirect loop"
+	const prompt = "look at the login redirect loop"
+	contextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + projectDir +
+		`","tab_id":"tT0","focused_pane_id":"pP0"}`
+	repoConfig := func(string) config.RepoConfig { return config.RepoConfig{} }
+
+	for _, tc := range []struct {
+		name       string
+		configTOML string
+		flag       string
+		want       bool
+	}{
+		{"off by default, turned on", "branch_prefix = \"zvi/\"\n[agents]\nfavorites = [\"claude\"]\n", "--reap", true},
+		{"on from config.toml, turned off", "branch_prefix = \"zvi/\"\n[agents]\nfavorites = [\"claude\"]\n[reaper]\nmark_ready = true\n", "--no-reap", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir, stateDir := t.TempDir(), t.TempDir()
+			writeConfig(t, configDir, tc.configTOML)
+
+			fromCommand := commandPlanInput(t, commandCase{
+				configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+				projectDir: projectDir, repoConfig: repoConfig,
+				args: []string{"--title", title, "--prompt", prompt, tc.flag},
+			})
+
+			m := formModel(t, formCase{
+				configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+				repoConfig: repoConfig, title: title,
+			})
+			if got := m.PlanInput().MarkReady; got == tc.want {
+				t.Fatalf("test setup: the form already resolved MarkReady = %v before ⌃X, so the keystroke proves nothing", got)
+			}
+			m = send(m, tea.KeyPressMsg{Code: tea.KeyTab})
+			for _, r := range prompt {
+				m = send(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+			}
+			m = send(m, tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+			fromForm := m.PlanInput()
+
+			if !reflect.DeepEqual(fromCommand, fromForm) {
+				t.Fatalf("the command and the form disagree.\ncommand: %s\nform:    %s",
+					showInput(fromCommand), showInput(fromForm))
+			}
+			if fromCommand.MarkReady != tc.want || fromCommand.Prompt != prompt {
+				t.Errorf("MarkReady = %v, Prompt = %q; want %v and the typed prompt", fromCommand.MarkReady, fromCommand.Prompt, tc.want)
+			}
+		})
+	}
 }

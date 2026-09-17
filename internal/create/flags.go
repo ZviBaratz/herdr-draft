@@ -58,6 +58,15 @@ type request struct {
 	// when neither was given, so spec §10's resolved default stands.
 	worktree *bool
 
+	// reap is --reap/--no-reap as one tri-state, the worktree pair's shape
+	// (reap spec §7.1): nil when neither was given, so the resolved
+	// [reaper] mark_ready stands. reapOn/reapOff are the two raw flag
+	// values it is computed from; they live here rather than as
+	// registerFlags parameters so that function's signature -- which
+	// spawnskill_contract_test.go calls -- stays put.
+	reap            *bool
+	reapOn, reapOff bool
+
 	set map[string]bool
 }
 
@@ -80,6 +89,10 @@ flags:
   --base REF         worktree base ref (default: HEAD)
   --worktree         create a git worktree
   --no-worktree      do not create a worktree
+  --reap             end the prompt with pane-reaper's instruction, so the
+                     agent marks its own pane ready to close when finished
+                     (default: off, or [reaper] mark_ready)
+  --no-reap          do not, even if [reaper] mark_ready is on
   --placement WHERE  new-space | tab-here | split-here | tab-in; where a
                      session without a worktree lands. tab-in is a tab in
                      the workspace already holding the project's checkout,
@@ -131,6 +144,8 @@ func registerFlags(fs *flag.FlagSet, req *request, worktreeOn, worktreeOff *bool
 	fs.StringVar(&req.base, "base", "", "")
 	fs.BoolVar(worktreeOn, "worktree", false, "")
 	fs.BoolVar(worktreeOff, "no-worktree", false, "")
+	fs.BoolVar(&req.reapOn, "reap", false, "")
+	fs.BoolVar(&req.reapOff, "no-reap", false, "")
 	fs.StringVar(&req.placement, "placement", "", "")
 	fs.StringVar(&req.workspace, "workspace", "", "")
 	fs.StringVar(&req.agent, "agent", "", "")
@@ -181,6 +196,20 @@ func parseArgs(args []string) (request, error) {
 		// mirror.
 		v := !worktreeOff
 		req.worktree = &v
+	}
+
+	if req.set["reap"] && req.set["no-reap"] {
+		return request{}, errors.New("--reap and --no-reap contradict each other")
+	}
+	switch {
+	case req.set["reap"]:
+		v := req.reapOn
+		req.reap = &v
+	case req.set["no-reap"]:
+		// Inverted for --no-worktree's reason: each flag is the other's
+		// mirror, so --no-reap=false asks for the reap.
+		v := !req.reapOff
+		req.reap = &v
 	}
 
 	if err := req.validate(); err != nil {
