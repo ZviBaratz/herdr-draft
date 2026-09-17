@@ -105,7 +105,8 @@ exit codes:
 
 tab-here and split-here need herdr's own pane environment
 (HERDR_WORKSPACE_ID / HERDR_TAB_ID / HERDR_PANE_ID), which herdr sets for
-every pane, worktree or not. Only a new space needs none of it.
+every pane. new-space and tab-in need none of it, and neither does a
+worktree session, which always runs in its own space.
 `
 
 // registerFlags builds create's flag set, binding every flag to the

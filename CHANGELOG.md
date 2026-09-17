@@ -71,10 +71,9 @@ without the popup. It drives herdr exclusively through the public CLI
 - **`--placement tab-in` and `--workspace <id>`** place the agent's tab in a
   workspace other than the invoking one — the one already holding the
   project (the default when there is one), or any open workspace by id —
-  with none of the three pane variables required (#128). Like every
-  placement, they need `--no-worktree`. With a worktree, `--workspace` and
-  any `--placement` but `new-space` are refused, and a remembered placement
-  does not apply.
+  with none of the three pane variables required (#128). They need
+  `--no-worktree`: with a worktree, `--workspace` and any `--placement` but
+  `new-space` are refused, and a remembered placement does not apply.
 - **Anything left unset resolves exactly as the form resolves it** — one
   resolver, and a test drives a real form and a real `create` request over
   the same files to keep the two from drifting.
@@ -97,9 +96,10 @@ without the popup. It drives herdr exclusively through the public CLI
   to arrive — so the text comes back as `unconfirmed_prompt` rather than
   `unsent_prompt`, and `--on-failure clean` is refused, because the session
   may have an agent working in it right now.
-- **The reported ids name the agent, not the worktree.** Under `--worktree`
-  with `tab-here` or `split-here` the checkout gets a space the agent does
-  not run in, so `--json` carries the space's triple alongside the agent's.
+- **The reported ids name the agent, not the space.** `--json` carries the
+  space's triple alongside the agent's. The two differ when herdr answers a
+  worktree create with a workspace that was already open, and the agent is
+  given a fresh tab in it instead of whatever pane herdr handed back.
 - `create` reads the plugin environment only when `HERDR_PLUGIN_ID` says it
   is ours, so a shell inside another plugin's pane cannot have its config
   read as this plugin's or its state written into.

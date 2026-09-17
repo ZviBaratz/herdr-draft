@@ -1624,7 +1624,11 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 // When Execute claimed a pane for the agent that differs from the space's
 // own (a reuse correction, placement spec §5.1/§5.2), that claimed pane is
 // closed FIRST, so nothing is left running an agent in a directory about
-// to be deleted.
+// to be deleted. Defensive rather than reachable from either caller today:
+// a reuse claim only happens on a reused space, which CleanCheck refuses
+// before Clean is ever called, and since placement spec §14 no plan Build
+// emits puts the agent anywhere else. It stays because the ordering is
+// the one Clean must keep the day either of those changes.
 //
 // What "the space" is depends on the plan, and this used to get it wrong.
 // With UseWorktree off and a `here` placement, build.go's topologyOp

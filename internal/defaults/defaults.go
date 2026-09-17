@@ -387,6 +387,24 @@ func ParsePlacement(s string) (plan.Placement, bool) {
 	}
 }
 
+// RememberedPlacement is the placement a successful submit records in
+// last-used.json and projects.json, given what that file held before.
+//
+// A worktree session has no placement -- it runs in the worktree's own space
+// whatever the chip said (placement spec §14) -- so it records nothing new
+// and keeps previous. Recording its "new-space" instead would overwrite the
+// placement a session without a worktree remembered, and would turn
+// "nothing recorded" into a remembered new-space that outranks
+// config.toml's default_placement for every later session. The form
+// (app.persistStateCmd) and `create` (remember) both call this, so the two
+// paths cannot record differently.
+func RememberedPlacement(in plan.Input, previous string) string {
+	if in.UseWorktree {
+		return previous
+	}
+	return PlacementValue(in.Placement)
+}
+
 // PlacementValue is ParsePlacement's inverse: it names p in the same
 // config.toml vocabulary, for writing into last-used.json and
 // projects.json. Round-tripping through the SAME vocabulary the config file

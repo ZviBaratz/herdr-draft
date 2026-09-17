@@ -217,9 +217,10 @@ func TestPlacementField_PanelRowsMatchesPanelAcrossCombinations(t *testing.T) {
 
 				// The direct arithmetic check, computed independently of
 				// both PlacementField.PanelRows() and Panel(): 2 base rows,
-				// +1 when a config file chose the value.
+				// +1 when a config file chose the value -- and only while
+				// the row shows that value, so not under a worktree.
 				wantRows := 2
-				if provenance != "" {
+				if provenance != "" && !worktreeOn {
 					wantRows++
 				}
 				if got := f.PanelRows(); got != wantRows {
@@ -228,6 +229,24 @@ func TestPlacementField_PanelRowsMatchesPanelAcrossCombinations(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestPlacementField_InertPanelAttributesNothing: provenance says which file
+// chose the value a panel shows (v2 spec §11). The inert panel shows no
+// value -- the plan runs in the worktree's own space whatever
+// .herdr-draft.toml said -- so it must not claim the file chose anything;
+// `create --json` attributes the same state to "worktree".
+func TestPlacementField_InertPanelAttributesNothing(t *testing.T) {
+	f := NewPlacementField(theme.Default())
+	f.SetProvenance(".herdr-draft.toml")
+	f.SetWorktreeOn(true)
+	if panel := ansi.Strip(f.Panel(80, 3)); strings.Contains(panel, "from ") {
+		t.Errorf("inert Panel = %q, still attributes a value it does not show", panel)
+	}
+	f.SetWorktreeOn(false)
+	if panel := ansi.Strip(f.Panel(80, f.PanelRows())); !strings.Contains(panel, "from .herdr-draft.toml") {
+		t.Errorf("live Panel = %q, want the provenance back", panel)
 	}
 }
 

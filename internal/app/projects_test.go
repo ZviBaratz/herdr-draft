@@ -360,7 +360,7 @@ func TestSubmit_RecordsProjectMemory(t *testing.T) {
 		AgentKind:   "codex",
 		Placement:   plan.PlacementTabHere,
 		BaseRef:     "develop",
-		UseWorktree: true,
+		UseWorktree: false, // a worktree submit keeps the placement instead: TestSubmit_AWorktreeSubmitLeavesThePlacementMemoryAlone
 	}
 
 	_, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{FailedIndex: -1}})
@@ -379,8 +379,8 @@ func TestSubmit_RecordsProjectMemory(t *testing.T) {
 	if entry.Placement != "tab-here" {
 		t.Errorf("entry.Placement = %q, want %q", entry.Placement, "tab-here")
 	}
-	if entry.Worktree == nil || !*entry.Worktree {
-		t.Errorf("entry.Worktree = %v, want a recorded true", entry.Worktree)
+	if entry.Worktree == nil || *entry.Worktree {
+		t.Errorf("entry.Worktree = %v, want a recorded false", entry.Worktree)
 	}
 	if entry.Base != "develop" {
 		t.Errorf("entry.Base = %q, want %q", entry.Base, "develop")

@@ -129,17 +129,17 @@ type Runner interface {
 	// non-empty, is emitted ahead of argv as shell assignments -- see
 	// EnvVar for why it cannot simply be more argv.
 	PaneRun(ctx context.Context, paneID string, env []EnvVar, argv []string) error
-	// PaneClose runs `herdr pane close <pane_id>` -- placement spec §5.4:
-	// when Execute claimed a fresh pane for the agent in a workspace it did
-	// not create (a reuse correction, §5.2), Clean must close THAT pane
-	// before removing the space, so nothing is left running an agent in a
-	// directory about to be deleted. Never called when AgentAt.PaneID ==
-	// Created.PaneID -- the common case, where there is nothing extra to
-	// close.
+	// PaneClose runs `herdr pane close <pane_id>`. Clean calls it for a
+	// `split here` space without a worktree, and -- placement spec §5.4 --
+	// for an agent pane that differs from the space's own, before removing
+	// the space, so nothing is left running an agent in a directory about
+	// to be deleted. That second call is defensive: the only such pane is a
+	// reuse claim (§5.2), and CleanCheck refuses a reused space first.
 	PaneClose(ctx context.Context, paneID string) error
 	// TabClose runs `herdr tab close <tab_id>`. Clean needs it because
-	// with the worktree off and a `here` placement, the space Execute
-	// created IS a tab inside the INVOKING workspace, so a tab is what
+	// with the worktree off and a `tab here` or `tab in` placement, the
+	// space Execute created IS a tab inside an existing workspace, so a tab
+	// is what
 	// there is to remove -- WorkspaceClose would take the user's own
 	// workspace, and everything else in it, along with it.
 	TabClose(ctx context.Context, tabID string) error
@@ -1143,11 +1143,11 @@ func (r *CLIRunner) PaneClose(ctx context.Context, paneID string) error {
 //
 // One cascade, and why the caller can live with it: handle_tab_close
 // closes the whole WORKSPACE when ws.tabs.len() <= 1
-// (herdr:src/app/api/tabs.rs at v0.9.0). Clean's only caller for this is a
-// `tab here` placement, whose tab was created in Input.Ctx.WorkspaceID --
-// a workspace that by construction already held the INVOKING pane's own
-// tab, so normally closing ours leaves that one behind and the cascade
-// does not fire. Not "always", though: the popup's failure screen can sit
+// (herdr:src/app/api/tabs.rs at v0.9.0). Clean calls this for a `tab here`
+// or `tab in` placement, whose tab was created in a workspace that by
+// construction already held a tab -- the invoking pane's own, or the named
+// space's -- so normally closing ours leaves that one behind and the
+// cascade does not fire. Not "always", though: the popup's failure screen can sit
 // there for minutes, and a user who closes the invoking tab meanwhile
 // makes ours the last one. The close is still right when that happens --
 // by then the workspace holds nothing but what this create made, which is

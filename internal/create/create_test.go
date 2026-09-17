@@ -2071,8 +2071,6 @@ func (c *fakeClauth) Status(context.Context) (clauth.Status, error) {
 	return c.status, c.err
 }
 
-// createdAnything reports whether any call that makes a session -- a
-// worktree, a workspace, a tab, a split, or a launch -- reached the runner.
 // reuseTheWorktreesSpace makes the fake's first `worktree create` answer
 // with a workspace `workspace list` already reported -- herdr's reuse
 // branch -- so Execute claims a tab in it for the agent (placement spec
@@ -2082,6 +2080,8 @@ func reuseTheWorktreesSpace(h *harness) {
 	h.runner.workspaces = []herdrc.WorkspaceInfo{{WorkspaceID: "wS1", Label: "an older session"}}
 }
 
+// createdAnything reports whether any call that makes a session -- a
+// worktree, a workspace, a tab, a split, or a launch -- reached the runner.
 func (h *harness) createdAnything() bool {
 	for _, name := range []string{"WorktreeCreate", "WorkspaceCreate", "TabCreate", "PaneSplit", "PaneRun", "AgentStart"} {
 		if h.runner.called(name) {

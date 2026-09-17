@@ -301,16 +301,30 @@ func (f *PlacementField) Panel(w, h int) string {
 	// the chooser: panelBlock truncates from the bottom, and a note about
 	// where a value came from is worth less than the control that changes
 	// it.
-	if f.provenance != "" {
+	if f.showsProvenance() {
 		lines = append(lines, provenanceLine(f.provenance, w, f.palette))
 	}
 	return panelBlock(w, h, lines...)
 }
 
+// showsProvenance reports whether the panel carries the provenance line:
+// only while it shows the value a config file chose. The inert panel shows
+// none -- a worktree session runs in its own space whatever the file said
+// -- so attributing one there would claim a choice nothing is honouring,
+// and `create --json` attributes the same state to "worktree".
+func (f *PlacementField) showsProvenance() bool {
+	return f.provenance != "" && !f.worktreeOn
+}
+
 // PanelRows is two -- the chips and their explanation, or under a worktree
 // the inert line and its blank -- plus the provenance line when a config
-// file chose the selection.
-func (f *PlacementField) PanelRows() int { return 2 + provenanceRows(f.provenance) }
+// file chose the selection and the panel shows it (showsProvenance).
+func (f *PlacementField) PanelRows() int {
+	if f.showsProvenance() {
+		return 2 + provenanceRows(f.provenance)
+	}
+	return 2
+}
 
 // FooterRungs implements form.go's footerHinter for the one state
 // footer.go's per-ZONE table cannot see: under a worktree this row is

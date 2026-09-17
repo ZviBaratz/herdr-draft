@@ -1264,8 +1264,15 @@ worktree and any other placement.
   `--no-worktree`). #145-147's rule is that `create` refuses what the form
   refuses. A remembered or configured placement is not refused. It simply
   does not apply, and `--json` attributes the placement to `worktree`.
-- **Memory:** a worktree submit records `new-space`, as every worktree
-  submit did before §6.1 (§6.4).
+- **Memory:** a worktree submit records the worktree and keeps the
+  placement both memory files already held (`defaults.RememberedPlacement`).
+  Nobody chose a placement for it. Recording its `new-space` instead would
+  overwrite a placement remembered from a session without a worktree, and
+  would turn "nothing recorded" into a `new-space` that outranks
+  `config.toml`'s `default_placement`. The pre-§6.1 behaviour did exactly
+  that.
+- **Provenance:** the inert panel carries no `from .herdr-draft.toml` line,
+  since it shows no value to attribute; `create --json` says `worktree`.
 
 ### 14.3 What this supersedes, and what stands
 
@@ -1276,6 +1283,8 @@ worktree and any other placement.
 | §6.3, `--placement split-here --worktree` "is now a request herdr-draft can honour" | superseded: refused |
 | §9's frame list for a live placement row under a worktree | superseded by frames of the inert row |
 | §11 items 1 and 2 | answered the other way, for the reasons in 14.1 |
+| §12's row deleting `provenanceWorktree` | reversed: it returns, and `create --json` attributes a worktree session's placement to `worktree` |
+| §6.4's "every value ever persisted by a worktree user is `new-space`" | no longer made true going forward: a worktree submit now keeps the placement it found (14.2) |
 | §5.1 (space vs agent pane), §5.2 (reuse correction), §5.4 (keep-or-clean) | **stand**: a reused space still gets a claimed tab, so the agent's ids and the space's can still differ |
 | §8.1 and §8.2 (herdr bugs) | stand; §8.2's family is filed as [herdrdev/herdr#4293](https://github.com/herdrdev/herdr/issues/4293), through `worktree open` (14.1) |
 | §8.4 (`--no-open`) | no longer needed by herdr-draft |

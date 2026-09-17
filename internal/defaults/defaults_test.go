@@ -658,3 +658,22 @@ func TestResolve_TrustRepositoryComesOnlyFromConfigToml(t *testing.T) {
 		}
 	})
 }
+
+// TestRememberedPlacement_AWorktreeSubmitKeepsWhatWasRecorded pins placement
+// spec §14.2's memory rule. A worktree session has no placement -- nobody
+// chose one -- so its submit must not overwrite the placement a session
+// without a worktree recorded, nor turn "nothing recorded" into
+// "new-space", which would then outrank config.toml's default_placement.
+func TestRememberedPlacement_AWorktreeSubmitKeepsWhatWasRecorded(t *testing.T) {
+	worktree := plan.Input{UseWorktree: true, Placement: plan.PlacementNewSpace}
+	if got := RememberedPlacement(worktree, "split-here"); got != "split-here" {
+		t.Errorf("worktree submit over split-here records %q, want split-here kept", got)
+	}
+	if got := RememberedPlacement(worktree, ""); got != "" {
+		t.Errorf("worktree submit over nothing records %q, want nothing", got)
+	}
+	noWorktree := plan.Input{Placement: plan.PlacementTabIn}
+	if got := RememberedPlacement(noWorktree, "split-here"); got != "tab-in" {
+		t.Errorf("submit without a worktree records %q, want its own tab-in", got)
+	}
+}

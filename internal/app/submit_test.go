@@ -1152,7 +1152,7 @@ func TestSubmit_PersistsStateAndFeedsItBackIntoTheNextFormOpen(t *testing.T) {
 		Title:       "Fix pagination",
 		AgentKind:   "codex",
 		Placement:   plan.PlacementTabHere,
-		UseWorktree: true,
+		UseWorktree: false,
 	}
 	_, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{FailedIndex: -1}})
 	if _, ok := cmd().(statePersistedMsg); !ok {
@@ -1169,8 +1169,8 @@ func TestSubmit_PersistsStateAndFeedsItBackIntoTheNextFormOpen(t *testing.T) {
 	if saved.LastPlacement != "tab-here" {
 		t.Errorf("LastPlacement = %q, want %q", saved.LastPlacement, "tab-here")
 	}
-	if saved.LastWorktree == nil || !*saved.LastWorktree {
-		t.Errorf("LastWorktree = %v, want a recorded true", saved.LastWorktree)
+	if saved.LastWorktree == nil || *saved.LastWorktree {
+		t.Errorf("LastWorktree = %v, want a recorded false", saved.LastWorktree)
 	}
 
 	// The read side: a fresh form-open defaults to what was just recorded.
@@ -1185,8 +1185,8 @@ func TestSubmit_PersistsStateAndFeedsItBackIntoTheNextFormOpen(t *testing.T) {
 	if got := next.placement.Value(); got != plan.PlacementTabHere {
 		t.Errorf("a fresh form's placement = %v, want the last-used tab-here", got)
 	}
-	if !next.resolved.UseWorktree {
-		t.Error("a fresh form's worktree default = false, want the last-used true")
+	if next.resolved.UseWorktree {
+		t.Error("a fresh form's worktree default = true, want the last-used false")
 	}
 	// The recents' own destination: New feeds State.Recents into
 	// buildDirCandidates, which is DirField's entire candidate pool (spec
@@ -1196,6 +1196,44 @@ func TestSubmit_PersistsStateAndFeedsItBackIntoTheNextFormOpen(t *testing.T) {
 	if !containsString(candidates, "/repo/project") {
 		t.Errorf("a fresh form's project candidates = %v, want the recent %q among them",
 			candidates, "/repo/project")
+	}
+}
+
+// TestSubmit_AWorktreeSubmitLeavesThePlacementMemoryAlone: a worktree
+// session has no placement (placement spec §14), so its submit records the
+// worktree and the kind but keeps whatever placement both memory files
+// already held -- the chip the form shows when the worktree is turned off.
+func TestSubmit_AWorktreeSubmitLeavesThePlacementMemoryAlone(t *testing.T) {
+	m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{
+		Ctx:      herdrc.Context{WorkspaceCwd: "/repo"},
+		State:    config.State{LastPlacement: "split-here"},
+		Projects: memoryFor(map[string]config.ProjectDefaults{"/repo": {Placement: "tab-here", Worktree: ptrBool(false)}}),
+	})
+	m.projectKey = "/repo"
+	m.submitInput = plan.Input{ProjectDir: "/repo", Title: "t", AgentKind: "claude", UseWorktree: true, Placement: plan.PlacementNewSpace}
+
+	_, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{FailedIndex: -1}})
+	if _, ok := cmd().(statePersistedMsg); !ok {
+		t.Fatal("handleSubmitDone on success did not run the state write")
+	}
+
+	saved, _ := config.LoadState(m.stateDir)
+	if saved.LastPlacement != "split-here" {
+		t.Errorf("last-used placement = %q, want split-here kept", saved.LastPlacement)
+	}
+	if saved.LastWorktree == nil || !*saved.LastWorktree {
+		t.Errorf("last-used worktree = %v, want a recorded true", saved.LastWorktree)
+	}
+	projects, _ := config.LoadProjects(m.stateDir)
+	entry, ok := projects.Get("/repo")
+	if !ok {
+		t.Fatal("projects.json has no entry for the project")
+	}
+	if entry.Placement != "tab-here" {
+		t.Errorf("project placement = %q, want tab-here kept", entry.Placement)
+	}
+	if entry.Worktree == nil || !*entry.Worktree {
+		t.Errorf("project worktree = %v, want a recorded true", entry.Worktree)
 	}
 }
 

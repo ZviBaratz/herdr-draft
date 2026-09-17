@@ -437,6 +437,19 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	// exactly this flag; it is the first that names a workspace other than
 	// the invoking one, and equivalence_test.go treats it as a flag
 	// (provenance "flag"), not as context.
+	// A worktree session runs in the worktree's own space (placement spec
+	// §14), so a placement or a destination given outright asks for
+	// something it cannot have. Refused rather than dropped: the form
+	// offers no such combination, and #145-147's rule is that `create`
+	// refuses what the form refuses. A REMEMBERED placement is different --
+	// nobody asked for it on this command line -- and simply does not apply
+	// (below). Checked before --workspace's id is looked up, so a caller is
+	// not sent to fix an id that could never be used.
+	if useWorktree {
+		if err := refuseWorktreePlacement(req, placement, prov[defaults.FieldWorktree]); err != nil {
+			return plan.Input{}, nil, err
+		}
+	}
 	space := res.Space
 	if req.set["workspace"] {
 		named, ok := workspaceByID(t.workspaces, req.workspace)
@@ -448,19 +461,8 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		prov[defaults.FieldPlacement] = provenanceFlag
 	}
 
-	// A worktree session runs in the worktree's own space (placement spec
-	// §14), so a placement or a destination given outright asks for
-	// something it cannot have. Refused rather than dropped: the form
-	// offers no such combination, and #145-147's rule is that `create`
-	// refuses what the form refuses. A REMEMBERED placement is different --
-	// nobody asked for it on this command line -- and simply does not apply.
-	if useWorktree {
-		if err := refuseWorktreePlacement(req, placement, prov[defaults.FieldWorktree]); err != nil {
-			return plan.Input{}, nil, err
-		}
-		if !req.set["placement"] {
-			prov[defaults.FieldPlacement] = provenanceWorktree
-		}
+	if useWorktree && !req.set["placement"] {
+		prov[defaults.FieldPlacement] = provenanceWorktree
 	}
 	placement = plan.EffectivePlacement(useWorktree, placement)
 

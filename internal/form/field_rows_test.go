@@ -470,9 +470,9 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 		{"placement/on-with-provenance", func() Section {
 			f := NewPlacementField(p)
 			f.SetWorktreeOn(true)
-			f.SetProvenance(".herdr-draft.toml")
+			f.SetProvenance(".herdr-draft.toml") // not shown: the inert panel shows no value to attribute
 			return f
-		}, 2 + 1},
+		}, 2},
 
 		// agent: the favorites chip row plus one line per known kind,
 		// capped at agentPanelMaxRows. With no kinds at all it still

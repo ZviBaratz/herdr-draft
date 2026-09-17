@@ -497,8 +497,8 @@ with the dialog still up, in which case the launch row goes green and the
 first only through headless probes, so expect the shape above — but a `…` on
 the launch row is the same feature, not a different result.
 
-With a `here` placement herdr has already moved you to the agent's pane, so
-the dialog is in front of you. Answer it (`↓`, `↵` for "Yes, I trust this
+herdr has already moved you to the agent's pane (the worktree's space is
+created with `Focus: true`), so the dialog is in front of you. Answer it (`↓`, `↵` for "Yes, I trust this
 folder"). **Press nothing in the popup** — that is the whole of #115.
 
 **Then read the pane, not the report.** `herdr[S] pane read <pane-id>
@@ -535,11 +535,11 @@ longer running* — and no instruction to answer a dialog that is gone.
 > **On the fallback path, answer the gate BEFORE you go and look at the
 > pane.** This no longer applies to the ordinary run — since #115 the popup
 > waits and closes itself, and there is no gate to answer — but it still
-> applies whenever the wait ends in the failure screen. With a `here`
-> placement the agent's tab or split is created with `Focus: true`
-> (`placementOp`, build.go) — deliberately, since that is where the agent
-> lands — so herdr moves you to the new pane while the popup is still up
-> with its keep-or-remove choice unanswered. On the 2026-09-09 run that
+> applies whenever the wait ends in the failure screen. The space the agent
+> runs in is created with `Focus: true` (`topologyOp`, build.go) —
+> deliberately, since that is where the agent lands — so herdr moves you to
+> the new pane while the popup is still up with its keep-or-remove choice
+> unanswered. On the 2026-09-09 run that
 > produced a genuinely confusing artifact: a `k` pressed while looking at
 > the pane went to the **agent**, whose startup banner came out `kclaude:`,
 > and the gate was answered only by a second `k` after switching back.
@@ -696,7 +696,7 @@ export HERDR_BIN_PATH=/nonexistent/herdr
 | Probe | Expected |
 |---|---|
 | `herdr-draft create --no-worktree` | `a title is required: pass --title, or --issue to take one from Linear` → **exit 2** |
-| `herdr-draft create --title x --placement nowhere` | `unknown --placement "nowhere": expected new-space, tab-here or split-here`, then the usage block → **exit 2** |
+| `herdr-draft create --title x --placement nowhere` | `unknown --placement "nowhere": expected new-space, tab-here, split-here or tab-in`, then the usage block → **exit 2** |
 | `herdr-draft create --title x --no-worktree --placement tab-here` | `HERDR_WORKSPACE_ID is not set: --placement tab-here creates the tab in the workspace this pane belongs to` → **exit 2** (the missing variable is named exactly) |
 | `herdr-draft create --title x --no-worktree --placement new-space` | `herdr unreachable: herdr workspace list: ...` → **exit 3** |
 | `herdr-draft bogus` | the top-level usage block → **exit 2**; `herdr-draft help` prints the same at **exit 0** |
@@ -1482,12 +1482,15 @@ reads none of them, which is the whole of #128.
 **Worktree on.** Repeat the form walk with the worktree **on**. The row
 reads `the worktree's own space`, not `tab in smoke14`. The submit opens
 one new space nested under `smoke14` with the agent in it, and adds no tab
-to `smoke14`. `--json`'s two triples are equal (placement spec §14).
+to `smoke14` (placement spec §14). Headlessly, `create --worktree --json`
+reports equal agent and `space_*` triples.
 
-**Also record:** close `smoke14` and re-open the form on the same repo. The
-row must read `new space` again and the chip count must be three — the
-memory files remember `tab-in`, and the resolver has to drop it once the
-space is gone rather than leave the cursor on a chip that is not there.
+**Also record:** close `smoke14`, re-open the form on the same repo, and
+turn the worktree off (the worktree-on submit above left it remembered on).
+The row must read `new space` and the chip count must be three. The memory
+files still remember `tab-in` — a worktree submit keeps the placement it
+found (placement spec §14.2) — so this is the resolver dropping it once the
+space is gone, rather than leaving the cursor on a chip that is not there.
 
 **Partly run.** The setup's `worktree open` step, the headless `tab-in`
 default, and the headless worktree-on result were observed on 2026-09-17

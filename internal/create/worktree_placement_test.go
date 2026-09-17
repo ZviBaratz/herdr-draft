@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ZviBaratz/herdr-draft/internal/config"
 )
 
 // These pin placement spec §14 on the command side: a worktree session
@@ -23,13 +25,19 @@ func TestWorktree_RefusesAPlacementItCannotHonour(t *testing.T) {
 		// repoSpace opens the repository's own space first, which is what
 		// makes tab-in and --workspace resolvable at all.
 		repoSpace bool
+		// fromDefault is set where the worktree was not passed on the
+		// command line: the refusal must then say where it came from.
+		fromDefault bool
 	}{
 		{name: "tab-here", args: []string{"--title", "t", "--worktree", "--placement", "tab-here"}},
 		{name: "split-here", args: []string{"--title", "t", "--worktree", "--placement", "split-here"}},
 		{name: "tab-in", args: []string{"--title", "t", "--worktree", "--placement", "tab-in"}, repoSpace: true},
 		{name: "--workspace", args: []string{"--title", "t", "--worktree", "--workspace", "wG"}, repoSpace: true},
+		// Refused for the worktree first: fixing an id that could never be
+		// used anyway would be a wasted round.
+		{name: "--workspace with an unknown id", args: []string{"--title", "t", "--worktree", "--workspace", "w9"}},
 		// No --worktree: config.Load's built-in default_worktree turns it on.
-		{name: "tab-here under the default worktree", args: []string{"--title", "t", "--placement", "tab-here"}},
+		{name: "tab-here under the default worktree", args: []string{"--title", "t", "--placement", "tab-here"}, fromDefault: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
@@ -43,6 +51,9 @@ func TestWorktree_RefusesAPlacementItCannotHonour(t *testing.T) {
 			}
 			if !strings.Contains(h.stderr.String(), "--no-worktree") {
 				t.Errorf("stderr = %q, want the remedy (--no-worktree) named", h.stderr)
+			}
+			if said := strings.Contains(h.stderr.String(), "the worktree is on here from config.toml"); said != tc.fromDefault {
+				t.Errorf("stderr = %q; naming the worktree's tier = %v, want %v", h.stderr, said, tc.fromDefault)
 			}
 			if h.createdAnything() {
 				t.Errorf("herdr was asked to create something on a usage error: %v", h.runner.calls)
@@ -116,5 +127,41 @@ func TestWorktree_ARememberedHerePlacementDoesNotApply(t *testing.T) {
 	if out.Placement != "new-space" || out.Provenance["placement"] != provenanceWorktree {
 		t.Errorf("placement = %q from %q, want new-space from %q",
 			out.Placement, out.Provenance["placement"], provenanceWorktree)
+	}
+}
+
+// TestWorktree_ASubmitLeavesThePlacementMemoryAlone is the command side of
+// placement spec §14.2's memory rule, with the same files the form reads:
+// a worktree create records the worktree and keeps the placement.
+func TestWorktree_ASubmitLeavesThePlacementMemoryAlone(t *testing.T) {
+	h := newHarness(t)
+	key := projectMemoryKey("/projects/thing", "/projects/thing")
+	writeFile(t, filepath.Join(h.env.StateDir, "last-used.json"),
+		`{"kind":"claude","placement":"split-here","worktree":false}`)
+	writeFile(t, filepath.Join(h.env.StateDir, "projects.json"),
+		`{"version":1,"entries":{"`+key+`":{"kind":"claude","worktree":false,"placement":"tab-here","seen":"2026-09-01T00:00:00Z"}}}`)
+
+	h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
+	if code := h.run("--title", "t", "--worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+
+	state, _ := config.LoadState(h.env.StateDir)
+	if state.LastPlacement != "split-here" {
+		t.Errorf("last-used placement = %q, want split-here kept", state.LastPlacement)
+	}
+	if state.LastWorktree == nil || !*state.LastWorktree {
+		t.Errorf("last-used worktree = %v, want a recorded true", state.LastWorktree)
+	}
+	projects, _ := config.LoadProjects(h.env.StateDir)
+	entry, ok := projects.Get(key)
+	if !ok {
+		t.Fatalf("projects.json has no entry for %q", key)
+	}
+	if entry.Placement != "tab-here" {
+		t.Errorf("project placement = %q, want tab-here kept", entry.Placement)
+	}
+	if entry.Worktree == nil || !*entry.Worktree {
+		t.Errorf("project worktree = %v, want a recorded true", entry.Worktree)
 	}
 }
