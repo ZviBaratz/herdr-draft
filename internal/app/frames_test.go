@@ -470,6 +470,34 @@ func TestAssembledForm_OpeningState(t *testing.T) {
 	}
 }
 
+// TestAssembledForm_OpenedFromALane pins the popup opened in a linked
+// worktree's own space -- a lane, where the spawn skill's agents and their
+// owners work (#171). It opens on the lane's checkout, which is what
+// `create` run there defaults to, and the worktree row names the lane's
+// branch as what the new one is cut from. The project panel is focused
+// because it carries the other half: the repository root, the default
+// before #171, as the next candidate.
+//
+// The dir check's answer and the base list are applied by hand, for the
+// opening-state frame's reason.
+func TestAssembledForm_OpenedFromALane(t *testing.T) {
+	const lane = "/home/zvi/.herdr/worktrees/herdr-draft/zvi-fix-login"
+	setup := frameSetup(true)
+	setup.Ctx.WorkspaceCwd = lane
+	setup.Ctx.Worktree = &herdrc.ContextWorktree{
+		RepoName: "herdr-draft", RepoRoot: "/home/zvi/Projects/herdr-draft",
+		CheckoutPath: lane, IsLinkedWorktree: true,
+	}
+	m := resolveDirCheck(t, newTestModel(t, setup))
+	m.worktree.SetOn(true)
+	m.worktree.SetHeadBranch("zvi/fix-login")
+	m.worktree.SetBaseItems(1, []string{"zvi/fix-login", "main"})
+	m.reactToChanges()
+	m.form.FocusByID("dir")
+
+	assertAppFrame(t, "assembled-lane-project-101x30", m, framePopupW, framePopupH)
+}
+
 // TestAssembledForm_TitleCollision is the half of v3 spec §9's panel that
 // is not just a list: a title matching an existing session's label marks
 // that session's row.

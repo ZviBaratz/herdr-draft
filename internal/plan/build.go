@@ -148,6 +148,11 @@ type Input struct {
 	// the pinned-claude path, the one place AccountPin is used at all.
 	Launcher []string
 
+	// Linked is set when a worktree session's ProjectDir is a linked
+	// checkout, and is the zero value otherwise -- including for every
+	// session without a worktree, which runs in ProjectDir whatever it is.
+	Linked LinkedCheckout
+
 	Prompt string
 	// MarkReady is the pane-reaper toggle's POSITION (reap spec §7.2): the
 	// form's `keep · reap` chips, or `create --reap`/`--no-reap`, over the
@@ -158,6 +163,39 @@ type Input struct {
 	Ctx                             herdrc.Context
 	DetectionTimeout, PromptTimeout time.Duration
 	TrustRepository                 bool
+}
+
+// LinkedCheckout is what a worktree session has to know about a project
+// directory inside a LINKED worktree -- a checkout `git worktree add` made,
+// like another session's own (#171). herdr refuses one as the source of a
+// new worktree (linked_worktree_source, herdr:src/app/api/worktrees.rs at
+// v0.9.0), so the new worktree is created from the repository root instead,
+// and cut from the linked checkout's own commit.
+//
+// Both callers resolve it, since Build performs no I/O, and both resolve it
+// the same way, which equivalence_test.go holds them to.
+type LinkedCheckout struct {
+	// RepoRoot is the origin repository root (gitx.RepoRoot): `worktree
+	// create`'s --cwd in place of ProjectDir.
+	RepoRoot string
+	// Head is the linked checkout's HEAD commit, a full SHA, resolved only
+	// when BaseRef is unset: it is what an unset base means from there.
+	// Leaving it to herdr would mean the root's HEAD, which is the primary
+	// checkout's commit and not the one the session was started from. A
+	// commit rather than a branch name, so a detached HEAD works too.
+	Head string
+}
+
+// WorktreeBase is the base `worktree create` is given: BaseRef when one was
+// chosen, a linked checkout's own commit when it was not, and otherwise ""
+// -- herdr's default, the source checkout's HEAD. It is the one statement of
+// that rule, read by Build, by the clean check that counts from the base,
+// and by both callers' reports of what the branch was cut from.
+func WorktreeBase(in Input) string {
+	if in.BaseRef != "" {
+		return in.BaseRef
+	}
+	return in.Linked.Head
 }
 
 // OpKind identifies which herdr operation an Op performs.
@@ -257,6 +295,9 @@ func Build(in Input) ([]Op, error) {
 	if in.UseWorktree && !in.IsGitRepo {
 		return nil, fmt.Errorf("plan: build: worktree creation requires a git repository at %q", in.ProjectDir)
 	}
+	if in.UseWorktree && in.Linked.RepoRoot != "" && WorktreeBase(in) == "" {
+		return nil, fmt.Errorf("plan: build: %q is a linked worktree checkout and its commit was not resolved, so the branch would be cut from the primary checkout's HEAD instead", in.ProjectDir)
+	}
 	if in.AccountPin != "" && in.AgentKind != claudeAgentKind {
 		return nil, fmt.Errorf("plan: build: account pinning is only supported for the %q agent kind, got %q", claudeAgentKind, in.AgentKind)
 	}
@@ -303,15 +344,23 @@ func Build(in Input) ([]Op, error) {
 // combination before this runs. Execute still treats the first topology op
 // as the space and the last as the agent's pane (topologyIndices), which
 // with one op is the same op.
+//
+// From a linked checkout the worktree is created from the repository root
+// (LinkedCheckout); every other op here runs in ProjectDir, the checkout
+// itself.
 func topologyOp(in Input) []Op {
 	if in.UseWorktree {
+		source := in.ProjectDir
+		if in.Linked.RepoRoot != "" {
+			source = in.Linked.RepoRoot
+		}
 		return []Op{{
 			Kind:  OpWorktreeCreate,
 			Label: "creating worktree",
 			Worktree: &herdrc.WorktreeCreateReq{
-				Cwd:             in.ProjectDir,
+				Cwd:             source,
 				Branch:          in.Branch,
-				Base:            in.BaseRef,
+				Base:            WorktreeBase(in),
 				Label:           in.Title,
 				Focus:           true,
 				TrustRepository: in.TrustRepository,

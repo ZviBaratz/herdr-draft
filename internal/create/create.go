@@ -121,6 +121,11 @@ type GitSource interface {
 	// BranchExists is the form's duplicate-branch check (#147): whether a
 	// branch of that name already exists locally or on a remote.
 	BranchExists(ctx context.Context, dir, name string) (bool, error)
+	// LinkedWorktree and HeadCommit are what a worktree session from inside
+	// a linked checkout needs (#171): whether the project is one, and the
+	// commit it is on.
+	LinkedWorktree(ctx context.Context, dir string) (bool, error)
+	HeadCommit(ctx context.Context, dir string) (string, error)
 }
 
 // ClauthSource is clauth's status feed -- the same one-method interface

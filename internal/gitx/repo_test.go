@@ -387,6 +387,48 @@ func TestRepoRoot_LinkedWorktreeSharesTheOriginRoot(t *testing.T) {
 	}
 }
 
+// TestLinkedWorktree tells a checkout `git worktree add` made from a
+// repository's primary checkout -- the question #171 turns on, because
+// herdr refuses a linked checkout as the source of a new worktree.
+//
+// The separate-git-dir case is the one that rules out the cheaper test: its
+// primary checkout's --show-toplevel differs from RepoRoot's answer just as
+// a linked worktree's does, and it is not linked.
+func TestLinkedWorktree(t *testing.T) {
+	ctx := context.Background()
+	origin := mkRepo(t)
+	linked := filepath.Join(t.TempDir(), "feature")
+	gitRun(t, origin, "worktree", "add", "-q", "-b", "feature", linked)
+	sub := filepath.Join(linked, "internal")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", sub, err)
+	}
+	separate := t.TempDir()
+	gitRun(t, separate, "init", "-q", "--separate-git-dir", filepath.Join(t.TempDir(), "repo.git"))
+
+	for _, tc := range []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{"the primary checkout", origin, false},
+		{"a linked worktree", linked, true},
+		{"a subdirectory of a linked worktree", sub, true},
+		{"a primary checkout whose git directory lives elsewhere", separate, false},
+		{"a plain directory", t.TempDir(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := LinkedWorktree(ctx, tc.dir)
+			if err != nil {
+				t.Fatalf("LinkedWorktree(%s): %v", tc.dir, err)
+			}
+			if got != tc.want {
+				t.Errorf("LinkedWorktree(%s) = %v, want %v", tc.dir, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRepoRoot_FromASubdirectory pins that the root is the REPOSITORY's,
 // not the directory asked about: the project field can hold any path
 // inside the repo and must still key on one entry.

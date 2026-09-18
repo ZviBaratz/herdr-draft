@@ -99,6 +99,9 @@ type submitFakeRunner struct {
 	awaitErr error
 
 	calls []string
+	// worktreeReqs is every `worktree create` request, as herdr would have
+	// received it.
+	worktreeReqs []herdrc.WorktreeCreateReq
 }
 
 var _ herdrc.Runner = (*submitFakeRunner)(nil)
@@ -115,7 +118,8 @@ func (r *submitFakeRunner) WorkspaceList(context.Context) ([]herdrc.WorkspaceInf
 	return nil, nil
 }
 
-func (r *submitFakeRunner) WorktreeCreate(context.Context, herdrc.WorktreeCreateReq) (herdrc.CreatedTopology, error) {
+func (r *submitFakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreateReq) (herdrc.CreatedTopology, error) {
+	r.worktreeReqs = append(r.worktreeReqs, req)
 	if r.shouldFail("WorktreeCreate") {
 		return herdrc.CreatedTopology{}, r.failErr
 	}

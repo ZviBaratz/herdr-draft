@@ -311,6 +311,38 @@ func repoRootFallback(ctx context.Context, dir string) (string, error) {
 	return "", fmt.Errorf("repo root: %w", err)
 }
 
+// LinkedWorktree reports whether dir is inside a LINKED worktree -- a
+// checkout `git worktree add` made -- rather than a repository's primary
+// checkout. herdr refuses a linked checkout as the source of a new worktree
+// (linked_worktree_source), which is what makes the difference worth asking
+// about (#171).
+//
+// Linked means the checkout's own git directory is not the common one,
+// which is herdr's own test too (herdr:src/workspace/git/discovery.rs at
+// v0.9.0). Comparing --show-toplevel against RepoRoot would be cheaper and
+// wrong: a primary checkout whose git directory lives elsewhere (`git init
+// --separate-git-dir`) differs there as well.
+//
+// A plain directory is (false, nil), as RepoRoot answers ("", nil) for one.
+// On a git older than 2.31, which has no --path-format, the answer is an
+// error: RepoRoot cannot find the origin root there either (it falls back to
+// the checkout), so a caller has nothing to substitute for a linked checkout
+// anyway.
+func LinkedWorktree(ctx context.Context, dir string) (bool, error) {
+	out, err := runGit(ctx, dir, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	if err != nil {
+		if !IsGitRepo(dir) {
+			return false, nil
+		}
+		return false, fmt.Errorf("linked worktree: %w", err)
+	}
+	dirs := strings.Split(out, "\n")
+	if len(dirs) != 2 {
+		return false, fmt.Errorf("linked worktree: unexpected rev-parse output in %s: %q", dir, out)
+	}
+	return filepath.Clean(dirs[0]) != filepath.Clean(dirs[1]), nil
+}
+
 // ListBranches returns at most limit branch names in repoDir, newest by
 // committer date first. Local and remote-tracking names for the same
 // branch are deduped (the "origin/" prefix is stripped), and

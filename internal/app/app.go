@@ -139,6 +139,11 @@ type gitSource interface {
 	// one repository shares a single entry. ("", nil) for a plain
 	// directory; see gitx.RepoRoot.
 	RepoRoot(ctx context.Context, dir string) (string, error)
+	// LinkedWorktree reports whether dir is inside a linked worktree
+	// checkout (gitx.LinkedWorktree), and HeadCommit the commit dir's HEAD
+	// names: together, what a worktree session from a lane needs (#171).
+	LinkedWorktree(ctx context.Context, dir string) (bool, error)
+	HeadCommit(ctx context.Context, dir string) (string, error)
 	ListSubdirs(dir string, limit int) []string
 	ResolvePath(path string) string
 	ListBranches(ctx context.Context, dir string, limit int) ([]string, error)
@@ -565,6 +570,12 @@ type Model struct {
 	// that PlanInput() -- which internal/create's equivalence test compares
 	// against the headless command's -- stays a pure read of state.
 	autoPick picker.Result
+
+	// linked is the dir check's answer about whether the project is a lane
+	// -- a linked worktree checkout -- and linkedHead the lane's commit, read
+	// at submit (#171). See linkedCheckout for how buildPlanInput uses them.
+	linked     linkedProject
+	linkedHead string
 
 	// linearIssues is the last Linear issue list this Model has seen --
 	// New's own Setup.LinearCache, refreshed by handleLinearResult
@@ -1179,6 +1190,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePickerPreview(msg)
 	case pickerCommitMsg:
 		return m.handlePickerCommit(msg)
+	case linkedHeadMsg:
+		return m.handleLinkedHead(msg)
 	default:
 		return m.routeToForm(msg)
 	}
@@ -1279,6 +1292,18 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 	if cmd, blocked := m.checkSubmitValidation(); blocked {
 		return m, cmd
 	}
+	// A lane's commit is read HERE, after every blocking check and ahead of
+	// the account pick: it has no side effect, and a lane whose commit cannot
+	// be read should not have spent a pick first.
+	if m.needsLinkedHead() {
+		return m, m.linkedHeadCmd()
+	}
+	return m.continueSubmit()
+}
+
+// continueSubmit is handleSubmit's second step, and where a lane's commit
+// resumes it (handleLinkedHead).
+func (m Model) continueSubmit() (Model, tea.Cmd) {
 	// An `auto` account is resolved HERE, after every blocking check and
 	// before anything is created: the pick writes a ledger entry, and spending
 	// one on a submit that a duplicate title was about to refuse would hand
@@ -1462,6 +1487,59 @@ func (m Model) ResolveAccount(ctx context.Context) (picker.Result, error) {
 	return m.deps.Picker.Pick(ctx, pathx.ExpandTilde(m.dir.Value()), picker.Options{})
 }
 
+// linkedProject is the dir check's answer about a lane (#171): root is the
+// origin repository root when dir is a linked worktree checkout, "" when it
+// is not. dir is the project value the answer was for.
+type linkedProject struct{ dir, root string }
+
+// linkedCheckout is the plan.Input.Linked this form would submit: the
+// repository root the worktree is created from, and the lane's commit when no
+// base is chosen. Zero without a worktree, and zero when the dir check's
+// answer was about a different project value -- one typed and submitted
+// before its own check landed -- rather than send this project's worktree to
+// another repository.
+func (m Model) linkedCheckout(useWorktree bool) plan.LinkedCheckout {
+	if !useWorktree || m.linked.root == "" || m.linked.dir != m.dir.Value() {
+		return plan.LinkedCheckout{}
+	}
+	c := plan.LinkedCheckout{RepoRoot: m.linked.root}
+	if m.worktree.Base() == "" {
+		c.Head = m.linkedHead
+	}
+	return c
+}
+
+// needsLinkedHead reports whether a submit has to read the lane's commit
+// first: a worktree, from a lane, with no base chosen.
+func (m Model) needsLinkedHead() bool {
+	useWorktree := m.worktree.Enabled() && m.worktree.On()
+	return m.linkedCheckout(useWorktree).RepoRoot != "" && m.worktree.Base() == ""
+}
+
+// ResolveLinkedHead reads the lane's commit for a submit that needs it
+// (needsLinkedHead), and is a no-op returning "" otherwise, so callers may
+// call it unconditionally.
+//
+// Read at submit rather than with the dir check, because a lane's own agent
+// may commit while the popup is up, and the base row's HEAD means the commit
+// the lane is on when the session is made. It is `create`'s
+// withLinkedCheckout for the popup, and exported for ResolveAccount's
+// reason: internal/create's equivalence test drives the form to a comparable
+// plan.Input through it and WithLinkedHead.
+func (m Model) ResolveLinkedHead(ctx context.Context) (string, error) {
+	if !m.needsLinkedHead() {
+		return "", nil
+	}
+	return m.deps.Git.HeadCommit(ctx, m.linked.dir)
+}
+
+// WithLinkedHead records a ResolveLinkedHead answer so buildPlanInput can
+// stay a pure read of field state.
+func (m Model) WithLinkedHead(head string) Model {
+	m.linkedHead = head
+	return m
+}
+
 // WithAccount records a ResolveAccount answer so buildPlanInput can stay a
 // pure read of field state. A zero Result clears any previous answer, which is
 // what makes a second submit after a failed first one ask again rather than
@@ -1545,6 +1623,7 @@ func (m Model) buildPlanInput() plan.Input {
 		AccountLaunch:    m.accountLaunch(),
 		AccountConfigDir: m.autoPick.ConfigDir,
 		Launcher:         m.cfg.Clauth.Launcher,
+		Linked:           m.linkedCheckout(useWorktree),
 		Prompt:           m.prompt.Value(),
 		// The toggle's position, not whether the instruction is appended --
 		// plan.PromptText decides that for both callers (reap spec §7.2).
@@ -2290,7 +2369,17 @@ func OrderedAgentKinds(favorites []string) []string {
 // defaultProjectDir resolves spec §6 field 2's "Default: current space's
 // repo root" -- the worktree's own repo root when the invoking context is
 // itself a worktree, falling back to the plain workspace cwd otherwise.
+//
+// A LINKED worktree's space -- a lane -- opens on its own checkout instead
+// (#171). herdr's repo_root for that space names the primary checkout, and
+// `create` run from the lane defaults to the lane, its working directory, so
+// following repo_root here would have the two paths build different
+// sessions from one place: another project, another base, and without a
+// worktree another directory.
 func defaultProjectDir(ctx herdrc.Context) string {
+	if w := ctx.Worktree; w != nil && w.IsLinkedWorktree && w.CheckoutPath != "" {
+		return w.CheckoutPath
+	}
 	if ctx.Worktree != nil && ctx.Worktree.RepoRoot != "" {
 		return ctx.Worktree.RepoRoot
 	}
@@ -2312,6 +2401,12 @@ func buildDirCandidates(ctx herdrc.Context, workspaces []herdrc.WorkspaceInfo, r
 	var out []string
 	if d := defaultProjectDir(ctx); d != "" {
 		out = append(out, d)
+	}
+	// From a lane, the repository it belongs to comes next: the default
+	// before #171, one keystroke away. Anywhere else it is the default
+	// itself, and the dedupe drops it.
+	if ctx.Worktree != nil && ctx.Worktree.RepoRoot != "" {
+		out = append(out, ctx.Worktree.RepoRoot)
 	}
 	if ctx.WorkspaceCwd != "" {
 		out = append(out, ctx.WorkspaceCwd)

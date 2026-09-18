@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -54,6 +55,12 @@ func TestFormAndCommandProduceTheSamePlan(t *testing.T) {
 	// too rather than being excluded from the comparison.
 	contextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + projectDir +
 		`","tab_id":"tT0","focused_pane_id":"pP0"}`
+	// The same pane in a lane's space instead: what herdr hands a popup
+	// opened there, and what a `create` run there inherits (#171). herdr's
+	// repo_root names the primary checkout; the lane is checkout_path.
+	laneContextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + laneDir +
+		`","worktree":{"repo_key":"` + projectDir + `/.git","repo_name":"thing","repo_root":"` + projectDir +
+		`","checkout_path":"` + laneDir + `","is_linked_worktree":true},"tab_id":"tT0","focused_pane_id":"pP0"}`
 
 	for _, tc := range []struct {
 		name string
@@ -75,6 +82,11 @@ func TestFormAndCommandProduceTheSamePlan(t *testing.T) {
 		// it reaches the title row: the keyboard's tab moves focus. (An
 		// issue's title reaches it seeded, through SetTitle.)
 		paste bool
+		// lane runs the command, and opens the popup, in laneDir: a linked
+		// worktree checkout of the project (#171) and the directory the
+		// spawn skill's own agents run in. Both sides then take the lane as
+		// the project, left unset.
+		lane bool
 		// issue is the Linear issue both sides can see. args names it with
 		// --issue; the form is sent the message IssueField sends when a
 		// user picks it, and nothing is typed, because the issue seeds the
@@ -322,6 +334,72 @@ favorites = ["claude"]
 			},
 		},
 		{
+			// #171: the spawn skill's first example, run from a lane. herdr
+			// refuses the lane as a worktree source, so both paths name the
+			// repository root for that and cut the branch from the lane's
+			// commit -- the popup because it now opens on the lane, as
+			// `create` always did. This is the fixture that would have caught
+			// it: before it, no scenario was invoked from a linked worktree.
+			name: "from a lane: a worktree from the repository root, cut from the lane's commit",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+`,
+			lane: true,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				Linked:           plan.LinkedCheckout{RepoRoot: projectDir, Head: laneHead},
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
+			// The lane's commit is what an UNSET base means and nothing more:
+			// a base remembered for the repository (projects.json keys on the
+			// origin root, so the lane shares its entry) wins on both paths,
+			// and neither reads the commit.
+			name: "from a lane, a remembered base still wins over its commit",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+`,
+			projects: `{"version":1,"entries":{"` + projectDir +
+				`":{"base":"main","seen":"2026-09-01T00:00:00Z"}}}`,
+			lane: true,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", BaseRef: "main", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				Linked:           plan.LinkedCheckout{RepoRoot: projectDir},
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
+			// #171's second decision: without a worktree the session is the
+			// lane's, in the lane's own checkout. With its space open, #128's
+			// default puts the tab there -- not in the repository's space.
+			name: "from a lane with no worktree: a tab in the lane's own space",
+			configTOML: `
+branch_prefix = "zvi/"
+default_worktree = false
+[agents]
+favorites = ["claude"]
+`,
+			lane: true,
+			workspaces: []herdrc.WorkspaceInfo{{WorkspaceID: "wL", Label: "thing-lane", Worktree: &herdrc.ContextWorktree{
+				RepoRoot: projectDir, CheckoutPath: laneDir, RepoName: "thing", IsLinkedWorktree: true}}},
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch:    "zvi/fix-login-redirect-loop",
+				Placement: plan.PlacementTabIn, Space: plan.Space{WorkspaceID: "wL", Label: "thing-lane"},
+				AgentKind:        "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
 			// #176: the title row holds 32 runes (spec §6 field 3) and
 			// --title used to hold anything, so one long title built two
 			// sessions. The title labels the space and the tab, and here the
@@ -442,12 +520,17 @@ prompt_template = "Work on {identifier}"
 			if tc.issue != nil {
 				typed = ""
 			}
+			invokedIn, ctxJSON := projectDir, contextJSON
+			if tc.lane {
+				invokedIn, ctxJSON = laneDir, laneContextJSON
+			}
 
 			fromCommand := commandPlanInput(t, commandCase{
 				configDir:   configDir,
 				stateDir:    stateDir,
-				contextJSON: contextJSON,
-				projectDir:  projectDir,
+				contextJSON: ctxJSON,
+				projectDir:  invokedIn,
+				lane:        tc.lane,
 				repoConfig:  repoConfig,
 				workspaces:  tc.workspaces,
 				issue:       tc.issue,
@@ -456,7 +539,8 @@ prompt_template = "Work on {identifier}"
 			fromForm := formPlanInput(t, formCase{
 				configDir:   configDir,
 				stateDir:    stateDir,
-				contextJSON: contextJSON,
+				contextJSON: ctxJSON,
+				lane:        tc.lane,
 				repoConfig:  repoConfig,
 				workspaces:  tc.workspaces,
 				title:       typed,
@@ -471,11 +555,11 @@ prompt_template = "Work on {identifier}"
 
 			// ... and both agree on the RIGHT thing.
 			want := tc.want
-			want.ProjectDir, want.IsGitRepo = projectDir, true
+			want.ProjectDir, want.IsGitRepo = invokedIn, true
 			if want.Title == "" {
 				want.Title = title
 			}
-			want.Ctx = mustContext(t, contextJSON)
+			want.Ctx = mustContext(t, ctxJSON)
 			// No scenario configures a [clauth] launcher, so both paths
 			// resolve the built-in one. Filled here rather than repeated in
 			// every literal, and only when the scenario left it unset, so a
@@ -497,8 +581,11 @@ type commandCase struct {
 	configDir, stateDir string
 	contextJSON         string
 	projectDir          string
-	repoConfig          func(string) config.RepoConfig
-	workspaces          []herdrc.WorkspaceInfo
+	// lane makes laneDir a linked checkout of laneRoot at laneHead, as
+	// formCase.lane does for the form's git.
+	lane       bool
+	repoConfig func(string) config.RepoConfig
+	workspaces []herdrc.WorkspaceInfo
 	// issue is the one assigned Linear issue --issue can find, or nil for
 	// no Linear at all.
 	issue  *linear.Issue
@@ -516,6 +603,12 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	}
 	runner := newFakeRunner()
 	runner.workspaces = c.workspaces
+	git := newFakeGit()
+	if c.lane {
+		git.roots = map[string]string{laneDir: laneRoot}
+		git.linked = map[string]bool{laneDir: true}
+		git.head = laneHead
+	}
 	// Assigned only when there is an issue: a nil *fakeLinear in the
 	// interface would read as Linear configured.
 	var issues IssueSource
@@ -534,7 +627,7 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 		PluginID: pluginID,
 	}, Deps{
 		Runner:     runner,
-		Git:        newFakeGit(),
+		Git:        git,
 		Linear:     issues,
 		RepoConfig: c.repoConfig,
 		Stdin:      strings.NewReader(""),
@@ -572,9 +665,11 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 type formCase struct {
 	configDir, stateDir string
 	contextJSON         string
-	repoConfig          func(string) config.RepoConfig
-	workspaces          []herdrc.WorkspaceInfo
-	title               string
+	// lane is commandCase.lane, for the form's git.
+	lane       bool
+	repoConfig func(string) config.RepoConfig
+	workspaces []herdrc.WorkspaceInfo
+	title      string
 	// paste sends title as one tea.PasteMsg instead of keystrokes.
 	paste bool
 	// issue, when set, is offered by a Linear source and then chosen, as
@@ -590,7 +685,21 @@ type formCase struct {
 
 func formPlanInput(t *testing.T, c formCase) plan.Input {
 	t.Helper()
-	return formModel(t, c).PlanInput()
+	return withLinkedHead(t, formModel(t, c)).PlanInput()
+}
+
+// withLinkedHead takes the first step a submit takes after validation:
+// reading a lane's commit when the plan needs it (#171). The command side
+// takes its counterpart inside resolveRequest. For every other scenario it
+// is a no-op, which is itself worth running: a form that read a commit it
+// did not need would show up here as a Linked the command does not have.
+func withLinkedHead(t *testing.T, m app.Model) app.Model {
+	t.Helper()
+	head, err := m.ResolveLinkedHead(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveLinkedHead: %v", err)
+	}
+	return m.WithLinkedHead(head)
 }
 
 // formModel is formPlanInput's first half: a real, settled app.Model with the
@@ -614,7 +723,7 @@ func formModel(t *testing.T, c formCase) app.Model {
 
 	deps := app.Deps{
 		Runner:     newFakeRunner(),
-		Git:        &formGit{},
+		Git:        &formGit{lane: c.lane},
 		Clock:      app.Clock{Sleep: func(time.Duration) {}},
 		RepoConfig: c.repoConfig,
 		Picker:     c.picker,
@@ -776,13 +885,27 @@ favorites = ["claude", "codex"]
 }
 
 // formGit is app's own gitSource for these tests: an existing repository
-// whose root is itself, with two branches.
-type formGit struct{}
+// whose root is itself, with two branches -- and, with lane set, laneDir a
+// linked checkout of laneRoot at laneHead, as commandCase.lane makes it for
+// the command.
+type formGit struct{ lane bool }
 
 func (formGit) DirExists(string) bool { return true }
 func (formGit) IsGitRepo(string) bool { return true }
-func (formGit) RepoRoot(_ context.Context, dir string) (string, error) {
+func (g formGit) RepoRoot(_ context.Context, dir string) (string, error) {
+	if g.lane && dir == laneDir {
+		return laneRoot, nil
+	}
 	return dir, nil
+}
+func (g formGit) LinkedWorktree(_ context.Context, dir string) (bool, error) {
+	return g.lane && dir == laneDir, nil
+}
+func (g formGit) HeadCommit(context.Context, string) (string, error) {
+	if !g.lane {
+		return "", errors.New("formGit: HeadCommit asked outside a lane")
+	}
+	return laneHead, nil
 }
 func (formGit) ListSubdirs(string, int) []string { return nil }
 func (formGit) ResolvePath(p string) string      { return p }
@@ -915,7 +1038,7 @@ launch = "wrapper"
 // nothing while making the common path harder to read.
 func formPlanInputAuto(t *testing.T, c formCase) plan.Input {
 	t.Helper()
-	m := formModel(t, c)
+	m := withLinkedHead(t, formModel(t, c))
 	res, err := m.ResolveAccount(context.Background())
 	if err != nil {
 		t.Fatalf("ResolveAccount: %v", err)

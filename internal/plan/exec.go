@@ -1651,10 +1651,12 @@ func unconfirmedCleanReason(cause unconfirmedCause) string {
 // a race no interactive submit can realistically hit; the trade is
 // deliberate. A non-empty BaseRef (any other picker row) is used as-is:
 // git resolves it in the worktree, which shares the origin repo's object
-// store.
+// store. So is a linked checkout's commit (WorktreeBase): the plan already
+// named the exact commit the worktree was cut from, so neither the
+// approximation nor the git call applies (#171).
 func resolveBaseRef(ctx context.Context, in Input) (string, error) {
-	if in.BaseRef != "" {
-		return in.BaseRef, nil
+	if base := WorktreeBase(in); base != "" {
+		return base, nil
 	}
 	if in.ProjectDir == "" {
 		return "", fmt.Errorf("no project directory to resolve HEAD in")

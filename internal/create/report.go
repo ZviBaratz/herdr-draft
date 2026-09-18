@@ -244,7 +244,7 @@ func (r report) writeJSON(w io.Writer) {
 	}
 	if r.input.UseWorktree {
 		out.Branch = r.input.Branch
-		out.Base = r.input.BaseRef
+		out.Base = plan.WorktreeBase(r.input)
 	}
 	if c := r.result.Created; c != nil {
 		out.SpaceWorkspaceID, out.SpaceTabID, out.SpacePaneID = c.WorkspaceID, c.TabID, c.PaneID

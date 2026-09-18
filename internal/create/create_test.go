@@ -278,6 +278,16 @@ type fakeGit struct {
 	// branches names the branches BranchExists reports as already there,
 	// locally or on a remote -- nil for every test that does not care.
 	branches map[string]bool
+	// roots overrides RepoRoot's answer for a directory, which is otherwise
+	// the directory itself; linked names the directories that are linked
+	// worktree checkouts. Both nil for every test that is not about one.
+	roots  map[string]string
+	linked map[string]bool
+	// head and headErr are HeadCommit's answer, and headCalls counts the
+	// questions.
+	head      string
+	headErr   error
+	headCalls int
 }
 
 var _ GitSource = (*fakeGit)(nil)
@@ -293,7 +303,17 @@ func (g *fakeGit) RepoRoot(_ context.Context, dir string) (string, error) {
 	if !g.isRepo {
 		return "", nil
 	}
+	if root, ok := g.roots[dir]; ok {
+		return root, nil
+	}
 	return dir, nil
+}
+func (g *fakeGit) LinkedWorktree(_ context.Context, dir string) (bool, error) {
+	return g.linked[dir], nil
+}
+func (g *fakeGit) HeadCommit(context.Context, string) (string, error) {
+	g.headCalls++
+	return g.head, g.headErr
 }
 
 // fakeLinear implements IssueSource.

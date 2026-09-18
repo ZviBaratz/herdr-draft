@@ -62,6 +62,10 @@ type tiers struct {
 	// second path, so a project inside a repository still finds the
 	// repository's own space.
 	repoRoot string
+	// linked reports that projectDir is inside a linked worktree checkout
+	// whose repoRoot resolved -- a lane (#171). A worktree session from one
+	// is created from repoRoot, since herdr refuses the lane as a source.
+	linked bool
 	// workspaces is the `herdr workspace list` snapshot the open-workspace
 	// tier reads (defaults.Sources.Workspaces). nil when herdr could not be
 	// asked: that leaves every other tier's answer standing, and run()'s
@@ -175,6 +179,10 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	if err != nil {
 		return resolution{}, err
 	}
+	in, err = withLinkedCheckout(ctx, in, t, prov, deps.git())
+	if err != nil {
+		return resolution{}, err
+	}
 	if err := requireContext(hctx, in); err != nil {
 		return resolution{}, err
 	}
@@ -242,6 +250,13 @@ func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, proje
 		}
 	}
 	t.repoRoot = repoRoot
+	if repoRoot != "" {
+		// Not fatal either, and for the same reason: an unanswered question
+		// leaves the lane as the source, which herdr refuses by name
+		// (linked_worktree_source) -- loud, and no worse than before #171.
+		linked, err := deps.git().LinkedWorktree(ctx, projectDir)
+		t.linked = err == nil && linked
+	}
 	t.projectKey = projectMemoryKey(projectDir, repoRoot)
 	t.repo = deps.repoConfig()(repoRoot)
 	t.state, t.projects = loadMemory(env.StateDir)
@@ -558,6 +573,38 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		// only `create` could set would be the first thing to break that.
 		TrustRepository: res.TrustRepository,
 	}, prov, nil
+}
+
+// withLinkedCheckout fills in plan.Input.Linked for a worktree session whose
+// project is a linked checkout (#171): the repository root herdr will accept
+// as the source, and -- when no base was chosen -- the checkout's own
+// commit, which is what spawn skill §3 promises an unset --base means. Left
+// to herdr, an unset base would be the PRIMARY checkout's HEAD.
+//
+// The commit is resolved here rather than in loadTiers because only this
+// case needs it, and after buildInput because only buildInput knows whether
+// there is a worktree and a base. It is the command's half of what the form
+// does at submit (app's ResolveLinkedHead): a commit, so a detached HEAD
+// works too, and so --json can say exactly what the branch was cut from.
+//
+// It is not remembered. BaseRef stays what was chosen -- nothing -- and
+// projects.json records that, since it is keyed on the origin root and a
+// remembered commit would pin every later session in the repository to it.
+func withLinkedCheckout(ctx context.Context, in plan.Input, t tiers, prov map[string]string, git GitSource) (plan.Input, error) {
+	if !in.UseWorktree || !t.linked {
+		return in, nil
+	}
+	in.Linked.RepoRoot = t.repoRoot
+	if in.BaseRef != "" {
+		return in, nil
+	}
+	head, err := git.HeadCommit(ctx, in.ProjectDir)
+	if err != nil {
+		return plan.Input{}, fmt.Errorf("%s is a linked worktree checkout, so the new branch is cut from its commit, and that could not be resolved: %v -- pass --base to choose one", in.ProjectDir, err)
+	}
+	in.Linked.Head = head
+	prov[defaults.FieldBaseRef] = provenanceCheckout
+	return in, nil
 }
 
 // agentKind resolves the agent kind: --agent when given (rejected unless
@@ -942,13 +989,16 @@ func workspaceByID(workspaces []herdrc.WorkspaceInfo, id string) (plan.Space, bo
 	return plan.Space{}, false
 }
 
-// provenanceFlag and provenanceWorktree are the two provenance values
-// spec §10's tier names cannot express: a value the caller gave outright
-// on the command line, and the one value a worktree decides by itself
-// (placement spec §14: a worktree session's placement is its own space).
+// provenanceFlag, provenanceWorktree and provenanceCheckout are the
+// provenance values spec §10's tier names cannot express: a value the
+// caller gave outright on the command line, the one value a worktree
+// decides by itself (placement spec §14: a worktree session's placement is
+// its own space), and the base a linked checkout supplies when none was
+// chosen -- its own commit (#171).
 const (
 	provenanceFlag     = "flag"
 	provenanceWorktree = "worktree"
+	provenanceCheckout = "checkout"
 )
 
 // provenanceOf turns the resolver's own tier attribution into the string

@@ -102,6 +102,14 @@ type fakeGit struct {
 	repoRootErr   error
 	repoRootCalls []string
 
+	// linked names the directories LinkedWorktree reports as linked
+	// worktree checkouts; head/headErr are HeadCommit's answer and
+	// headCalls every directory it was asked about (#171).
+	linked    map[string]bool
+	head      string
+	headErr   error
+	headCalls []string
+
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
@@ -186,6 +194,15 @@ func (g *fakeGit) RepoRoot(_ context.Context, dir string) (string, error) {
 		return "", nil
 	}
 	return dir, nil
+}
+func (g *fakeGit) LinkedWorktree(_ context.Context, dir string) (bool, error) {
+	g.dirsSeen = append(g.dirsSeen, dir)
+	return g.linked[dir], nil
+}
+func (g *fakeGit) HeadCommit(_ context.Context, dir string) (string, error) {
+	g.headCalls = append(g.headCalls, dir)
+	g.dirsSeen = append(g.dirsSeen, dir)
+	return g.head, g.headErr
 }
 func (g *fakeGit) ListBranches(_ context.Context, dir string, _ int) ([]string, error) {
 	g.listBranchesCalls++
