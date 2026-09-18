@@ -470,3 +470,41 @@ func TestFrames_AccountAutoRefused(t *testing.T) {
 			Refusal: "pool exhausted (resets 22:49)",
 		}), 101, 30)
 }
+
+// buildOptionsPanelForm focuses OptionsField on claude with a config seed,
+// extra_args passing a flag of its own, and the cursor moved to effort --
+// agent-options spec §7.2's panel with every line it can carry. With other,
+// the model is a typed id, so the name part is open under it.
+func buildOptionsPanelForm(palette theme.Palette, other bool) Model {
+	f := NewOptionsField(palette)
+	seed := map[string]string{"effort": "xhigh", "permission_mode": "plan"}
+	if other {
+		seed["model"] = "claude-opus-5[1m]"
+	}
+	f.SetKind("claude", KindOptions{
+		Specs: claudeSpecs(), Seed: seed, SeedSource: "config.toml",
+		ExtraArgs: []string{"--verbose", "--model", "opus"},
+		Pinned:    map[string]string{"model": "opus"},
+	})
+	m := fieldFrame(palette, f)
+	f.Update(key(tea.KeyDown, 0))
+	return m
+}
+
+func TestFrames_OptionsPanel(t *testing.T) {
+	assertFrame(t, "options-panel-80x24", buildOptionsPanelForm(theme.Default(), false), 80, 24)
+	assertFrame(t, "options-panel-other-80x24", buildOptionsPanelForm(theme.Default(), true), 80, 24)
+}
+
+// buildOptionsInertForm is a kind that declares nothing, reached by a
+// click since Tab skips it: spec §7.1's one dim row, and a panel that says
+// why and still shows the kind's extra_args.
+func buildOptionsInertForm(palette theme.Palette) Model {
+	f := NewOptionsField(palette)
+	f.SetKind("codex", KindOptions{ExtraArgs: []string{"--full-auto"}})
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_OptionsInert(t *testing.T) {
+	assertFrame(t, "options-inert-80x24", buildOptionsInertForm(theme.Default()), 80, 24)
+}

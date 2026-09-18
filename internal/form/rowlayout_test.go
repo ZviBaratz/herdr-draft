@@ -19,33 +19,36 @@ import (
 // it lives entirely at h >= 16, so a small-height fixture that moves is a
 // bug, not a consequence.
 func TestLayoutFrame_SpecNineLadder(t *testing.T) {
-	const n = 8
+	// Nine rows: the shipped stack since the agent-options spec added
+	// `options` (§7.4). v3 spec §7.3's own table is the same ladder at
+	// n = 8, one row lower throughout.
+	const n = 9
 	cases := []struct {
 		h    int
 		want frame
 	}{
-		{40, frame{PadTop: 6, Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 15, Rule3: true, Footer: true, PadBottom: 6}},
+		{40, frame{PadTop: 6, Header: true, Rule1: true, Rows: 9, Rule2: true, Region: 14, Rule3: true, Footer: true, PadBottom: 6}},
 		// The shipped pane (v3 spec §6.1), and the two rungs under it:
 		// h = 29 is where the bottom pad runs out, h = 28 where the top
 		// one does and the cap is exactly met.
-		{30, frame{PadTop: 1, Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 15, Rule3: true, Footer: true, PadBottom: 1}},
-		{29, frame{PadTop: 1, Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 15, Rule3: true, Footer: true}},
-		{28, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 15, Rule3: true, Footer: true}},
+		{30, frame{PadTop: 1, Header: true, Rule1: true, Rows: 9, Rule2: true, Region: 14, Rule3: true, Footer: true, PadBottom: 1}},
+		{29, frame{PadTop: 1, Header: true, Rule1: true, Rows: 9, Rule2: true, Region: 14, Rule3: true, Footer: true}},
+		{28, frame{Header: true, Rule1: true, Rows: 9, Rule2: true, Region: 14, Rule3: true, Footer: true}},
 		// The popup clamped to an 80x24 terminal: below the cap, so all
 		// of the slack is still panel.
-		{22, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 9, Rule3: true, Footer: true}},
-		{19, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 6, Rule3: true, Footer: true}},
+		{22, frame{Header: true, Rule1: true, Rows: 9, Rule2: true, Region: 8, Rule3: true, Footer: true}},
+		{19, frame{Header: true, Rule1: true, Rows: 9, Rule2: true, Region: 5, Rule3: true, Footer: true}},
 		// The frame is exactly whole: every component present, the panel
 		// on its floor.
-		{16, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 3, Rule3: true, Footer: true}},
+		{17, frame{Header: true, Rule1: true, Rows: 9, Rule2: true, Region: 3, Rule3: true, Footer: true}},
 		// --- from here down, identical to v2 ---
-		{15, frame{Header: true, Rule1: true, Rows: 8, Rule2: true, Region: 3, Footer: true}},
-		{14, frame{Header: true, Rule1: true, Rows: 8, Region: 3, Footer: true}},
-		{13, frame{Rule1: true, Rows: 8, Region: 3, Footer: true}},
-		{12, frame{Rows: 8, Region: 3, Footer: true}},
+		{16, frame{Header: true, Rule1: true, Rows: 9, Rule2: true, Region: 3, Footer: true}},
+		{15, frame{Header: true, Rule1: true, Rows: 9, Region: 3, Footer: true}},
+		{14, frame{Rule1: true, Rows: 9, Region: 3, Footer: true}},
+		{13, frame{Rows: 9, Region: 3, Footer: true}},
 		// The stack starts scrolling: the panel floor outranks the
-		// eighth row.
-		{11, frame{Rows: 7, Region: 3, Footer: true}},
+		// ninth row.
+		{12, frame{Rows: 8, Region: 3, Footer: true}},
 		{10, frame{Rows: 6, Region: 3, Footer: true}},
 		{5, frame{Rows: 1, Region: 3, Footer: true}},
 		// Below h = 5 the panel gives up its floor a row at a time and
@@ -73,14 +76,14 @@ func TestLayoutFrame_SpecNineLadder(t *testing.T) {
 // The bound is n-specific and deliberately so. The three new rungs cost
 // one row of chrome plus whatever the cap withholds, and a shorter stack
 // reaches them sooner: n = 0 first differs at h = 8. What the shipped
-// form promises is that nothing at h <= 15 moved, and that is what is
-// asserted.
+// form promises is that nothing at h <= 16 moved -- 15 until the
+// agent-options spec's ninth row -- and that is what is asserted.
 func TestLayoutFrame_UnchangedBelowTheCap(t *testing.T) {
-	const n = 8
-	for h := 0; h <= 15; h++ {
+	const n = 9
+	for h := 0; h <= 16; h++ {
 		f := layoutFrame(h, n)
 		if f.Rule3 || f.PadTop != 0 || f.PadBottom != 0 {
-			t.Errorf("layoutFrame(%d, %d) = %+v: h <= 15 must be the v2 frame, with no rule 3 and no pads", h, n, f)
+			t.Errorf("layoutFrame(%d, %d) = %+v: h <= 16 must be the v2 frame, with no rule 3 and no pads", h, n, f)
 		}
 		if f.Region > panelFloor {
 			t.Errorf("layoutFrame(%d, %d).Region = %d: v2 never grew the region past its floor this low", h, n, f.Region)

@@ -52,7 +52,7 @@ const (
 	titleSessionOne  = "session"
 	titleSessionMany = "sessions"
 	// titleSessionsMaxRows caps how many session rows PanelRows will ask
-	// for. Fifteen is panelCapRows -- the region cannot show more than
+	// for. It is panelCapRows -- the region cannot show more than
 	// that anyway (v3 spec §7.2), so a larger number would only make
 	// PanelRows lie about a height it can never be given.
 	titleSessionsMaxRows = panelCapRows
