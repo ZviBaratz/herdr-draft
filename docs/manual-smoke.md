@@ -1595,7 +1595,11 @@ stable blocking screen that the prompt was typed into, that is the evidence
 for adding it to `dialog.go`'s signatures; if it shows an ordinary error,
 record that nothing is needed.
 
-**Not yet run.** Do not write a result you did not see.
+**Partly run.** The drift check, the unpinned form walk, and Path B's typed
+command through an `echo` launcher were observed on 2026-09-18 (Recorded
+runs). A real claude launch on either path, the headless refusals against a
+live herdr, and the model-error record were not. Do not write a result you
+did not see.
 
 ## After the matrix
 
@@ -1629,6 +1633,25 @@ record that nothing is needed.
   alongside the release.
 
 ## Recorded runs
+
+### the options row (agent-options spec) — 2026-09-18
+
+herdr 0.9.0, claude 2.1.276, `zvi/session-configuration` as it stood before
+the independent review's fixes, not merged. Route A0 with its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME`, a
+scratch plugin config and state dir, and `[clauth] enabled = false` for the
+form, so no account row. No claude was started: the pass spent no account
+quota and wrote nothing of the user's.
+
+| Case | Result |
+|---|---|
+| drift | **as expected.** `--effort` listed `low, medium, high, xhigh, max`, and `--permission-mode` listed `acceptEdits, auto, bypassPermissions, manual, dontAsk, plan`. |
+| form at rest | **as expected.** With `[agents.extra_args] claude = ["--model", "sonnet"]` and `[agents.options.claude] effort = "high"` plus a refused `permission_mode = "bypassPermissions"`: the row read `sonnet · effort high` (`sonnet` dim). The panel read `inherit sends nothing of its own; [agents.extra_args] passes --model sonnet`, `[agents.extra_args] adds: --model sonnet`, the refusal warning, and `from config.toml`. The footer rung was `↑↓ option · ←→ value`. |
+| form walk | **as expected.** `←` on model reached `other` and opened `name`. `claude-opus-5[1m]` typed in. A following space was refused, and the row read `… · effort xhigh · plan mode` after `→` on effort and `→ →` on mode. The rest of `send-text ' --dangerous'` landed after the refused space, as `claude-opus-5[1m]--dangerous`. That is a valid id, because the rule only forbids a leading dash, so it is one argument to `--model` and not a flag. |
+| codex round trip | **as expected.** Agent `→` to codex: `options  none for codex`. `←` back: every choice restored. |
+| Path B, headless | **as expected.** `[clauth] launcher = ["echo", "LAUNCHED", "{account}"]`, extra args `["--model", "sonnet", "--verbose"]`, `--model 'claude-opus-5[1m]' --permission-mode plan --account personal-1`. The pane was typed `echo LAUNCHED personal-1 --verbose --model 'claude-opus-5[1m]' --effort high --permission-mode plan`, and echo printed the id unquoted. Extra args' `--model sonnet` was replaced and `--verbose` kept. `--json` reported all three options, with provenance `option.effort: config.toml` and the other two `flag`. Exit 1 at detection, as an echo launcher must. |
+
+Teardown: the disposable session stopped and deleted, the scratch tree
+removed, `pgrep -x herdr-draft` 0.
 
 ### control characters in a `create` title (#178) — 2026-09-18
 
