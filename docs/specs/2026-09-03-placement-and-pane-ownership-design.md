@@ -1372,8 +1372,11 @@ such policy.
 **What does run long is headless.** `create --title` and `--issue` have
 no 32-rune cap. A 47-rune `--title` reaches `plan.Input` whole from
 `create` and cut to 32 from the form, with the branch derived differently
-to match (`--issue` diverges in the title only, since both paths take
-Linear's branch name). `TestFormAndCommandProduceTheSamePlan` misses it
+to match. `--issue` usually diverges in the title only, because both
+paths take Linear's branch name. That holds while `linear_branch_name` is
+at its default and the issue has a branch name. Otherwise both paths
+derive the branch from their differently-capped titles
+(`app.BranchFor`). `TestFormAndCommandProduceTheSamePlan` misses it
 because every title in it is short. That is the drift the equivalence
 test exists to catch, it is independent of tabs, and it is #176.
 
