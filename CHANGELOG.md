@@ -95,8 +95,8 @@ without the popup. It drives herdr exclusively through the public CLI
 - **A title is cut to 32 runes, as the form's `title` row cuts it**,
   whether it came from `--title` or from `--issue`'s Linear issue, and a
   line on stderr gives the title used. Uncut, one long title built two
-  different sessions: its space, tab, agent and derived branch all differed
-  from the popup's (#176).
+  different sessions: the space and tab labels and a title-derived branch
+  differed from the popup's, and so could the agent's name (#176).
 - Progress goes to stderr one line per step; the result to stdout, or a
   single JSON object under `--json` carrying a `provenance` map naming the
   tier each value came from.

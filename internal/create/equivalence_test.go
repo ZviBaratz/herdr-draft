@@ -36,8 +36,8 @@ import (
 // .herdr-draft.toml and plugin context, settles it by running the debounced
 // dir/base checks its own Init schedules, types the title a user would
 // type (or picks the issue that seeds it), and reads back the plan.Input
-// its submit would build. The two
-// plan.Inputs must be identical, field for field.
+// its submit would build. The two plan.Inputs must be identical, field for
+// field.
 //
 // That is the only test in this repository that can catch the failure this
 // feature is most exposed to: a resolution rule the form applies AFTER the
@@ -274,9 +274,10 @@ favorites = ["claude"]
 		{
 			// #176: the title row holds 32 runes (spec §6 field 3) and
 			// --title used to hold anything, so one long title built two
-			// sessions. The title names the space, the tab and the agent,
-			// and here the branch as well, because it is derived from the
-			// title.
+			// sessions. The title labels the space and the tab, and here the
+			// branch differs as well, because it is derived from the title.
+			// (It names the agent too, but plan.AgentName's 30-rune clamp
+			// hides the cut for this title.)
 			name: "a --title over 32 runes is cut as the form cuts it",
 			configTOML: `
 branch_prefix = "zvi/"

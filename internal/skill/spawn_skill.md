@@ -209,8 +209,8 @@ cannot find out on its own:
 `--issue ID` seeds the title, branch and prompt from a Linear issue, if
 the user has Linear configured and the work has an issue. It is a
 starting point for the prompt, not a substitute for the four things above.
-The issue's title is cut to 32 runes like any other, and the prompt still
-quotes it whole.
+The issue's title is cut to 32 runes like any other. The prompt it seeds
+is not cut.
 
 `--reap` ends the prompt with an instruction to mark the new pane ready
 for **pane-reaper**, which closes it once the agent has saved its work and

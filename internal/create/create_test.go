@@ -1647,6 +1647,15 @@ func TestLongTitleIsCutAndSaysSo(t *testing.T) {
 			wantLine: `herdr-draft create: ENG-42's title is 52 runes and a title is capped at 32, as in the form; using "Fix café login redirect loop whe"`,
 		},
 		{
+			// --title wins over the issue's, so the line names --title:
+			// blaming the issue for a title the caller typed would send
+			// them to the wrong place to shorten it.
+			name:     "--title beside --issue",
+			args:     []string{"--title", "fix login redirect loop when the cookie expires", "--issue", "eng-42"},
+			wantUsed: "fix login redirect loop when the",
+			wantLine: `herdr-draft create: --title is 47 runes and a title is capped at 32, as in the form; using "fix login redirect loop when the"`,
+		},
+		{
 			name:     "exactly the cap is not cut",
 			args:     []string{"--title", "fix login redirect loop when the"},
 			wantUsed: "fix login redirect loop when the",
