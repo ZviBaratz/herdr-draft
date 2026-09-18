@@ -1,6 +1,7 @@
 package create
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"os"
@@ -15,7 +16,9 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
+	"github.com/ZviBaratz/herdr-draft/internal/form"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
+	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -32,8 +35,9 @@ import (
 // real app.Model over the SAME config.toml, last-used.json, projects.json,
 // .herdr-draft.toml and plugin context, settles it by running the debounced
 // dir/base checks its own Init schedules, types the title a user would
-// type, and reads back the plan.Input its submit would build. The two
-// plan.Inputs must be identical, field for field.
+// type (or picks the issue that seeds it), and reads back the plan.Input
+// its submit would build. The two plan.Inputs must be identical, field for
+// field.
 //
 // That is the only test in this repository that can catch the failure this
 // feature is most exposed to: a resolution rule the form applies AFTER the
@@ -62,8 +66,16 @@ func TestFormAndCommandProduceTheSamePlan(t *testing.T) {
 		// the tier (TierOpenWorkspace) that is a fact about the machine
 		// rather than a file.
 		workspaces []herdrc.WorkspaceInfo
+		// title is what a user types into the title row, and what args
+		// hands --title. "" is the short title every other scenario shares.
+		title string
+		// issue is the Linear issue both sides can see. args names it with
+		// --issue; the form is sent the message IssueField sends when a
+		// user picks it, and nothing is typed, because the issue seeds the
+		// title.
+		issue *linear.Issue
 		// args are the command's flags; the form is driven with the
-		// equivalent user input (the title, always) and nothing else.
+		// equivalent user input (the title, or the issue) and nothing else.
 		args []string
 		// want is what the tiers above are supposed to resolve to. Equality
 		// between the two sides is the point of the test, but two sides
@@ -259,6 +271,59 @@ favorites = ["claude"]
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
+		{
+			// #176: the title row holds 32 runes (spec §6 field 3) and
+			// --title used to hold anything, so one long title built two
+			// sessions. The title labels the space and the tab, and here the
+			// branch differs as well, because it is derived from the title.
+			// (It names the agent too, but plan.AgentName's 30-rune clamp
+			// hides the cut for this title.)
+			name: "a --title over 32 runes is cut as the form cuts it",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+`,
+			title: "fix login redirect loop when the cookie expires",
+			args:  []string{"--title", "fix login redirect loop when the cookie expires"},
+			want: plan.Input{
+				Title:  "fix login redirect loop when the",
+				Branch: "zvi/fix-login-redirect-loop-when-the", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
+			// #176's other half: an issue's title is cut on the way into
+			// the title row too. The branch agrees either way, since both
+			// paths take the issue's own, so the title is all that
+			// diverged.
+			//
+			// The é puts a two-byte rune before the cut, and rune 32 falls
+			// inside "when": a cut by bytes, or back to a word boundary,
+			// lands somewhere the form's does not.
+			name: "an issue title over 32 runes is cut as the form cuts it",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+`,
+			issue: &linear.Issue{
+				Identifier: "ENG-42", Title: "Fix café login redirect loop when the cookie expires",
+				BranchName: "zvi/eng-42-fix-cafe-login-redirect-loop",
+				URL:        "https://linear.app/x/ENG-42", Description: "it loops",
+			},
+			args: []string{"--issue", "ENG-42"},
+			// The prompt quotes the issue's title whole: the cap is the
+			// title row's, and the template is not rendered into it.
+			want: plan.Input{
+				Title:  "Fix café login redirect loop whe",
+				Branch: "zvi/eng-42-fix-cafe-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				Prompt:           "Work on ENG-42: Fix café login redirect loop when the cookie expires\n\nhttps://linear.app/x/ENG-42\n\nit loops",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configDir, stateDir := t.TempDir(), t.TempDir()
@@ -271,6 +336,11 @@ favorites = ["claude"]
 			}
 			repoConfig := func(string) config.RepoConfig { return tc.repo }
 
+			typed := cmp.Or(tc.title, title)
+			if tc.issue != nil {
+				typed = ""
+			}
+
 			fromCommand := commandPlanInput(t, commandCase{
 				configDir:   configDir,
 				stateDir:    stateDir,
@@ -278,6 +348,7 @@ favorites = ["claude"]
 				projectDir:  projectDir,
 				repoConfig:  repoConfig,
 				workspaces:  tc.workspaces,
+				issue:       tc.issue,
 				args:        tc.args,
 			})
 			fromForm := formPlanInput(t, formCase{
@@ -286,7 +357,8 @@ favorites = ["claude"]
 				contextJSON: contextJSON,
 				repoConfig:  repoConfig,
 				workspaces:  tc.workspaces,
-				title:       title,
+				title:       typed,
+				issue:       tc.issue,
 			})
 
 			if !reflect.DeepEqual(fromCommand, fromForm) {
@@ -296,7 +368,10 @@ favorites = ["claude"]
 
 			// ... and both agree on the RIGHT thing.
 			want := tc.want
-			want.ProjectDir, want.Title, want.IsGitRepo = projectDir, title, true
+			want.ProjectDir, want.IsGitRepo = projectDir, true
+			if want.Title == "" {
+				want.Title = title
+			}
 			want.Ctx = mustContext(t, contextJSON)
 			// No scenario configures a [clauth] launcher, so both paths
 			// resolve the built-in one. Filled here rather than repeated in
@@ -321,8 +396,11 @@ type commandCase struct {
 	projectDir          string
 	repoConfig          func(string) config.RepoConfig
 	workspaces          []herdrc.WorkspaceInfo
-	args                []string
-	picker              picker.Source
+	// issue is the one assigned Linear issue --issue can find, or nil for
+	// no Linear at all.
+	issue  *linear.Issue
+	args   []string
+	picker picker.Source
 }
 
 func commandPlanInput(t *testing.T, c commandCase) plan.Input {
@@ -335,6 +413,12 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	}
 	runner := newFakeRunner()
 	runner.workspaces = c.workspaces
+	// Assigned only when there is an issue: a nil *fakeLinear in the
+	// interface would read as Linear configured.
+	var issues IssueSource
+	if c.issue != nil {
+		issues = &fakeLinear{issues: []linear.Issue{*c.issue}}
+	}
 	resolved, err := resolveRequest(context.Background(), req, Env{
 		ConfigDir:   c.configDir,
 		StateDir:    c.stateDir,
@@ -348,6 +432,7 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	}, Deps{
 		Runner:     runner,
 		Git:        newFakeGit(),
+		Linear:     issues,
 		RepoConfig: c.repoConfig,
 		Stdin:      strings.NewReader(""),
 		Stdout:     &strings.Builder{},
@@ -373,20 +458,24 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 // formCase/formPlanInput build a real app.Model over the same tiers, let
 // it settle, type the title, and read back what its submit would build.
 // The form side is deliberately driven with the ONE input a user gives
-// that this comparison needs -- the title -- and nothing else. Every
-// scenario above therefore differs only in its configuration tiers, which
-// is precisely the claim under test ("unset flags resolve through the
-// resolver"). Driving the form's chip rows and pickers by keystroke would
-// couple this test to internal/form's key grammar, which is being
-// rewritten under a separate issue; the flags-beat-the-tiers half is
-// covered on the command side alone, by TestFlagsBeatEveryTier.
+// that this comparison needs -- the title, or the issue that seeds it --
+// and nothing else. Every scenario above therefore differs only in its
+// configuration tiers, which is precisely the claim under test ("unset
+// flags resolve through the resolver"). Driving the form's chip rows and
+// pickers by keystroke would couple this test to internal/form's key
+// grammar, which is being rewritten under a separate issue; the
+// flags-beat-the-tiers half is covered on the command side alone, by
+// TestFlagsBeatEveryTier.
 type formCase struct {
 	configDir, stateDir string
 	contextJSON         string
 	repoConfig          func(string) config.RepoConfig
 	workspaces          []herdrc.WorkspaceInfo
 	title               string
-	picker              picker.Source
+	// issue, when set, is offered by a Linear source and then chosen, as
+	// commandCase.issue is found by --issue.
+	issue  *linear.Issue
+	picker picker.Source
 	// clauthStatus is what makes the account row exist at all (app.New's own
 	// ">= 2 profiles" gate). The command path never consults clauth, so this
 	// has no counterpart on the other side -- it is scaffolding for the row,
@@ -418,18 +507,23 @@ func formModel(t *testing.T, c formCase) app.Model {
 		t.Fatalf("ParseContext: %v", err)
 	}
 
+	deps := app.Deps{
+		Runner:     newFakeRunner(),
+		Git:        &formGit{},
+		Clock:      app.Clock{Sleep: func(time.Duration) {}},
+		RepoConfig: c.repoConfig,
+		Picker:     c.picker,
+		// Non-nil purely to satisfy app.New's construction gate; nothing
+		// in this test focuses the account row, which is the only thing
+		// that would ever call it.
+		Clauth: app.NewClauthSource(clauth.LoadOpts{}),
+	}
+	if c.issue != nil {
+		deps.Linear = &fakeLinear{issues: []linear.Issue{*c.issue}}
+	}
+
 	m := app.New(app.Setup{
-		Deps: app.Deps{
-			Runner:     newFakeRunner(),
-			Git:        &formGit{},
-			Clock:      app.Clock{Sleep: func(time.Duration) {}},
-			RepoConfig: c.repoConfig,
-			Picker:     c.picker,
-			// Non-nil purely to satisfy app.New's construction gate; nothing
-			// in this test focuses the account row, which is the only thing
-			// that would ever call it.
-			Clauth: app.NewClauthSource(clauth.LoadOpts{}),
-		},
+		Deps:         deps,
 		Ctx:          hctx,
 		Workspaces:   c.workspaces,
 		Config:       cfg,
@@ -448,6 +542,13 @@ func formModel(t *testing.T, c formCase) app.Model {
 	// .herdr-draft.toml and applies spec §10's per-project memory, and the
 	// base-branch listing the remembered base needs in order to land.
 	m = pump(t, m, m.Init())
+	// A chosen issue arrives as the message IssueField sends on a pick,
+	// not by keystroke -- the same line against the key grammar that
+	// formCase draws. What it schedules is dropped for the reason given
+	// below: the seeding plan.Input reads is synchronous.
+	if c.issue != nil {
+		m = send(m, form.IssueChosenMsg{Issue: c.issue})
+	}
 	// Then the one thing a user types. The commands a keystroke returns
 	// are deliberately dropped rather than pumped: they are the cursor's
 	// blink and the debounced title-duplicate check, and neither touches

@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
@@ -385,14 +386,25 @@ func projectMemoryKey(projectDir, repoRoot string) string {
 func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, issue *linear.Issue, prompt explicitPrompt, hctx herdrc.Context, deps Deps) (plan.Input, map[string]string, error) {
 	prov := provenanceOf(res)
 
-	title := req.title
+	title, from := req.title, "--title"
 	if !req.set["title"] || strings.TrimSpace(title) == "" {
 		if issue != nil {
-			title = issue.Title
+			title, from = issue.Title, issue.Identifier+"'s title"
 		}
 	}
 	if strings.TrimSpace(title) == "" {
 		return plan.Input{}, nil, fmt.Errorf("a title is required: pass --title, or --issue to take one from Linear")
+	}
+	// The title row's cap (spec §6 field 3), from the definition the row
+	// itself reads, so one long title builds one session (#176). It is cut
+	// here, before anything reads it: the branch below is derived from it,
+	// and the title-in-use refusal compares it. The form cuts without a
+	// word because its row shows the result. Nothing shows anything here,
+	// so a caller whose --title came back shorter is told, once.
+	if cut := plan.CutTitle(title); cut != title {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s is %d runes and a title is capped at %d, as in the form; using %q\n",
+			from, utf8.RuneCountInString(title), plan.TitleMaxRunes, cut)
+		title = cut
 	}
 
 	issueBranch := ""

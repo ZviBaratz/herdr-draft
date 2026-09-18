@@ -14,12 +14,15 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
 const (
-	// titleCharLimit is spec §6 field 3's "32-rune cap".
-	titleCharLimit = 32
+	// titleCharLimit is spec §6 field 3's "32-rune cap", read from plan
+	// because `create` cuts a title with the same number (plan.CutTitle).
+	// The form-local name stays because placement spec §15.2 cites it.
+	titleCharLimit = plan.TitleMaxRunes
 	// titleRowLabel is v2's row label (v2 spec §6): lowercase, no colon,
 	// no padding -- the form pads it into the label column
 	// (rowlayout.go's labelColWidth).

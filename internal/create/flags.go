@@ -83,7 +83,8 @@ then the built-in default.
 
 flags:
   --project DIR      project directory (default: the working directory)
-  --title TEXT       session title; required unless --issue supplies one
+  --title TEXT       session title; required unless --issue supplies one.
+                     Either is cut to 32 runes, as the form cuts it
   --prompt TEXT      initial prompt; "-" reads it from stdin
   --branch NAME      worktree branch (default: derived from the title)
   --base REF         worktree base ref (default: HEAD)

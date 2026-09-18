@@ -1380,6 +1380,12 @@ derive the branch from their differently-capped titles
 because every title in it is short. That is the drift the equivalence
 test exists to catch, it is independent of tabs, and it is #176.
 
+**Closed 2026-09-18 by #176.** `create` cuts a title to 32 runes with
+`plan.CutTitle`, which reads the same `plan.TitleMaxRunes` that
+`titleCharLimit` now aliases, and says so on stderr. Fact 1 therefore
+holds from both paths. `TestFormAndCommandProduceTheSamePlan` now has a
+scenario for a long `--title` and one for a long issue title.
+
 ### 15.3 The control, if that changes (declined 2026-09-18, not built)
 
 - **Home: the title row's panel**, as a `tab` part under the verdict line
