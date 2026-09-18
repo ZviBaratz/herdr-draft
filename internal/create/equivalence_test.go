@@ -69,6 +69,10 @@ func TestFormAndCommandProduceTheSamePlan(t *testing.T) {
 		// title is what a user types into the title row, and what args
 		// hands --title. "" is the short title every other scenario shares.
 		title string
+		// paste enters the title as one paste instead of keystrokes, which
+		// is the only way a tab or a line break reaches the title row: the
+		// keyboard's tab moves focus.
+		paste bool
 		// issue is the Linear issue both sides can see. args names it with
 		// --issue; the form is sent the message IssueField sends when a
 		// user picks it, and nothing is typed, because the issue seeds the
@@ -324,6 +328,58 @@ favorites = ["claude"]
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
+		{
+			// #178: the title row turns a tab and a line break into a space
+			// and drops any other control character, and `create` kept them
+			// all. Here the dropped BEL also changes the branch, which is
+			// derived from the title: "abell", not "a-bell".
+			name: "a --title with a tab, a line break and a BEL is cleaned as the form cleans it",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+`,
+			title: "line one\nline two\twith a\abell",
+			paste: true,
+			args:  []string{"--title", "line one\nline two\twith a\abell"},
+			want: plan.Input{
+				Title:  "line one line two with abell",
+				Branch: "zvi/line-one-line-two-with-abell", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
+			// The same rule for an issue's title, and its order against
+			// #176's cut: clean first, then cut, as the row does. Cutting
+			// the raw title first would end at "...when th", one rune
+			// short, because the BEL counted.
+			//
+			// The template leaves the title out of the prompt on purpose.
+			// The form's prompt is a textarea with a sanitizer of its own
+			// (a tab becomes four spaces), so a title with a tab in the
+			// prompt would compare that drift too, and it is not this one.
+			name: "an issue title with control characters is cleaned, then cut, as the form does",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+[linear]
+prompt_template = "Work on {identifier}"
+`,
+			issue: &linear.Issue{
+				Identifier: "ENG-43", Title: "Fix\a login\tredirect loop when the cookie expires",
+				BranchName: "zvi/eng-43-fix-login-redirect-loop",
+			},
+			args: []string{"--issue", "ENG-43"},
+			want: plan.Input{
+				Title:  "Fix login redirect loop when the",
+				Branch: "zvi/eng-43-fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				Prompt:           "Work on ENG-43",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configDir, stateDir := t.TempDir(), t.TempDir()
@@ -358,6 +414,7 @@ favorites = ["claude"]
 				repoConfig:  repoConfig,
 				workspaces:  tc.workspaces,
 				title:       typed,
+				paste:       tc.paste,
 				issue:       tc.issue,
 			})
 
@@ -472,6 +529,8 @@ type formCase struct {
 	repoConfig          func(string) config.RepoConfig
 	workspaces          []herdrc.WorkspaceInfo
 	title               string
+	// paste sends title as one tea.PasteMsg instead of keystrokes.
+	paste bool
 	// issue, when set, is offered by a Linear source and then chosen, as
 	// commandCase.issue is found by --issue.
 	issue  *linear.Issue
@@ -555,6 +614,9 @@ func formModel(t *testing.T, c formCase) app.Model {
 	// any field plan.Input reads (the branch derivation a title change
 	// drives is synchronous, inside reactToChanges). Pumping them would
 	// mean waiting out one blocked blink command per character.
+	if c.paste {
+		return send(m, tea.PasteMsg{Content: c.title})
+	}
 	for _, r := range c.title {
 		m = send(m, tea.KeyPressMsg{Code: r, Text: string(r)})
 	}

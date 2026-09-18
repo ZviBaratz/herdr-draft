@@ -1532,6 +1532,26 @@ record" were not. Do not write a result you did not see.
 
 ## Recorded runs
 
+### control characters in a `create` title (#178) — 2026-09-18
+
+herdr 0.9.0. First `main` at `e558782`, then `zvi/sanitize-create-titles`
+built from the uncommitted tree on `e558782` that became this branch's
+commit, not merged. Route A0 with the §15.1 run's isolation, and
+`[agents] favorites = ["nosuchkind"]`, so no account quota was spent. For
+the first pass a second disposable server hosted a TUI client attached to
+the first, and `pane read --source visible` gave herdr's own sidebar and
+tab bar. `--issue` was not run live, because it needs a real Linear key;
+`TestFormAndCommandProduceTheSamePlan` and
+`TestTitleIsKeptToWhatTheFormKeeps` cover it.
+
+| Case | Result |
+|---|---|
+| `main`, titles with a tab, a line break, a BEL and an ESC sequence | **the defect.** herdr stored all four labels verbatim, control characters and all, for the space and the tab. Its TUI drops them when drawing: the sidebar read `tabhere`, `line oneline two`, `bell here` and `esc [7mreverse[0m h…`, and the tab bar read `line oneline two`. Nothing reached the terminal as a live code, but a tab or a line break runs the words together. |
+| the fix, the same four titles, `--worktree` | **as expected.** One stderr line each, e.g. `herdr-draft create: --title has characters the form's title row does not keep (tabs and line breaks become spaces, the rest are dropped); using "line one line two"`. The labels were `tab here`, `line one line two`, `bell here` and `esc [7mreverse[0m here`, for the space and the tab, and the branches were derived from them (`zvi/line-one-line-two`). |
+
+Teardown: both sessions stopped and deleted, the scratch tree removed,
+`herdr session list` without either, `pgrep -x herdr-draft` 0.
+
 ### a long `create` title is cut to 32 runes (#176) — 2026-09-18
 
 herdr 0.9.0, `zvi/cap-create-titles-at-32-runes`, built from the

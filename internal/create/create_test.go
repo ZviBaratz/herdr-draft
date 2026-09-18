@@ -1622,11 +1622,13 @@ func TestIssueSeedsTitleBranchAndPrompt(t *testing.T) {
 	}
 }
 
-// TestLongTitleIsCutAndSaysSo is #176 as the caller sees it. The session is
-// titled with the first 32 runes, as the form's would be, and one line on
-// stderr says so: an explicit --title would otherwise come back shortened
-// with nothing anywhere saying why. --json reports the title that was used.
-func TestLongTitleIsCutAndSaysSo(t *testing.T) {
+// TestTitleIsKeptToWhatTheFormKeeps is #176 and #178 as the caller sees
+// them. The session is titled with what the form's title row would hold --
+// tabs and line breaks made spaces, other control characters dropped, then
+// the first 32 runes -- and one line on stderr says so: an explicit --title
+// would otherwise come back changed with nothing anywhere saying why.
+// --json reports the title that was used.
+func TestTitleIsKeptToWhatTheFormKeeps(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		args     []string
@@ -1656,6 +1658,31 @@ func TestLongTitleIsCutAndSaysSo(t *testing.T) {
 			wantLine: `herdr-draft create: --title is 47 runes and a title is capped at 32, as in the form; using "fix login redirect loop when the"`,
 		},
 		{
+			name:     "--title with a line break",
+			args:     []string{"--title", "line one\nline two"},
+			wantUsed: "line one line two",
+			wantLine: `herdr-draft create: --title has characters the form's title row does not keep (tabs and line breaks become spaces, the rest are dropped); using "line one line two"`,
+		},
+		{
+			// One line for both changes, naming the title actually used:
+			// two lines would have the first give a title that was then
+			// cut.
+			name:     "--issue with control characters, over the cap",
+			args:     []string{"--issue", "eng-43"},
+			wantUsed: "Fix login redirect loop when the",
+			wantLine: `herdr-draft create: ENG-43's title has characters the form's title row does not keep (tabs and line breaks become spaces, the rest are dropped), and a title is capped at 32 runes; using "Fix login redirect loop when the"`,
+		},
+		{
+			// Nothing of this --title survives cleaning, so it is blank
+			// and the issue's title applies -- as in the form, where a
+			// paste of control characters leaves the row empty and a
+			// picked issue still seeds it.
+			name:     "--title of control characters only, beside --issue",
+			args:     []string{"--title", "\a\x1b", "--issue", "eng-42"},
+			wantUsed: "Fix café login redirect loop whe",
+			wantLine: `herdr-draft create: ENG-42's title is 52 runes and a title is capped at 32, as in the form; using "Fix café login redirect loop whe"`,
+		},
+		{
 			name:     "exactly the cap is not cut",
 			args:     []string{"--title", "fix login redirect loop when the"},
 			wantUsed: "fix login redirect loop when the",
@@ -1666,6 +1693,9 @@ func TestLongTitleIsCutAndSaysSo(t *testing.T) {
 			h.deps.Linear = &fakeLinear{issues: []linear.Issue{{
 				Identifier: "ENG-42", Title: "Fix café login redirect loop when the cookie expires",
 				BranchName: "zvi/eng-42-fix-cafe-login-redirect-loop",
+			}, {
+				Identifier: "ENG-43", Title: "Fix\a login\tredirect loop when the cookie expires",
+				BranchName: "zvi/eng-43-fix-login-redirect-loop",
 			}}}
 
 			if code := h.run(append(tc.args, "--no-worktree", "--json")...); code != ExitOK {
@@ -1674,15 +1704,15 @@ func TestLongTitleIsCutAndSaysSo(t *testing.T) {
 
 			var lines []string
 			for _, line := range strings.Split(h.stderr.String(), "\n") {
-				if strings.Contains(line, "capped at") {
+				if strings.Contains(line, "title") && strings.Contains(line, "; using ") {
 					lines = append(lines, line)
 				}
 			}
 			switch {
 			case tc.wantLine == "" && len(lines) > 0:
-				t.Errorf("stderr says %q, want nothing about a cut", lines)
+				t.Errorf("stderr says %q, want nothing about the title", lines)
 			case tc.wantLine != "" && (len(lines) != 1 || lines[0] != tc.wantLine):
-				t.Errorf("stderr lines about the cut = %q, want exactly\n%q", lines, tc.wantLine)
+				t.Errorf("stderr lines about the title = %q, want exactly\n%q", lines, tc.wantLine)
 			}
 
 			// The space is labelled with what was used, not what was asked.

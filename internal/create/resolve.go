@@ -386,25 +386,29 @@ func projectMemoryKey(projectDir, repoRoot string) string {
 func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, issue *linear.Issue, prompt explicitPrompt, hctx herdrc.Context, deps Deps) (plan.Input, map[string]string, error) {
 	prov := provenanceOf(res)
 
-	title, from := req.title, "--title"
-	if !req.set["title"] || strings.TrimSpace(title) == "" {
+	// Blank is judged on the cleaned text, as the form judges it: a paste
+	// of nothing but control characters leaves the title row empty, so a
+	// Linear issue picked afterwards still seeds it.
+	raw, from := req.title, "--title"
+	if !req.set["title"] || strings.TrimSpace(plan.SanitizeTitle(raw)) == "" {
 		if issue != nil {
-			title, from = issue.Title, issue.Identifier+"'s title"
+			raw, from = issue.Title, issue.Identifier+"'s title"
 		}
 	}
-	if strings.TrimSpace(title) == "" {
+	// The title row's rules, from the definitions the row itself is held
+	// to, so one title builds one session: cleaned (#178) and then cut to
+	// spec §6 field 3's cap (#176), in the row's order, before anything
+	// reads it. The branch below is derived from it, and the title-in-use
+	// refusal compares it. The form changes a title without a word because
+	// its row shows the result. Nothing shows anything here, so a caller
+	// whose title came back changed is told, once.
+	clean := plan.SanitizeTitle(raw)
+	if strings.TrimSpace(clean) == "" {
 		return plan.Input{}, nil, fmt.Errorf("a title is required: pass --title, or --issue to take one from Linear")
 	}
-	// The title row's cap (spec §6 field 3), from the definition the row
-	// itself reads, so one long title builds one session (#176). It is cut
-	// here, before anything reads it: the branch below is derived from it,
-	// and the title-in-use refusal compares it. The form cuts without a
-	// word because its row shows the result. Nothing shows anything here,
-	// so a caller whose --title came back shorter is told, once.
-	if cut := plan.CutTitle(title); cut != title {
-		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s is %d runes and a title is capped at %d, as in the form; using %q\n",
-			from, utf8.RuneCountInString(title), plan.TitleMaxRunes, cut)
-		title = cut
+	title := plan.CutTitle(clean)
+	if note := titleNote(from, raw, clean, title); note != "" {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", note)
 	}
 
 	issueBranch := ""
@@ -827,6 +831,26 @@ func reapWarning(req request, in plan.Input) string {
 		return "--reap has no effect: there is no prompt to add pane-reaper's instruction to"
 	}
 	return "--reap has no effect: a prompt starting with / is a slash command, and the instruction would reach it as arguments"
+}
+
+// titleNote is the stderr line for a title buildInput changed, or "" for
+// one it used as given: raw as the caller or the issue gave it, clean after
+// plan.SanitizeTitle, and used after plan.CutTitle. One line covers both
+// changes and names only the title actually used -- a line per change
+// would have the first quote a title the second then cut.
+func titleNote(from, raw, clean, used string) string {
+	const unkept = "has characters the form's title row does not keep (tabs and line breaks become spaces, the rest are dropped)"
+	cleaned, cut := clean != raw, used != clean
+	switch {
+	case cleaned && cut:
+		return fmt.Sprintf("%s %s, and a title is capped at %d runes; using %q", from, unkept, plan.TitleMaxRunes, used)
+	case cleaned:
+		return fmt.Sprintf("%s %s; using %q", from, unkept, used)
+	case cut:
+		return fmt.Sprintf("%s is %d runes and a title is capped at %d, as in the form; using %q",
+			from, utf8.RuneCountInString(clean), plan.TitleMaxRunes, used)
+	}
+	return ""
 }
 
 // workspaceByID finds the open workspace --workspace names, so the plan

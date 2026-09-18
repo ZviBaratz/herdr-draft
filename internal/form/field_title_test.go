@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
@@ -62,6 +63,50 @@ func TestTitleField_ThirtyTwoRuneCap(t *testing.T) {
 	}
 	if got := len([]rune(f.Value())); got != 32 {
 		t.Fatalf("Value() has %d runes after typing 40, want exactly 32 (cap)", got)
+	}
+}
+
+// TestTitleField_KeepsWhatPlanKeeps is #178's drift guard. The title row
+// cleans and caps a title inside bubbles' textinput, which this repository
+// does not own, and `create` does the same with plan.SanitizeTitle and
+// plan.CutTitle. This holds the two to one answer on both ways text reaches
+// the row from outside the keyboard: a seeded title (SetTitle, which is how
+// a Linear issue's arrives) and a paste. A bubbles upgrade that changes its
+// rule fails here, rather than quietly building a different session from
+// `create`.
+func TestTitleField_KeepsWhatPlanKeeps(t *testing.T) {
+	for _, title := range []string{
+		"fix login redirect loop",
+		"fix\tlogin",
+		"line one\nline two",
+		"fix\r\nlogin",
+		"fix\alogin",
+		"fix \x1b[7mlogin\x1b[0m",
+		"fix\x7flogin",
+		"fix\u0085login",
+		"fix\xfflogin",
+		"fix\ufffdlogin",
+		"fix\u200dlogin",
+		// Long, with a dropped character before rune 32: the row cleans
+		// first and cuts second, so the cut lands one rune later than a
+		// cut of the raw text would.
+		"Fix\a login\tredirect loop when the cookie expires",
+		strings.Repeat("\t", 40),
+	} {
+		want := plan.CutTitle(plan.SanitizeTitle(title))
+
+		seeded := NewTitleField(theme.Default())
+		seeded.SetTitle(title, false)
+		if got := seeded.Value(); got != want {
+			t.Errorf("SetTitle(%q): the row holds %q, plan keeps %q", title, got, want)
+		}
+
+		pasted := NewTitleField(theme.Default())
+		pasted.Focus()
+		pasted.Update(tea.PasteMsg{Content: title})
+		if got := pasted.Value(); got != want {
+			t.Errorf("paste %q: the row holds %q, plan keeps %q", title, got, want)
+		}
 	}
 }
 
