@@ -322,9 +322,13 @@ reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
 `--issue`, `--json`, `--on-failure keep|clean`. `herdr-draft create --help`
 lists them.
 
-A title is at most 32 runes, the length the form's `title` row holds. A
-longer `--title`, or a longer title `--issue` takes from Linear, is cut to
-32 as the form cuts it, and a line on stderr gives the title used.
+A title holds no control characters and at most 32 runes, which is what
+the form's `title` row holds, and `create` keeps a `--title`, or the title
+`--issue` takes from Linear, to the same. A tab, CR or LF becomes a space,
+any other control character or invalid UTF-8 is dropped, and what remains
+is cut to 32 runes. A line on stderr says so whenever that changes the
+title, and when a `--title` that cleans to nothing gives way to the
+issue's.
 
 **Anything you don't pass resolves exactly the way the form resolves it** —
 see [Where defaults come from](#where-defaults-come-from); the command and

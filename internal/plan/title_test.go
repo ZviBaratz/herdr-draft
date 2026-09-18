@@ -40,3 +40,34 @@ func TestCutTitle(t *testing.T) {
 		})
 	}
 }
+
+// TestSanitizeTitle pins the form's title-row rule (#178): bubbles'
+// textinput turns a tab and each CR or LF into one space, and drops every
+// other control character along with U+FFFD, which is what an invalid
+// UTF-8 byte decodes to. Everything else is kept, including characters
+// that are invisible but not controls.
+func TestSanitizeTitle(t *testing.T) {
+	for _, tc := range []struct {
+		name, title, want string
+	}{
+		{"empty", "", ""},
+		{"plain is untouched", "fix login redirect loop", "fix login redirect loop"},
+		{"a tab becomes a space", "fix\tlogin", "fix login"},
+		{"a line break becomes a space", "line one\nline two", "line one line two"},
+		{"CR and LF are a space each", "fix\r\nlogin", "fix  login"},
+		{"BEL is dropped", "fix\alogin", "fixlogin"},
+		{"ESC is dropped and its sequence's text kept", "fix \x1b[7mlogin\x1b[0m", "fix [7mlogin[0m"},
+		{"DEL is dropped", "fix\x7flogin", "fixlogin"},
+		{"a C1 control is dropped, NEL included", "fix\u0085login", "fixlogin"},
+		{"an invalid UTF-8 byte is dropped", "fix\xfflogin", "fixlogin"},
+		{"a literal U+FFFD is dropped too", "fix\ufffdlogin", "fixlogin"},
+		{"a format character is not a control, and is kept", "fix\u200dlogin", "fix\u200dlogin"},
+		{"non-ASCII is kept", "Fix café login", "Fix café login"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizeTitle(tc.title); got != tc.want {
+				t.Errorf("SanitizeTitle(%q) = %q, want %q", tc.title, got, tc.want)
+			}
+		})
+	}
+}

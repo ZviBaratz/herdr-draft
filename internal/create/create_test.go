@@ -1622,38 +1622,68 @@ func TestIssueSeedsTitleBranchAndPrompt(t *testing.T) {
 	}
 }
 
-// TestLongTitleIsCutAndSaysSo is #176 as the caller sees it. The session is
-// titled with the first 32 runes, as the form's would be, and one line on
-// stderr says so: an explicit --title would otherwise come back shortened
-// with nothing anywhere saying why. --json reports the title that was used.
-func TestLongTitleIsCutAndSaysSo(t *testing.T) {
+// TestTitleIsKeptToWhatTheFormKeeps is #176 and #178 as the caller sees
+// them. The session is titled with what the form's title row would hold --
+// tabs and line breaks made spaces, other control characters dropped, then
+// the first 32 runes -- and one line on stderr says so: an explicit --title
+// would otherwise come back changed with nothing anywhere saying why.
+// --json reports the title that was used.
+func TestTitleIsKeptToWhatTheFormKeeps(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		args     []string
 		wantUsed string
-		// wantLine is the whole stderr line, or "" for none.
-		wantLine string
+		// wantLines is every stderr line about the title, whole, in order.
+		wantLines []string
 	}{
 		{
-			name:     "--title",
-			args:     []string{"--title", "fix login redirect loop when the cookie expires"},
-			wantUsed: "fix login redirect loop when the",
-			wantLine: `herdr-draft create: --title is 47 runes and a title is capped at 32, as in the form; using "fix login redirect loop when the"`,
+			name:      "--title",
+			args:      []string{"--title", "fix login redirect loop when the cookie expires"},
+			wantUsed:  "fix login redirect loop when the",
+			wantLines: []string{`herdr-draft create: --title is 47 runes and a title is capped at 32, as in the form; using "fix login redirect loop when the"`},
 		},
 		{
-			name:     "--issue",
-			args:     []string{"--issue", "eng-42"},
-			wantUsed: "Fix café login redirect loop whe",
-			wantLine: `herdr-draft create: ENG-42's title is 52 runes and a title is capped at 32, as in the form; using "Fix café login redirect loop whe"`,
+			name:      "--issue",
+			args:      []string{"--issue", "eng-42"},
+			wantUsed:  "Fix café login redirect loop whe",
+			wantLines: []string{`herdr-draft create: ENG-42's title is 52 runes and a title is capped at 32, as in the form; using "Fix café login redirect loop whe"`},
 		},
 		{
 			// --title wins over the issue's, so the line names --title:
 			// blaming the issue for a title the caller typed would send
 			// them to the wrong place to shorten it.
-			name:     "--title beside --issue",
-			args:     []string{"--title", "fix login redirect loop when the cookie expires", "--issue", "eng-42"},
-			wantUsed: "fix login redirect loop when the",
-			wantLine: `herdr-draft create: --title is 47 runes and a title is capped at 32, as in the form; using "fix login redirect loop when the"`,
+			name:      "--title beside --issue",
+			args:      []string{"--title", "fix login redirect loop when the cookie expires", "--issue", "eng-42"},
+			wantUsed:  "fix login redirect loop when the",
+			wantLines: []string{`herdr-draft create: --title is 47 runes and a title is capped at 32, as in the form; using "fix login redirect loop when the"`},
+		},
+		{
+			name:      "--title with a line break",
+			args:      []string{"--title", "line one\nline two"},
+			wantUsed:  "line one line two",
+			wantLines: []string{`herdr-draft create: --title has characters the form's title row does not keep (a tab, CR or LF becomes a space, and the rest are dropped); using "line one line two"`},
+		},
+		{
+			// One line for both changes, naming the title actually used:
+			// two lines would have the first give a title that was then
+			// cut.
+			name:      "--issue with control characters, over the cap",
+			args:      []string{"--issue", "eng-43"},
+			wantUsed:  "Fix login redirect loop when the",
+			wantLines: []string{`herdr-draft create: ENG-43's title has characters the form's title row does not keep (a tab, CR or LF becomes a space, and the rest are dropped), and a title is capped at 32 runes; using "Fix login redirect loop when the"`},
+		},
+		{
+			// Nothing of this --title survives cleaning, so it is blank
+			// and the issue's title applies -- as in the form, where a
+			// paste of control characters leaves the row empty and a
+			// picked issue still seeds it.
+			name:     "--title of control characters only, beside --issue",
+			args:     []string{"--title", "\a\x1b", "--issue", "eng-42"},
+			wantUsed: "Fix café login redirect loop whe",
+			wantLines: []string{
+				`herdr-draft create: --title is blank as the form's title row would hold it, so ENG-42's title is used instead`,
+				`herdr-draft create: ENG-42's title is 52 runes and a title is capped at 32, as in the form; using "Fix café login redirect loop whe"`,
+			},
 		},
 		{
 			name:     "exactly the cap is not cut",
@@ -1666,6 +1696,9 @@ func TestLongTitleIsCutAndSaysSo(t *testing.T) {
 			h.deps.Linear = &fakeLinear{issues: []linear.Issue{{
 				Identifier: "ENG-42", Title: "Fix café login redirect loop when the cookie expires",
 				BranchName: "zvi/eng-42-fix-cafe-login-redirect-loop",
+			}, {
+				Identifier: "ENG-43", Title: "Fix\a login\tredirect loop when the cookie expires",
+				BranchName: "zvi/eng-43-fix-login-redirect-loop",
 			}}}
 
 			if code := h.run(append(tc.args, "--no-worktree", "--json")...); code != ExitOK {
@@ -1674,15 +1707,15 @@ func TestLongTitleIsCutAndSaysSo(t *testing.T) {
 
 			var lines []string
 			for _, line := range strings.Split(h.stderr.String(), "\n") {
-				if strings.Contains(line, "capped at") {
+				if strings.HasPrefix(line, "herdr-draft create: ") && strings.Contains(line, "title") {
 					lines = append(lines, line)
 				}
 			}
 			switch {
-			case tc.wantLine == "" && len(lines) > 0:
-				t.Errorf("stderr says %q, want nothing about a cut", lines)
-			case tc.wantLine != "" && (len(lines) != 1 || lines[0] != tc.wantLine):
-				t.Errorf("stderr lines about the cut = %q, want exactly\n%q", lines, tc.wantLine)
+			case len(tc.wantLines) == 0 && len(lines) > 0:
+				t.Errorf("stderr says %q, want nothing about the title", lines)
+			case len(tc.wantLines) > 0 && !slices.Equal(lines, tc.wantLines):
+				t.Errorf("stderr lines about the title = %q, want exactly\n%q", lines, tc.wantLines)
 			}
 
 			// The space is labelled with what was used, not what was asked.
@@ -1696,6 +1729,40 @@ func TestLongTitleIsCutAndSaysSo(t *testing.T) {
 			}
 			if out.Title != tc.wantUsed {
 				t.Errorf("--json title = %q, want %q", out.Title, tc.wantUsed)
+			}
+		})
+	}
+}
+
+// TestTitleWithNothingTheRowKeepsIsRefusedByName: a title that cleans to
+// blank is refused, as the form refuses an empty title row, and the reason
+// names the title that was given. "a title is required: pass --title"
+// would tell a caller who did pass one to do it again.
+func TestTitleWithNothingTheRowKeepsIsRefusedByName(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		args       []string
+	}{
+		{
+			name: "--title",
+			args: []string{"--title", "\a\x1b"},
+			want: "herdr-draft create: --title has nothing the form's title row keeps; pass a --title with text in it",
+		},
+		{
+			name: "--issue",
+			args: []string{"--issue", "eng-44"},
+			want: "herdr-draft create: ENG-44's title has nothing the form's title row keeps; pass a --title with text in it",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.deps.Linear = &fakeLinear{issues: []linear.Issue{{Identifier: "ENG-44", Title: "\a\t"}}}
+
+			if code := h.run(append(tc.args, "--no-worktree")...); code != ExitUsage {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+			}
+			if !strings.Contains(h.stderr.String(), tc.want+"\n") {
+				t.Errorf("stderr = %q, want the line %q", h.stderr, tc.want)
 			}
 		})
 	}

@@ -84,7 +84,10 @@ then the built-in default.
 flags:
   --project DIR      project directory (default: the working directory)
   --title TEXT       session title; required unless --issue supplies one.
-                     Either is cut to 32 runes, as the form cuts it
+                     Either is kept to what the form's title row holds:
+                     a tab, CR or LF becomes a space, other control
+                     characters and invalid UTF-8 are dropped, and it is
+                     cut to 32 runes
   --prompt TEXT      initial prompt; "-" reads it from stdin
   --branch NAME      worktree branch (default: derived from the title)
   --base REF         worktree base ref (default: HEAD)
