@@ -765,8 +765,12 @@ func TestExecute_WorktreeReusedWithAPlacementOpClaimsNoTab(t *testing.T) {
 	want := []string{
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
-		"TabCreate(" + in.Ctx.WorkspaceID + ",/tmp/wt)",  // the PLACEMENT op
-		"TabRename(" + m.topo.TabID + ",Fix pagination)", // the agent's tab, which the placement op made
+		"TabCreate(" + in.Ctx.WorkspaceID + ",/tmp/wt)", // the PLACEMENT op
+		// Recorded, not discriminated: this fake answers the placement's
+		// TabCreate with the reused space's own ids, so the space's tab and
+		// the agent's are both t1 here. Which one the rename targets is
+		// TestExecute_ReusedSpaceNeverRenamesTheUsersTab's to pin.
+		"TabRename(" + m.topo.TabID + ",Fix pagination)",
 		"AgentStart(" + AgentName(in.Title) + "," + m.topo.PaneID + ")",
 	}
 	if !reflect.DeepEqual(m.calls, want) {

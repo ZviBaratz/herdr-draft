@@ -455,15 +455,17 @@ counter:
 
 ```
 ✓ worktree   <branch> from <base>
-✓ workspace  smoke a wt
+✓ tab        smoke a wt
 › claude     smoke-a-wt
   prompt     queued
 ...
 step 3 of 4
 ```
 
-`✓` done, `›` running, `✗` failed, blank pending; a step with nothing of its
-own to say prints the state word (`queued`, `working…`, `done`). The label
+`✓` done, `›` running, `✗` failed, `…` waiting on you, `!` failed without
+stopping the run (only the `tab` row can: a tab that kept herdr's `1`),
+blank pending; a step with nothing of its own to say prints the state word
+(`queued`, `working…`, `done`). The label
 column is the agent *kind*; the agent step's value is the herdr agent name,
 a slug of the title. Then the popup closes.
 

@@ -112,8 +112,9 @@ type Progress struct {
 // well as the pane, and a plan with a later topology op could move the
 // workspace too (#99). Build produces no such plan since placement spec
 // §14, but Execute's contract does not depend on that.
-// FailedIndex is the index of the first op that failed, or -1
-// on success. PromptText carries a prompt that never reached the agent, so
+// FailedIndex is the index of the op whose failure stopped the plan, or
+// -1 on success. A cosmetic op's failure (isCosmeticKind) stops nothing,
+// so it can precede FailedIndex or sit in a successful result. PromptText carries a prompt that never reached the agent, so
 // the caller can surface it for manual paste (spec §9 step 3); it is empty
 // on success and on any plan that carried no prompt at all.
 //

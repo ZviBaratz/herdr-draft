@@ -567,16 +567,21 @@ func TestCLIRunnerTabCloseRequiresTheJSONEnvelope(t *testing.T) {
 // after the id with single spaces (herdr:src/cli/tab.rs at v0.9.0,
 // `args[1..].join(" ")`), so a split label would still arrive -- minus any
 // run of spaces inside it, which one element keeps.
+//
+// The label's double space is what makes this test able to tell the two
+// apart: fakeHerdr logs with `echo "$@"`, which joins its arguments with
+// single spaces, so a one-word-per-element split of an ordinary label logs
+// byte-identically to the label passed whole.
 func TestCLIRunnerTabRename(t *testing.T) {
-	stdout := `{"id":"cli:tab:rename","result":{"type":"tab_info","tab":{"tab_id":"w1:t3","label":"Fix login"}}}`
+	stdout := `{"id":"cli:tab:rename","result":{"type":"tab_info","tab":{"tab_id":"w1:t3","label":"Fix  login"}}}`
 	bin, argvLog := fakeHerdr(t, stdout)
 	r := &CLIRunner{Bin: bin}
 
-	if err := r.TabRename(context.Background(), TabRenameReq{TabID: "w1:t3", Label: "Fix login"}); err != nil {
+	if err := r.TabRename(context.Background(), TabRenameReq{TabID: "w1:t3", Label: "Fix  login"}); err != nil {
 		t.Fatalf("TabRename: %v", err)
 	}
 
-	wantArgv := "tab rename w1:t3 Fix login"
+	wantArgv := "tab rename w1:t3 Fix  login"
 	if got := readArgvLog(t, argvLog); got != wantArgv {
 		t.Errorf("argv = %q, want %q", got, wantArgv)
 	}

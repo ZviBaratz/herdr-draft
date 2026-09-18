@@ -1311,9 +1311,13 @@ neither gets the op.
 A rename is cosmetic, so a failed one never fails the create. It is the
 only op with its own failure state, `StepFailedNonFatal`: the plan goes
 on, and `FailedIndex`, `PromptText` and the prompt's delivery posture are
-left alone. The popup marks the row `! tab  not named: <reason>`, and
-`create` prints `failed, continuing: <reason>` for the step on stderr and
-leaves stdout and `--json` unchanged. Checked live on a disposable
+left alone. `create` prints `failed, continuing: <reason>` for the step on
+stderr and leaves stdout and `--json` unchanged. The popup marks the row
+`! tab  not named: <reason>`, but a successful submit still closes the
+popup at once. So the row stays on screen only when a later step fails
+and holds the failure screen up; otherwise the evidence is the tab's own
+`1`. Holding the popup open over a cosmetic failure was considered and
+not done, because it would make the user dismiss a success. Checked live on a disposable
 server, with herdr's own tab bar read from an attached client. That
 covered `new space`, worktree, the §5.2 reuse, `tab here`, `split here`
 and a rename refused by a shim.
