@@ -1599,10 +1599,19 @@ unknown id, and the prompt is delivered and answered in the transcript with
 `There's an issue with the selected model (no-such-model)`. Re-check it when
 claude's major version moves.
 
-**Run on 2026-09-18** (Recorded runs), in two passes: the form, its panel
-and Path B's typed command without an agent, then real launches on both
-paths. The headless refusals were covered by tests, not against a live
+**Run on 2026-09-18** (Recorded runs), in three passes: the form, its panel
+and Path B's typed command without an agent; real launches on both paths;
+and once through the real popup, with the owner's own config, after the
+merge. The headless refusals were covered by tests, not against a live
 herdr. Do not write a result you did not see.
+
+**Reading what a launch was given.** claude draws on the terminal's
+alternate screen, so the shell line that started it is not in the pane's
+buffer once it is up, whatever `pane read --source` asks for. The process
+still carries it: `herdr pane process-info --pane <id>` lists the
+foreground process's `argv`, which is the one record of which flags
+actually reached claude, and so of whether an option replaced an extra
+arg or merely followed it.
 
 ## After the matrix
 
@@ -1636,6 +1645,22 @@ herdr. Do not write a result you did not see.
   alongside the release.
 
 ## Recorded runs
+
+### the options row through the real popup — 2026-09-18
+
+herdr 0.9.0, claude 2.1.277, the owner's live install at `52d9750` (#181
+and #187 merged), the owner's own `config.toml`, and the real popup opened
+by its keybinding. The owner drove it. The config's `[agents.extra_args]`
+passes `--model claude-opus-5[1m] --effort xhigh`, and `[clauth] launcher`
+is `claude-as`. One launch, prompt `hi`.
+
+| Case | Result |
+|---|---|
+| the form, before submitting (Route B against the same config, read-only) | **as expected.** The row read `claude-opus-5[1m] · effort xhigh`, dimmed, and the panel said `inherit sends nothing of its own; [agents.extra_args] passes --model claude-opus-5[1m]` over `[agents.extra_args] adds: --model claude-opus-5[1m] --effort xhigh`. That is extra_args shown for the first time, not options. |
+| worktree off, `effort low`, `plan`, model left on `inherit`, `⌃S` | **as expected.** `herdr pane process-info` gave the agent's argv as `claude --settings {"teammateMode":"tmux"} --model claude-opus-5[1m] --effort low --permission-mode plan`. There is one `--effort`, so `low` replaced extra_args' `xhigh`. The model came from extra_args, since that option inherited. The `--settings` element is `claude-as`'s own, so the pinned launch went through the owner's wrapper and the options followed it. The banner read `Opus 5 (1M context) with low effort`, claude said it was in plan mode, and the tab was named `options demo`. |
+| where it landed | **as designed, and not what was predicted.** Opened from a pane in a linked worktree's space, the project row defaulted to the repository's main checkout, so `tab in` put the session in the repository's own space rather than the worktree's. |
+
+Teardown: the demo pane closed, and its claude process gone.
 
 ### the options row, launching claude (agent-options spec) — 2026-09-18
 
