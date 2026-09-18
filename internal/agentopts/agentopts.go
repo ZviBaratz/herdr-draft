@@ -220,7 +220,7 @@ func Normalize(kind, name, v string) (string, error) {
 		}
 	}
 	if why, refused := o.refused[v]; refused {
-		return "", fmt.Errorf("%s is not offered: %s; %s", v, why, extraArgsEscape)
+		return "", fmt.Errorf("not offered, because %s; %s", why, extraArgsEscape)
 	}
 	if o.FreeText {
 		if !freeTextPattern.MatchString(v) {
