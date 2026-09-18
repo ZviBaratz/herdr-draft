@@ -269,6 +269,16 @@ without the popup. It drives herdr exclusively through the public CLI
   proved one either way. Where the answer cannot be known, the output says
   so and names the pane to look at, rather than asserting the tidier
   answer.
+- **A project directory means that repository, whatever the environment
+  says.** git lets `GIT_DIR`, `GIT_WORK_TREE` and the rest of its
+  local-repository variables override the directory a command runs in, and
+  a git hook exports them, as does `git rebase --exec` in a linked worktree.
+  So a `create` run from either used to ask *another* repository whether
+  the project was a repository, which branches it had, where its root was,
+  and whether a failed session's worktree was safe to remove. herdr-draft
+  now clears exactly the variables git itself clears before acting on a
+  different repository (`git rev-parse --local-env-vars`). `GIT_SSH`,
+  `GIT_SSH_COMMAND` and your other git settings still apply.
 - **Screen detection is evidence-based.** Before sending a queued prompt
   the executor reads the pane and checks it against known blocking-dialog
   signatures rather than trusting an "idle" report, and turns herdr's
