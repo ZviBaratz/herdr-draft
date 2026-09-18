@@ -48,9 +48,14 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 
 	repo := mkRepo(t)
 	gitRun(t, repo, "branch", "feature")
+	linked := filepath.Join(t.TempDir(), "lane")
+	gitRun(t, repo, "worktree", "add", "-q", "-b", "lane", linked)
 
 	decoy := mkRepo(t)
 	gitRun(t, decoy, "branch", "decoy-only")
+	// A commit of its own, so its HEAD cannot equal this repository's: two
+	// mkRepo commits made in the same second are byte-identical.
+	gitRun(t, decoy, "commit", "-q", "--allow-empty", "-m", "decoy")
 	if err := os.WriteFile(filepath.Join(decoy, "dirty"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("dirty the decoy: %v", err)
 	}
@@ -89,6 +94,21 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 		t.Errorf("ListBranches = %v: not this repository's branches", branches)
 	}
 
+	// A lane's worktree is created from the repository root, from the
+	// lane's commit (#171): answered about the decoy, a primary checkout,
+	// the lane would be handed to herdr, and its commit would be the
+	// decoy's.
+	if ok, err := LinkedWorktree(ctx, linked); err != nil || !ok {
+		t.Errorf("LinkedWorktree(%s) = %v, %v: it answered about the inherited repository", linked, ok, err)
+	}
+	head, err := ResolveRef(ctx, linked, "HEAD")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if want := revParse(t, repo, "HEAD"); head != want {
+		t.Errorf("ResolveRef(%s, HEAD) = %s, want this repository's %s", linked, head, want)
+	}
+
 	// The one that matters most: Disposable is the clean gate before a
 	// failed session's worktree is removed. Judging the wrong repository
 	// is how a worktree with work in it gets called safe to delete -- or,
@@ -97,6 +117,21 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 	if err != nil || !ok {
 		t.Errorf("Disposable(%s) = %v, %q, %v: it judged the inherited repository", repo, ok, reason, err)
 	}
+}
+
+// revParse is `git rev-parse <rev>` in dir, run with the test environment
+// rather than through this package, so it cannot share a leak with the
+// call it checks.
+func revParse(t *testing.T, dir, rev string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", rev)
+	cmd.Dir = dir
+	cmd.Env = gitTestEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse %s in %s: %v", rev, dir, err)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // sameDir compares two paths after resolving symlinks, since a temp dir
