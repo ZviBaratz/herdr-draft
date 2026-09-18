@@ -79,7 +79,7 @@ see [License & provenance](#license--provenance).
 
 ## The form
 
-**Eight rows, one line each**, in this order. A row states what the session
+**Nine rows, one line each**, in this order. A row states what the session
 will be, not which knob is set, and it never moves: the row positions are
 fixed whatever has focus and whatever the window height is.
 
@@ -92,11 +92,12 @@ fixed whatever has focus and whatever the window height is.
 | `worktree` | `on · <branch> ← <base>`, `on · from <base>` before a title exists to derive a branch from, or `off` | `not a git repository` |
 | `placement` | `new space` / `tab here` / `split here` / `tab in <space>` | `the worktree's own space`, whenever the worktree is on |
 | `agent` | `claude` | — |
+| `options` | `opus · effort xhigh · plan mode`, the options you chose; a dim value is what `[agents.extra_args]` passes instead; `claude's own settings` when nothing is set anywhere | `none for <kind>`, for an agent kind that declares no options |
 | `account` | `personal · Max 20x · 5h 12% · 7d 40%`, or `active · …` when nothing is pinned | `account pinning only applies to claude` |
 
 `issue` is absent unless Linear is configured, and `account` unless clauth is
 configured with at least two profiles — both static, startup-time checks
-(see [Configuration](#configuration)). With neither, the form is six rows.
+(see [Configuration](#configuration)). With neither, the form is seven rows.
 That is the shape most people will see.
 
 **The popup is a fixed 104×32 cells.** That is a manifest value, not a
@@ -110,7 +111,8 @@ other: the candidate list for `issue`, `project`, `agent` and `account`; a
 `keep · reap` line over the textarea for `prompt` (see
 [`[reaper]`](#reaper)); the verdict line (`branch will be …`) plus the
 sessions that were open when the form opened, for `title`; a three-part
-`off · on` / `branch` / `base` editor for `worktree`. Branch and base are not
+`off · on` / `branch` / `base` editor for `worktree`; one chip line per
+option for `options` (see [`[agents.options]`](#agentsoptionskind)). Branch and base are not
 rows of their own — they are parts of the worktree row's panel, so a form
 with a worktree is the same height as one without.
 
@@ -130,7 +132,7 @@ in the row order is spent on a button.
 |---|---|
 | `⇥` / `⇧⇥` | next / previous row (`⇧⇥` from title reaches `issue`) |
 | `↑` `↓` | move within the focused row's panel |
-| `←` `→` | chips: worktree on/off, placement, agent favorites |
+| `←` `→` | chips: worktree on/off, placement, agent favorites, an option's value |
 | `⇥` in a picker | complete, then advance |
 | `↵` | create, from a non-empty title, from the prompt, or from the button; advance from anywhere else |
 | `⌃S` | create, from anywhere |
@@ -318,9 +320,19 @@ git log -1 --format=%B | herdr-draft create --title "revert" --prompt -
 
 Flags mirror the form's fields: `--project`, `--title`, `--prompt` (`-`
 reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
-`--reap` / `--no-reap`, `--placement`, `--workspace`, `--agent`, `--account`,
-`--issue`, `--json`, `--on-failure keep|clean`. `herdr-draft create --help`
-lists them.
+`--reap` / `--no-reap`, `--placement`, `--workspace`, `--agent`, `--model`,
+`--effort`, `--permission-mode`, `--account`, `--issue`, `--json`,
+`--on-failure keep|clean`. `herdr-draft create --help` lists them.
+
+`--model`, `--effort` and `--permission-mode` are the `options` row's flags.
+They apply only to an agent kind that declares them — `claude`, today — and
+are refused with exit 2 for one that does not. `inherit` sends no flag even
+when `config.toml` sets a default:
+
+```bash
+herdr-draft create --title "design the cache" --effort max --permission-mode plan
+herdr-draft create --title "quick fix" --model sonnet --effort inherit
+```
 
 A title holds no control characters and at most 32 runes, which is what
 the form's `title` row holds, and `create` keeps a `--title`, or the title
@@ -342,7 +354,8 @@ single JSON object with `--json` (which also carries a prompt the dialog
 guard withheld, since a headless caller has no pane to recover it from, and
 a `provenance` map naming the tier each value came from — `flag` for the
 ones you passed). A `mark_ready: true` means the prompt carried
-pane-reaper's instruction. It never prompts. Exit codes:
+pane-reaper's instruction, and `agent_options` is what the agent was
+launched with. It never prompts. Exit codes:
 
 | Code | Meaning |
 |---|---|
@@ -649,11 +662,11 @@ through, and says so when wrapper mode fell back for want of a `config_dir`.
   is the first list-typed one, so it is worth stating: it takes a **list of
   arguments**, not a command line.
 
-  Your agent's `[agents.extra_args]` are appended *after* the whole template,
-  so a launcher must be a program or function that accepts them. An `sh -c
-  "…"` wrapper is accepted by the validator but will not receive them — they
-  land as the inner shell's `$0` and `$1` and never reach the agent, while the
-  launch step still reports success.
+  Your agent's `[agents.extra_args]` and its session options are appended
+  *after* the whole template, so a launcher must be a program or function
+  that accepts them. An `sh -c "…"` wrapper is accepted by the validator but
+  will not receive them — they land as the inner shell's `$0` and `$1` and
+  never reach the agent, while the launch step still reports success.
 
   The reason to change it: `clauth start` costs the session its herdmates
   team lead, since it bypasses the shell function that sets
@@ -754,6 +767,41 @@ inside it only when `picker` is set and its probe succeeded.
   involved — the agent then receives a value with the quote marks still
   attached. If you are carrying a `["--model", "'…'"]` workaround from
   before this was fixed, remove the inner quotes (#72).
+
+  For the model, effort and permission mode, prefer `[agents.options]`
+  below: those can be changed per session, in the popup or with a `create`
+  flag, and extra args cannot. The `options` panel shows what extra args
+  append, read-only.
+
+### `[agents.options.<kind>]`
+
+The default session options for one agent kind: what the `options` row
+opens on, and what `create` uses for a flag you leave off. Every key is
+optional; an unset one sends no flag, so the agent's own settings decide.
+Only `claude` declares options today.
+
+```toml
+[agents.options.claude]
+model = "claude-opus-5[1m]"   # an alias (fable, opus, sonnet, haiku) or a full id
+effort = "xhigh"              # low | medium | high | xhigh | max
+permission_mode = "plan"      # manual | plan | acceptEdits | auto
+```
+
+- `inherit` is the same as leaving a key out.
+- `bypassPermissions` and `dontAsk` are not accepted. The first opens with
+  a confirmation dialog that the session's prompt would be typed into, and
+  the second never asks. Pass either through `[agents.extra_args]` if you
+  mean it.
+- A value the kind does not offer, a key it does not declare, a kind that
+  declares nothing, and a value that is not a string are each reported —
+  on the `options` panel and on `create`'s stderr — and skipped. None of
+  them stops the popup opening.
+- An option you set, here or in the popup, **replaces** the same flag in
+  `[agents.extra_args]` rather than following it, in either spelling
+  (`--model opus` or `--model=opus`). An option left on `inherit` leaves
+  extra args alone, and the row shows the value they pass, dimmed.
+- It is never remembered from a submit: a session you started in `plan`
+  mode does not make the next one plan. Change the default here.
 
 ### `[timeouts]`
 
@@ -903,8 +951,8 @@ your agent (that is a machine decision, not a repository one), and
 actually settled — the worktree toggle, the placement, the agent kind, and
 the base ref for the project you were in. A selected Linear issue overrides
 title, branch and prompt on top of all of it, unless you have already typed
-over them. The prompt's `keep · reap` toggle comes from `config.toml` or
-the built-in alone.
+over them. The prompt's `keep · reap` toggle and the `options` row come
+from `config.toml` or the built-in alone.
 
 Per-project memory re-applies when you change the project row, for every
 field you have not touched yourself. It is keyed by the **git repository
@@ -950,8 +998,8 @@ The list above is therefore the *complete* set of keys it may set:
   still seeds the title and the prompt.
 
 **Everything else in the file is ignored and reported**, including every
-other key `config.toml` accepts — `[agents.extra_args]` (it becomes part
-of a launched agent's command line), `[agents] favorites`/`default` (a
+other key `config.toml` accepts — `[agents.extra_args]` and
+`[agents.options]` (each becomes part of a launched agent's command line), `[agents] favorites`/`default` (a
 repository doesn't choose which agent runs on your machine), `[linear]
 prompt_template` (it would become the agent's first instruction),
 `[reaper]` (it would add an instruction to your agent's prompt),

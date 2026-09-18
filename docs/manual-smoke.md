@@ -1499,6 +1499,104 @@ default, and the headless worktree-on result were observed on 2026-09-17
 (Recorded runs). The form walk, the two `create` variants, and "Also
 record" were not. Do not write a result you did not see.
 
+## What the options row added
+
+### Cell 15 — the agent's model, effort and permission mode
+
+**Why this cell exists.** The tests pin every argv the plan builds for both
+launch paths, and every state of the row and its panel. None of them can
+tell you whether the claude that starts in the pane is running the model,
+effort and mode the row claimed. That is decided by claude, from a
+command line the tests only ever compare with an expectation. Nor can they
+tell you whether the declaration still matches the claude you have
+installed (agent-options spec §9).
+
+**Drift first, before you open anything.** Compare the installed claude
+against `internal/agentopts`' declaration:
+
+```bash
+claude --version
+claude --help | grep -A2 -- '--effort'
+claude --help | grep -A3 -- '--permission-mode'
+```
+
+**Expected:** `--effort` lists exactly `low, medium, high, xhigh, max`, and
+`--permission-mode`'s choices include `manual`, `plan`, `acceptEdits` and
+`auto`. A value the declaration offers that claude no longer lists is a
+defect to fix before release. A choice claude lists that the declaration
+does not is only a gap: it is never offered, so nothing breaks.
+
+**Setup:** a throwaway repo, and a `config.toml` in the redirected config
+directory carrying:
+
+```toml
+[agents.extra_args]
+claude = ["--model", "sonnet"]
+
+[agents.options.claude]
+effort = "high"
+```
+
+**Steps, form, unpinned (Path A):** `project` → the throwaway repo, worktree
+off, and an account row left on `active` (or clauth absent). Read the
+`options` row before touching it.
+
+**Expected at rest:** `sonnet · effort high`, with `sonnet` dim, and the
+panel's last lines `[agents.extra_args] adds: --model sonnet` and `from
+config.toml`. Then walk the panel:
+
+1. `↑`/`↓` move between `model`, `effort` and `mode`, and `←`/`→` move the
+   chips of the line under `▸`.
+2. On `model`, choose `other`: a `name` line opens under it. Type
+   `claude-opus-5[1m]`. Paste `--foo` into it, and nothing lands.
+3. `mode` → `plan`. The row now reads `claude-opus-5[1m] · effort high ·
+   plan mode`, and the hint on the model line says the model replaces
+   extra args' `sonnet`.
+4. Move the `agent` row to `codex` and back to `claude`. On codex the row
+   reads `none for codex` and `⇥` skips it. Back on claude, your choices are
+   all still there.
+
+Submit with a prompt. **Expected:** the progress screen's agent step names
+the options. `herdr[S] pane read <agent-pane>` shows claude's banner naming
+the 1M-context model at high effort, and claude's footer shows plan mode.
+The pane's command must not contain `--model sonnet`: the option replaced
+it.
+
+**Steps, form, pinned (Path B):** the same walk with an account pinned on
+the `account` row. **Expected:** the same banner and footer. The typed
+command in the pane's scrollback reads `clauth start <account> --
+--effort high ...`, with the bracketed model id quoted for the shell.
+
+**Steps, headless:**
+
+```bash
+herdr-draft create --project /var/tmp/hd-smoke-15 --title "probe 15" --no-worktree \
+  --model opus --permission-mode plan --json
+herdr-draft create --project /var/tmp/hd-smoke-15 --title "probe 15b" --no-worktree \
+  --effort inherit --json
+herdr-draft create --project /var/tmp/hd-smoke-15 --title "x" --agent codex --effort high; echo "exit $?"
+herdr-draft create --project /var/tmp/hd-smoke-15 --title "x" --permission-mode bypassPermissions; echo "exit $?"
+```
+
+**Expected:**
+- The first reports `"agent_options": {"model": "opus", "effort": "high",
+  "permission_mode": "plan"}` and provenance `option.model: flag`,
+  `option.effort: config.toml`.
+- The second has no `agent_options` at all, and its pane runs with extra
+  args' `--model sonnet` and no `--effort`.
+- The last two exit 2 before anything is created. The codex one names the
+  option codex does not declare, and the bypass one gives its reason.
+
+**Also record, the model error.** Set `model = "no-such-model"` through the
+`other` line and submit with a prompt. Record verbatim what claude shows in
+the pane, and what the progress screen and `create --json` reported.
+Agent-options spec §10 leaves a wrong model id to claude. If claude shows a
+stable blocking screen that the prompt was typed into, that is the evidence
+for adding it to `dialog.go`'s signatures; if it shows an ordinary error,
+record that nothing is needed.
+
+**Not yet run.** Do not write a result you did not see.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:
