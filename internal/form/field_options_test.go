@@ -182,6 +182,22 @@ func TestOptionsField_TypingOnTheModelChipsTypesAName(t *testing.T) {
 	}
 }
 
+// A key that could not start a model id does not leave the chips: a stray
+// space or dash on a chosen `opus` must not quietly swap it for an empty
+// `other`, which sends nothing.
+func TestOptionsField_AnInvalidKeyOnTheModelChipsChangesNothing(t *testing.T) {
+	f := newClaudeOptions(t, map[string]string{"model": "opus"})
+	f.Focus()
+	f.Update(rn(' '))
+	f.Update(rn('-'))
+	if got := f.Values()["model"]; got != "opus" {
+		t.Fatalf("model = %q, want opus untouched", got)
+	}
+	if part, _ := f.current(); part.onName {
+		t.Fatalf("the cursor moved to the name part on a key that types nothing")
+	}
+}
+
 // Typing on a line that takes no text does nothing at all.
 func TestOptionsField_TypingOnAClosedLineIsIgnored(t *testing.T) {
 	f := newClaudeOptions(t, nil)

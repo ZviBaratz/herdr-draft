@@ -265,7 +265,9 @@ func (f *OptionsField) Blur() {
 //     other key, go to the input.
 //   - A printable key on a free-text option's chips selects `other` and
 //     types into its name -- the obvious thing to try, and a keystroke
-//     that did nothing would read as broken.
+//     that did nothing would read as broken -- provided the key could
+//     extend the name into a valid value; any other key leaves the chips
+//     alone.
 //   - A click on a chip selects it and moves the cursor there.
 //
 // A kind with nothing declared ignores everything: a click can still focus
@@ -299,7 +301,12 @@ func (f *OptionsField) Update(msg tea.Msg) tea.Cmd {
 				return f.syncNameFocus()
 			}
 		default:
-			if !part.onName && l.name != nil && km.Text != "" && km.Mod&^tea.ModShift == 0 {
+			// Only a key that could extend the name into a valid id makes
+			// the jump. A stray space or dash would otherwise swap a chosen
+			// alias for an `other` whose name refuses the key -- which sends
+			// nothing at all, a change nobody asked for.
+			if !part.onName && l.name != nil && km.Text != "" && km.Mod&^tea.ModShift == 0 &&
+				l.spec.Valid != nil && l.spec.Valid(l.name.Value()+km.Text) {
 				l.chips.SelectID(optionsOtherID)
 				f.setPart(f.part + 1)
 				return f.updateName(l, msg)
