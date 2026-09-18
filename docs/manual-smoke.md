@@ -1530,6 +1530,32 @@ record" were not. Do not write a result you did not see.
 
 ## Recorded runs
 
+### every tab a session opens carries its title (placement spec §15.1) — 2026-09-18
+
+herdr 0.9.0, `zvi/name-created-tabs`, built from the tree that became
+`ca51eed` (it differed from that commit in doc comments only), and not
+merged. Route A0, with its own `XDG_CONFIG_HOME` and
+`XDG_STATE_HOME` so no installed plugin loaded, and `[worktrees] directory`
+under `/var/tmp`. `[agents] favorites = ["nosuchkind"]` and a scratch plugin
+state dir, so every create stops at `starting agent`, and the pass spent no
+account quota and wrote nothing of the user's. A second disposable server
+hosted a TUI client attached to the first, and `pane read --source visible`
+from it gave herdr's own tab bar as text. The client needed
+`onboarding = false` in the first session's config: the onboarding card
+ignores `esc` and offers only `↵ continue`.
+
+| Case | Result |
+|---|---|
+| `new space`, headless | **as expected.** Three steps, `[2/3] naming tab ... ok`; `tab list` gave `w1:t1 'Fix login redirect loop'`, and so did the tab bar. The same create from `main`'s binary (`5a17647`) left its tab `'1'`. |
+| worktree, headless | **as expected.** `w3:t1 'Add export button'`. |
+| §5.2 reuse, headless | **as expected.** Cell 9's stale-workspace recipe, plus `git branch -D` of the branch, since #147 refuses an existing one. herdr reused `w3`; the claim `w3:t2` was named `'Export button, take two'`, and `w3:t1` kept `'Add export button'`. The tab bar read `Add export button │ Export button, take two`. |
+| `tab here`, `split here`, headless | **as expected.** Two steps each, no rename. `tab here` made `w2:t2 'Tab here session'` at creation. `split here` added a pane to the invoking tab, `w2:t1`, whose label stayed `'1'`. |
+| a refused rename | **as expected.** A `HERDR_BIN_PATH` shim failed `tab rename` alone with a `tab_not_found` envelope. `[2/3] naming tab ... failed, continuing: … tab_not_found …`, the run went on, and the failure line named `starting agent`. |
+| form, worktree on | **as expected.** A typed title and `⌃S`: `✓ worktree`, `✓ tab  Wire the CSV exporter`, `✗ nosuchkind`. `tab list` agreed. |
+
+Teardown: both disposable sessions stopped and deleted, the scratch tree
+removed, `herdr session list` without either, `pgrep -x herdr-draft` 0.
+
 ### a worktree session keeps its own space (placement spec §14) — 2026-09-17
 
 herdr 0.9.0, `zvi/worktree-owns-its-space` at `66c3070` plus the `create
