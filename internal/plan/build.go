@@ -148,6 +148,11 @@ type Input struct {
 	// the pinned-claude path, the one place AccountPin is used at all.
 	Launcher []string
 
+	// Linked is set when a worktree session's ProjectDir is a linked
+	// checkout, and is the zero value otherwise -- including for every
+	// session without a worktree, which runs in ProjectDir whatever it is.
+	Linked LinkedCheckout
+
 	Prompt string
 	// MarkReady is the pane-reaper toggle's POSITION (reap spec §7.2): the
 	// form's `keep · reap` chips, or `create --reap`/`--no-reap`, over the
@@ -158,6 +163,44 @@ type Input struct {
 	Ctx                             herdrc.Context
 	DetectionTimeout, PromptTimeout time.Duration
 	TrustRepository                 bool
+}
+
+// LinkedCheckout is what a worktree session has to know about a project
+// directory inside a LINKED worktree -- a checkout `git worktree add` made,
+// like another session's own (#171). herdr refuses one as the source of a
+// new worktree (linked_worktree_source, herdr:src/app/api/worktrees.rs at
+// v0.9.0), so the new worktree is created from the repository root instead,
+// cut from the commit its base names in the linked checkout.
+//
+// Both callers resolve it, since Build performs no I/O, and both resolve it
+// the same way, which equivalence_test.go holds them to.
+type LinkedCheckout struct {
+	// RepoRoot is the repository's primary checkout (gitx.PrimaryCheckout),
+	// which herdr calls its repo root: `worktree create`'s --cwd in place of
+	// ProjectDir.
+	RepoRoot string
+	// Commit is the commit the base names, a full SHA resolved IN the
+	// linked checkout: BaseRef's, or HEAD's when no base was chosen.
+	// herdr runs `git worktree add` in the source, so a ref handed over
+	// unresolved would be resolved in the primary checkout instead -- an
+	// unset base, or HEAD, or anything else that means something per
+	// checkout, as the primary's commit rather than the one the session was
+	// started from. For a branch the commit is the same either way. A commit
+	// rather than a ref, so a detached HEAD works too.
+	Commit string
+}
+
+// WorktreeBase is the base `worktree create` is given: from a linked
+// checkout, the commit its base names there (LinkedCheckout.Commit);
+// otherwise BaseRef, where "" is herdr's default, the source checkout's
+// HEAD. It is the one statement of that rule, read by Build, by the clean
+// check that counts from the base, and by both callers' reports of what the
+// branch was cut from.
+func WorktreeBase(in Input) string {
+	if in.Linked.Commit != "" {
+		return in.Linked.Commit
+	}
+	return in.BaseRef
 }
 
 // OpKind identifies which herdr operation an Op performs.
@@ -257,6 +300,9 @@ func Build(in Input) ([]Op, error) {
 	if in.UseWorktree && !in.IsGitRepo {
 		return nil, fmt.Errorf("plan: build: worktree creation requires a git repository at %q", in.ProjectDir)
 	}
+	if in.UseWorktree && in.Linked.RepoRoot != "" && in.Linked.Commit == "" {
+		return nil, fmt.Errorf("plan: build: %q is a linked worktree checkout and its base was not resolved there, so it would be resolved in the primary checkout instead", in.ProjectDir)
+	}
 	if in.AccountPin != "" && in.AgentKind != claudeAgentKind {
 		return nil, fmt.Errorf("plan: build: account pinning is only supported for the %q agent kind, got %q", claudeAgentKind, in.AgentKind)
 	}
@@ -303,15 +349,23 @@ func Build(in Input) ([]Op, error) {
 // combination before this runs. Execute still treats the first topology op
 // as the space and the last as the agent's pane (topologyIndices), which
 // with one op is the same op.
+//
+// From a linked checkout the worktree is created from the repository root
+// (LinkedCheckout); every other op here runs in ProjectDir, the checkout
+// itself.
 func topologyOp(in Input) []Op {
 	if in.UseWorktree {
+		source := in.ProjectDir
+		if in.Linked.RepoRoot != "" {
+			source = in.Linked.RepoRoot
+		}
 		return []Op{{
 			Kind:  OpWorktreeCreate,
 			Label: "creating worktree",
 			Worktree: &herdrc.WorktreeCreateReq{
-				Cwd:             in.ProjectDir,
+				Cwd:             source,
 				Branch:          in.Branch,
-				Base:            in.BaseRef,
+				Base:            WorktreeBase(in),
 				Label:           in.Title,
 				Focus:           true,
 				TrustRepository: in.TrustRepository,

@@ -311,6 +311,69 @@ func repoRootFallback(ctx context.Context, dir string) (string, error) {
 	return "", fmt.Errorf("repo root: %w", err)
 }
 
+// PrimaryCheckout returns the primary checkout of the repository dir
+// belongs to, when dir is inside a LINKED worktree -- a checkout `git
+// worktree add` made -- and "" otherwise. herdr refuses a linked checkout as
+// the source of a new worktree (linked_worktree_source), so from one the new
+// worktree is created from this directory instead (#171).
+//
+// Linked means the checkout's own git directory is not the common one,
+// which is herdr's own test too (herdr:src/workspace/git/discovery.rs at
+// v0.9.0). Comparing --show-toplevel against RepoRoot would be cheaper and
+// wrong: a primary checkout whose git directory lives elsewhere (`git init
+// --separate-git-dir`) differs there as well.
+//
+// The answer is RepoRoot's rule, the parent of the common git directory,
+// used only once that directory is shown to BE the primary checkout: a work
+// tree at its own top whose git directory is the common one. RepoRoot's
+// answer is a memory key and may name something else. For a
+// separate-git-dir repository it is wherever the git directory sits, and
+// git itself cannot say where that repository's checkout is. For a bare
+// one it is the directory holding the repository, and there is no primary
+// checkout at all. Both answer "" rather than hand herdr a directory the user
+// never named, which leaves the linked checkout as the source and herdr's
+// own refusal of it standing -- no worse than before #171. So does a git
+// older than 2.31, which has no --path-format.
+//
+// A plain directory is ("", nil), as RepoRoot answers ("", nil) for one.
+func PrimaryCheckout(ctx context.Context, dir string) (string, error) {
+	lane, err := checkoutDirs(ctx, dir)
+	if err != nil {
+		if !IsGitRepo(dir) {
+			return "", nil
+		}
+		return "", fmt.Errorf("primary checkout: %w", err)
+	}
+	if lane.gitDir == lane.commonDir {
+		return "", nil
+	}
+	candidate := filepath.Dir(lane.commonDir)
+	primary, err := checkoutDirs(ctx, candidate)
+	if err != nil || primary.gitDir != lane.commonDir || primary.commonDir != lane.commonDir || primary.top != candidate {
+		return "", nil
+	}
+	return candidate, nil
+}
+
+// gitDirs is what `git rev-parse` says about one checkout: its own git
+// directory, the common one, and the top of its work tree.
+type gitDirs struct{ gitDir, commonDir, top string }
+
+// checkoutDirs asks git for dir's gitDirs, as absolute cleaned paths. It
+// fails outside a work tree, which is what makes a bare repository's
+// directory fail PrimaryCheckout's check.
+func checkoutDirs(ctx context.Context, dir string) (gitDirs, error) {
+	out, err := runGit(ctx, dir, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel")
+	if err != nil {
+		return gitDirs{}, err
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != 3 {
+		return gitDirs{}, fmt.Errorf("unexpected rev-parse output in %s: %q", dir, out)
+	}
+	return gitDirs{filepath.Clean(lines[0]), filepath.Clean(lines[1]), filepath.Clean(lines[2])}, nil
+}
+
 // ListBranches returns at most limit branch names in repoDir, newest by
 // committer date first. Local and remote-tracking names for the same
 // branch are deduped (the "origin/" prefix is stripped), and

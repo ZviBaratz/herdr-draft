@@ -108,7 +108,10 @@ you are doing right now.
   default. If you are on a feature branch and the new work should start
   from `main`, pass it rather than assume.
 - `--project DIR` is the repository. Left off, it resolves to the working
-  directory.
+  directory. That is right inside another session's worktree too. herdr
+  requires the new worktree to be created from the repository's primary
+  checkout, but its base is still resolved in yours, so `HEAD` is still
+  your current commit.
 
 **Uncommitted work does not travel.** A worktree is cut from a commit, so
 anything you have edited and not committed is invisible to the new agent.

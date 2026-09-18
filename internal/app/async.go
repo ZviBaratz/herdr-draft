@@ -35,6 +35,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -131,6 +132,12 @@ type dirResultMsg struct {
 	// Zero value for a project that is not a repository, whose root could
 	// not be resolved, or that has no such file.
 	repoConfig config.RepoConfig
+	// linkedRoot is the repository's primary checkout when the directory is
+	// inside a linked worktree checkout -- a lane -- and "" otherwise (#171). A
+	// worktree session from one is created from this root, since herdr
+	// refuses the lane itself as the source. It rides the same request for
+	// repoConfig's reason: it is one more fact about the same repository.
+	linkedRoot string
 }
 
 // scheduleDirCheck bumps the directory-validity source's own request
@@ -174,8 +181,26 @@ func (m Model) runDirCheck(req request) tea.Cmd {
 			isGitRepo:  isRepo,
 			memoryKey:  projectMemoryKey(path, exists, root),
 			repoConfig: loadRepoConfig(root),
+			linkedRoot: projectLinkedRoot(git, path, root),
 		}
 	}
+}
+
+// projectLinkedRoot is the repository's primary checkout when path is inside
+// a linked worktree checkout, and "" otherwise -- including when the
+// question could not be answered, or has no answer (gitx.PrimaryCheckout),
+// which leaves the checkout as the source: herdr then refuses it by name
+// (linked_worktree_source), loud, and no worse than before #171. root gates
+// it only as "this is a repository at all".
+func projectLinkedRoot(git gitSource, path, root string) string {
+	if root == "" {
+		return ""
+	}
+	primary, err := git.PrimaryCheckout(context.Background(), path)
+	if err != nil {
+		return ""
+	}
+	return primary
 }
 
 // projectRepoRoot resolves the ORIGIN repository root behind path, which
@@ -258,6 +283,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	// than DirField exposing its own Validity() getter back out.
 	m.dirInvalid = validity == form.ValidityInvalid
 	m.worktree.SetGitTarget(msg.isGitRepo)
+	m.linked = linkedProject{dir: msg.req.key, root: msg.linkedRoot}
 
 	worktreeOnBefore := m.worktree.On()
 	// The branch is watched alongside the toggle because the repo tier can
@@ -828,6 +854,42 @@ func flattenWarnings(ws []string) []string {
 	return out
 }
 
+// --- a lane's base: resolved at submit (#171) -------------------------------
+
+// linkedCommitMsg carries the commit a lane's base names back to the submit it
+// was blocking. Unversioned for pickerCommitMsg's reason: one per submit, and
+// the submit is waiting for it.
+type linkedCommitMsg struct {
+	commit string
+	err    error
+}
+
+// linkedCommitCmd runs Model.ResolveLinkedCommit off-model: it is a `git
+// rev-parse`, and Update does no I/O.
+func (m Model) linkedCommitCmd() tea.Cmd {
+	src := m
+	return func() tea.Msg {
+		commit, err := src.ResolveLinkedCommit(context.Background())
+		return linkedCommitMsg{commit: commit, err: err}
+	}
+}
+
+// handleLinkedCommit resumes -- or refuses -- the submit the lane's base was
+// blocking.
+//
+// A failure does NOT fall through to a build that leaves the base to herdr:
+// from the primary checkout that would resolve it there -- HEAD as the
+// primary's commit -- having said nothing, and plan.Build refuses that plan
+// anyway. It stops on the worktree row, where another base is one keystroke
+// away.
+func (m Model) handleLinkedCommit(msg linkedCommitMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		m.worktree.SetBaseStatus("couldn't resolve " + m.linkedBaseRef() + ": pick a base")
+		return m, m.form.FocusByID("worktree")
+	}
+	return m.WithLinkedCommit(msg.commit).continueSubmit()
+}
+
 // --- account picker: the commit-time pick ----------------------------------
 
 // pickerCommitMsg carries the commit-time pick back to the submit pipeline.
@@ -1120,10 +1182,11 @@ func submitStepLabel(op plan.Op, in plan.Input) string {
 func submitStepDetail(op plan.Op, in plan.Input) string {
 	switch op.Kind {
 	case plan.OpWorktreeCreate:
-		base := in.BaseRef
-		if base == "" {
-			base = "HEAD"
-		}
+		// A chosen base as chosen. With none, from a lane, the commit it
+		// turned out to be, which "HEAD" would misname: from the repository
+		// root, HEAD is the primary checkout's. Seven characters, as git
+		// abbreviates one, since the row has a branch to fit beside it.
+		base := cmp.Or(in.BaseRef, in.Linked.Commit[:min(len(in.Linked.Commit), 7)], "HEAD")
 		if in.Branch == "" {
 			return "from " + base
 		}
@@ -1558,6 +1621,14 @@ func (gitxSource) IsGitRepo(dir string) bool { return gitx.IsGitRepo(dir) }
 
 func (gitxSource) RepoRoot(ctx context.Context, dir string) (string, error) {
 	return gitx.RepoRoot(ctx, dir)
+}
+
+func (gitxSource) PrimaryCheckout(ctx context.Context, dir string) (string, error) {
+	return gitx.PrimaryCheckout(ctx, dir)
+}
+
+func (gitxSource) ResolveCommit(ctx context.Context, dir, ref string) (string, error) {
+	return gitx.ResolveRef(ctx, dir, ref)
 }
 
 func (gitxSource) ListSubdirs(dir string, limit int) []string {

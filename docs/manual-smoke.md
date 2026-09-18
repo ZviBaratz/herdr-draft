@@ -1646,6 +1646,49 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### `create` and the popup from inside a lane (#171) — 2026-09-18
+
+herdr 0.9.0. `zvi/fix-create-from-a-worktree-lane` at `c2240c0`, not
+merged, against `main` at `52d9750`, both built into a scratch directory.
+Route A0 with its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME`, `[worktrees]
+directory` under `/var/tmp`, and a scratch plugin config and state dir with
+`[agents] favorites = ["nosuchkind"]`. Every create stopped at `starting
+agent`, and the pass spent no account quota. The setup was the issue's: a
+throwaway repo with a parent workspace `w1`, and a lane made by `herdr
+worktree create --branch lane/one` (`w2`), with one commit on it: `main` at
+`de2f1b4`, the lane at `4486c1e`. Every `create` ran from the lane's
+checkout, with `w2`'s pane ids and the three plugin variables. herdr's own
+`workspace list` gave `w2` a `repo_root` of the primary checkout and a
+`checkout_path` of the lane, which is what the popup's new default reads.
+
+| Case | Result |
+|---|---|
+| `main`, the issue's five rows | **the defect, reproduced.** `--worktree`, and no worktree flag: exit 1, `linked_worktree_source`, `nothing was created`. `--no-worktree`: a tab in `w2`, in the lane. `--worktree --project <repo>`: cut from `de2f1b4`, `main`'s commit. Adding `--base lane/one`: cut from `4486c1e`. |
+| the fix, the same rows | **as expected.** `--worktree`, and no flag: exit 1 at `starting agent`, each checkout at `4486c1e`. `--no-worktree`: a tab in `w2`, cwd the lane. `--worktree --project <repo>`: `de2f1b4`, unchanged, since the primary checkout is not a lane. `--worktree --base lane/one`, with no `--project`: `4486c1e`. |
+| `--worktree --json` | **as expected.** `project_dir` the lane, `base` `4486c1e2e7a654264b758096fe10617f6cca9fad`, `provenance.base` `checkout`. |
+| a detached lane | **as expected.** A commit on a detached HEAD, `c47b30a`: the new checkout was cut from it. |
+| the popup, opened in the lane's pane (Route B) | **as expected.** The context was `w2`'s entry from `workspace list`. The form opened on `project  /var/tmp/h171/wt/repo/lane-one`, `worktree  on · from lane/one`, with the lane then the repo root as the project row's first two candidates. A submit read `✓ worktree  zvi/form-lane from 4486c1e`, and the checkout was at `4486c1e`. `c` on the failure screen removed it. |
+| the popup, a lane picked in the project row | **the defect, then the fix.** Opened from `w1`, `lane-one` typed into the project row, a title, `⌃S`. `main`'s binary: `✗ worktree  herdr worktree create --cwd <lane> …`. The fix: `✓ worktree  zvi/picked-lane from 4486c1e`. The issue had read this case from the code; this is its first measurement. |
+
+**Not checked live:** that the lane's commit is never remembered, because a
+create that fails at `starting agent` writes no memory. `TestLane_TheCommitIsNotRemembered`
+and `TestSubmit_FromALaneTheCommitIsNotRemembered` cover both paths.
+
+**Second pass, after the independent review** (`34b51ca`, same isolation, a
+fresh setup: `main` at `3b2a5c1`, the lane at `8f42d06`). The review found
+two defects in `c2240c0`, and both reproduced live on that code first:
+
+| Case | `c2240c0` | `34b51ca` |
+|---|---|---|
+| `--worktree --base HEAD`, from the lane | cut from `3b2a5c1`, the **primary's** commit: herdr resolved `HEAD` in the source | cut from `8f42d06`, the lane's: every base is now resolved in the lane first |
+| a lane of a `--separate-git-dir` repository | `--cwd <dir holding the git directory>`, herdr `not_git_worktree` | no substitute: `--cwd <lane>`, herdr's own `linked_worktree_source` |
+
+With `34b51ca`, no base still gave `8f42d06`. `--base main --json` gave
+`base: main` from `flag`, cut from `3b2a5c1`. Teardown as above.
+
+Teardown: the disposable session stopped and deleted, no process with a cwd
+under the scratch tree, the scratch tree removed, `pgrep -x herdr-draft` 0.
+
 ### the options row through the real popup — 2026-09-18
 
 herdr 0.9.0, claude 2.1.277, the owner's live install at `52d9750` (#181
@@ -1661,6 +1704,11 @@ is `claude-as`. One launch, prompt `hi`.
 | where it landed | **as designed, and not what was predicted.** Opened from a pane in a linked worktree's space, the project row defaulted to the repository's main checkout, so `tab in` put the session in the repository's own space rather than the worktree's. |
 
 Teardown: the demo pane closed, and its claude process gone.
+
+"Where it landed" describes the default at `52d9750`. #171 changed it: the
+popup opened in a linked worktree's space now opens on that worktree's
+checkout, as `create` run there does, so the same submit would put the
+session in a tab in the worktree's own space.
 
 ### the options row, launching claude (agent-options spec) — 2026-09-18
 

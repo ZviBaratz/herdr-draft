@@ -102,6 +102,16 @@ type fakeGit struct {
 	repoRootErr   error
 	repoRootCalls []string
 
+	// primary maps a linked worktree checkout to its repository's primary
+	// checkout (PrimaryCheckout). commits answers ResolveCommit, keyed
+	// "<dir> <ref>", and a ref asked about anywhere else is an error, so the
+	// wrong checkout cannot pass for the right one; resolveCalls records
+	// every question in that form, and resolveErr fails them all (#171).
+	primary      map[string]string
+	commits      map[string]string
+	resolveErr   error
+	resolveCalls []string
+
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
@@ -186,6 +196,22 @@ func (g *fakeGit) RepoRoot(_ context.Context, dir string) (string, error) {
 		return "", nil
 	}
 	return dir, nil
+}
+func (g *fakeGit) PrimaryCheckout(_ context.Context, dir string) (string, error) {
+	g.dirsSeen = append(g.dirsSeen, dir)
+	return g.primary[dir], nil
+}
+func (g *fakeGit) ResolveCommit(_ context.Context, dir, ref string) (string, error) {
+	key := dir + " " + ref
+	g.resolveCalls = append(g.resolveCalls, key)
+	g.dirsSeen = append(g.dirsSeen, dir)
+	if g.resolveErr != nil {
+		return "", g.resolveErr
+	}
+	if c, ok := g.commits[key]; ok {
+		return c, nil
+	}
+	return "", fmt.Errorf("fakeGit: no commit for %q in %s", ref, dir)
 }
 func (g *fakeGit) ListBranches(_ context.Context, dir string, _ int) ([]string, error) {
 	g.listBranchesCalls++

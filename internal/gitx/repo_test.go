@@ -387,6 +387,88 @@ func TestRepoRoot_LinkedWorktreeSharesTheOriginRoot(t *testing.T) {
 	}
 }
 
+// TestPrimaryCheckout is the question #171 turns on: herdr refuses a linked
+// worktree as the source of a new one, so from a linked checkout the new
+// worktree is created from the repository's primary checkout instead -- and
+// that has to BE the primary checkout, or herdr is handed some other
+// directory.
+//
+// The layouts after the first three are the ones where the parent of the
+// common git directory (RepoRoot's answer, a fine memory key) is not a
+// checkout at all. git itself cannot name the primary checkout of a
+// separate-git-dir repository from one of its linked worktrees, and a bare
+// repository has none, so both answer "" -- no substitution, and herdr's own
+// refusal stands.
+func TestPrimaryCheckout(t *testing.T) {
+	ctx := context.Background()
+	origin := mkRepo(t)
+	linked := filepath.Join(t.TempDir(), "feature")
+	gitRun(t, origin, "worktree", "add", "-q", "-b", "feature", linked)
+	sub := filepath.Join(linked, "internal")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", sub, err)
+	}
+
+	// A separate git directory, then a linked worktree of it.
+	gitDirs := t.TempDir()
+	separate := t.TempDir()
+	gitRun(t, separate, "init", "-q", "-b", "main", "--separate-git-dir", filepath.Join(gitDirs, "repo.git"))
+	gitRun(t, separate, "commit", "-q", "--allow-empty", "-m", "init")
+	separateLane := filepath.Join(t.TempDir(), "lane")
+	gitRun(t, separate, "worktree", "add", "-q", "-b", "lane", separateLane)
+
+	// The same, with the git directory kept inside ANOTHER repository's work
+	// tree: RepoRoot's answer for the lane is then a directory in that other
+	// repository, and a worktree created there would be created in it.
+	host := mkRepo(t)
+	hosted := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(host, "gitdirs"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	gitRun(t, hosted, "init", "-q", "-b", "main", "--separate-git-dir", filepath.Join(host, "gitdirs", "repo.git"))
+	gitRun(t, hosted, "commit", "-q", "--allow-empty", "-m", "init")
+	hostedLane := filepath.Join(t.TempDir(), "lane")
+	gitRun(t, hosted, "worktree", "add", "-q", "-b", "lane", hostedLane)
+
+	// A bare repository with its checkouts beside it, and the `.git` file
+	// that layout usually keeps at the top.
+	bareRoot := t.TempDir()
+	gitRun(t, bareRoot, "init", "-q", "--bare", "-b", "main", ".bare")
+	if err := os.WriteFile(filepath.Join(bareRoot, ".git"), []byte("gitdir: ./.bare\n"), 0o644); err != nil {
+		t.Fatalf("write .git: %v", err)
+	}
+	bareMain := filepath.Join(bareRoot, "main")
+	gitRun(t, filepath.Join(bareRoot, ".bare"), "worktree", "add", "-q", "--orphan", bareMain)
+	gitRun(t, bareMain, "commit", "-q", "--allow-empty", "-m", "init")
+	bareLane := filepath.Join(bareRoot, "lane")
+	gitRun(t, bareMain, "worktree", "add", "-q", "-b", "lane", bareLane)
+
+	for _, tc := range []struct {
+		name string
+		dir  string
+		want string
+	}{
+		{"the primary checkout itself", origin, ""},
+		{"a linked worktree", linked, origin},
+		{"a subdirectory of a linked worktree", sub, origin},
+		{"a primary checkout whose git directory lives elsewhere", separate, ""},
+		{"a linked worktree of that repository", separateLane, ""},
+		{"a linked worktree whose git directory is inside another repository", hostedLane, ""},
+		{"a linked worktree of a bare repository", bareLane, ""},
+		{"a plain directory", t.TempDir(), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := PrimaryCheckout(ctx, tc.dir)
+			if err != nil {
+				t.Fatalf("PrimaryCheckout(%s): %v", tc.dir, err)
+			}
+			if (got == "") != (tc.want == "") || (got != "" && !sameDir(t, got, tc.want)) {
+				t.Errorf("PrimaryCheckout(%s) = %q, want %q", tc.dir, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRepoRoot_FromASubdirectory pins that the root is the REPOSITORY's,
 // not the directory asked about: the project field can hold any path
 // inside the repo and must still key on one entry.
