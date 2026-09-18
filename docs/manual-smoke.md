@@ -1674,6 +1674,18 @@ checkout, with `w2`'s pane ids and the three plugin variables. herdr's own
 create that fails at `starting agent` writes no memory. `TestLane_TheCommitIsNotRemembered`
 and `TestSubmit_FromALaneTheCommitIsNotRemembered` cover both paths.
 
+**Second pass, after the independent review** (`34b51ca`, same isolation, a
+fresh setup: `main` at `3b2a5c1`, the lane at `8f42d06`). The review found
+two defects in `c2240c0`, and both reproduced live on that code first:
+
+| Case | `c2240c0` | `34b51ca` |
+|---|---|---|
+| `--worktree --base HEAD`, from the lane | cut from `3b2a5c1`, the **primary's** commit: herdr resolved `HEAD` in the source | cut from `8f42d06`, the lane's: every base is now resolved in the lane first |
+| a lane of a `--separate-git-dir` repository | `--cwd <dir holding the git directory>`, herdr `not_git_worktree` | no substitute: `--cwd <lane>`, herdr's own `linked_worktree_source` |
+
+With `34b51ca`, no base still gave `8f42d06`. `--base main --json` gave
+`base: main` from `flag`, cut from `3b2a5c1`. Teardown as above.
+
 Teardown: the disposable session stopped and deleted, no process with a cwd
 under the scratch tree, the scratch tree removed, `pgrep -x herdr-draft` 0.
 
@@ -1692,6 +1704,11 @@ is `claude-as`. One launch, prompt `hi`.
 | where it landed | **as designed, and not what was predicted.** Opened from a pane in a linked worktree's space, the project row defaulted to the repository's main checkout, so `tab in` put the session in the repository's own space rather than the worktree's. |
 
 Teardown: the demo pane closed, and its claude process gone.
+
+"Where it landed" describes the default at `52d9750`. #171 changed it: the
+popup opened in a linked worktree's space now opens on that worktree's
+checkout, as `create` run there does, so the same submit would put the
+session in a tab in the worktree's own space.
 
 ### the options row, launching claude (agent-options spec) — 2026-09-18
 
