@@ -42,6 +42,12 @@ without the popup. It drives herdr exclusively through the public CLI
   session's agent elsewhere left the worktree's space holding only an idle
   shell, and once `tab in` became the default it did so for every worktree
   session after the first in a repository.
+- **Opened in a linked worktree's own space, the form defaults to that
+  checkout** (#171): another session's worktree, say, with the repository's
+  root as the next candidate. It used to open on the repository root, so a
+  worktree from there was cut from the primary checkout's commit rather
+  than the one you were on, and a session without one ran in the primary
+  checkout, where `create` run in the same place runs in the lane.
 - **Every tab a session opens carries its title**, from the popup and from
   `create` alike. herdr's `workspace create` and `worktree create` label
   only the space, which left its first tab called `1`, so a `new space` or
@@ -118,6 +124,16 @@ without the popup. It drives herdr exclusively through the public CLI
   build two different sessions: the space and tab labels and a
   title-derived branch differed from the popup's, and so could the agent's
   name (#176, #178).
+- **Run inside a linked worktree, it can create a worktree** (#171).
+  `--worktree`, and a create with no worktree flag at all, handed herdr the
+  linked checkout as the source, which herdr refuses: exit 1, nothing
+  created. That was the spawn skill's first example, run by an agent in any
+  worktree lane. The new worktree is now created from the repository root
+  and cut from the commit the lane is on, unless `--base` names another.
+  `--json` reports that commit as `base`, with provenance `checkout`, and it
+  is never remembered. The project stays the lane, so `--no-worktree` still
+  runs there. The popup does the same, from a lane's space or with one
+  picked in the `project` row.
 - Progress goes to stderr one line per step; the result to stdout, or a
   single JSON object under `--json` carrying a `provenance` map naming the
   tier each value came from.

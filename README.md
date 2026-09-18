@@ -151,7 +151,9 @@ The project row has two modes, and switches between them on what you type:
 - **Fragment** (anything not starting with `/`, `~` or `.`) fuzzy-filters a
   fixed pool of candidates: the current space's repo root first, then the
   current workspace cwd, then every open herdr workspace's own worktree
-  root, then your recents.
+  root, then your recents. Opened in a linked worktree's own space, the
+  first candidate, and the default, is that worktree's checkout, with the
+  repository root next: the same project `create` run there resolves to.
 - **Path** (`/`, `~` or `.`) browses the filesystem — the subdirectories of
   the parent you have typed so far, re-read only when that parent changes.
   `⇥` completes to the longest common prefix, shell-style, and deliberately
@@ -349,11 +351,19 @@ files to keep them from drifting. The project directory defaults to the
 working directory. A successful create records what it used, so the form's
 next open defaults to it too.
 
+**Inside a linked worktree** (another session's, say) the project is that
+checkout. herdr will not create a worktree *from* a linked checkout, so a
+worktree session is created from the repository root instead, and cut from
+the commit you are on unless `--base` names another. That commit is never
+remembered. Without a worktree, the session runs in the checkout itself.
+The popup does the same.
+
 Progress goes to stderr, one line per step; the result to stdout, or a
 single JSON object with `--json` (which also carries a prompt the dialog
 guard withheld, since a headless caller has no pane to recover it from, and
 a `provenance` map naming the tier each value came from — `flag` for the
-ones you passed). A `mark_ready: true` means the prompt carried
+ones you passed, and `checkout` for a `base` that is the commit a linked
+worktree is on). A `mark_ready: true` means the prompt carried
 pane-reaper's instruction, and `agent_options` is what the agent was
 launched with. It never prompts. Exit codes:
 

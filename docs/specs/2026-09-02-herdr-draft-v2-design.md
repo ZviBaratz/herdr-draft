@@ -645,6 +645,19 @@ command and the form produce the same session from the same inputs.
 > **Extended, reap spec (2026-09-17).** `--reap` / `--no-reap` (that
 > document's §7).
 
+> **Amended, #171 (2026-09-18): from inside a linked worktree.** Both paths
+> take the linked checkout as the project: `create` because it is the
+> working directory, and the form because a linked worktree's space now
+> opens on its `checkout_path`, not on herdr's `repo_root` for it, which
+> names the primary checkout (v1 §6 field 2's "current space's repo root").
+> herdr refuses a linked checkout as the source of a new worktree
+> (`linked_worktree_source`), so a worktree session names the repository
+> root as `worktree create`'s `--cwd`, and nothing else moves: without a
+> worktree the session runs in the linked checkout. An unset base is then
+> that checkout's own commit, resolved to a SHA at submit, since herdr's
+> default would be the primary checkout's HEAD. The commit is reported
+> (`create --json`'s `base`, provenance `checkout`) and never remembered.
+
 Run from a plain shell inside a herdr pane there is no
 `HERDR_PLUGIN_CONTEXT_JSON`, so context comes from `HERDR_WORKSPACE_ID` /
 `HERDR_TAB_ID` / `HERDR_PANE_ID`. Only the tab-here and split-here placements
