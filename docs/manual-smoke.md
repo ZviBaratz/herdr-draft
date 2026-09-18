@@ -1532,6 +1532,29 @@ record" were not. Do not write a result you did not see.
 
 ## Recorded runs
 
+### a long `create` title is cut to 32 runes (#176) — 2026-09-18
+
+herdr 0.9.0, `zvi/cap-create-titles-at-32-runes`, built from the
+uncommitted tree on `9141b77` that became this branch's commit, and not
+merged. For contrast, `main` at `9141b77` was built from `git archive`.
+Route A0, with the §15.1 run's isolation: its own `XDG_CONFIG_HOME`,
+`XDG_STATE_HOME` and `[worktrees] directory` under `/var/tmp`, a scratch
+plugin state dir, and `[agents] favorites = ["nosuchkind"]` with
+`branch_prefix = "zvi/"`. Every create stopped at `starting agent`, and the
+pass spent no account quota. `--issue` was not run live, because it needs a
+real Linear key. `TestFormAndCommandProduceTheSamePlan` and
+`TestLongTitleIsCutAndSaysSo` cover it.
+
+| Case | Result |
+|---|---|
+| 47-rune `--title`, `--no-worktree --json` | **as expected.** The first stderr line was `herdr-draft create: --title is 47 runes and a title is capped at 32, as in the form; using "fix login redirect loop when the"`. `workspace list` gave `w1 'fix login redirect loop when the'`, `tab list` gave `w1:t1` with the same label, and `--json`'s `title` was the cut one. |
+| the same title again | **as expected.** The cut line, then exit 2 with `workspace w1 is already labelled "fix login redirect loop when the"`: the title-in-use refusal compares the cut title. |
+| 43-rune `--title`, `--worktree` | **as expected.** `using "add a CSV export button to the r"`. The branch was `zvi/add-a-csv-export-button-to-the-r`, derived from the cut title, and `w2` and `w2:t1` carried the cut title. |
+| 43-rune `--title` from `main`'s binary | **the defect, for contrast.** No line, and `w3` and `w3:t1` read `'wire the exporter to the nightly job runner'` whole. |
+
+Teardown: the session stopped and deleted, the scratch tree removed,
+`herdr session list` without it, `pgrep -x herdr-draft` 0.
+
 ### every tab a session opens carries its title (placement spec §15.1) — 2026-09-18
 
 herdr 0.9.0, `zvi/name-created-tabs`, built from the tree that became

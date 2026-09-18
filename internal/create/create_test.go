@@ -1622,6 +1622,76 @@ func TestIssueSeedsTitleBranchAndPrompt(t *testing.T) {
 	}
 }
 
+// TestLongTitleIsCutAndSaysSo is #176 as the caller sees it. The session is
+// titled with the first 32 runes, as the form's would be, and one line on
+// stderr says so: an explicit --title would otherwise come back shortened
+// with nothing anywhere saying why. --json reports the title that was used.
+func TestLongTitleIsCutAndSaysSo(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantUsed string
+		// wantLine is the whole stderr line, or "" for none.
+		wantLine string
+	}{
+		{
+			name:     "--title",
+			args:     []string{"--title", "fix login redirect loop when the cookie expires"},
+			wantUsed: "fix login redirect loop when the",
+			wantLine: `herdr-draft create: --title is 47 runes and a title is capped at 32, as in the form; using "fix login redirect loop when the"`,
+		},
+		{
+			name:     "--issue",
+			args:     []string{"--issue", "eng-42"},
+			wantUsed: "Fix café login redirect loop whe",
+			wantLine: `herdr-draft create: ENG-42's title is 52 runes and a title is capped at 32, as in the form; using "Fix café login redirect loop whe"`,
+		},
+		{
+			name:     "exactly the cap is not cut",
+			args:     []string{"--title", "fix login redirect loop when the"},
+			wantUsed: "fix login redirect loop when the",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.deps.Linear = &fakeLinear{issues: []linear.Issue{{
+				Identifier: "ENG-42", Title: "Fix café login redirect loop when the cookie expires",
+				BranchName: "zvi/eng-42-fix-cafe-login-redirect-loop",
+			}}}
+
+			if code := h.run(append(tc.args, "--no-worktree", "--json")...); code != ExitOK {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+			}
+
+			var lines []string
+			for _, line := range strings.Split(h.stderr.String(), "\n") {
+				if strings.Contains(line, "capped at") {
+					lines = append(lines, line)
+				}
+			}
+			switch {
+			case tc.wantLine == "" && len(lines) > 0:
+				t.Errorf("stderr says %q, want nothing about a cut", lines)
+			case tc.wantLine != "" && (len(lines) != 1 || lines[0] != tc.wantLine):
+				t.Errorf("stderr lines about the cut = %q, want exactly\n%q", lines, tc.wantLine)
+			}
+
+			// The space is labelled with what was used, not what was asked.
+			wantCall := "WorkspaceCreate(/projects/thing," + tc.wantUsed + ")"
+			if !slices.Contains(h.runner.calls, wantCall) {
+				t.Errorf("calls = %v, want %s", h.runner.calls, wantCall)
+			}
+			var out jsonReport
+			if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+				t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+			}
+			if out.Title != tc.wantUsed {
+				t.Errorf("--json title = %q, want %q", out.Title, tc.wantUsed)
+			}
+		})
+	}
+}
+
 // TestIssueWithoutLinear refuses rather than silently creating a session
 // with none of the seeding that was asked for.
 func TestIssueWithoutLinear(t *testing.T) {

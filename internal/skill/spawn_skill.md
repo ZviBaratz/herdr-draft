@@ -96,6 +96,9 @@ you are doing right now.
 
 - `--worktree` / `--no-worktree` choose explicitly. Leave both off and the
   user's own default applies.
+- `--title TEXT` names the session: its agent, and the space or tab it
+  opens. A title over 32 runes is cut to 32, as the form cuts it, and one
+  line on stderr gives the title used, so write one that fits.
 - `--branch NAME` names the branch. Left off, it is derived from the title.
 - `--base REF` is what the branch is cut from. Left off it resolves like
   every other unset value — usually `HEAD`, which is *your current commit*,
@@ -206,6 +209,8 @@ cannot find out on its own:
 `--issue ID` seeds the title, branch and prompt from a Linear issue, if
 the user has Linear configured and the work has an issue. It is a
 starting point for the prompt, not a substitute for the four things above.
+The issue's title is cut to 32 runes like any other, and the prompt still
+quotes it whole.
 
 `--reap` ends the prompt with an instruction to mark the new pane ready
 for **pane-reaper**, which closes it once the agent has saved its work and
