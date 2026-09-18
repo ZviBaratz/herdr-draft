@@ -385,6 +385,25 @@ func countCallsWithPrefix(calls []string, prefix string) int {
 	return n
 }
 
+// gitTestEnv is the environment every test git command here runs with: the
+// process's own, minus every GIT_* variable, plus a fixed identity. The
+// strip is the point. GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE all beat
+// cmd.Dir, and `git rebase --exec` exports GIT_DIR in a linked worktree, so
+// inheriting them sent this helper's `git init`/`add`/`commit` into the
+// repository running the tests (TestGitHelpersIgnoreAnInheritedGitDir).
+func gitTestEnv(extra ...string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env,
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	return append(env, extra...)
+}
+
 // mkRepo creates a temp git repo with one commit on "main" (mirroring
 // internal/gitx/repo_test.go's helper of the same name, Task 4) for
 // CleanCheck's worktree tests, which need a real gitx.Disposable check.
@@ -394,9 +413,7 @@ func mkRepo(t *testing.T) string {
 	run := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		cmd.Env = gitTestEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -1729,9 +1746,7 @@ func gitIn(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	cmd.Env = gitTestEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v (in %s): %v\n%s", args, dir, err, out)
 	}
