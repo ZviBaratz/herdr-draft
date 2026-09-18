@@ -874,6 +874,67 @@ func TestSubmitView_WaitingStepHasItsOwnGlyph(t *testing.T) {
 	}
 }
 
+// sampleStepsNonFatal is a worktree session whose tab kept herdr's name:
+// the rename step failed, and the launch below it went on regardless.
+func sampleStepsNonFatal() []Step {
+	return []Step{
+		{Label: "worktree", Detail: "zvi/fix-login-redirect-loop from main", State: plan.StepDone},
+		{Label: "tab", Detail: "not named: herdr tab rename w3:t1 Fix login redirect loop: exit status 1", State: plan.StepFailedNonFatal},
+		{Label: "claude", Detail: "starting under clauth alpha-2", State: plan.StepRunning},
+		{Label: "prompt", State: plan.StepPending},
+	}
+}
+
+// TestFrames_ProgressPastANonFatalStep pins the sixth state as drawn: its
+// own glyph and colour, the reason in the value column, and the rows below
+// it still running -- which is the whole difference from a failed step.
+func TestFrames_ProgressPastANonFatalStep(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsNonFatal())
+	assertSubmitFrame(t, "progress-nonfatal-80x24", v, 80, 24)
+}
+
+// TestSubmitView_NonFatalStepHasItsOwnGlyph: a step that failed without
+// stopping the plan must not look like any of the other four. Blank is a
+// pending row; ✓ would claim the tab was named; ✗ says the plan stopped,
+// which it did not; and … says it is waiting on the user, who has nothing
+// to do.
+func TestSubmitView_NonFatalStepHasItsOwnGlyph(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsNonFatal())
+
+	var row string
+	for _, l := range strippedFrameLines(v, 80, 24) {
+		if strings.Contains(l, "tab") && strings.Contains(l, "not named") {
+			row = l
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("no tab row in\n%s", strippedFrame(v, 80, 24))
+	}
+	glyph := strings.TrimSpace(row[:strings.Index(row, "tab")])
+	if glyph == "" {
+		t.Fatal("non-fatal row has no glyph at all -- a pending row already looks like that")
+	}
+	for _, taken := range []string{"✓", "›", "✗", "…"} {
+		if glyph == taken {
+			t.Errorf("non-fatal row carries %q, the glyph for another state", glyph)
+		}
+	}
+}
+
+// TestSubmitView_NonFatalStepWithNoDetailSaysSo: the state's own word, for
+// a row with nothing of its own to say -- the same fallback every other
+// state has.
+func TestSubmitView_NonFatalStepWithNoDetailSaysSo(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps([]Step{{Label: "tab", State: plan.StepFailedNonFatal}})
+	if frame := strippedFrame(v, 80, 24); !strings.Contains(frame, "failed, continuing") {
+		t.Errorf("ViewAt(80,24) = %q, want the row to say it failed and the run went on", frame)
+	}
+}
+
 // TestSubmitView_WaitingStepWithNoDetailSaysSo mirrors the "queued" rule
 // for the fifth state: a row with nothing of its own to say prints its
 // state's word.

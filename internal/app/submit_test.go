@@ -136,6 +136,13 @@ func (r *submitFakeRunner) TabCreate(context.Context, herdrc.TabCreateReq) (herd
 	return r.topo, nil
 }
 
+func (r *submitFakeRunner) TabRename(context.Context, herdrc.TabRenameReq) error {
+	if r.shouldFail("TabRename") {
+		return r.failErr
+	}
+	return nil
+}
+
 func (r *submitFakeRunner) PaneSplit(context.Context, herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
 	if r.shouldFail("PaneSplit") {
 		return herdrc.CreatedTopology{}, r.failErr
@@ -380,8 +387,8 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 	// op, matching Task 12's first matrix case exactly -- as v2 spec
 	// §12's short nouns, which is what the submit view's label column
 	// holds (see async.go's submitStepLabel).
-	wantLabels := []string{"creating worktree", "typing the clauth launch", "waiting for agent detection", "sending prompt"}
-	wantRows := []string{"worktree", "claude", "detection", "prompt"}
+	wantLabels := []string{"creating worktree", "naming tab", "typing the clauth launch", "waiting for agent detection", "sending prompt"}
+	wantRows := []string{"worktree", "tab", "claude", "detection", "prompt"}
 	if len(m.submitSteps) != len(wantRows) {
 		t.Fatalf("seeded submitSteps = %d entries, want %d: %+v", len(m.submitSteps), len(wantRows), m.submitSteps)
 	}
@@ -394,7 +401,12 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 	if got, want := m.submitSteps[0].Detail, "zvi/fix-pagination from HEAD"; got != want {
 		t.Errorf("seeded worktree row detail = %q, want %q", got, want)
 	}
-	if got, want := m.submitSteps[1].Detail, "under clauth work"; got != want {
+	// The tab row names what the tab will be CALLED, which is the title --
+	// the same value column the `tab here` placement's row shows.
+	if got, want := m.submitSteps[1].Detail, "Fix pagination"; got != want {
+		t.Errorf("seeded tab row detail = %q, want %q", got, want)
+	}
+	if got, want := m.submitSteps[2].Detail, "under clauth work"; got != want {
 		t.Errorf("seeded clauth row detail = %q, want %q", got, want)
 	}
 
@@ -419,7 +431,7 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 
 	// The trailing AgentRead is #116's post-send verification: the popup
 	// may not report a create clean until the pane says the prompt landed.
-	wantCalls := []string{"WorkspaceList", "WorktreeCreate", "PaneRun", "AwaitDetection", "AgentRead", "AgentPrompt", "AgentRead"}
+	wantCalls := []string{"WorkspaceList", "WorktreeCreate", "TabRename", "PaneRun", "AwaitDetection", "AgentRead", "AgentPrompt", "AgentRead"}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("runner.calls = %v, want %v", runner.calls, wantCalls)
 	}
@@ -577,6 +589,53 @@ func TestSubmit_FailedStepShowsFailureWithCleanCheckReasonThreaded(t *testing.T)
 	frame := ansi.Strip(m.submitView.ViewAt(80, 24))
 	if !containsAll(frame, "claude", "boom", "k keep it", "c remove it") {
 		t.Fatalf("SubmitView.ViewAt(80,24) = %q, want it to show the failed step plus an allowed keep-or-clean choice", frame)
+	}
+}
+
+// TestSubmit_ATabThatKeptItsNumberIsStillASuccess is the popup half of
+// plan's non-fatal rename. The row says the tab was not named and why, in
+// a state of its own; the run goes on to start the agent; and the submit
+// ends on the SUCCESS path -- state persisted, popup closed -- rather than
+// on a keep-or-clean screen offering to tear down a working session over a
+// label.
+func TestSubmit_ATabThatKeptItsNumberIsStillASuccess(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:    herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"},
+		failAt:  "TabRename",
+		failErr: errors.New(`herdr tab rename tab-1 Fix pagination: exit status 1: {"error":{"code":"tab_not_found"}}`),
+	}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.title.SetTitle("Fix pagination", false)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if !m.submitting {
+		t.Fatal("Update(SubmitMsg{}) did not start submitting")
+	}
+	m, _, done := drainSubmitProgress(t, m, cmd)
+
+	if done.result.FailedIndex != -1 {
+		t.Fatalf("ExecResult.FailedIndex = %d, want -1: %+v", done.result.FailedIndex, done.result)
+	}
+	var row form.Step
+	for _, s := range m.submitSteps {
+		if s.Label == "tab" {
+			row = s
+		}
+	}
+	if row.State != plan.StepFailedNonFatal {
+		t.Fatalf("tab row = %+v, want StepFailedNonFatal", row)
+	}
+	if !strings.HasPrefix(row.Detail, "not named: ") || !strings.Contains(row.Detail, "tab_not_found") {
+		t.Errorf("tab row detail = %q, want it to say the tab was not named, and herdr's reason", row.Detail)
+	}
+	if strings.Contains(row.Detail, "plan: execute") {
+		t.Errorf("tab row detail = %q, want Execute's own wrapper trimmed as on a failed row", row.Detail)
+	}
+
+	_, finalCmd := m.handleSubmitDone(done)
+	if _, ok := finalCmd().(statePersistedMsg); !ok {
+		t.Fatal("handleSubmitDone did not take the success path (persist, then quit)")
 	}
 }
 

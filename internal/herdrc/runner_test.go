@@ -562,6 +562,64 @@ func TestCLIRunnerTabCloseRequiresTheJSONEnvelope(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerTabRename pins the argv: both the id and the label are
+// POSITIONAL, and the label travels as ONE element. herdr joins everything
+// after the id with single spaces (herdr:src/cli/tab.rs at v0.9.0,
+// `args[1..].join(" ")`), so a split label would still arrive -- minus any
+// run of spaces inside it, which one element keeps.
+func TestCLIRunnerTabRename(t *testing.T) {
+	stdout := `{"id":"cli:tab:rename","result":{"type":"tab_info","tab":{"tab_id":"w1:t3","label":"Fix login"}}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.TabRename(context.Background(), TabRenameReq{TabID: "w1:t3", Label: "Fix login"}); err != nil {
+		t.Fatalf("TabRename: %v", err)
+	}
+
+	wantArgv := "tab rename w1:t3 Fix login"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerTabRenameRequiresTheJSONEnvelope is
+// TestCLIRunnerTabCloseRequiresTheJSONEnvelope for `tab rename`, and for the
+// same reason: at v0.9.0 `tab_rename` prints through print_method_response
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/runtime.rs#L65-L67),
+// and only a fixture that prints NOTHING can tell runJSON from runOK.
+func TestCLIRunnerTabRenameRequiresTheJSONEnvelope(t *testing.T) {
+	bin, _ := fakeHerdrOK(t)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.TabRename(context.Background(), TabRenameReq{TabID: "w1:t3", Label: "Fix login"})
+	if err == nil {
+		t.Fatal("TabRename = nil against a subcommand that printed no envelope; " +
+			"`tab rename` reports success as JSON (print_method_response at v0.9.0), so it has to go through runJSON")
+	}
+	if !strings.Contains(err.Error(), "parse response") {
+		t.Errorf("error = %v, want the missing envelope to be what failed", err)
+	}
+}
+
+// TestCLIRunnerTabRenameRefusesEmptyTabID mirrors
+// TestCLIRunnerTabCloseRefusesEmptyTabID. herdr would reject an empty id
+// itself, but a caller holding no tab id is a caller that lost track of
+// which tab it made, and that is worth saying here rather than as herdr's
+// tab_not_found.
+func TestCLIRunnerTabRenameRefusesEmptyTabID(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.TabRename(context.Background(), TabRenameReq{Label: "Fix login"})
+	if err == nil {
+		t.Fatal("TabRename with no tab id = nil, want a refusal")
+	}
+	if !errors.Is(err, errRefused) {
+		t.Errorf("error %q is not a refusal to run (errors.Is errRefused = false)", err)
+	}
+	assertNeverExecuted(t, argvLog)
+}
+
 // TestCLIRunnerTabCloseRefusesEmptyTabID mirrors
 // TestCLIRunnerPaneCloseRefusesEmptyPaneID: a caller holding no tab id must
 // not silently close whatever tab herdr would pick by default.

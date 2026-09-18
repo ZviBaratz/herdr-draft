@@ -59,6 +59,7 @@ func (r *fakeRunner) WorkspaceCreate(context.Context, herdrc.WorkspaceCreateReq)
 func (r *fakeRunner) TabCreate(context.Context, herdrc.TabCreateReq) (herdrc.CreatedTopology, error) {
 	return herdrc.CreatedTopology{}, nil
 }
+func (r *fakeRunner) TabRename(context.Context, herdrc.TabRenameReq) error { return nil }
 func (r *fakeRunner) PaneSplit(context.Context, herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
 	return herdrc.CreatedTopology{}, nil
 }

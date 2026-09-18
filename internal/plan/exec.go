@@ -35,6 +35,17 @@ const (
 	// Appended rather than inserted in state order: StepPending must stay
 	// the zero value, since that is what an unstarted row is seeded with.
 	StepWaiting
+	// StepFailedNonFatal is a step that failed WITHOUT stopping the plan:
+	// its op only decorates what the plan had already made, so the session
+	// was created anyway and the row says what it is missing. OpTabRename
+	// is the only such op (isCosmeticKind).
+	//
+	// Its own state rather than StepFailed carrying a flag, because every
+	// caller reads StepFailed as "the plan stopped here" -- internal/create
+	// records that step's label and error as THE failure it reports -- and
+	// a flag an existing reader does not know to check would make a tab
+	// label the reason a successful create gave for failing.
+	StepFailedNonFatal
 )
 
 // String names a StepState for progress lines and test failure output.
@@ -50,6 +61,8 @@ func (s StepState) String() string {
 		return "StepFailed"
 	case StepWaiting:
 		return "StepWaiting"
+	case StepFailedNonFatal:
+		return "StepFailedNonFatal"
 	default:
 		return fmt.Sprintf("StepState(%d)", int(s))
 	}
@@ -81,7 +94,7 @@ type ExecOpts struct {
 
 // Progress reports one op's state transition to Execute's caller. Index is
 // the op's position among Total ops, Label is that op's Op.Label, and Err
-// is only ever non-nil when State is StepFailed.
+// is only ever non-nil when State is StepFailed or StepFailedNonFatal.
 type Progress struct {
 	Index, Total int
 	Label        string
@@ -1094,6 +1107,18 @@ func unsentPromptText(ops []Op, failedIdx int) string {
 	return ""
 }
 
+// isCosmeticKind reports whether an op of kind only decorates what the plan
+// has already made, so that its failure is reported (StepFailedNonFatal)
+// and the plan goes on.
+//
+// OpTabRename is the only one, and the case for it is the comparison: a
+// create that stopped over a tab label would leave a space with no agent
+// in it and hand the prompt back for manual paste, where the cost of going
+// on is a tab still called by its number.
+func isCosmeticKind(kind OpKind) bool {
+	return kind == OpTabRename
+}
+
 // isTopologyKind reports whether kind is one of the four ops that can
 // produce a herdrc.CreatedTopology (i.e. carries gotTopo=true in Execute's
 // loop below) -- OpAgentStart and everything after it never do.
@@ -1132,12 +1157,14 @@ func topologyIndices(ops []Op) (space, agentPane int) {
 
 // Execute runs ops in order against r. It threads each op's step-1 output
 // (the topology op's workspace/tab/pane ids) into every later op that
-// needs it -- OpAgentStart's Agent.PaneID, OpClauthLaunch's PaneRun target
-// pane, OpAwaitDetection's target pane, and OpAgentPrompt's Prompt.Target
-// -- since Build (build.go) leaves those fields empty for exactly this
-// reason. Execute reports Progress before and after each op and stops at
-// the first op that fails, after that op's busy retry budget (if any) is
-// exhausted. It never panics: an Op whose Kind requires a request field
+// needs it -- OpTabRename's Rename.TabID, OpAgentStart's Agent.PaneID,
+// OpClauthLaunch's PaneRun target pane, OpAwaitDetection's target pane,
+// and OpAgentPrompt's Prompt.Target -- since Build (build.go) leaves those
+// fields empty for exactly this reason. Execute reports Progress before
+// and after each op and stops at the first op that fails, after that op's
+// busy retry budget (if any) is exhausted -- unless the op is cosmetic
+// (isCosmeticKind), whose failure is reported as StepFailedNonFatal and
+// passed over. It never panics: an Op whose Kind requires a request field
 // that is nil (see malformedOpError) fails that op gracefully instead of
 // dereferencing nil.
 func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onProgress func(Progress)) ExecResult {
@@ -1264,6 +1291,20 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				}
 				topo, err = r.PaneSplit(ctx, *op.Split)
 				gotTopo = err == nil
+			case OpTabRename:
+				if op.Rename == nil {
+					return malformedOpError(op.Kind)
+				}
+				// The AGENT's tab, not the space's (result.Created). They are
+				// the same tab unless the worktree's space was already open
+				// (placement spec §5.2), and then the space's tab is one the
+				// user was working in; the session's is the one claimed
+				// beside it, which that claim already labelled.
+				req := *op.Rename
+				if req.TabID == "" && result.AgentAt != nil {
+					req.TabID = result.AgentAt.TabID
+				}
+				err = r.TabRename(ctx, req)
 			case OpAgentStart:
 				if op.Agent == nil {
 					return malformedOpError(op.Kind)
@@ -1406,6 +1447,15 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			}
 			return err
 		})
+
+		if runErr != nil && isCosmeticKind(op.Kind) {
+			// Reported, and nothing else: FailedIndex, PromptText and the
+			// prompt's delivery posture all describe the plan's outcome,
+			// and this step does not change it.
+			emitProgress(onProgress, i, total, op.Label, StepFailedNonFatal,
+				fmt.Errorf("plan: execute: %s: %w", op.Label, runErr))
+			continue
+		}
 
 		if runErr != nil {
 			// A step that failed AFTER its own space op already succeeded

@@ -42,6 +42,13 @@ without the popup. It drives herdr exclusively through the public CLI
   session's agent elsewhere left the worktree's space holding only an idle
   shell, and once `tab in` became the default it did so for every worktree
   session after the first in a repository.
+- **Every tab a session opens carries its title**, from the popup and from
+  `create` alike. herdr's `workspace create` and `worktree create` label
+  only the space, which left its first tab called `1`, so a `new space` or
+  worktree session now renames that tab. The rename is cosmetic, and a
+  failed one never fails the create: its step is marked `!` and the run
+  goes on. `split here` renames nothing, because the tab it lands in is
+  yours.
 - **A selected Linear issue seeds title, branch and prompt**, unless you
   have already typed over them.
 - **The prompt panel can end the prompt with pane-reaper's instruction.**

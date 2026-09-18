@@ -161,6 +161,10 @@ const (
 	OpClauthLaunch
 	OpAwaitDetection
 	OpAgentPrompt
+	// OpTabRename names the tab a space op opened. Appended so that no
+	// existing kind is renumbered; it is not a topology kind, since it
+	// creates nothing.
+	OpTabRename
 )
 
 // String names an OpKind for progress lines and test failure output.
@@ -182,6 +186,8 @@ func (k OpKind) String() string {
 		return "OpAwaitDetection"
 	case OpAgentPrompt:
 		return "OpAgentPrompt"
+	case OpTabRename:
+		return "OpTabRename"
 	default:
 		return fmt.Sprintf("OpKind(%d)", int(k))
 	}
@@ -190,7 +196,8 @@ func (k OpKind) String() string {
 // Op is one step of a creation plan. Exactly one request field is populated
 // per Kind: Worktree for OpWorktreeCreate, Workspace for
 // OpWorkspaceCreate, Tab for OpTabCreate, Split for OpPaneSplit, Agent for
-// OpAgentStart, RunArgv for OpClauthLaunch, Prompt for OpAgentPrompt.
+// OpAgentStart, RunArgv for OpClauthLaunch, Prompt for OpAgentPrompt,
+// Rename for OpTabRename.
 // OpAwaitDetection populates only Timeout, which OpAgentStart also carries
 // for the trust-dialog wait (#115). Requests that depend on step-1
 // output (pane/workspace ids the topology-creation op returns) are left
@@ -208,6 +215,7 @@ type Op struct {
 	RunArgv   []string                   // OpClauthLaunch: argv for Runner.PaneRun
 	RunEnv    []herdrc.EnvVar            // OpClauthLaunch: shell assignment prefix for Runner.PaneRun
 	Prompt    *herdrc.AgentPromptReq     // OpAgentPrompt
+	Rename    *herdrc.TabRenameReq       // OpTabRename
 	Timeout   time.Duration              // OpAwaitDetection, and OpAgentStart's #115 fallback
 
 	// AgentKind is OpAwaitDetection's other field: the kind being waited
@@ -248,7 +256,9 @@ func Build(in Input) ([]Op, error) {
 		return nil, fmt.Errorf("plan: build: placement tab-in needs an open workspace to place the tab in, and none was named")
 	}
 
-	ops := append(topologyOp(in), launchOps(in)...)
+	topology := topologyOp(in)
+	ops := append(topology, nameTabOp(in, topology)...)
+	ops = append(ops, launchOps(in)...)
 	if in.Prompt != "" {
 		ops = append(ops, Op{
 			Kind:  OpAgentPrompt,
@@ -307,6 +317,40 @@ func topologyOp(in Input) []Op {
 			Focus: true,
 		},
 	}}
+}
+
+// nameTabOp returns the op that names the tab a space op opened, after the
+// session title -- or nothing, when the topology op already named its tab
+// or opened none.
+//
+// Only the two space ops need it, and the reason is herdr's rather than
+// ours: `workspace create` and `worktree create` take --label for the SPACE
+// alone (herdr:src/cli/workspace.rs and src/cli/worktree.rs at v0.9.0), so
+// the tab either one opens is named by herdr's default, its number. The
+// `tab` placements name theirs at creation (`tab create --label`, in
+// placementOp), and `split here` opens a pane inside a tab the user owns,
+// whose name is not ours to change.
+//
+// Keyed on the topology op's KIND rather than on Input's placement and
+// worktree fields, because what needs a rename is a fact about what each
+// herdr call leaves behind, and the kind is that call.
+//
+// The op carries no tab id: which tab to name is only known once the space
+// op has run, and Execute fills it in from where the agent's pane ended up.
+func nameTabOp(in Input, topology []Op) []Op {
+	if len(topology) == 0 {
+		return nil
+	}
+	switch topology[len(topology)-1].Kind {
+	case OpWorkspaceCreate, OpWorktreeCreate:
+		return []Op{{
+			Kind:   OpTabRename,
+			Label:  "naming tab",
+			Rename: &herdrc.TabRenameReq{Label: in.Title},
+		}}
+	default:
+		return nil
+	}
 }
 
 // placementOp returns the op that attaches the session's pane relative to

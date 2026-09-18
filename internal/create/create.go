@@ -386,6 +386,13 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 			fmt.Fprintf(deps.stderr(), "[%d/%d] %s ... failed: %v\n", p.Index+1, total, p.Label, p.Err)
 			rep.failedLabel = p.Label
 			rep.err = p.Err
+		case plan.StepFailedNonFatal:
+			// Said, and deliberately NOT recorded as rep's failure: the
+			// run goes on, and whether it fails is for a later step to
+			// decide. Only stderr hears about it -- a tab still called
+			// by its number changes nothing a caller of stdout or
+			// --json addresses next.
+			fmt.Fprintf(deps.stderr(), "[%d/%d] %s ... failed, continuing: %v\n", p.Index+1, total, p.Label, p.Err)
 		}
 	}
 

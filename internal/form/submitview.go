@@ -427,13 +427,20 @@ func (v *SubmitView) stepRow(s Step, labelW, valueW int) string {
 // stepGlyph renders a step's state marker, padded to exactly the gutter's
 // width so the label column starts where the form's does regardless of
 // the glyph's own cell width: "✓" done, "›" running, "✗" failed, "…"
-// waiting on the user, blank for a step that has not started.
+// waiting on the user, "!" failed without stopping the plan, blank for a
+// step that has not started.
 //
 // The waiting glyph is deliberately not "›". A running step and a waiting
 // one differ in whose turn it is, and the gutter is the first thing anyone
 // reads: an accent chevron on a pipeline that has stopped for the user
 // would say the machine is still working, which is the one thing that is
 // not true (#115).
+//
+// The non-fatal glyph is not "✗" for the converse reason: "✗" is the row
+// the plan stopped on, and the rows under a non-fatal one go on running.
+// It shares Warning with the waiting glyph because both mark a row that
+// is worth reading and needs no answer from the pipeline; the glyph is
+// what keeps the two apart.
 func stepGlyph(state plan.StepState, p theme.Palette) string {
 	var glyph string
 	var fg theme.Color
@@ -446,6 +453,8 @@ func stepGlyph(state plan.StepState, p theme.Palette) string {
 		glyph, fg = "✗", p.Danger
 	case plan.StepWaiting:
 		glyph, fg = "…", p.Warning
+	case plan.StepFailedNonFatal:
+		glyph, fg = "!", p.Warning
 	default: // StepPending: no marker at all, just the indent.
 		return strings.Repeat(" ", gutterWidth)
 	}
@@ -478,6 +487,11 @@ func (v *SubmitView) stepValue(s Step, width int) string {
 		style = lipgloss.NewStyle().Foreground(v.palette.Warning)
 		if text == "" {
 			text = "waiting on you…"
+		}
+	case plan.StepFailedNonFatal:
+		style = lipgloss.NewStyle().Foreground(v.palette.Warning)
+		if text == "" {
+			text = "failed, continuing"
 		}
 	case plan.StepDone:
 		if text == "" {

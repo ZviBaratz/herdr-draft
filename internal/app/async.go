@@ -1003,8 +1003,15 @@ func (m Model) handleSubmitProgress(msg submitProgressMsg) (Model, tea.Cmd) {
 	if i := msg.progress.Index; i >= 0 && i < len(m.submitSteps) {
 		step := m.submitSteps[i]
 		step.State = msg.progress.State
-		if msg.progress.State == plan.StepFailed {
+		switch msg.progress.State {
+		case plan.StepFailed:
 			step.Detail = submitStepError(msg.progress.Err, msg.progress.Label)
+		case plan.StepFailedNonFatal:
+			// The row's seeded detail was the tab's intended name, which
+			// is now exactly what it did not get. The prefix is what
+			// makes the error read as a consequence rather than a stop:
+			// the rows below this one go on running.
+			step.Detail = "not named: " + submitStepError(msg.progress.Err, msg.progress.Label)
 		}
 		m.submitSteps[i] = step
 	}
@@ -1085,7 +1092,7 @@ func submitStepLabel(op plan.Op, in plan.Input) string {
 		return "worktree"
 	case plan.OpWorkspaceCreate:
 		return "workspace"
-	case plan.OpTabCreate:
+	case plan.OpTabCreate, plan.OpTabRename:
 		return "tab"
 	case plan.OpPaneSplit:
 		return "pane"
@@ -1122,6 +1129,14 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 		return in.Branch + " from " + base
 	case plan.OpWorkspaceCreate, plan.OpTabCreate, plan.OpPaneSplit:
 		return in.Title
+	case plan.OpTabRename:
+		// The name the tab is being given, read off the op rather than
+		// assumed to be the title -- the same reason the agent row reads
+		// op.Agent.Name.
+		if op.Rename != nil {
+			return op.Rename.Label
+		}
+		return ""
 	case plan.OpAgentStart:
 		if op.Agent != nil {
 			return op.Agent.Name

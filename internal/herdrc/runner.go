@@ -66,6 +66,14 @@ type TabCreateReq struct {
 	Focus     bool
 }
 
+// TabRenameReq is the request shape for `herdr tab rename`. TabID is left
+// empty by plan.Build and filled in by plan.Execute from the tab the
+// topology op created, the same way AgentStartReq.PaneID is.
+type TabRenameReq struct {
+	TabID string
+	Label string
+}
+
 // PaneSplitReq is the request shape for `herdr pane split` (spec §9).
 type PaneSplitReq struct {
 	PaneID    string
@@ -114,6 +122,10 @@ type Runner interface {
 	WorktreeCreate(ctx context.Context, req WorktreeCreateReq) (CreatedTopology, error)
 	WorkspaceCreate(ctx context.Context, req WorkspaceCreateReq) (CreatedTopology, error)
 	TabCreate(ctx context.Context, req TabCreateReq) (CreatedTopology, error)
+	// TabRename runs `herdr tab rename <tab_id> <label>` -- how the tab a
+	// `workspace create` or `worktree create` opened gets the session's
+	// title, since neither call can name it.
+	TabRename(ctx context.Context, req TabRenameReq) error
 	PaneSplit(ctx context.Context, req PaneSplitReq) (CreatedTopology, error)
 	AgentStart(ctx context.Context, req AgentStartReq) error
 	AgentPrompt(ctx context.Context, req AgentPromptReq) error
@@ -639,6 +651,33 @@ func (r *CLIRunner) TabCreate(ctx context.Context, req TabCreateReq) (CreatedTop
 		TabID:       result.RootPane.TabID,
 		PaneID:      result.RootPane.PaneID,
 	}, nil
+}
+
+// TabRename runs `herdr tab rename <tab_id> <label>`. It exists because
+// `workspace create` and `worktree create` take --label for the SPACE only:
+// the tab either one opens is named by herdr's default, its number, and
+// this is the only way to name it afterwards.
+//
+// runJSON, not runOK: at v0.9.0 `tab_rename` prints through
+// print_method_response, the JSON-envelope helper, as `tab_close` does --
+// https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/runtime.rs#L65-L67.
+//
+// Both arguments are positional, and the label is passed as ONE element.
+// herdr's tab_rename joins everything after the id with single spaces
+// (herdr:src/cli/tab.rs at v0.9.0), so a label split into words would still
+// arrive, but with every run of spaces in it collapsed. It also parses no
+// flags there, which is why a label is not put through appendFlag's
+// "-"-refusal: nothing on herdr's side of this call reads it as an option.
+//
+// The empty-id guard mirrors TabClose's. herdr would answer tab_not_found,
+// but a caller holding no tab id has lost track of which tab it made, and
+// that is the more useful thing to say.
+func (r *CLIRunner) TabRename(ctx context.Context, req TabRenameReq) error {
+	if req.TabID == "" {
+		return fmt.Errorf("%w tab rename: no tab id to rename", errRefused)
+	}
+	_, err := r.runJSON(ctx, "tab", "rename", req.TabID, req.Label)
+	return err
 }
 
 // PaneSplit runs `herdr pane split`.

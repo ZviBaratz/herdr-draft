@@ -68,7 +68,7 @@ func TestBuildWorktreePinPrompt(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	want := []OpKind{OpWorktreeCreate, OpClauthLaunch, OpAwaitDetection, OpAgentPrompt}
+	want := []OpKind{OpWorktreeCreate, OpTabRename, OpClauthLaunch, OpAwaitDetection, OpAgentPrompt}
 	if got := kindsOf(ops); !reflect.DeepEqual(got, want) {
 		t.Fatalf("op kinds = %v, want %v", got, want)
 	}
@@ -97,20 +97,20 @@ func TestBuildWorktreePinPrompt(t *testing.T) {
 	}
 
 	wantArgv := []string{"clauth", "start", "work", "--", "--model", "opus"}
-	if got := ops[1].RunArgv; !reflect.DeepEqual(got, wantArgv) {
+	if got := ops[2].RunArgv; !reflect.DeepEqual(got, wantArgv) {
 		t.Fatalf("RunArgv = %v, want %v", got, wantArgv)
 	}
-	if ops[1].Agent != nil || ops[1].Worktree != nil || ops[1].Prompt != nil {
-		t.Errorf("OpClauthLaunch has an unexpected populated request field: %+v", ops[1])
+	if ops[2].Agent != nil || ops[2].Worktree != nil || ops[2].Prompt != nil {
+		t.Errorf("OpClauthLaunch has an unexpected populated request field: %+v", ops[2])
 	}
 
-	if ops[2].Timeout != in.DetectionTimeout {
-		t.Errorf("AwaitDetection timeout = %v, want %v", ops[2].Timeout, in.DetectionTimeout)
+	if ops[3].Timeout != in.DetectionTimeout {
+		t.Errorf("AwaitDetection timeout = %v, want %v", ops[3].Timeout, in.DetectionTimeout)
 	}
 
-	pr := ops[3].Prompt
+	pr := ops[4].Prompt
 	if pr == nil {
-		t.Fatal("ops[3].Prompt is nil")
+		t.Fatal("ops[4].Prompt is nil")
 	}
 	if pr.Text != in.Prompt {
 		t.Errorf("Prompt.Text = %q, want %q", pr.Text, in.Prompt)
@@ -131,14 +131,14 @@ func TestBuildWorktreeActiveClaude(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	want := []OpKind{OpWorktreeCreate, OpAgentStart, OpAgentPrompt}
+	want := []OpKind{OpWorktreeCreate, OpTabRename, OpAgentStart, OpAgentPrompt}
 	if got := kindsOf(ops); !reflect.DeepEqual(got, want) {
 		t.Fatalf("op kinds = %v, want %v", got, want)
 	}
 
-	ag := ops[1].Agent
+	ag := ops[2].Agent
 	if ag == nil {
-		t.Fatal("ops[1].Agent is nil")
+		t.Fatal("ops[2].Agent is nil")
 	}
 	if ag.Name != AgentName(in.Title) {
 		t.Errorf("Agent.Name = %q, want %q", ag.Name, AgentName(in.Title))
@@ -183,9 +183,9 @@ func TestBuildWorktreeNewSpaceUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	want := []OpKind{OpWorktreeCreate, OpAgentStart}
+	want := []OpKind{OpWorktreeCreate, OpTabRename, OpAgentStart}
 	if got := kindsOf(ops); !reflect.DeepEqual(got, want) {
-		t.Fatalf("op kinds = %v, want %v -- new-space placement must not append anything", got, want)
+		t.Fatalf("op kinds = %v, want %v -- new-space placement must not append anything but the tab's name", got, want)
 	}
 	if !ops[0].Worktree.Focus {
 		t.Error("worktree op Focus = false, want true: the worktree's space is where the session runs, so it owns focus")
@@ -262,7 +262,7 @@ func TestBuildNewSpacePlacement(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	want := []OpKind{OpWorkspaceCreate, OpAgentStart}
+	want := []OpKind{OpWorkspaceCreate, OpTabRename, OpAgentStart}
 	if got := kindsOf(ops); !reflect.DeepEqual(got, want) {
 		t.Fatalf("op kinds = %v, want %v", got, want)
 	}
@@ -279,6 +279,69 @@ func TestBuildNewSpacePlacement(t *testing.T) {
 	}
 	if !ws.Focus {
 		t.Error("Workspace.Focus = false, want true")
+	}
+}
+
+// TestBuild_NamesEveryTabItCreates pins which plans carry an OpTabRename:
+// exactly the two whose topology op opens a space, because `workspace
+// create` and `worktree create` label the SPACE and leave its first tab
+// with herdr's default, its number. The `tab` placements name their tab at
+// creation (`tab create --label`), and `split here` creates no tab at all
+// -- renaming the tab a split lands in would rename one the user owns.
+func TestBuild_NamesEveryTabItCreates(t *testing.T) {
+	cases := []struct {
+		name        string
+		worktree    bool
+		placement   Placement
+		wantTopo    OpKind
+		wantsRename bool
+	}{
+		{"new space", false, PlacementNewSpace, OpWorkspaceCreate, true},
+		{"worktree", true, PlacementNewSpace, OpWorktreeCreate, true},
+		{"tab here", false, PlacementTabHere, OpTabCreate, false},
+		{"tab in", false, PlacementTabIn, OpTabCreate, false},
+		{"split here", false, PlacementSplitHere, OpPaneSplit, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := validInput()
+			in.UseWorktree = tc.worktree
+			in.Placement = tc.placement
+			in.Space = Space{WorkspaceID: "wG", Label: "herdr-draft"}
+
+			ops, err := Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if ops[0].Kind != tc.wantTopo {
+				t.Fatalf("ops[0] = %v, want %v", ops[0].Kind, tc.wantTopo)
+			}
+			var renames []Op
+			for _, op := range ops {
+				if op.Kind == OpTabRename {
+					renames = append(renames, op)
+				}
+			}
+			if !tc.wantsRename {
+				if len(renames) != 0 {
+					t.Fatalf("op kinds = %v, want no OpTabRename", kindsOf(ops))
+				}
+				return
+			}
+			if len(renames) != 1 || ops[1].Kind != OpTabRename {
+				t.Fatalf("op kinds = %v, want exactly one OpTabRename, directly after the space op", kindsOf(ops))
+			}
+			r := ops[1].Rename
+			if r == nil {
+				t.Fatal("OpTabRename has no Rename request")
+			}
+			if r.Label != in.Title {
+				t.Errorf("Rename.Label = %q, want the title %q", r.Label, in.Title)
+			}
+			if r.TabID != "" {
+				t.Errorf("Rename.TabID = %q, want it empty -- only Execute knows which tab the space op made", r.TabID)
+			}
+		})
 	}
 }
 
