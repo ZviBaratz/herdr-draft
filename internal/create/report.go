@@ -3,6 +3,7 @@
 package create
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -224,7 +225,10 @@ type jsonReport struct {
 	CleanRefused string `json:"clean_refused,omitempty"`
 
 	// Provenance is spec §10's tier attribution, one entry per resolved
-	// value: which file supplied it, or "flag" when the caller did.
+	// value: which file supplied it, or "flag" when the caller did,
+	// "worktree" for the placement a worktree decides, and "checkout" for
+	// the commit a linked checkout supplies as an unset base (see
+	// provenanceFlag and its siblings).
 	Provenance map[string]string `json:"provenance"`
 }
 
@@ -244,7 +248,9 @@ func (r report) writeJSON(w io.Writer) {
 	}
 	if r.input.UseWorktree {
 		out.Branch = r.input.Branch
-		out.Base = plan.WorktreeBase(r.input)
+		// A chosen base as chosen, whatever it resolved to; an unset one
+		// from a linked checkout as the commit it turned out to be (#171).
+		out.Base = cmp.Or(r.input.BaseRef, plan.WorktreeBase(r.input))
 	}
 	if c := r.result.Created; c != nil {
 		out.SpaceWorkspaceID, out.SpaceTabID, out.SpacePaneID = c.WorkspaceID, c.TabID, c.PaneID

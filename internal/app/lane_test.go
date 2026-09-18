@@ -15,12 +15,15 @@ import (
 // These pin #171 on the popup's side: a form opened from a linked worktree's
 // own space -- a lane -- or pointed at one in the project row. herdr refuses
 // a linked checkout as a worktree source, so the worktree is created from the
-// repository root and cut from the lane's commit, as `create` does.
+// repository root, cut from the commit its base names in the lane, as
+// `create` does.
 
 const (
 	laneDir  = "/home/zvi/wt/thing-lane"
 	laneRoot = "/home/zvi/projects/thing"
+	// laneHead and laneMain are the commits HEAD and main name in the lane.
 	laneHead = "3f2a9c1e5b7d4a608e1f2b3c4d5e6f708192a3b4"
+	laneMain = "9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b"
 )
 
 // laneContext is the plugin context herdr hands a popup opened in the lane's
@@ -40,8 +43,8 @@ func laneContext() herdrc.Context {
 func laneGit() *fakeGit {
 	g := newFakeGit()
 	g.repoRoots = map[string]string{laneDir: laneRoot}
-	g.linked = map[string]bool{laneDir: true}
-	g.head = laneHead
+	g.primary = map[string]string{laneDir: laneRoot}
+	g.commits = map[string]string{laneDir + " HEAD": laneHead, laneDir + " main": laneMain}
 	g.currentBranchResult = "lane/one"
 	g.listBranchesResult = []string{"lane/one", "main"}
 	return g
@@ -102,8 +105,8 @@ func TestSubmit_FromALaneTheWorktreeIsCutFromItsCommitInTheRepoRoot(t *testing.T
 	if got := m.dir.Value(); got != laneDir {
 		t.Fatalf("project = %q, want the lane", got)
 	}
-	if len(git.headCalls) != 0 {
-		t.Fatalf("the lane's commit was read before submit: %v", git.headCalls)
+	if len(git.resolveCalls) != 0 {
+		t.Fatalf("the lane's commit was read before submit: %v", git.resolveCalls)
 	}
 
 	next, cmd := m.Update(form.SubmitMsg{})
@@ -116,8 +119,8 @@ func TestSubmit_FromALaneTheWorktreeIsCutFromItsCommitInTheRepoRoot(t *testing.T
 	if !m.submitting {
 		t.Fatal("reading the lane's commit did not resume the submit")
 	}
-	if !reflect.DeepEqual(git.headCalls, []string{laneDir}) {
-		t.Errorf("HEAD was read in %v, want once, in the lane", git.headCalls)
+	if !reflect.DeepEqual(git.resolveCalls, []string{laneDir + " HEAD"}) {
+		t.Errorf("commits read: %v, want HEAD once, in the lane", git.resolveCalls)
 	}
 
 	drainSubmitProgress(t, m, cmd)
@@ -129,10 +132,13 @@ func TestSubmit_FromALaneTheWorktreeIsCutFromItsCommitInTheRepoRoot(t *testing.T
 	}
 }
 
-// TestSubmit_FromALaneAChosenBaseNeedsNoCommit: the lane's commit is only
-// what an unset base means, so a chosen one submits at once. The source
-// still moves to the repository root.
-func TestSubmit_FromALaneAChosenBaseNeedsNoCommit(t *testing.T) {
+// TestSubmit_FromALaneAChosenBaseIsResolvedInTheLane: herdr runs `git
+// worktree add` in the source, so a base handed to it from the repository
+// root would be resolved there. A chosen base is therefore read in the lane
+// at submit too -- for a branch the same commit, but the rule is the one
+// that keeps HEAD-relative refs honest on the command side. The source still
+// moves to the repository root.
+func TestSubmit_FromALaneAChosenBaseIsResolvedInTheLane(t *testing.T) {
 	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
 	git := laneGit()
 	m := laneModel(t, runner, git, true)
@@ -143,15 +149,17 @@ func TestSubmit_FromALaneAChosenBaseNeedsNoCommit(t *testing.T) {
 
 	next, cmd := m.Update(form.SubmitMsg{})
 	m = next.(Model)
+	next, cmd = m.Update(cmd())
+	m = next.(Model)
 	if !m.submitting {
-		t.Fatal("a chosen base still waited for the lane's commit")
+		t.Fatal("the submit did not resume once the base was read")
 	}
 	drainSubmitProgress(t, m, cmd)
-	if len(git.headCalls) != 0 {
-		t.Errorf("HEAD was read in %v with a base chosen", git.headCalls)
+	if !reflect.DeepEqual(git.resolveCalls, []string{laneDir + " main"}) {
+		t.Errorf("commits read: %v, want main once, in the lane", git.resolveCalls)
 	}
-	if req := runner.worktreeReqs[0]; req.Cwd != laneRoot || req.Base != "main" {
-		t.Errorf("worktree create --cwd %q --base %q, want --cwd %q --base main", req.Cwd, req.Base, laneRoot)
+	if req := runner.worktreeReqs[0]; req.Cwd != laneRoot || req.Base != laneMain {
+		t.Errorf("worktree create --cwd %q --base %q, want --cwd %q --base %q", req.Cwd, req.Base, laneRoot, laneMain)
 	}
 }
 
@@ -169,8 +177,8 @@ func TestSubmit_FromALaneWithNoWorktreeStaysInTheLane(t *testing.T) {
 	if m.submitInput.ProjectDir != laneDir || m.submitInput.Linked != (plan.LinkedCheckout{}) {
 		t.Errorf("project %q, linked %+v; want the lane and nothing linked", m.submitInput.ProjectDir, m.submitInput.Linked)
 	}
-	if len(git.headCalls) != 0 {
-		t.Errorf("HEAD was read in %v for a session with no worktree", git.headCalls)
+	if len(git.resolveCalls) != 0 {
+		t.Errorf("commits read for a session with no worktree: %v", git.resolveCalls)
 	}
 }
 
@@ -180,7 +188,7 @@ func TestSubmit_FromALaneWithNoWorktreeStaysInTheLane(t *testing.T) {
 // be chosen.
 func TestSubmit_AnUnreadableLaneCommitStopsTheSubmit(t *testing.T) {
 	git := laneGit()
-	git.headErr = errors.New("ambiguous argument 'HEAD'")
+	git.resolveErr = errors.New("ambiguous argument 'HEAD'")
 	m := laneModel(t, &submitFakeRunner{}, git, true)
 
 	next, cmd := m.Update(form.SubmitMsg{})
@@ -229,7 +237,7 @@ func TestSubmit_FromALaneTheCommitIsNotRemembered(t *testing.T) {
 	m.projectKey = laneRoot
 	m.submitInput = plan.Input{
 		ProjectDir: laneDir, Title: "t", AgentKind: "claude", UseWorktree: true,
-		Linked: plan.LinkedCheckout{RepoRoot: laneRoot, Head: laneHead},
+		Linked: plan.LinkedCheckout{RepoRoot: laneRoot, Commit: laneHead},
 	}
 
 	_, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{FailedIndex: -1}})
@@ -247,12 +255,23 @@ func TestSubmit_FromALaneTheCommitIsNotRemembered(t *testing.T) {
 }
 
 // TestSubmitStepDetail_ALaneNamesTheCommit: the submit screen's worktree row
-// says what the branch is cut from, and from a lane that is the commit, not
-// "HEAD" -- which there would name the wrong one.
+// says what the branch is cut from. From a lane with no base chosen that is
+// the commit, not "HEAD" -- which from the repository root would name the
+// wrong one. A chosen base is named as chosen.
 func TestSubmitStepDetail_ALaneNamesTheCommit(t *testing.T) {
 	op := plan.Op{Kind: plan.OpWorktreeCreate}
-	in := plan.Input{Branch: "zvi/x", Linked: plan.LinkedCheckout{RepoRoot: laneRoot, Head: laneHead}}
-	if got, want := submitStepDetail(op, in), "zvi/x from 3f2a9c1"; got != want {
-		t.Errorf("detail = %q, want %q", got, want)
+	for _, tc := range []struct {
+		name string
+		in   plan.Input
+		want string
+	}{
+		{"no base chosen", plan.Input{Branch: "zvi/x", Linked: plan.LinkedCheckout{RepoRoot: laneRoot, Commit: laneHead}}, "zvi/x from 3f2a9c1"},
+		{"a chosen base", plan.Input{Branch: "zvi/x", BaseRef: "main", Linked: plan.LinkedCheckout{RepoRoot: laneRoot, Commit: laneMain}}, "zvi/x from main"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := submitStepDetail(op, tc.in); got != tc.want {
+				t.Errorf("detail = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

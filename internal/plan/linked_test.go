@@ -6,8 +6,12 @@ import (
 	"testing"
 )
 
-// laneHead is a linked checkout's HEAD commit, as a caller resolves it.
-const laneHead = "3f2a9c1e5b7d4a608e1f2b3c4d5e6f708192a3b4"
+// laneHead is a linked checkout's HEAD commit, and laneMain the commit its
+// `main` names, as a caller resolves them in that checkout.
+const (
+	laneHead = "3f2a9c1e5b7d4a608e1f2b3c4d5e6f708192a3b4"
+	laneMain = "9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b"
+)
 
 // laneInput is a worktree session whose project is a linked checkout of
 // /repo -- a lane (#171) -- with nothing chosen for the base.
@@ -16,7 +20,7 @@ func laneInput() Input {
 	in.ProjectDir = "/wt/lane"
 	in.UseWorktree = true
 	in.BaseRef = ""
-	in.Linked = LinkedCheckout{RepoRoot: "/repo", Head: laneHead}
+	in.Linked = LinkedCheckout{RepoRoot: "/repo", Commit: laneHead}
 	return in
 }
 
@@ -42,37 +46,45 @@ func TestBuild_ALinkedCheckoutIsCutFromItsCommitInTheRepoRoot(t *testing.T) {
 	}
 }
 
-// TestBuild_AChosenBaseStillWinsFromALinkedCheckout: the lane's commit is
-// what an UNSET base means there, nothing more. The source is still the
-// repository root, which is the half that has nothing to do with the base.
-func TestBuild_AChosenBaseStillWinsFromALinkedCheckout(t *testing.T) {
+// TestBuild_AChosenBaseIsTheCommitItNamesInTheLinkedCheckout: herdr runs
+// `git worktree add` in the source, so from the repository root a ref that
+// means something per checkout -- HEAD above all -- would name the PRIMARY
+// checkout's commit. The caller resolves the chosen base in the lane, and the
+// commit is what herdr is given. For a branch that is the same commit either
+// way.
+func TestBuild_AChosenBaseIsTheCommitItNamesInTheLinkedCheckout(t *testing.T) {
 	in := laneInput()
 	in.BaseRef = "main"
-	in.Linked.Head = ""
+	in.Linked.Commit = laneMain
 
 	ops, err := Build(in)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if wt := ops[0].Worktree; wt.Cwd != "/repo" || wt.Base != "main" {
-		t.Errorf("Worktree Cwd, Base = %q, %q; want %q, %q", wt.Cwd, wt.Base, "/repo", "main")
+	if wt := ops[0].Worktree; wt.Cwd != "/repo" || wt.Base != laneMain {
+		t.Errorf("Worktree Cwd, Base = %q, %q; want %q, %q", wt.Cwd, wt.Base, "/repo", laneMain)
 	}
 }
 
 // TestBuild_RefusesALinkedCheckoutWithNoCommitToCutFrom: with the source
-// moved to the repository root, an empty base would mean the primary
-// checkout's HEAD -- the wrong commit, silently. Refused instead, so a
-// caller that forgot to resolve the lane's commit cannot build that plan.
+// moved to the repository root, a base handed over unresolved would be
+// resolved there -- an empty one, or HEAD, as the primary checkout's commit,
+// silently. Refused instead, chosen base or not, so a caller that forgot to
+// resolve it in the lane cannot build that plan.
 func TestBuild_RefusesALinkedCheckoutWithNoCommitToCutFrom(t *testing.T) {
-	in := laneInput()
-	in.Linked.Head = ""
+	for _, base := range []string{"", "HEAD", "main"} {
+		in := laneInput()
+		in.BaseRef = base
+		in.Linked.Commit = ""
 
-	ops, err := Build(in)
-	if err == nil {
-		t.Fatalf("Build = %v, want an error: no base and no resolved commit", kindsOf(ops))
-	}
-	if !strings.Contains(err.Error(), "/wt/lane") {
-		t.Errorf("error = %q, want it to name the checkout", err)
+		ops, err := Build(in)
+		if err == nil {
+			t.Errorf("base %q: Build = %v, want an error: nothing resolved in the lane", base, kindsOf(ops))
+			continue
+		}
+		if !strings.Contains(err.Error(), "/wt/lane") {
+			t.Errorf("base %q: error = %q, want it to name the checkout", base, err)
+		}
 	}
 }
 
@@ -101,8 +113,9 @@ func TestWorktreeBase(t *testing.T) {
 		in   Input
 		want string
 	}{
-		{"a chosen base", Input{BaseRef: "main", Linked: LinkedCheckout{RepoRoot: "/repo", Head: laneHead}}, "main"},
-		{"unset, from a linked checkout", Input{Linked: LinkedCheckout{RepoRoot: "/repo", Head: laneHead}}, laneHead},
+		{"a chosen base, from a linked checkout", Input{BaseRef: "main", Linked: LinkedCheckout{RepoRoot: "/repo", Commit: laneMain}}, laneMain},
+		{"unset, from a linked checkout", Input{Linked: LinkedCheckout{RepoRoot: "/repo", Commit: laneHead}}, laneHead},
+		{"a chosen base, from a primary checkout", Input{BaseRef: "main"}, "main"},
 		{"unset, from a primary checkout", Input{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

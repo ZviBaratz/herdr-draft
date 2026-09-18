@@ -353,10 +353,13 @@ next open defaults to it too.
 
 **Inside a linked worktree** (another session's, say) the project is that
 checkout. herdr will not create a worktree *from* a linked checkout, so a
-worktree session is created from the repository root instead, and cut from
-the commit you are on unless `--base` names another. That commit is never
+worktree session is created from the repository's primary checkout
+instead. Its base, whether chosen or not, is resolved in the linked
+checkout first, so `HEAD` is the commit you are on there. With no base
+chosen, `--json` reports that commit as `base`. The commit is never
 remembered. Without a worktree, the session runs in the checkout itself.
-The popup does the same.
+The popup does the same. A bare repository has no primary checkout to
+create from, and herdr's own refusal stands.
 
 Progress goes to stderr, one line per step; the result to stdout, or a
 single JSON object with `--json` (which also carries a prompt the dialog

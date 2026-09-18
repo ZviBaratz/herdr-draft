@@ -128,10 +128,11 @@ without the popup. It drives herdr exclusively through the public CLI
   `--worktree`, and a create with no worktree flag at all, handed herdr the
   linked checkout as the source, which herdr refuses: exit 1, nothing
   created. That was the spawn skill's first example, run by an agent in any
-  worktree lane. The new worktree is now created from the repository root
-  and cut from the commit the lane is on, unless `--base` names another.
-  `--json` reports that commit as `base`, with provenance `checkout`, and it
-  is never remembered. The project stays the lane, so `--no-worktree` still
+  worktree lane. The new worktree is now created from the repository's
+  primary checkout, with its base resolved in the lane, so an unset base,
+  or `HEAD`, is the commit the lane is on. With no base chosen, `--json`
+  reports that commit as `base`, with provenance `checkout`, and it is
+  never remembered. The project stays the lane, so `--no-worktree` still
   runs there. The popup does the same, from a lane's space or with one
   picked in the `project` row.
 - Progress goes to stderr one line per step; the result to stdout, or a

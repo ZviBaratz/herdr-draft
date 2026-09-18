@@ -4,6 +4,7 @@
 package create
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -62,10 +63,11 @@ type tiers struct {
 	// second path, so a project inside a repository still finds the
 	// repository's own space.
 	repoRoot string
-	// linked reports that projectDir is inside a linked worktree checkout
-	// whose repoRoot resolved -- a lane (#171). A worktree session from one
-	// is created from repoRoot, since herdr refuses the lane as a source.
-	linked bool
+	// primary is the repository's primary checkout when projectDir is inside
+	// a linked worktree checkout -- a lane (#171) -- and "" otherwise. A
+	// worktree session from a lane is created from it, since herdr refuses
+	// the lane as a source.
+	primary string
 	// workspaces is the `herdr workspace list` snapshot the open-workspace
 	// tier reads (defaults.Sources.Workspaces). nil when herdr could not be
 	// asked: that leaves every other tier's answer standing, and run()'s
@@ -251,11 +253,13 @@ func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, proje
 	}
 	t.repoRoot = repoRoot
 	if repoRoot != "" {
-		// Not fatal either, and for the same reason: an unanswered question
-		// leaves the lane as the source, which herdr refuses by name
-		// (linked_worktree_source) -- loud, and no worse than before #171.
-		linked, err := deps.git().LinkedWorktree(ctx, projectDir)
-		t.linked = err == nil && linked
+		// Not fatal either, and for the same reason: an unanswered question,
+		// or one with no answer (gitx.PrimaryCheckout), leaves the lane as
+		// the source, which herdr refuses by name (linked_worktree_source) --
+		// loud, and no worse than before #171.
+		if primary, err := deps.git().PrimaryCheckout(ctx, projectDir); err == nil {
+			t.primary = primary
+		}
 	}
 	t.projectKey = projectMemoryKey(projectDir, repoRoot)
 	t.repo = deps.repoConfig()(repoRoot)
@@ -576,34 +580,37 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 }
 
 // withLinkedCheckout fills in plan.Input.Linked for a worktree session whose
-// project is a linked checkout (#171): the repository root herdr will accept
-// as the source, and -- when no base was chosen -- the checkout's own
-// commit, which is what spawn skill §3 promises an unset --base means. Left
-// to herdr, an unset base would be the PRIMARY checkout's HEAD.
+// project is a linked checkout (#171): the primary checkout herdr will accept
+// as the source, and the commit the base names IN the linked checkout --
+// HEAD's when no base was chosen, which is what spawn skill §3 promises an
+// unset --base means. herdr runs `git worktree add` in the source, so a base
+// left for it to resolve would be resolved in the primary checkout: an unset
+// one, `--base HEAD`, or any other per-checkout ref, as the primary's commit.
+// For a branch the commit is the same either way.
 //
-// The commit is resolved here rather than in loadTiers because only this
-// case needs it, and after buildInput because only buildInput knows whether
-// there is a worktree and a base. It is the command's half of what the form
-// does at submit (app's ResolveLinkedHead): a commit, so a detached HEAD
-// works too, and so --json can say exactly what the branch was cut from.
+// Resolved here rather than in loadTiers because only this case needs it,
+// and after buildInput because only buildInput knows whether there is a
+// worktree and which base. It is the command's half of what the form does at
+// submit (app's ResolveLinkedCommit): a commit, so a detached HEAD works too,
+// and so --json can say exactly what an unset base turned out to be.
 //
-// It is not remembered. BaseRef stays what was chosen -- nothing -- and
-// projects.json records that, since it is keyed on the origin root and a
-// remembered commit would pin every later session in the repository to it.
+// It is not remembered. BaseRef stays what was chosen, and projects.json
+// records that, since it is keyed on the origin root and a remembered commit
+// would pin every later session in the repository to it.
 func withLinkedCheckout(ctx context.Context, in plan.Input, t tiers, prov map[string]string, git GitSource) (plan.Input, error) {
-	if !in.UseWorktree || !t.linked {
+	if !in.UseWorktree || t.primary == "" {
 		return in, nil
 	}
-	in.Linked.RepoRoot = t.repoRoot
-	if in.BaseRef != "" {
-		return in, nil
-	}
-	head, err := git.HeadCommit(ctx, in.ProjectDir)
+	in.Linked.RepoRoot = t.primary
+	ref := cmp.Or(in.BaseRef, "HEAD")
+	commit, err := git.ResolveCommit(ctx, in.ProjectDir, ref)
 	if err != nil {
-		return plan.Input{}, fmt.Errorf("%s is a linked worktree checkout, so the new branch is cut from its commit, and that could not be resolved: %v -- pass --base to choose one", in.ProjectDir, err)
+		return plan.Input{}, fmt.Errorf("%s is a linked worktree checkout, so the base is resolved there, and %s could not be: %v -- pass --base to choose another", in.ProjectDir, ref, err)
 	}
-	in.Linked.Head = head
-	prov[defaults.FieldBaseRef] = provenanceCheckout
+	in.Linked.Commit = commit
+	if in.BaseRef == "" {
+		prov[defaults.FieldBaseRef] = provenanceCheckout
+	}
 	return in, nil
 }
 

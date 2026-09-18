@@ -279,15 +279,18 @@ type fakeGit struct {
 	// locally or on a remote -- nil for every test that does not care.
 	branches map[string]bool
 	// roots overrides RepoRoot's answer for a directory, which is otherwise
-	// the directory itself; linked names the directories that are linked
-	// worktree checkouts. Both nil for every test that is not about one.
-	roots  map[string]string
-	linked map[string]bool
-	// head and headErr are HeadCommit's answer, and headCalls counts the
-	// questions.
-	head      string
-	headErr   error
-	headCalls int
+	// the directory itself; primary maps a linked worktree checkout to its
+	// repository's primary checkout. Both nil for every test that is not
+	// about one.
+	roots   map[string]string
+	primary map[string]string
+	// commits answers ResolveCommit, keyed "<dir> <ref>": a ref asked about
+	// anywhere else is an error, so asking the wrong checkout cannot pass
+	// for asking the right one. resolveCalls records every question in that
+	// form, and resolveErr fails them all.
+	commits      map[string]string
+	resolveErr   error
+	resolveCalls []string
 }
 
 var _ GitSource = (*fakeGit)(nil)
@@ -308,12 +311,19 @@ func (g *fakeGit) RepoRoot(_ context.Context, dir string) (string, error) {
 	}
 	return dir, nil
 }
-func (g *fakeGit) LinkedWorktree(_ context.Context, dir string) (bool, error) {
-	return g.linked[dir], nil
+func (g *fakeGit) PrimaryCheckout(_ context.Context, dir string) (string, error) {
+	return g.primary[dir], nil
 }
-func (g *fakeGit) HeadCommit(context.Context, string) (string, error) {
-	g.headCalls++
-	return g.head, g.headErr
+func (g *fakeGit) ResolveCommit(_ context.Context, dir, ref string) (string, error) {
+	key := dir + " " + ref
+	g.resolveCalls = append(g.resolveCalls, key)
+	if g.resolveErr != nil {
+		return "", g.resolveErr
+	}
+	if c, ok := g.commits[key]; ok {
+		return c, nil
+	}
+	return "", fmt.Errorf("fakeGit: no commit for %q in %s", ref, dir)
 }
 
 // fakeLinear implements IssueSource.

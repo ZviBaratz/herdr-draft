@@ -98,7 +98,9 @@ flags:
                      cut to 32 runes
   --prompt TEXT      initial prompt; "-" reads it from stdin
   --branch NAME      worktree branch (default: derived from the title)
-  --base REF         worktree base ref (default: HEAD)
+  --base REF         worktree base ref (default: HEAD). Inside a linked
+                     worktree it is resolved there, so HEAD is the commit
+                     that worktree is on
   --worktree         create a git worktree
   --no-worktree      do not create a worktree
   --reap             end the prompt with pane-reaper's instruction, so the

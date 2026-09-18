@@ -98,8 +98,8 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 	// lane's commit (#171): answered about the decoy, a primary checkout,
 	// the lane would be handed to herdr, and its commit would be the
 	// decoy's.
-	if ok, err := LinkedWorktree(ctx, linked); err != nil || !ok {
-		t.Errorf("LinkedWorktree(%s) = %v, %v: it answered about the inherited repository", linked, ok, err)
+	if primary, err := PrimaryCheckout(ctx, linked); err != nil || !sameDir(t, primary, repo) {
+		t.Errorf("PrimaryCheckout(%s) = %q, %v: it answered about the inherited repository", linked, primary, err)
 	}
 	head, err := ResolveRef(ctx, linked, "HEAD")
 	if err != nil {

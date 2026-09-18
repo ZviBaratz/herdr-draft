@@ -14,22 +14,24 @@ import (
 // worktree -- a lane, which is where the spawn skill's agents run -- with
 // --project left off. herdr refuses a linked checkout as a worktree source,
 // so the worktree is created from the repository root, and cut from the
-// lane's own commit when no base is chosen.
+// commit its base names IN the lane: HEAD's when no base is chosen.
 
 const (
 	// laneDir is the linked checkout the command runs in, and laneRoot the
-	// repository's primary checkout behind it.
+	// repository's primary checkout behind it. laneHead and laneMain are the
+	// commits HEAD and main name in the lane.
 	laneDir  = "/worktrees/thing-lane"
 	laneRoot = "/projects/thing"
 	laneHead = "3f2a9c1e5b7d4a608e1f2b3c4d5e6f708192a3b4"
+	laneMain = "9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b"
 )
 
 // inLane runs h's command from laneDir.
 func inLane(h *harness) {
 	h.deps.Workdir = func() (string, error) { return laneDir, nil }
 	h.git.roots = map[string]string{laneDir: laneRoot}
-	h.git.linked = map[string]bool{laneDir: true}
-	h.git.head = laneHead
+	h.git.primary = map[string]string{laneDir: laneRoot}
+	h.git.commits = map[string]string{laneDir + " HEAD": laneHead, laneDir + " main": laneMain}
 }
 
 // worktreeCreates is every `worktree create` the runner was asked for, as
@@ -71,6 +73,9 @@ func TestLane_AWorktreeIsCutFromTheLanesCommitInTheRepoRoot(t *testing.T) {
 			if !strings.HasSuffix(rest, ","+laneHead) {
 				t.Errorf("worktree create branch,base = %q, want the base to be the lane's commit %s", rest, laneHead)
 			}
+			if want := []string{laneDir + " HEAD"}; !slices.Equal(h.git.resolveCalls, want) {
+				t.Errorf("commits resolved: %v, want %v: HEAD, in the lane", h.git.resolveCalls, want)
+			}
 		})
 	}
 }
@@ -88,26 +93,38 @@ func TestLane_NoWorktreeStaysInTheLane(t *testing.T) {
 	if !slices.Contains(h.runner.calls, "WorkspaceCreate("+laneDir+",t)") {
 		t.Errorf("calls = %v, want a workspace in the lane's checkout", h.runner.calls)
 	}
-	if h.git.headCalls != 0 {
-		t.Errorf("the lane's commit was resolved %d times for a session with no worktree", h.git.headCalls)
+	if len(h.git.resolveCalls) != 0 {
+		t.Errorf("commits resolved for a session with no worktree: %v", h.git.resolveCalls)
 	}
 }
 
-// TestLane_AChosenBaseStillWins: the lane's commit is only what an UNSET
-// base means. The source still moves to the repository root.
-func TestLane_AChosenBaseStillWins(t *testing.T) {
-	h := newHarness(t)
-	inLane(h)
+// TestLane_AChosenBaseIsResolvedInTheLane: herdr runs `git worktree add` in
+// the source, so a base handed to it from the repository root is resolved
+// there. For a branch that is the same commit; for HEAD it is the primary
+// checkout's, which is why every base is resolved in the lane first. The
+// source still moves to the repository root.
+func TestLane_AChosenBaseIsResolvedInTheLane(t *testing.T) {
+	for _, tc := range []struct{ base, want string }{
+		{"main", laneMain},
+		// The reviewer's probe: `--base HEAD`, passed to be explicit, used to
+		// reach herdr as the literal HEAD and cut from the primary's commit.
+		{"HEAD", laneHead},
+	} {
+		t.Run(tc.base, func(t *testing.T) {
+			h := newHarness(t)
+			inLane(h)
 
-	if code := h.run("--title", "t", "--worktree", "--base", "main"); code != ExitOK {
-		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
-	}
-	creates := worktreeCreates(h)
-	if len(creates) != 1 || !strings.HasPrefix(creates[0], laneRoot+",") || !strings.HasSuffix(creates[0], ",main") {
-		t.Errorf("worktree creates = %v, want one from %s cut from main", creates, laneRoot)
-	}
-	if h.git.headCalls != 0 {
-		t.Errorf("the lane's commit was resolved %d times with --base given", h.git.headCalls)
+			if code := h.run("--title", "t", "--worktree", "--base", tc.base); code != ExitOK {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+			}
+			creates := worktreeCreates(h)
+			if len(creates) != 1 || !strings.HasPrefix(creates[0], laneRoot+",") || !strings.HasSuffix(creates[0], ","+tc.want) {
+				t.Errorf("worktree creates = %v, want one from %s cut from %s", creates, laneRoot, tc.want)
+			}
+			if want := []string{laneDir + " " + tc.base}; !slices.Equal(h.git.resolveCalls, want) {
+				t.Errorf("commits resolved: %v, want %v", h.git.resolveCalls, want)
+			}
+		})
 	}
 }
 
@@ -133,6 +150,26 @@ func TestLane_JSONReportsTheCommitAndWhereItCameFrom(t *testing.T) {
 	}
 	if out.ProjectDir != laneDir {
 		t.Errorf("project_dir = %q, want the lane %q", out.ProjectDir, laneDir)
+	}
+}
+
+// TestLane_JSONReportsAChosenBaseAsChosen: a base the caller chose is
+// reported as they wrote it, from where it came -- the commit it was
+// resolved to is the plan's business, and --json without a lane reports it
+// the same way.
+func TestLane_JSONReportsAChosenBaseAsChosen(t *testing.T) {
+	h := newHarness(t)
+	inLane(h)
+
+	if code := h.run("--title", "t", "--worktree", "--base", "main", "--json"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	var out jsonReport
+	if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+		t.Fatalf("stdout is not one JSON object: %v\n%s", err, h.stdout)
+	}
+	if out.Base != "main" || out.Provenance["base"] != "flag" {
+		t.Errorf("base = %q from %q, want main from flag", out.Base, out.Provenance["base"])
 	}
 }
 
@@ -164,7 +201,7 @@ func TestLane_TheCommitIsNotRemembered(t *testing.T) {
 func TestLane_AnUnresolvableCommitIsRefused(t *testing.T) {
 	h := newHarness(t)
 	inLane(h)
-	h.git.headErr = errors.New("ambiguous argument 'HEAD': unknown revision")
+	h.git.resolveErr = errors.New("ambiguous argument 'HEAD': unknown revision")
 
 	if code := h.run("--title", "t", "--worktree"); code != ExitUsage {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)

@@ -651,12 +651,16 @@ command and the form produce the same session from the same inputs.
 > opens on its `checkout_path`, not on herdr's `repo_root` for it, which
 > names the primary checkout (v1 §6 field 2's "current space's repo root").
 > herdr refuses a linked checkout as the source of a new worktree
-> (`linked_worktree_source`), so a worktree session names the repository
-> root as `worktree create`'s `--cwd`, and nothing else moves: without a
-> worktree the session runs in the linked checkout. An unset base is then
-> that checkout's own commit, resolved to a SHA at submit, since herdr's
-> default would be the primary checkout's HEAD. The commit is reported
-> (`create --json`'s `base`, provenance `checkout`) and never remembered.
+> (`linked_worktree_source`), so a worktree session names the repository's
+> primary checkout as `worktree create`'s `--cwd`, and nothing else moves:
+> without a worktree the session runs in the linked checkout. herdr then
+> runs `git worktree add` in the primary checkout, so the base, chosen or
+> not, is resolved to a commit in the linked checkout at submit: an unset
+> one, or `HEAD`, would otherwise be the primary's commit. With no base
+> chosen that commit is reported (`create --json`'s `base`, provenance
+> `checkout`); it is never remembered. A repository whose primary checkout
+> cannot be found from the linked one (a bare repository, or one whose git
+> directory lives elsewhere) gets no substitute, and herdr's refusal stands.
 
 Run from a plain shell inside a herdr pane there is no
 `HERDR_PLUGIN_CONTEXT_JSON`, so context comes from `HERDR_WORKSPACE_ID` /

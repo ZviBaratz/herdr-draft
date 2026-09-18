@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -351,16 +351,16 @@ favorites = ["claude"]
 			want: plan.Input{
 				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
 				Placement: plan.PlacementNewSpace, AgentKind: "claude",
-				Linked:           plan.LinkedCheckout{RepoRoot: projectDir, Head: laneHead},
+				Linked:           plan.LinkedCheckout{RepoRoot: projectDir, Commit: laneHead},
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
 		{
-			// The lane's commit is what an UNSET base means and nothing more:
-			// a base remembered for the repository (projects.json keys on the
+			// A base remembered for the repository (projects.json keys on the
 			// origin root, so the lane shares its entry) wins on both paths,
-			// and neither reads the commit.
-			name: "from a lane, a remembered base still wins over its commit",
+			// and both resolve it IN the lane: from the repository root a
+			// per-checkout ref would name the primary checkout's commit.
+			name: "from a lane, a remembered base is resolved in the lane",
 			configTOML: `
 branch_prefix = "zvi/"
 [agents]
@@ -373,7 +373,7 @@ favorites = ["claude"]
 			want: plan.Input{
 				Branch: "zvi/fix-login-redirect-loop", BaseRef: "main", UseWorktree: true,
 				Placement: plan.PlacementNewSpace, AgentKind: "claude",
-				Linked:           plan.LinkedCheckout{RepoRoot: projectDir},
+				Linked:           plan.LinkedCheckout{RepoRoot: projectDir, Commit: laneMain},
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
@@ -606,8 +606,8 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	git := newFakeGit()
 	if c.lane {
 		git.roots = map[string]string{laneDir: laneRoot}
-		git.linked = map[string]bool{laneDir: true}
-		git.head = laneHead
+		git.primary = map[string]string{laneDir: laneRoot}
+		git.commits = map[string]string{laneDir + " HEAD": laneHead, laneDir + " main": laneMain}
 	}
 	// Assigned only when there is an issue: a nil *fakeLinear in the
 	// interface would read as Linear configured.
@@ -685,21 +685,22 @@ type formCase struct {
 
 func formPlanInput(t *testing.T, c formCase) plan.Input {
 	t.Helper()
-	return withLinkedHead(t, formModel(t, c)).PlanInput()
+	return withLinkedCommit(t, formModel(t, c)).PlanInput()
 }
 
-// withLinkedHead takes the first step a submit takes after validation:
-// reading a lane's commit when the plan needs it (#171). The command side
-// takes its counterpart inside resolveRequest. For every other scenario it
-// is a no-op, which is itself worth running: a form that read a commit it
-// did not need would show up here as a Linked the command does not have.
-func withLinkedHead(t *testing.T, m app.Model) app.Model {
+// withLinkedCommit takes the first step a submit takes after validation:
+// resolving the base in a lane when the plan needs it (#171). The command
+// side takes its counterpart inside resolveRequest. For every other scenario
+// it is a no-op, which is itself worth running: a form that resolved a
+// commit it did not need would show up here as a Linked the command does not
+// have.
+func withLinkedCommit(t *testing.T, m app.Model) app.Model {
 	t.Helper()
-	head, err := m.ResolveLinkedHead(context.Background())
+	commit, err := m.ResolveLinkedCommit(context.Background())
 	if err != nil {
-		t.Fatalf("ResolveLinkedHead: %v", err)
+		t.Fatalf("ResolveLinkedCommit: %v", err)
 	}
-	return m.WithLinkedHead(head)
+	return m.WithLinkedCommit(commit)
 }
 
 // formModel is formPlanInput's first half: a real, settled app.Model with the
@@ -898,14 +899,26 @@ func (g formGit) RepoRoot(_ context.Context, dir string) (string, error) {
 	}
 	return dir, nil
 }
-func (g formGit) LinkedWorktree(_ context.Context, dir string) (bool, error) {
-	return g.lane && dir == laneDir, nil
-}
-func (g formGit) HeadCommit(context.Context, string) (string, error) {
-	if !g.lane {
-		return "", errors.New("formGit: HeadCommit asked outside a lane")
+func (g formGit) PrimaryCheckout(_ context.Context, dir string) (string, error) {
+	if g.lane && dir == laneDir {
+		return laneRoot, nil
 	}
-	return laneHead, nil
+	return "", nil
+}
+
+// ResolveCommit answers only in the lane, as commandCase's fake does, so a
+// commit read in any other checkout -- the primary's HEAD, above all -- is an
+// error rather than an answer that happens to match.
+func (g formGit) ResolveCommit(_ context.Context, dir, ref string) (string, error) {
+	if g.lane && dir == laneDir {
+		switch ref {
+		case "HEAD":
+			return laneHead, nil
+		case "main":
+			return laneMain, nil
+		}
+	}
+	return "", fmt.Errorf("formGit: no commit for %q in %s", ref, dir)
 }
 func (formGit) ListSubdirs(string, int) []string { return nil }
 func (formGit) ResolvePath(p string) string      { return p }
@@ -1038,7 +1051,7 @@ launch = "wrapper"
 // nothing while making the common path harder to read.
 func formPlanInputAuto(t *testing.T, c formCase) plan.Input {
 	t.Helper()
-	m := withLinkedHead(t, formModel(t, c))
+	m := withLinkedCommit(t, formModel(t, c))
 	res, err := m.ResolveAccount(context.Background())
 	if err != nil {
 		t.Fatalf("ResolveAccount: %v", err)
