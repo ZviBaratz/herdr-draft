@@ -13,6 +13,7 @@
 package defaults
 
 import (
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
@@ -90,6 +91,12 @@ const (
 	FieldTrustRepository  = "trust_repository"
 	FieldMarkReady        = "mark_ready"
 )
+
+// FieldAgentOption is the provenance key for one agent session option
+// (agent-options spec §8.2): "option.model", "option.effort". A function
+// rather than more constants because the set of options is the
+// declaration's (internal/agentopts), not this package's.
+func FieldAgentOption(name string) string { return "option." + name }
 
 // Sources is every tier Resolve consults, each already loaded by the
 // caller -- this package performs no I/O of its own.
@@ -174,14 +181,9 @@ type Resolved struct {
 	// which leaves the form on its own first favorite.
 	AgentKind string
 	// BaseRef is the default base ref for a worktree branch. "" means HEAD
-	// (form.WorktreeField.Base()'s own sentinel).
-	//
-	// Resolved, but not APPLIED by the form: WorktreeField exposes no
-	// setter for its base picker's selection (only SetBaseItems, for the
-	// candidate pool), and internal/form is being rewritten under a
-	// separate issue, so adding one here would collide. The headless
-	// `create` command can consume this immediately; the form picks it up
-	// when the setter lands.
+	// (form.WorktreeField.Base()'s own sentinel). The form applies it with
+	// WorktreeField.SetBase, which holds the selection until the ref list
+	// naming it has landed.
 	BaseRef string
 	// LinearBranchName reports whether a chosen Linear issue's own
 	// branchName owns the branch (spec §11's repo-config key of the same
@@ -434,4 +436,44 @@ func PlacementValue(p plan.Placement) string {
 	default:
 		return "new-space"
 	}
+}
+
+// AgentOptions resolves one agent kind's session options (agent-options
+// spec §6.1) and attributes each one the kind declares: built-in `inherit`,
+// then config.toml's `[agents.options.<kind>]`, and nothing above.
+//
+// A function of its own rather than more fields on Resolved, because it
+// is a function of the kind -- and the kind is not settled when Resolve
+// runs: `create --agent` overrides the resolved kind, and the form's agent
+// row can move to any kind while the popup is open. Both callers ask this
+// with their FINAL kind, which keeps the chain in this package without
+// resolving options for a kind nobody launches.
+//
+// It skips memory for mark_ready's reason (reap spec §6.1): whether a
+// session should plan first or think hard is a property of the task, and a
+// remembered `plan mode` would silently carry into the next one. A
+// repository cannot set it either -- repo.go refuses `agents.options` --
+// so there is no repository tier to skip.
+//
+// The values are a fresh map, nil when nothing is set.
+func AgentOptions(cfg config.Config, kind string) (agentopts.Values, map[string]Tier) {
+	opts := agentopts.For(kind)
+	if len(opts) == 0 {
+		return nil, nil
+	}
+	configured := cfg.Agents.Options[kind]
+	var vals agentopts.Values
+	from := make(map[string]Tier, len(opts))
+	for _, o := range opts {
+		key := FieldAgentOption(o.Name)
+		from[key] = TierBuiltin
+		if v := configured[o.Name]; v != "" {
+			if vals == nil {
+				vals = agentopts.Values{}
+			}
+			vals[o.Name] = v
+			from[key] = TierUserConfig
+		}
+	}
+	return vals, from
 }
