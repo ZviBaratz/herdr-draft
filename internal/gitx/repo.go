@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,15 +26,66 @@ import (
 // validity for a path the user is still typing -- and runGit now resolves
 // core.sshCommand, a second git process each time (effectiveSSHCommand).
 // Anything added here that could reach a remote must move to runGit
-// instead; that is where the protections are.
+// instead; that is where the protections are. The one protection both
+// DO keep is localRepoEnvVars: skipping runGit's cost is no reason to ask
+// a different repository than dir.
 func IsGitRepo(dir string) bool {
 	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
 	cmd.Dir = dir
+	cmd.Env = withoutLocalRepoEnv(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
 	return strings.TrimSpace(string(out)) == "true"
+}
+
+// localRepoEnvVars is git's own list of the environment variables that say
+// which repository a git command acts on -- `git rev-parse
+// --local-env-vars`, the set git itself clears before it runs a command in
+// a DIFFERENT repository (a submodule, say). TestLocalRepoEnvVarsMatchGit
+// holds this copy to the installed git's answer.
+//
+// Every function in this package names the directory it means, and each of
+// these beats that directory: an inherited GIT_DIR makes `git -C <dir>` ask
+// about some other repository entirely. A git hook exports them, and so does
+// `git rebase --exec` in a linked worktree -- so `herdr-draft create` run
+// from either used to answer "is this a repository", "does this branch
+// exist" and, worst, "is this worktree safe to remove" about the wrong one.
+//
+// Only these, and not every GIT_*: this package deliberately honours
+// GIT_SSH and GIT_SSH_COMMAND (effectiveSSHCommand), and a user's own
+// GIT_CONFIG_GLOBAL or GIT_ASKPASS is theirs to set.
+var localRepoEnvVars = []string{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_CONFIG",
+	"GIT_CONFIG_PARAMETERS",
+	"GIT_CONFIG_COUNT",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_DIR",
+	"GIT_WORK_TREE",
+	"GIT_IMPLICIT_WORK_TREE",
+	"GIT_GRAFT_FILE",
+	"GIT_INDEX_FILE",
+	"GIT_NO_REPLACE_OBJECTS",
+	"GIT_REPLACE_REF_BASE",
+	"GIT_PREFIX",
+	"GIT_SHALLOW_FILE",
+	"GIT_COMMON_DIR",
+}
+
+// withoutLocalRepoEnv returns base less every variable in
+// localRepoEnvVars, so the directory a command runs in is the repository
+// it asks about. A fresh slice: base is the caller's.
+func withoutLocalRepoEnv(base []string) []string {
+	env := make([]string, 0, len(base))
+	for _, kv := range base {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(localRepoEnvVars, name) {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
 
 // waitDelay bounds how long cmd.Wait may block after the context has
@@ -42,11 +94,15 @@ const waitDelay = 2 * time.Second
 
 // runGit runs git with the given args in repoDir and returns trimmed
 // stdout. On failure it returns an error wrapped with the command and
-// repo directory for context.
+// repo directory for context. repoDir is the repository asked about,
+// whatever the process environment says: see localRepoEnvVars.
 func runGit(ctx context.Context, repoDir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoDir
-	cmd.Env = nonInteractiveEnv(os.Environ(), effectiveSSHCommand(ctx, os.Environ(), repoDir))
+	// Stripped once and handed to both: effectiveSSHCommand's own `git
+	// config` read has to ask this repository too.
+	base := withoutLocalRepoEnv(os.Environ())
+	cmd.Env = nonInteractiveEnv(base, effectiveSSHCommand(ctx, base, repoDir))
 	// exec.CommandContext kills git when ctx is done, but stdout/stderr
 	// are bytes.Buffers, so exec pipes them and cmd.Wait blocks on its
 	// copier goroutines until every writer closes -- a grandchild that
@@ -173,8 +229,11 @@ func configValue(ctx context.Context, base []string, repoDir, key string) string
 	cmd := exec.CommandContext(ctx, "git", "config", "--get", key)
 	cmd.Dir = repoDir
 	// "" rather than a resolved command: the whole point of this call is
-	// to find that out, and `git config` reaches no ssh of any kind.
-	cmd.Env = nonInteractiveEnv(base, "")
+	// to find that out, and `git config` reaches no ssh of any kind. The
+	// repository variables are stripped here too, not only by runGit: a
+	// caller handing in a raw environment must still read THIS repository's
+	// config, not the one an inherited GIT_DIR names.
+	cmd.Env = nonInteractiveEnv(withoutLocalRepoEnv(base), "")
 	cmd.WaitDelay = waitDelay
 	out, err := cmd.Output()
 	if err != nil {
@@ -297,6 +356,7 @@ func BranchExists(ctx context.Context, repoDir, name string) (bool, error) {
 	for _, ref := range []string{"refs/heads/" + name, "refs/remotes/origin/" + name} {
 		cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", ref)
 		cmd.Dir = repoDir
+		cmd.Env = withoutLocalRepoEnv(os.Environ())
 		err := cmd.Run()
 		if err == nil {
 			return true, nil
