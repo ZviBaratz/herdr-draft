@@ -12,15 +12,32 @@ import (
 	"time"
 )
 
+// gitTestEnv is the environment every test git command here runs with: the
+// process's own, minus every GIT_* variable, plus a fixed identity. The
+// strip is the point. GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE all beat
+// cmd.Dir, and `git rebase --exec` exports GIT_DIR in a linked worktree, so
+// inheriting them sent this helper's `git init`/`add`/`commit` into the
+// repository running the tests (TestHelpersIgnoreAnInheritedGitDir).
+func gitTestEnv(extra ...string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env,
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	return append(env, extra...)
+}
+
 func mkRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	run := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		cmd.Env = gitTestEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -36,9 +53,7 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	cmd.Env = gitTestEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -53,10 +68,7 @@ func gitCommitAt(t *testing.T, dir, msg string, at time.Time) {
 	date := at.Format(time.RFC3339)
 	cmd := exec.Command("git", "commit", "-qm", msg, "--allow-empty")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
-		"GIT_AUTHOR_DATE="+date, "GIT_COMMITTER_DATE="+date)
+	cmd.Env = gitTestEnv("GIT_AUTHOR_DATE="+date, "GIT_COMMITTER_DATE="+date)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit at %s: %v\n%s", date, err, out)
 	}
