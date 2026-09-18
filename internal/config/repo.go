@@ -84,6 +84,7 @@ type repoDeniedKey struct {
 // quietly promote one of these to allowed.
 var repoDeniedKeys = []repoDeniedKey{
 	{"agents.extra_args", "it becomes part of a launched agent's command line"},
+	{"agents.options", "it becomes part of a launched agent's command line"},
 	{"agents.favorites", "a repository does not choose which agent runs on your machine"},
 	{"agents.default", "a repository does not choose which agent runs on your machine"},
 	{"linear.prompt_template", "it would become the agent's first instruction"},

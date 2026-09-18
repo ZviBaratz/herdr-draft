@@ -14,10 +14,12 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 )
 
@@ -215,6 +217,24 @@ type AgentsConfig struct {
 	// ExtraArgs is the optional `[agents.extra_args]` sub-table: extra CLI
 	// args per agent kind, keyed by agent name.
 	ExtraArgs map[string][]string `toml:"extra_args"`
+
+	// Options is the optional `[agents.options.<kind>]` sub-tables
+	// (agent-options spec §6.2): each kind's default session options,
+	// already through agentopts.Normalize, so every value here is one the
+	// declaration offers and none is `inherit`. nil when the file sets
+	// none.
+	//
+	// Never decoded directly (`toml:"-"`): Load decodes the table through
+	// `any` in a second pass (loadAgentOptions), so that a value of the
+	// wrong TYPE -- `effort = 5` -- degrades with a reason like every other
+	// mistake in the table, instead of failing toml.Decode and refusing to
+	// open the popup over one option.
+	Options map[string]agentopts.Values `toml:"-"`
+	// OptionWarnings is every entry of `[agents.options]` Load refused,
+	// worded, in file-independent order: kinds by name, keys by name. It is
+	// the one list both surfaces read -- the popup's options panel and
+	// `create`'s stderr -- ClauthWarnings' reason for being one list.
+	OptionWarnings []string `toml:"-"`
 }
 
 // WorktreeConfig is the optional `[worktree]` table.
@@ -441,6 +461,18 @@ func Load(configDir string) (Config, error) {
 	if _, err := toml.Decode(string(b), &cfg); err != nil {
 		return Config{}, fmt.Errorf("load config: parse %s: %w", path, err)
 	}
+	// The second pass cannot fail where the first succeeded -- same bytes,
+	// and a target that accepts any value -- but an error is still an
+	// error, and reporting it beats pretending the table was empty.
+	var opts struct {
+		Agents struct {
+			Options map[string]any `toml:"options"`
+		} `toml:"agents"`
+	}
+	if _, err := toml.Decode(string(b), &opts); err != nil {
+		return Config{}, fmt.Errorf("load config: parse %s: %w", path, err)
+	}
+	cfg.Agents.Options, cfg.Agents.OptionWarnings = loadAgentOptions(opts.Agents.Options)
 
 	// The prefix reaches `herdr worktree create --branch <value>` as an
 	// argv element by way of gitx.BranchSlug, so it is validated at the
@@ -533,4 +565,66 @@ func Load(configDir string) (Config, error) {
 		cfg.Clauth.Launcher = def
 	}
 	return cfg, nil
+}
+
+// loadAgentOptions validates `[agents.options]` as decoded through `any`
+// against the agentopts declaration, returning what survived and a warning
+// for everything that did not (agent-options spec §6.2).
+//
+// A bad entry costs only itself: the rest of its table, and every other
+// kind's, still apply. The warning leads with the key and the value, then
+// the reason -- the value here is a word, not a path, so unlike a launcher
+// it does not crowd the reason off a panel line.
+func loadAgentOptions(raw map[string]any) (map[string]agentopts.Values, []string) {
+	var out map[string]agentopts.Values
+	var warnings []string
+	for _, kind := range sortedKeys(raw) {
+		table, ok := raw[kind].(map[string]any)
+		if !ok {
+			warnings = append(warnings, fmt.Sprintf(
+				"ignoring [agents.options] %s: expected a table, [agents.options.%s]", kind, kind))
+			continue
+		}
+		if len(agentopts.For(kind)) == 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"ignoring [agents.options.%s]: %s takes no session options; [agents.extra_args] still applies to it", kind, kind))
+			continue
+		}
+		for _, key := range sortedKeys(table) {
+			s, ok := table[key].(string)
+			if !ok {
+				warnings = append(warnings, fmt.Sprintf(
+					"ignoring [agents.options.%s] %s: expected a string, got %v", kind, key, table[key]))
+				continue
+			}
+			v, err := agentopts.Normalize(kind, key, s)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf(
+					"ignoring [agents.options.%s] %s = %q: %v", kind, key, s, err))
+				continue
+			}
+			if v == "" {
+				continue // inherit: a legal way to write "unset"
+			}
+			if out == nil {
+				out = map[string]agentopts.Values{}
+			}
+			if out[kind] == nil {
+				out[kind] = agentopts.Values{}
+			}
+			out[kind][key] = v
+		}
+	}
+	return out, warnings
+}
+
+// sortedKeys is m's keys in order, so two loads of one file warn in the
+// same order.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
