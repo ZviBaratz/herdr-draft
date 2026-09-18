@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -178,6 +179,14 @@ func (m *mockRunner) TabCreate(ctx context.Context, req herdrc.TabCreateReq) (he
 		return *m.tabTopo, nil
 	}
 	return m.topo, nil
+}
+
+func (m *mockRunner) TabRename(ctx context.Context, req herdrc.TabRenameReq) error {
+	m.record("TabRename", req.TabID, req.Label)
+	if m.shouldFail("TabRename") {
+		return m.failErr
+	}
+	return nil
 }
 
 func (m *mockRunner) PaneSplit(ctx context.Context, req herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
@@ -431,6 +440,7 @@ func TestExecuteHappyPathThreadsPaneID(t *testing.T) {
 	wantCalls := []string{
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"TabRename(tab-1,Fix pagination)",
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
 		"AgentRead(pane-1)",
 		"AgentPrompt(pane-1,start work)",
@@ -476,11 +486,169 @@ func TestExecute_WorktreeNotReused(t *testing.T) {
 	want := []string{
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"TabRename(t1,Fix pagination)",
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
 	}
 	if !reflect.DeepEqual(m.calls, want) {
 		t.Fatalf("calls = %v, want %v", m.calls, want)
 	}
+}
+
+// --- the tab a space op opened carries the title ---------------------------
+
+// TestExecute_NamesTheTabTheSpaceOpened: Build leaves the rename's tab id
+// empty, and Execute fills it from the tab the space op returned -- after
+// the space exists and before anything is launched into it, so a create
+// that fails later still leaves a tab named for what it was for.
+func TestExecute_NamesTheTabTheSpaceOpened(t *testing.T) {
+	in := validInput()
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"}}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1", result.FailedIndex)
+	}
+	want := []string{
+		"WorkspaceCreate(/repo,Fix pagination)",
+		"TabRename(tab-1,Fix pagination)",
+		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
+	}
+	if !reflect.DeepEqual(m.calls, want) {
+		t.Fatalf("calls = %v, want %v", m.calls, want)
+	}
+}
+
+// TestExecute_ReusedSpaceNeverRenamesTheUsersTab is the reason the rename
+// targets the AGENT's tab rather than the space's. When `worktree create`
+// hands back a workspace that was already open (placement spec §5.2), the
+// tab in its response is one the user was already working in; the session
+// runs in a tab claimed beside it. Renaming the space's tab would retitle
+// the user's own work after somebody else's session.
+func TestExecute_ReusedSpaceNeverRenamesTheUsersTab(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	m := &mockRunner{
+		workspacesBeforeCreate: []herdrc.WorkspaceInfo{{WorkspaceID: "w9", Label: "somebody-else"}},
+		topo:                   herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "users-tab", PaneID: "stranger-pane", CheckoutPath: "/tmp/wt"},
+		tabTopo:                &herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "claimed-tab", PaneID: "claimed-pane", CheckoutPath: "/tmp/wt"},
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1", result.FailedIndex)
+	}
+	for _, c := range m.calls {
+		if strings.HasPrefix(c, "TabRename(users-tab,") {
+			t.Fatalf("calls = %v: renamed the reused space's own tab, which belongs to the user", m.calls)
+		}
+	}
+	if !slices.Contains(m.calls, "TabRename(claimed-tab,Fix pagination)") {
+		t.Errorf("calls = %v, want the claimed tab named for the session", m.calls)
+	}
+}
+
+// TestExecute_ATabNameFailureDoesNotFailTheCreate: the rename is cosmetic.
+// A create that stopped over a tab label -- leaving a space with no agent
+// in it, and the prompt handed back for manual paste -- would be a far
+// worse outcome than a tab still called `1`. So the plan goes on, the
+// result is a success, and the step says what did not happen in its own
+// state rather than borrowing StepFailed, which every caller reads as "the
+// plan stopped here".
+func TestExecute_ATabNameFailureDoesNotFailTheCreate(t *testing.T) {
+	in := validInput()
+	in.Prompt = "go"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	renameIdx := indexOfKind(ops, OpTabRename)
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"},
+		failAt:    "TabRename",
+		failCount: 1,
+		failErr:   errors.New(`herdr tab rename tab-1 Fix pagination: exit status 1: {"error":{"code":"tab_not_found"}}`),
+	}
+
+	var got []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{}, func(p Progress) { got = append(got, p) })
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: a tab that kept herdr's name is not a failed create", result.FailedIndex)
+	}
+	if result.PromptText != "" {
+		t.Errorf("PromptText = %q, want empty -- the prompt was delivered", result.PromptText)
+	}
+	if result.AgentAt == nil || result.AgentAt.PaneID != "pane-1" {
+		t.Errorf("AgentAt = %+v, want the agent in pane-1", result.AgentAt)
+	}
+	if !slices.Contains(m.calls, "AgentPrompt(pane-1,"+PromptText(in)+")") {
+		t.Errorf("calls = %v, want the plan to have gone on to send the prompt", m.calls)
+	}
+
+	var last *Progress
+	for i := range got {
+		if got[i].State == StepFailed {
+			t.Errorf("progress %+v is StepFailed; nothing in this plan stopped it", got[i])
+		}
+		if got[i].Index == renameIdx {
+			last = &got[i]
+		}
+	}
+	if last == nil || last.State != StepFailedNonFatal {
+		t.Fatalf("rename step's last progress = %+v, want StepFailedNonFatal", last)
+	}
+	if last.Err == nil || !strings.Contains(last.Err.Error(), "tab_not_found") {
+		t.Errorf("rename step's Err = %v, want herdr's own reason carried to the caller", last.Err)
+	}
+}
+
+// TestExecute_ATabNameFailureDoesNotMaskALaterFailure: a rename that failed
+// first must not become the failure the caller reports. The step that
+// stopped the plan is the one FailedIndex names and the one whose error the
+// caller shows; the prompt still comes back for manual paste.
+func TestExecute_ATabNameFailureDoesNotMaskALaterFailure(t *testing.T) {
+	in := validInput()
+	in.AccountPin = "work"
+	in.Prompt = "go"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"},
+		failAt:    "TabRename",
+		failCount: 1,
+		failErr:   errors.New("tab_not_found"),
+		awaitErr:  errors.New("detection timed out"),
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if want := indexOfKind(ops, OpAwaitDetection); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the detection that stopped the plan)", result.FailedIndex, want)
+	}
+	if result.PromptText != PromptText(in) {
+		t.Errorf("PromptText = %q, want the undelivered prompt back", result.PromptText)
+	}
+}
+
+func indexOfKind(ops []Op, kind OpKind) int {
+	for i, op := range ops {
+		if op.Kind == kind {
+			return i
+		}
+	}
+	return -1
 }
 
 // agentPaneID is result.AgentAt.PaneID with the nil case folded in, since
@@ -537,6 +705,11 @@ func TestExecute_WorktreeReusedClaimsAFreshTab(t *testing.T) {
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
 		"TabCreate(w9,/tmp/wt)",
+		// The claim already carries the title; renaming it again is
+		// redundant and harmless. What matters is that it is t2, the
+		// session's tab, and never t1, the user's -- which
+		// TestExecute_ReusedSpaceNeverRenamesTheUsersTab pins on its own.
+		"TabRename(t2,Fix pagination)",
 		"AgentStart(" + AgentName(in.Title) + ",claimed-pane)",
 	}
 	if !reflect.DeepEqual(m.calls, want) {
@@ -593,6 +766,11 @@ func TestExecute_WorktreeReusedWithAPlacementOpClaimsNoTab(t *testing.T) {
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
 		"TabCreate(" + in.Ctx.WorkspaceID + ",/tmp/wt)", // the PLACEMENT op
+		// Recorded, not discriminated: this fake answers the placement's
+		// TabCreate with the reused space's own ids, so the space's tab and
+		// the agent's are both t1 here. Which one the rename targets is
+		// TestExecute_ReusedSpaceNeverRenamesTheUsersTab's to pin.
+		"TabRename(" + m.topo.TabID + ",Fix pagination)",
 		"AgentStart(" + AgentName(in.Title) + "," + m.topo.PaneID + ")",
 	}
 	if !reflect.DeepEqual(m.calls, want) {
@@ -802,14 +980,14 @@ func TestExecuteFailureAtAgentStart(t *testing.T) {
 		failAt:    "AgentStart",
 		failErr:   errors.New("boom"),
 		failCount: 1,
-		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"},
 	}
 
 	var progressed []Progress
 	result := Execute(context.Background(), m, ops, ExecOpts{}, func(p Progress) { progressed = append(progressed, p) })
 
-	if result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1", result.FailedIndex)
+	if want := indexOfKind(ops, OpAgentStart); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d", result.FailedIndex, want)
 	}
 	if result.Created == nil {
 		t.Fatal("Created is nil, want non-nil: the topology op succeeded before AgentStart failed")
@@ -818,6 +996,7 @@ func TestExecuteFailureAtAgentStart(t *testing.T) {
 	wantCalls := []string{
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"TabRename(tab-1,Fix pagination)",
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
 	}
 	if !reflect.DeepEqual(m.calls, wantCalls) {
@@ -828,8 +1007,8 @@ func TestExecuteFailureAtAgentStart(t *testing.T) {
 		t.Fatal("no progress reported")
 	}
 	last := progressed[len(progressed)-1]
-	if last.State != StepFailed || last.Index != 1 {
-		t.Fatalf("last progress = %+v, want State=StepFailed Index=1", last)
+	if want := indexOfKind(ops, OpAgentStart); last.State != StepFailed || last.Index != want {
+		t.Fatalf("last progress = %+v, want State=StepFailed Index=%d", last, want)
 	}
 	if !errors.Is(last.Err, m.failErr) {
 		t.Fatalf("last progress Err = %v, want it to wrap %v", last.Err, m.failErr)
@@ -882,8 +1061,8 @@ func TestExecutePersistentNonBusyErrorNoRetry(t *testing.T) {
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 
-	if result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1 (immediate failure)", result.FailedIndex)
+	if want := indexOfKind(ops, OpAgentStart); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (immediate failure)", result.FailedIndex, want)
 	}
 	if n := countCallsWithPrefix(m.calls, "AgentStart("); n != 1 {
 		t.Fatalf("AgentStart calls = %d, want 1 (no retry for a non-busy error)", n)
@@ -913,8 +1092,8 @@ func TestExecuteBusyRetryExhaustsBudget(t *testing.T) {
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 
-	if result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1 (budget exhausted, still fails)", result.FailedIndex)
+	if want := indexOfKind(ops, OpAgentStart); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (budget exhausted, still fails)", result.FailedIndex, want)
 	}
 	n := countCallsWithPrefix(m.calls, "AgentStart(")
 	if n < 2 {
@@ -945,7 +1124,7 @@ func TestExecuteClauthLaunchThreadsPaneID(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}}
+	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"}}
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 	if result.FailedIndex != -1 {
@@ -955,6 +1134,7 @@ func TestExecuteClauthLaunchThreadsPaneID(t *testing.T) {
 	wantCalls := []string{
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"TabRename(tab-1,Fix pagination)",
 		"PaneRun(pane-1,clauth,start,work,--,--model,opus)",
 		"AwaitDetection(pane-1," + in.DetectionTimeout.String() + ",0s)",
 	}
@@ -1011,8 +1191,8 @@ func TestExecuteFailureAtAgentPromptSurfacesPromptText(t *testing.T) {
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2", result.FailedIndex)
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d", result.FailedIndex, want)
 	}
 	if result.PromptText != in.Prompt {
 		t.Fatalf("PromptText = %q, want %q", result.PromptText, in.Prompt)
@@ -1776,8 +1956,8 @@ func TestExecuteBlockedStartIsExplained(t *testing.T) {
 	var progressed []Progress
 	result := Execute(context.Background(), m, ops, ExecOpts{}, func(p Progress) { progressed = append(progressed, p) })
 
-	if result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1 (the agent start op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentStart); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the agent start op): %+v", result.FailedIndex, want, result)
 	}
 	if !containsCall(m.calls, "AgentRead(pane-1)") {
 		t.Fatalf("calls = %v, want the agent pane read to find out WHY the start was refused", m.calls)
@@ -2055,8 +2235,8 @@ func TestExecutePathBBlockedDetectionNeverPrompts(t *testing.T) {
 	if containsCall(m.calls, "AgentPrompt(pane-1,implement the fix)") {
 		t.Fatalf("calls = %v, want NO AgentPrompt -- this is the call that killed the agent", m.calls)
 	}
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2 (the detection op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAwaitDetection); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the detection op): %+v", result.FailedIndex, want, result)
 	}
 
 	msg := progressed[len(progressed)-1].Err.Error()
@@ -2167,8 +2347,8 @@ func TestExecutePromptWaitTimeoutIsUnconfirmed(t *testing.T) {
 	if !result.PromptUnconfirmed {
 		t.Error("PromptUnconfirmed = false, want true -- a wait timeout cannot prove the prompt was not delivered")
 	}
-	if result.FailedIndex != 2 {
-		t.Errorf("FailedIndex = %d, want 2 -- the step still failed", result.FailedIndex)
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Errorf("FailedIndex = %d, want %d -- the step still failed", result.FailedIndex, want)
 	}
 	// The text is still carried: losing the caller's prompt is the worse
 	// error of the two, so it survives and only its LABEL changes.
@@ -2383,7 +2563,7 @@ func TestExecuteReportsTheWaitToTheUser(t *testing.T) {
 	if len(waiting) != 1 {
 		t.Fatalf("got %d StepWaiting events, want exactly 1: %+v", len(waiting), progressed)
 	}
-	agentStep := 1
+	agentStep := indexOfKind(ops, OpAgentStart)
 	if waiting[0].Index != agentStep {
 		t.Errorf("StepWaiting reported for step %d, want the launch step %d", waiting[0].Index, agentStep)
 	}
@@ -2460,8 +2640,8 @@ func TestExecuteWithoutATrustBudgetFailsFastOnABlockedStart(t *testing.T) {
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 
-	if result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1 (the agent start op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentStart); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the agent start op): %+v", result.FailedIndex, want, result)
 	}
 	if countCallsWithPrefix(m.calls, "AwaitDetection") != 0 {
 		t.Errorf("calls = %v, want NO poll at all: with no budget there is nothing to wait for", m.calls)
@@ -2498,8 +2678,8 @@ func TestExecuteFailsWhenTheDialogIsNeverAnswered(t *testing.T) {
 	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute},
 		func(p Progress) { progressed = append(progressed, p) })
 
-	if result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1 (the agent start op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentStart); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the agent start op): %+v", result.FailedIndex, want, result)
 	}
 	if result.PromptText != in.Prompt {
 		t.Errorf("PromptText = %q, want the prompt handed back for paste", result.PromptText)
@@ -2547,8 +2727,8 @@ func TestExecuteFailsWhenTheAgentIsGoneFromTheDialog(t *testing.T) {
 	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute},
 		func(p Progress) { progressed = append(progressed, p) })
 
-	if result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1: %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentStart); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d: %+v", result.FailedIndex, want, result)
 	}
 	msg := progressed[len(progressed)-1].Err.Error()
 	if !strings.Contains(msg, "no longer running") {
@@ -2587,8 +2767,8 @@ func TestExecuteGoneAgentReadsTheSameOnBothPaths(t *testing.T) {
 	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute},
 		func(p Progress) { progressed = append(progressed, p) })
 
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2 (the detection op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAwaitDetection); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the detection op): %+v", result.FailedIndex, want, result)
 	}
 	msg := progressed[len(progressed)-1].Err.Error()
 	if !strings.Contains(msg, "no longer running") {
@@ -2681,8 +2861,8 @@ func TestExecuteWithoutATrustBudgetDoesNotWaitForThePromptDialog(t *testing.T) {
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, want, result)
 	}
 	if countCallsWithPrefix(m.calls, "AgentPrompt") != 0 {
 		t.Errorf("calls = %v, want no prompt sent at all", m.calls)
@@ -2715,8 +2895,8 @@ func TestExecuteFailsWhenThePromptDialogIsNeverAnswered(t *testing.T) {
 	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 20 * time.Millisecond},
 		func(p Progress) { progressed = append(progressed, p) })
 
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, want, result)
 	}
 	if countCallsWithPrefix(m.calls, "AgentPrompt") != 0 {
 		t.Errorf("calls = %v, want nothing ever sent into the dialog", m.calls)
@@ -2761,8 +2941,8 @@ func TestExecuteReportsAGoneAgentFromThePromptDialog(t *testing.T) {
 	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute},
 		func(p Progress) { progressed = append(progressed, p) })
 
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2: %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d: %+v", result.FailedIndex, want, result)
 	}
 	msg := progressed[len(progressed)-1].Err.Error()
 	if !strings.Contains(msg, "no longer running") {
@@ -2892,8 +3072,8 @@ func TestExecuteRetriesAStalledPromptOnlyOnce(t *testing.T) {
 	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute},
 		func(p Progress) { progressed = append(progressed, p) })
 
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, want, result)
 	}
 	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
 		t.Errorf("AgentPrompt called %d times, want exactly 2 -- the retry is bounded", n)
@@ -2946,8 +3126,8 @@ func TestExecuteRetriesAStalledPromptWithoutATrustBudget(t *testing.T) {
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2: %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d: %+v", result.FailedIndex, want, result)
 	}
 	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
 		t.Errorf("AgentPrompt called %d times, want exactly 2 -- the settle waits for nobody, "+
@@ -3100,8 +3280,8 @@ func TestExecuteKeepsTheUnconfirmedPostureWhenTheRetryIsRefused(t *testing.T) {
 	// dialog out. The popup reaches the same refusal by a different route.
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 
-	if result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", result.FailedIndex, result)
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, want, result)
 	}
 	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
 		t.Fatalf("AgentPrompt called %d times, want 1 -- the retry's guard must refuse the dialog: %v",
@@ -3540,7 +3720,7 @@ func TestExecuteWrapperLaunchThreadsPaneIDAndConfigDir(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}}
+	m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"}}
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 	if result.FailedIndex != -1 {
@@ -3550,6 +3730,7 @@ func TestExecuteWrapperLaunchThreadsPaneIDAndConfigDir(t *testing.T) {
 	wantCalls := []string{
 		"WorkspaceList()",
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
+		"TabRename(tab-1,Fix pagination)",
 		"PaneRun(pane-1,CLAUDE_CONFIG_DIR=/dirs/work,claude,--model,opus)",
 		"AwaitDetection(pane-1," + in.DetectionTimeout.String() + ",0s)",
 	}

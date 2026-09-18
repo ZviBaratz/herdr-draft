@@ -4,7 +4,9 @@
 - **Status:** design approved 2026-09-03 (§5 through §8) and implemented.
   **§14 (2026-09-17) reverses §5.3 and §6.1 for a worktree:** a worktree
   session runs in its own space again, and placement applies only without
-  one. Read §14 before §5.3.
+  one. Read §14 before §5.3. **§15 (2026-09-18)** names the tab a session
+  opens after its title, and weighs a separate tab name — a proposal
+  awaiting the owner's decision, not a design approved for building.
 - **Supersedes:**
   - `internal/plan/build.go:19-21` — the `Placement` type's doc sentence
     "It is ignored when `Input.UseWorktree` is set -- worktree creation
@@ -1289,3 +1291,126 @@ worktree and any other placement.
 | §8.1 and §8.2 (herdr bugs) | stand; §8.2's family is filed as [herdrdev/herdr#4293](https://github.com/herdrdev/herdr/issues/4293), through `worktree open` (14.1) |
 | §8.4 (`--no-open`) | no longer needed by herdr-draft |
 | #128's `tab in <space>` and its default | stand for a session without a worktree |
+
+## 15. The tab a session lands in (2026-09-18)
+
+Citations in this section are for herdr **v0.9.0**, the current floor.
+
+### 15.1 Built: every tab a session opens carries its title
+
+`workspace create` and `worktree create` take `--label` for the space alone
+(`herdr:src/cli/workspace.rs` and `src/cli/worktree.rs` at v0.9.0), so the
+first tab of every `new space` and worktree session was called `1`. Build
+now follows those two ops with `OpTabRename`, which `Execute` points at the
+**agent's** tab (`ExecResult.AgentAt`). On a reused space (§5.2) the space's
+own tab is one the user was already working in; the session's tab is the
+claim, which its `tab create --label` had already named. The `tab`
+placements name their tab at creation and `split here` opens none, so
+neither gets the op.
+
+A rename is cosmetic, so a failed one never fails the create. It is the
+only op with its own failure state, `StepFailedNonFatal`: the plan goes
+on, and `FailedIndex`, `PromptText` and the prompt's delivery posture are
+left alone. `create` prints `failed, continuing: <reason>` for the step on
+stderr and leaves stdout and `--json` unchanged. The popup marks the row
+`! tab  not named: <reason>`, but a successful submit still closes the
+popup at once. So the row stays on screen only when a later step fails
+and holds the failure screen up; otherwise the evidence is the tab's own
+`1`. Holding the popup open over a cosmetic failure was considered and
+not done, because it would make the user dismiss a success.
+
+Checked live on a disposable server, with herdr's own tab bar read from
+an attached client. That covered `new space`, worktree, the §5.2 reuse,
+`tab here`, `split here` and a rename refused by a shim.
+
+On a worktree session the tab repeats the space's name, and the owner
+asked for it anyway. Seen on screen, it earns its place. The sidebar
+clips a space label at about twenty cells (`Export button,…`), while the
+tab bar shows the whole title. On a reused space, each session's tab
+carries its own title under a shared space label.
+
+### 15.2 Is a tab name that differs from the title worth a control?
+
+**Recommendation: no.** Four facts, each checked.
+
+1. **A popup title cannot run long.** The title field is capped at 32 runes
+   (`titleCharLimit`, spec §6 field 3), and a Linear-seeded title is cut to
+   that cap as well. A 32-rune tab is 36 cells wide.
+2. **herdr never truncates a tab.** Each tab is as wide as its label plus
+   four cells, eight at least. When the strip overflows, it scrolls to keep
+   the focused tab in view
+   ([`tabs.rs#L24-L58`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/client/shell/tabs.rs#L24-L58),
+   [`state.rs#L3`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/client/shell/state.rs#L3)).
+   A long label costs strip width, and never legibility.
+3. **Tabs pile up exactly where the title names nothing else.** A space
+   collects several sessions' tabs under `tab in <space>` (the default
+   without a worktree whenever the repository's space is open, #128) and
+   under `tab here`. Neither placement creates a space or a branch, so
+   there the title's only visible job is the tab's name. A separate tab
+   name would be a second editor for the same value, one row away from
+   the first. A name that differs from the title only buys something for
+   `new space` and worktree sessions, where the title also labels a space
+   and seeds a branch. There the tab usually sits alone in a space that
+   already carries the title, which is where its name matters least.
+4. **herdr already renames a tab by hand.** It has a rename-tab overlay
+   ([`actions.rs#L118-L119`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/client/shell/actions.rs#L118-L119)),
+   reached through the `rename_tab` keybind action, which is unbound by
+   default.
+
+The cost that remains is real but small. On a strip about 170 cells wide,
+four full-length titles fit before it scrolls, or six at 23 runes
+(`Fix login redirect loop`). The lever for that is a shorter title, and
+the title row already provides it.
+
+What would change this: the strip in a busy repository space proving
+annoying in use. The answer then is a **policy** for the default, not a
+per-session control, because nobody retypes a tab name on every submit.
+A `config.toml` key choosing the issue identifier over the title is one
+such policy.
+
+**What does run long is headless.** `create --title` and `--issue` have
+no 32-rune cap. A 47-rune title reaches `plan.Input` whole from `create`
+and cut to 32 from the form, with the branch derived differently to
+match. `TestFormAndCommandProduceTheSamePlan` misses it because every
+title in it is short. That is the drift the equivalence test exists to
+catch, it is independent of tabs, and it deserves its own issue.
+
+### 15.3 If the owner wants the control anyway
+
+- **Home: the title row's panel**, as a `tab` part under the verdict line
+  and above the session list. `↓` from the title row enters it and `↑`
+  leaves it. This is the worktree panel's part cursor (`field_worktree.go`),
+  and it needs no change to the key grammar, because `↑`/`↓` are
+  forwarded to the focused section. It covers every placement that opens
+  a tab, worktree sessions included.
+- **Value:** seeded from the title. It follows the title until typed
+  into, then stays, which is the `branch` part's touched-versus-seeded
+  rule (`SetBranch`). Under `split here` the part is inert and reads
+  `split here opens no tab`.
+- **Row:** unchanged while the tab name equals the title. Otherwise the
+  title row appends `· tab <name>` to the title, dim, eliding the head.
+- **Plan:** `plan.Input.TabLabel`, where `""` means the title. `nameTabOp`
+  and `placementOp`'s `tab create --label` read it. The §5.2 claim needs
+  nothing, because the rename after it applies the name.
+  `equivalence_test.go` gains a scenario that types the part on one side
+  and passes the flag on the other.
+- **`create`:** `--tab-label NAME`, which is herdr's own word for it. It
+  is refused (exit 2) with `--placement split-here`, because nothing is
+  there to name; #145–147's rule is that `create` refuses what the form
+  refuses. `--json` carries `tab_label` when it is set, with provenance
+  `flag`.
+- **Memory:** none. A tab name is per-session, like the title, so it is
+  not remembered, `.herdr-draft.toml` cannot set it, and it gets no
+  `config.toml` key.
+- **Frames:** the title panel with the part untouched, typed, and inert.
+
+### 15.4 Rejected: typing on the `placement` row
+
+This was the owner's first proposal: type a name while a `tab` chip is
+selected. Its instinct about *where* is right. The `tab` chips are the
+placements where tabs pile up (15.2 item 3). But in those placements the
+title already is the tab name, so the placement row would hold a second
+editor for the title's value. It would also be invisible: a chip row has
+no input to show, so a stray key could rename a tab silently. It cannot
+reach worktree sessions either, since the row is inert there (§14.2).
+The title panel (15.3) avoids all three.

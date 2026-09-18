@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -201,6 +202,10 @@ func (r *fakeRunner) TabCreate(_ context.Context, req herdrc.TabCreateReq) (herd
 	return r.nextTabIn(req.Workspace), nil
 }
 
+func (r *fakeRunner) TabRename(_ context.Context, req herdrc.TabRenameReq) error {
+	return r.record("TabRename", req.TabID, req.Label)
+}
+
 func (r *fakeRunner) PaneSplit(_ context.Context, req herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
 	if err := r.record("PaneSplit", req.PaneID, req.Direction); err != nil {
 		return herdrc.CreatedTopology{}, err
@@ -385,8 +390,64 @@ func TestExitZero_CreatesASession(t *testing.T) {
 		}
 	}
 	// Progress is one line per step, on stderr.
-	if got := strings.Count(h.stderr.String(), "... ok"); got != 2 {
+	if got := strings.Count(h.stderr.String(), "... ok"); got != 3 {
 		t.Errorf("stderr = %q, want one progress line per op", h.stderr)
+	}
+	// The workspace's own tab carries the title, not herdr's `1`.
+	if !slices.Contains(h.runner.calls, "TabRename(tT1,fix login redirect)") {
+		t.Errorf("calls = %v, want the new workspace's tab named for the session", h.runner.calls)
+	}
+}
+
+// TestExitZero_ATabThatKeptHerdrsNameIsStillACreate: naming the tab is
+// cosmetic, so its failure is a progress line and nothing more. Exit 0,
+// the created line on stdout, and no failure line -- a caller that reads
+// the exit code or the JSON `ok` must see the session it got, and one that
+// reads stderr sees why its tab is still called `1`.
+func TestExitZero_ATabThatKeptHerdrsNameIsStillACreate(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%v", asJSON), func(t *testing.T) {
+			h := newHarness(t)
+			h.runner.failAt = "TabRename"
+			h.runner.failErr = errors.New(`{"error":{"code":"tab_not_found"}}`)
+			args := []string{"--title", "fix login redirect", "--no-worktree"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+
+			if code := h.run(args...); code != ExitOK {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+			}
+			if !h.runner.called("AgentStart") {
+				t.Fatalf("calls = %v, want the run to have gone on to start the agent", h.runner.calls)
+			}
+			stderr := h.stderr.String()
+			if !strings.Contains(stderr, "[2/3] naming tab ... failed, continuing: ") || !strings.Contains(stderr, "tab_not_found") {
+				t.Errorf("stderr = %q, want the rename's own line to say it failed, that the run went on, and why", stderr)
+			}
+			if strings.Contains(stderr, "herdr-draft create: failed") {
+				t.Errorf("stderr = %q, want no failure line for a run that created its session", stderr)
+			}
+			out := h.stdout.String()
+			if !asJSON {
+				if !strings.HasPrefix(out, "created ") {
+					t.Errorf("stdout = %q, want the created line", out)
+				}
+				return
+			}
+			var got map[string]any
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("stdout is not one JSON object: %v\n%s", err, out)
+			}
+			if got["ok"] != true {
+				t.Errorf("ok = %v, want true", got["ok"])
+			}
+			for _, k := range []string{"error", "failed_step"} {
+				if _, present := got[k]; present {
+					t.Errorf("--json carries %q = %v, want it absent on a created session", k, got[k])
+				}
+			}
+		})
 	}
 }
 

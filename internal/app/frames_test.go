@@ -788,8 +788,8 @@ func TestAssembledSubmit_BlockedStartFrame(t *testing.T) {
 	next, cmd := m.Update(form.SubmitMsg{})
 	m = next.(Model)
 	m, _, done := drainSubmitProgress(t, m, cmd)
-	if done.result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1 (the agent start op): %+v", done.result.FailedIndex, done.result)
+	if want := stepRowIndex(t, m.submitSteps, "claude"); done.result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the agent start op): %+v", done.result.FailedIndex, want, done.result)
 	}
 
 	m, cleanCmd := m.handleSubmitDone(done)
@@ -904,8 +904,8 @@ func TestAssembledSubmit_UnansweredDialogFrame(t *testing.T) {
 	next, cmd := m.Update(form.SubmitMsg{})
 	m = next.(Model)
 	m, _, done := drainSubmitProgress(t, m, cmd)
-	if done.result.FailedIndex != 1 {
-		t.Fatalf("FailedIndex = %d, want 1 (the launch step): %+v", done.result.FailedIndex, done.result)
+	if want := stepRowIndex(t, m.submitSteps, "claude"); done.result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the launch step): %+v", done.result.FailedIndex, want, done.result)
 	}
 
 	m, cleanCmd := m.handleSubmitDone(done)
@@ -998,8 +998,8 @@ func TestAssembledSubmit_PromptKilledTheAgentFrame(t *testing.T) {
 	next, cmd := m.Update(form.SubmitMsg{})
 	m = next.(Model)
 	m, _, done := drainSubmitProgress(t, m, cmd)
-	if done.result.FailedIndex != 2 {
-		t.Fatalf("FailedIndex = %d, want 2 (the prompt op): %+v", done.result.FailedIndex, done.result)
+	if want := stepRowIndex(t, m.submitSteps, "prompt"); done.result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", done.result.FailedIndex, want, done.result)
 	}
 	if done.result.PromptText == "" {
 		t.Fatal("PromptText is empty, want the composed prompt back for a manual paste")
@@ -1021,4 +1021,20 @@ func TestAssembledSubmit_PromptKilledTheAgentFrame(t *testing.T) {
 	assertAppSubmitFrame(t, "submit-prompt-killed-agent-80x24", m, 80, 24)
 	assertAppSubmitFrame(t, fmt.Sprintf("submit-prompt-killed-agent-%dx%d", framePopupW, framePopupH),
 		m, framePopupW, framePopupH)
+}
+
+// stepRowIndex is the index of the submit row labelled label -- the step a
+// frame test expects the run to stop on, found by what the row IS rather
+// than by where it happened to sit when the test was written. A plan that
+// gains an op ahead of it (the tab rename did) moves the number and not
+// the row.
+func stepRowIndex(t *testing.T, steps []form.Step, label string) int {
+	t.Helper()
+	for i, s := range steps {
+		if s.Label == label {
+			return i
+		}
+	}
+	t.Fatalf("no %q row in %+v", label, steps)
+	return -1
 }
