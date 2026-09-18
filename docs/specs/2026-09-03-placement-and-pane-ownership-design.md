@@ -5,8 +5,9 @@
   **§14 (2026-09-17) reverses §5.3 and §6.1 for a worktree:** a worktree
   session runs in its own space again, and placement applies only without
   one. Read §14 before §5.3. **§15 (2026-09-18)** names the tab a session
-  opens after its title, and weighs a separate tab name — a proposal
-  awaiting the owner's decision, not a design approved for building.
+  opens after its title. It also weighed a separate tab name, which the
+  owner declined the same day (§15.2); §15.3's design is kept, unbuilt, in
+  case that changes.
 - **Supersedes:**
   - `internal/plan/build.go:19-21` — the `Placement` type's doc sentence
     "It is ignored when `Input.UseWorktree` is set -- worktree creation
@@ -1331,7 +1332,7 @@ carries its own title under a shared space label.
 
 ### 15.2 Is a tab name that differs from the title worth a control?
 
-**Recommendation: no.** Four facts, each checked.
+**Decided 2026-09-18: no**, as recommended here. Four facts, each checked.
 
 1. **A popup title cannot run long.** The title field is capped at 32 runes
    (`titleCharLimit`, spec §6 field 3), and a Linear-seeded title is cut to
@@ -1369,13 +1370,17 @@ A `config.toml` key choosing the issue identifier over the title is one
 such policy.
 
 **What does run long is headless.** `create --title` and `--issue` have
-no 32-rune cap. A 47-rune title reaches `plan.Input` whole from `create`
-and cut to 32 from the form, with the branch derived differently to
-match. `TestFormAndCommandProduceTheSamePlan` misses it because every
-title in it is short. That is the drift the equivalence test exists to
-catch, it is independent of tabs, and it deserves its own issue.
+no 32-rune cap. A 47-rune `--title` reaches `plan.Input` whole from
+`create` and cut to 32 from the form, with the branch derived differently
+to match. `--issue` usually diverges in the title only, because both
+paths take Linear's branch name. That holds while `linear_branch_name` is
+at its default and the issue has a branch name. Otherwise both paths
+derive the branch from their differently-capped titles
+(`app.BranchFor`). `TestFormAndCommandProduceTheSamePlan` misses it
+because every title in it is short. That is the drift the equivalence
+test exists to catch, it is independent of tabs, and it is #176.
 
-### 15.3 If the owner wants the control anyway
+### 15.3 The control, if that changes (declined 2026-09-18, not built)
 
 - **Home: the title row's panel**, as a `tab` part under the verdict line
   and above the session list. `↓` from the title row enters it and `↑`
