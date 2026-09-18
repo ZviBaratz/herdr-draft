@@ -1317,10 +1317,11 @@ stderr and leaves stdout and `--json` unchanged. The popup marks the row
 popup at once. So the row stays on screen only when a later step fails
 and holds the failure screen up; otherwise the evidence is the tab's own
 `1`. Holding the popup open over a cosmetic failure was considered and
-not done, because it would make the user dismiss a success. Checked live on a disposable
-server, with herdr's own tab bar read from an attached client. That
-covered `new space`, worktree, the §5.2 reuse, `tab here`, `split here`
-and a rename refused by a shim.
+not done, because it would make the user dismiss a success.
+
+Checked live on a disposable server, with herdr's own tab bar read from
+an attached client. That covered `new space`, worktree, the §5.2 reuse,
+`tab here`, `split here` and a rename refused by a shim.
 
 On a worktree session the tab repeats the space's name, and the owner
 asked for it anyway. Seen on screen, it earns its place. The sidebar
@@ -1358,8 +1359,8 @@ carries its own title under a shared space label.
 
 The cost that remains is real but small. On a strip about 170 cells wide,
 four full-length titles fit before it scrolls, or six at 23 runes
-(`Fix login redirect loop`). The lever for that is a shorter title, and the title row already
-provides it.
+(`Fix login redirect loop`). The lever for that is a shorter title, and
+the title row already provides it.
 
 What would change this: the strip in a busy repository space proving
 annoying in use. The answer then is a **policy** for the default, not a
