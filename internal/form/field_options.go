@@ -173,7 +173,21 @@ func (f *OptionsField) newLine(spec OptionSpec, seed string) *optionLine {
 		l.name.SetPlaceholder("type a " + spec.Label)
 	}
 	l.chips.SetChips(chips)
-	if seed != "" && !l.chips.SelectID(seed) && l.name != nil {
+	if seed == "" {
+		return l
+	}
+	// Matched against the OFFERED values only. The inherit and other chips
+	// carry form words as their IDs, and a free-text seed may spell one:
+	// config.toml's `model = "other"` is a model id, which create sends as
+	// `--model other`, so selecting the `other` chip with an empty name
+	// here would send nothing and break the two paths' equivalence.
+	for _, c := range spec.Choices {
+		if c.Value == seed {
+			l.chips.SelectID(seed)
+			return l
+		}
+	}
+	if l.name != nil {
 		l.chips.SelectID(optionsOtherID)
 		l.name.SetValue(seed)
 	}
@@ -264,10 +278,9 @@ func (f *OptionsField) Blur() {
 //   - ←→ move the chips of a chip part. On a name part they, and every
 //     other key, go to the input.
 //   - A printable key on a free-text option's chips selects `other` and
-//     types into its name -- the obvious thing to try, and a keystroke
-//     that did nothing would read as broken -- provided the key could
-//     extend the name into a valid value; any other key leaves the chips
-//     alone.
+//     starts a fresh name with it -- the obvious thing to try, and a
+//     keystroke that did nothing would read as broken -- provided the key
+//     is a valid start; any other key leaves the chips alone.
 //   - A click on a chip selects it and moves the cursor there.
 //
 // A kind with nothing declared ignores everything: a click can still focus
@@ -301,15 +314,20 @@ func (f *OptionsField) Update(msg tea.Msg) tea.Cmd {
 				return f.syncNameFocus()
 			}
 		default:
-			// Only a key that could extend the name into a valid id makes
-			// the jump. A stray space or dash would otherwise swap a chosen
-			// alias for an `other` whose name refuses the key -- which sends
-			// nothing at all, a change nobody asked for.
+			// A key typed on the chips STARTS a name, seeded with that key
+			// (Atrium's modelField did the same), and only when the key
+			// alone is a valid start. It does not edit whatever an earlier
+			// visit to `other` left in the input: that text's cursor can sit
+			// anywhere, so where the key would land -- and whether the edit
+			// would even be accepted -- is not knowable from here, and a
+			// refused edit after the chip had already moved left `other`
+			// launching the OLD name (review of the first version). A key
+			// that cannot start a name leaves the chips alone.
 			if !part.onName && l.name != nil && km.Text != "" && km.Mod&^tea.ModShift == 0 &&
-				l.spec.Valid != nil && l.spec.Valid(l.name.Value()+km.Text) {
+				l.spec.Valid != nil && l.spec.Valid(km.Text) {
 				l.chips.SelectID(optionsOtherID)
-				f.setPart(f.part + 1)
-				return f.updateName(l, msg)
+				l.name.SetValue(km.Text)
+				return f.setPart(f.part + 1)
 			}
 		}
 	}
@@ -472,6 +490,10 @@ func (f *OptionsField) hint() string {
 	pinned := f.state.opts.Pinned[l.spec.Name]
 	v := l.value()
 	switch {
+	case l.onOther() && v == "" && pinned != "":
+		// What launches is extra_args' pin, and the row already says so;
+		// "sends no --model" would contradict it.
+		return fmt.Sprintf("type a %s; while it is empty, [agents.extra_args] passes %s %s", l.spec.Label, flag, pinned)
 	case l.onOther() && v == "":
 		return fmt.Sprintf("type a %s; an empty one sends no %s", l.spec.Label, flag)
 	case v == "" && pinned != "":
@@ -515,7 +537,9 @@ func (f *OptionsField) extraArgsLine() string {
 
 // Panel is one part per option, then -- as room allows, and given up
 // bottom-first -- the hint, the extra_args line, the notes and the
-// provenance line (spec §7.2). The parts are never dropped.
+// provenance line (spec §7.2). The parts go last, and when even they
+// outnumber the rows, the ones kept are a window around the cursor, so the
+// part being changed is never the one cut.
 func (f *OptionsField) Panel(width, h int) string {
 	if h < 1 {
 		h = 1
@@ -564,6 +588,17 @@ func (f *OptionsField) Panel(width, h int) string {
 			content = fitLine(dim.Render("type a "+l.spec.Label), valueW)
 		}
 		lines = append(lines, f.panelPart(active, optionsNameLabel, content, labelW))
+	}
+	// A region shorter than the parts -- the three-row floor with `other`
+	// open is four -- keeps a window of them around the cursor rather than
+	// letting panelBlock cut from the bottom, which would hide the very
+	// line ←→ is changing (review of the first version).
+	if len(lines) > h {
+		start := 0
+		if f.part >= h {
+			start = f.part - h + 1
+		}
+		lines = lines[start : start+h]
 	}
 
 	if hint := f.hint(); hint != "" {

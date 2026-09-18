@@ -282,11 +282,18 @@ focus an inert row (`form.go`'s `FocusByID`).
 - Warnings about `[agents.options]` (§6.2) come next, then a provenance line
   (`from config.toml`) while the values shown are the config file's own.
 - **Shortening when rows are scarce:** the provenance line goes first, then
-  the notes, then the `extra_args` line, then the hint. The parts are never
-  dropped.
+  the notes, then the `extra_args` line, then the hint. The parts go last,
+  and when even they outnumber the rows (four parts with `other` open, at
+  the three-row floor), the panel keeps a window of them around the cursor,
+  so the part being changed is never the one cut.
 - **The name input** refuses any edit that would make an invalid id, so
   pasting `--foo` does nothing. `other` with an empty name sends no flag,
-  like `inherit`.
+  like `inherit`. A key typed on the model's chips selects `other` and
+  starts a fresh name with that key, when the key is a valid start; any
+  other key leaves the chips alone.
+- **A configured value is matched against the offered values only.**
+  `model = "other"` is a model id, sent as `--model other` by both paths,
+  not a selection of the `other` chip.
 
 A kind's values persist for the life of the popup. Going claude → codex →
 claude brings back what you chose. `⌃R ⌃R` rebuilds the form and reseeds
@@ -326,8 +333,8 @@ The rules:
 
 ### 8.2 Provenance and `--json`
 
-- **Provenance:** `option.<name>` is `flag`, `config.toml`, or absent for
-  built-in `inherit`.
+- **Provenance:** `option.<name>` is `flag`, `config.toml` or `built-in`,
+  for every option the kind declares.
 - **`--json`:** gains `"agent_options": {"model": "opus", ...}`, omitted when
   nothing is set.
 

@@ -198,6 +198,73 @@ func TestOptionsField_AnInvalidKeyOnTheModelChipsChangesNothing(t *testing.T) {
 	}
 }
 
+// Typing on the chips STARTS a name, seeded with the key, rather than
+// editing whatever an earlier visit to `other` left behind -- wherever that
+// old name's text cursor happens to sit. Review of the first version: a
+// name `abc` with its cursor at the start, then `haiku`, then `-`, passed
+// the jump's check as `abc-`, landed as a refused `-abc`, and left the
+// chip on `other` launching `--model abc`.
+func TestOptionsField_TypingOnTheChipsStartsAFreshName(t *testing.T) {
+	f := newClaudeOptions(t, nil)
+	f.Focus()
+	f.Update(key(tea.KeyLeft, 0)) // other
+	f.Update(key(tea.KeyDown, 0)) // name
+	for _, r := range "abc" {
+		f.Update(rn(r))
+	}
+	f.Update(key(tea.KeyHome, 0))
+	f.Update(key(tea.KeyUp, 0))   // back to the chips
+	f.Update(key(tea.KeyLeft, 0)) // haiku
+	f.Update(rn('-'))
+	if got := f.Values()["model"]; got != "haiku" {
+		t.Fatalf("after a stray dash: model = %q, want haiku", got)
+	}
+	f.Update(rn('x'))
+	if got := f.Values()["model"]; got != "x" {
+		t.Fatalf("after typing x on the chips: model = %q, want a fresh name %q", got, "x")
+	}
+}
+
+// A configured model id that happens to spell a chip's own word is still a
+// model id: config.toml's `model = "other"` must launch `--model other` from
+// the popup exactly as it does from create, not select the `other` chip with
+// an empty name (review of the first version; the equivalence invariant).
+func TestOptionsField_ASeedSpellingAChipWordIsStillAValue(t *testing.T) {
+	f := newClaudeOptions(t, map[string]string{"model": "other"})
+	if got := f.Values()["model"]; got != "other" {
+		t.Fatalf("model = %q, want the seeded id %q", got, "other")
+	}
+}
+
+// The part under the cursor is never cut, even when the region is shorter
+// than the parts: with `other` open there are four, and the floor is three.
+func TestOptionsField_ThePanelKeepsTheCursorPartInView(t *testing.T) {
+	f := newClaudeOptions(t, map[string]string{"model": "claude-opus-5[1m]"})
+	f.Focus()
+	for i := 0; i < 3; i++ {
+		f.Update(key(tea.KeyDown, 0)) // model -> name -> effort -> mode
+	}
+	panel := plainPanel(f, 3)
+	if !strings.Contains(panel, "▸ mode") {
+		t.Fatalf("the focused mode line is not in a three-row panel:\n%s", panel)
+	}
+}
+
+// With `other` open and its name empty, what launches is extra_args' pin,
+// which the row already says; the hint must not contradict it.
+func TestOptionsField_AnEmptyOtherHintNamesExtraArgs(t *testing.T) {
+	f := NewOptionsField(theme.Default())
+	f.SetKind("claude", KindOptions{
+		Specs: claudeSpecs(), ExtraArgs: []string{"--model", "opus"}, Pinned: map[string]string{"model": "opus"},
+	})
+	f.Focus()
+	f.Update(key(tea.KeyLeft, 0)) // other, name empty
+	panel := plainPanel(f, 8)
+	if strings.Contains(panel, "sends no --model") || !strings.Contains(panel, "[agents.extra_args] passes --model opus") {
+		t.Fatalf("hint contradicts the row:\n%s", panel)
+	}
+}
+
 // Typing on a line that takes no text does nothing at all.
 func TestOptionsField_TypingOnAClosedLineIsIgnored(t *testing.T) {
 	f := newClaudeOptions(t, nil)

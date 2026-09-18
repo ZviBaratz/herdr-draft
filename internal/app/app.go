@@ -2160,12 +2160,14 @@ func optionSpecs(kind string) []form.OptionSpec {
 
 // agentOptions is the options row's values for the plan, but only while
 // the row is showing the kind the agent row will launch. syncDerivedInertness
-// keeps the two together after every routed message, so a mismatch means
-// a submit arrived before the sync did, and options chosen for another kind
-// must never ride along with this one.
+// keeps the two together after every routed message, so a mismatch means a
+// submit arrived before the sync did. Options chosen for another kind must
+// never ride along with this one; the launched kind's own config.toml
+// default is what the row would have shown, and what `create` would send.
 func (m Model) agentOptions() agentopts.Values {
-	if m.options.Kind() != m.agent.Value() {
-		return nil
+	if kind := m.agent.Value(); m.options.Kind() != kind {
+		vals, _ := defaults.AgentOptions(m.cfg, kind)
+		return vals
 	}
 	return m.options.Values()
 }

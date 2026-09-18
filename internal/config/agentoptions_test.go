@@ -120,3 +120,18 @@ func TestLoad_AgentOptionsKeepTheGoodKeysBesideABadOne(t *testing.T) {
 		t.Fatalf("warnings = %q, want exactly the effort one", cfg.Agents.OptionWarnings)
 	}
 }
+
+// `options` written as a value rather than a table is a mistake like any
+// other in it, and is reported (review of the first version: it decoded
+// into an empty map and vanished).
+func TestLoad_AgentOptionsNotATableIsReported(t *testing.T) {
+	for _, body := range []string{"[agents]\noptions = \"opus\"\n", "[agents]\noptions = 5\n", "[agents]\noptions = [\"opus\"]\n"} {
+		cfg, err := Load(writeConfigBody(t, body))
+		if err != nil {
+			t.Fatalf("%q: Load: %v", body, err)
+		}
+		if len(cfg.Agents.OptionWarnings) != 1 || !strings.Contains(cfg.Agents.OptionWarnings[0], "ignoring [agents] options") {
+			t.Errorf("%q: warnings = %q, want one naming [agents] options", body, cfg.Agents.OptionWarnings)
+		}
+	}
+}

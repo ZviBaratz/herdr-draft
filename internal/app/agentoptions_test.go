@@ -76,16 +76,20 @@ func TestOptions_FollowTheAgentKind(t *testing.T) {
 }
 
 // A submit that beats the sync must not send one kind's options with
-// another: agentOptions refuses a row showing a kind other than the agent
-// row's.
-func TestOptions_AStaleRowSendsNothing(t *testing.T) {
+// another: with the row still showing a different kind, the plan carries the
+// launched kind's config.toml default -- what the row would have shown, and
+// what create would send -- and nothing the row holds.
+func TestOptions_AStaleRowSendsTheLaunchedKindsDefault(t *testing.T) {
 	m := newTestModel(t, testSetup{Config: config.Config{Agents: config.AgentsConfig{
-		Favorites: []string{"claude", "codex"},
+		Favorites: []string{"codex", "claude"},
 		Options:   map[string]agentopts.Values{"claude": {"effort": "low"}},
 	}}})
-	m.agent.Update(key(tea.KeyRight, 0)) // codex, with no reactToChanges after it
-	if got := m.PlanInput().AgentOptions; got != nil {
-		t.Fatalf("AgentOptions = %v from a row still showing %q for agent %q", got, m.options.Kind(), m.agent.Value())
+	if m.options.Kind() != "codex" {
+		t.Fatalf("setup: the row shows %q, want codex", m.options.Kind())
+	}
+	m.agent.Update(key(tea.KeyRight, 0)) // claude, with no reactToChanges after it
+	if got, want := m.PlanInput().AgentOptions, (agentopts.Values{"effort": "low"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("AgentOptions = %v from a row still showing %q for agent %q, want claude's default %v", got, m.options.Kind(), m.agent.Value(), want)
 	}
 }
 

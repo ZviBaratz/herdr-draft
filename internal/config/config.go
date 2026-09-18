@@ -464,15 +464,27 @@ func Load(configDir string) (Config, error) {
 	// The second pass cannot fail where the first succeeded -- same bytes,
 	// and a target that accepts any value -- but an error is still an
 	// error, and reporting it beats pretending the table was empty.
+	//
+	// `any`, not map[string]any, all the way down to `options` itself: a
+	// map target silently decodes `options = "opus"` into an empty map, so
+	// a key written as a value rather than a table vanished without the
+	// warning every other mistake in it gets (review of the first version).
 	var opts struct {
 		Agents struct {
-			Options map[string]any `toml:"options"`
+			Options any `toml:"options"`
 		} `toml:"agents"`
 	}
 	if _, err := toml.Decode(string(b), &opts); err != nil {
 		return Config{}, fmt.Errorf("load config: parse %s: %w", path, err)
 	}
-	cfg.Agents.Options, cfg.Agents.OptionWarnings = loadAgentOptions(opts.Agents.Options)
+	switch raw := opts.Agents.Options.(type) {
+	case nil:
+	case map[string]any:
+		cfg.Agents.Options, cfg.Agents.OptionWarnings = loadAgentOptions(raw)
+	default:
+		cfg.Agents.OptionWarnings = []string{fmt.Sprintf(
+			"ignoring [agents] options = %v: expected a table per agent kind, [agents.options.<kind>]", raw)}
+	}
 
 	// The prefix reaches `herdr worktree create --branch <value>` as an
 	// argv element by way of gitx.BranchSlug, so it is validated at the
