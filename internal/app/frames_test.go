@@ -236,6 +236,7 @@ var sectionMarkers = map[string]string{
 	"worktree":  "worktree",
 	"placement": "placement",
 	"agent":     "agent",
+	"options":   "options",
 	"account":   "account",
 	"prompt":    "prompt",
 	"create":    "↵ create",
@@ -517,9 +518,9 @@ func scrollingIssues() []linear.Issue {
 // internal/form's own issue-scroll fixture cannot stand in for it. That
 // one renders a synthetic single-section form, where the region is
 // whatever height the test asks for; here the region is exactly
-// panelCapRows because eight stack rows and six chrome lines are also on
+// panelCapRows because nine stack rows and six chrome lines are also on
 // screen, which is the only arithmetic that ships. It is also the one
-// frame that shows the scrollbar and the eight row-stack rows at once.
+// frame that shows the scrollbar and the nine row-stack rows at once.
 func TestAssembledForm_CappedPanelScrolls(t *testing.T) {
 	setup := frameSetup(true)
 	setup.Linear = &fakeLinear{issues: scrollingIssues()}
@@ -536,16 +537,17 @@ func TestAssembledForm_CappedPanelScrolls(t *testing.T) {
 
 // TestAssembledForm_LadderBoundaries pins the two rungs of v3 spec §7.1
 // that a height table can state but no frame showed: rule 3 appearing
-// (h=15 vs 16) and the pads appearing (h=29 vs 30).
+// (h=16 vs 17) and the pads appearing (h=29 vs 30).
 //
 // rowlayout_test.go already asserts both as arithmetic. These exist
 // because the arithmetic being right is not the same claim as the FRAME
-// being right -- §7.3's own worked table says everything at h <= 15 is
-// byte-identical to v2, and nothing until now could have caught it if it
-// were not. Each pair is one row apart, so a diff between the two files
-// is exactly the rung.
+// being right -- §7.3's own worked table says everything below the whole
+// frame is byte-identical to v2, and nothing until now could have caught
+// it if it were not. Each pair is one row apart, so a diff between the two
+// files is exactly the rung. The first pair was 15 vs 16 over eight rows;
+// the agent-options spec's ninth row moved it up one (§7.4).
 func TestAssembledForm_LadderBoundaries(t *testing.T) {
-	for _, h := range []int{15, 16, 29, 30} {
+	for _, h := range []int{16, 17, 29, 30} {
 		m := filledFrameModel(t, true, true)
 		m.form.FocusByID("title")
 		assertAppFrame(t, fmt.Sprintf("assembled-ladder-%dx%d", framePopupW, h), m, framePopupW, h)
