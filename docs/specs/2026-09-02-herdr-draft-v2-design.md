@@ -741,6 +741,9 @@ resume/account binding across herdr restore (upstream #3228), marketplace
 publication, prompt-history reuse, live theme reload, and the account
 exhausted-confirm modal.
 
+> **Reversed, agent-options spec (2026-09-18):** "model/effort/permission chip
+> fields" is no longer out. See `docs/specs/2026-09-18-agent-options-design.md`.
+
 Newly considered and declined: a command-bar/omnibox parser, a two-column
 plan-preview layout (it collapses to the row stack below ~90 columns and the
 author did not report the outcome as opaque), and session recipes or

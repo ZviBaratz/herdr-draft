@@ -206,9 +206,13 @@ already have installed `--ref` against it.
 Some features were considered and explicitly declined, and re-proposing one
 is a regression rather than an idea. The full lists are in v1 §16, v2 §16,
 v3 §14 and the placement spec §13 — among them variant fan-out, draft
-persistence, model/effort/permission-mode chip fields, writes back to
-Linear, prompt-history reuse, a command bar, session recipes, row grouping
-bands, and git ahead/behind in the header.
+persistence, writes back to Linear, prompt-history reuse, a command bar,
+session recipes, row grouping bands, and git ahead/behind in the header.
+
+Model, effort and permission mode used to be on this list. They came off it
+the way this section says anything should: the recorded reasoning was argued
+against, in `docs/specs/2026-09-18-agent-options-design.md` §2, and the owner
+accepted the argument.
 
 If you think one deserves revisiting, open an issue arguing against the
 recorded reasoning rather than a PR implementing it.
