@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 )
 
@@ -67,6 +68,13 @@ type request struct {
 	reap            *bool
 	reapOn, reapOff bool
 
+	// options holds one value per agent session option any kind declares,
+	// keyed by option name (agentopts.Names) -- the storage its flag
+	// (agentopts.FlagName) is bound to. Whether a flag was given is set's
+	// answer, as for every other flag: `--effort inherit` is a request, and
+	// an absent --effort is not.
+	options map[string]*string
+
 	set map[string]bool
 }
 
@@ -107,6 +115,16 @@ flags:
                      one holding the project (implies --placement tab-in;
                      needs --no-worktree)
   --agent KIND       agent kind to start, e.g. claude
+  --model NAME       the agent's model: an alias (fable, opus, sonnet,
+                     haiku) or a full id such as claude-opus-5[1m]
+  --effort LEVEL     low | medium | high | xhigh | max
+  --permission-mode MODE
+                     manual | plan | acceptEdits | auto
+                     These three are claude's session options. Unset, each
+                     comes from config.toml's [agents.options.<kind>], else
+                     the agent's own settings; "inherit" sends none even
+                     when config.toml sets one. A kind that does not
+                     declare an option refuses its flag
   --account NAME     clauth account to pin (claude only); "auto" asks the
                      configured [clauth] picker to choose
   --issue ID         seed title, branch and prompt from a Linear issue
@@ -153,6 +171,16 @@ func registerFlags(fs *flag.FlagSet, req *request, worktreeOn, worktreeOff *bool
 	fs.StringVar(&req.placement, "placement", "", "")
 	fs.StringVar(&req.workspace, "workspace", "", "")
 	fs.StringVar(&req.agent, "agent", "", "")
+	// One flag per declared session option, registered FROM the
+	// declaration (agent-options spec §8.1), so an option some kind gains
+	// is a flag here by construction -- and a flag createUsage and the
+	// spawn skill must then name, which their tests enforce.
+	req.options = map[string]*string{}
+	for _, name := range agentopts.Names() {
+		v := new(string)
+		req.options[name] = v
+		fs.StringVar(v, agentopts.FlagName(name), "", "")
+	}
 	fs.StringVar(&req.account, "account", "", "")
 	fs.StringVar(&req.issue, "issue", "", "")
 	fs.BoolVar(&req.json, "json", false, "")
@@ -244,6 +272,16 @@ func (r request) validate() error {
 	case onFailureKeep, onFailureClean:
 	default:
 		return fmt.Errorf("unknown --on-failure %q: expected keep or clean", r.onFailure)
+	}
+	// A blank option is a mistake rather than a request: "inherit" is how
+	// to ask for no flag, and a script that interpolated an empty variable
+	// should hear about it rather than silently inherit. Whether the value
+	// itself is valid depends on the agent kind, which is resolve.go's.
+	for _, name := range agentopts.Names() {
+		flag := agentopts.FlagName(name)
+		if r.set[flag] && strings.TrimSpace(*r.options[name]) == "" {
+			return fmt.Errorf("--%s needs a value, or %q to send none", flag, agentopts.Inherit)
+		}
 	}
 	return nil
 }

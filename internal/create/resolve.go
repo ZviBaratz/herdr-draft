@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
@@ -110,6 +111,12 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	// account panel reads, which is what keeps a warning added to it from
 	// reaching one surface and not the other.
 	for _, w := range cfg.ClauthWarnings() {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
+	}
+	// And every [agents.options] entry config.Load refused: the same list
+	// the popup's options panel shows (agent-options spec §6.2), because a
+	// default that silently did not apply is a session nobody can explain.
+	for _, w := range cfg.Agents.OptionWarnings {
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
 	}
 
@@ -512,6 +519,11 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		prov[defaults.FieldMarkReady] = provenanceFlag
 	}
 
+	options, err := agentOptions(req, t.cfg, kind, prov)
+	if err != nil {
+		return plan.Input{}, nil, err
+	}
+
 	return plan.Input{
 		ProjectDir:    t.projectDir,
 		Title:         title,
@@ -523,6 +535,7 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		Space:         space,
 		AgentKind:     kind,
 		ExtraArgs:     t.cfg.Agents.ExtraArgs[kind],
+		AgentOptions:  options,
 		AccountPin:    accountPin(req, t.cfg, kind),
 		AccountLaunch: accountLaunch(t.cfg),
 		// Off the same config as the form's buildPlanInput. Both paths must
@@ -569,6 +582,54 @@ func agentKind(req request, res defaults.Resolved, kinds []string, prov map[stri
 		return kinds[0], nil
 	}
 	return "", fmt.Errorf("no agent kind to start: set --agent, or [agents] favorites in config.toml")
+}
+
+// agentOptions resolves the session options for the kind this create will
+// launch (agent-options spec §8.1): defaults.AgentOptions for that kind --
+// config.toml over built-in inherit, the one chain the form reads too --
+// then every option flag given, each normalised against the kind's own
+// declaration.
+//
+// An option the kind does not declare is refused rather than dropped. The
+// form cannot produce one -- its row only offers what the kind declares --
+// and #145-147's rule is that create refuses what the form refuses; a
+// silently ignored `--effort` on a codex session is a script that thinks it
+// asked for something.
+func agentOptions(req request, cfg config.Config, kind string, prov map[string]string) (agentopts.Values, error) {
+	vals, from := defaults.AgentOptions(cfg, kind)
+	for field, tier := range from {
+		prov[field] = tier.String()
+	}
+	for _, name := range agentopts.Names() {
+		flag := agentopts.FlagName(name)
+		if !req.set[flag] {
+			continue
+		}
+		raw := *req.options[name]
+		// Normalize("") succeeds for every option the kind declares, so an
+		// error here means the kind declares no such option at all -- which
+		// deserves its own sentence rather than an "invalid value" one.
+		if _, err := agentopts.Normalize(kind, name, ""); err != nil {
+			return nil, fmt.Errorf("--%s does not apply to agent kind %s: %v", flag, kind, err)
+		}
+		v, err := agentopts.Normalize(kind, name, raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --%s %q: %v", flag, raw, err)
+		}
+		if v == "" {
+			delete(vals, name)
+		} else {
+			if vals == nil {
+				vals = agentopts.Values{}
+			}
+			vals[name] = v
+		}
+		prov[defaults.FieldAgentOption(name)] = provenanceFlag
+	}
+	if len(vals) == 0 {
+		return nil, nil
+	}
+	return vals, nil
 }
 
 // accountPin resolves the clauth pin the same way Model.accountPin does:

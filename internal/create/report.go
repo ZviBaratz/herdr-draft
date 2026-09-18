@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
@@ -212,6 +213,12 @@ type jsonReport struct {
 	// through provenance (reap spec §7.4).
 	MarkReady bool `json:"mark_ready,omitempty"`
 
+	// AgentOptions is the session options the agent was launched with,
+	// option name to value (agent-options spec §8.2) -- the chosen ones, not
+	// what [agents.extra_args] passes on its own. Absent when every option
+	// inherits; provenance's option.<name> entries say where each came from.
+	AgentOptions agentopts.Values `json:"agent_options,omitempty"`
+
 	OnFailure    string `json:"on_failure,omitempty"`
 	Cleaned      bool   `json:"cleaned,omitempty"`
 	CleanRefused string `json:"clean_refused,omitempty"`
@@ -232,6 +239,8 @@ func (r report) writeJSON(w io.Writer) {
 		Worktree:   r.input.UseWorktree,
 		Provenance: r.provenance,
 		MarkReady:  r.input.MarkReady && plan.ReapApplies(r.input.Prompt),
+
+		AgentOptions: r.input.AgentOptions,
 	}
 	if r.input.UseWorktree {
 		out.Branch = r.input.Branch
