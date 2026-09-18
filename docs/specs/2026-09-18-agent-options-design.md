@@ -373,7 +373,11 @@ catches up.
 - **`--resume`**, which is #166's: a narrow flag with no form control.
 - **Checking that the running agent honoured the flags.** §9's loud failures
   cover a stale declaration. A wrong model id is the agent's to report, in
-  its own pane.
+  its own pane, and on claude 2.1.277 it does: the session starts, and the
+  first prompt is answered with `There's an issue with the selected model`.
+  It is an ordinary transcript error, not a blocking screen, so the prompt
+  guard's signature list has nothing to learn from it
+  (`docs/manual-smoke.md`, Cell 15's recorded run).
 
 ## 11. Testing
 

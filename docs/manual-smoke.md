@@ -1593,13 +1593,16 @@ the pane, and what the progress screen and `create --json` reported.
 Agent-options spec §10 leaves a wrong model id to claude. If claude shows a
 stable blocking screen that the prompt was typed into, that is the evidence
 for adding it to `dialog.go`'s signatures; if it shows an ordinary error,
-record that nothing is needed.
+record that nothing is needed. **On claude 2.1.277 it is an ordinary
+error** (Recorded runs, 2026-09-18): claude starts, its banner names the
+unknown id, and the prompt is delivered and answered in the transcript with
+`There's an issue with the selected model (no-such-model)`. Re-check it when
+claude's major version moves.
 
-**Partly run.** The drift check, the unpinned form walk, and Path B's typed
-command through an `echo` launcher were observed on 2026-09-18 (Recorded
-runs). A real claude launch on either path, the headless refusals against a
-live herdr, and the model-error record were not. Do not write a result you
-did not see.
+**Run on 2026-09-18** (Recorded runs), in two passes: the form, its panel
+and Path B's typed command without an agent, then real launches on both
+paths. The headless refusals were covered by tests, not against a live
+herdr. Do not write a result you did not see.
 
 ## After the matrix
 
@@ -1633,6 +1636,26 @@ did not see.
   alongside the release.
 
 ## Recorded runs
+
+### the options row, launching claude (agent-options spec) — 2026-09-18
+
+herdr 0.9.0, claude **2.1.277** (it updated itself during the day; the drift
+check passed again on it, with the same `--effort` levels and
+`--permission-mode` choices), `zvi/session-configuration` at `3749c82`
+(#181), not merged. Route A0 with isolated `XDG_*` dirs, a throwaway repo,
+and a scratch plugin config and state dir. Three launches on `personal-0`,
+two one-word prompts: the pass cost the account about 1% of its 5h window.
+
+| Case | Result |
+|---|---|
+| Path A, the form (Route B) | **as expected.** Typing `claude-opus-5[1m]` onto the model chips jumped to `other`; `effort high`, `plan`; `⌃S`. The progress screen read `… claude  options-smoke · claude-opus-5[1m] · effort high · plan mode` and the footer `answer the dialog in the pane — your prompt goes out as soon as you do`, over the trust dialog. herdr typed `claude --model 'claude-opus-5[1m]' --effort high --permission-mode plan`. After `Down`, a check that `❯` sat on "Yes, I trust this folder", and `Enter`, the prompt went out and the form closed. claude's banner read `Opus 5 (1M context) with high effort`, its footer `⏸ plan mode on`, and it answered `hi` in plan mode. |
+| Path B, headless, pinned | **as expected.** `--account personal-0 --model sonnet --effort low --permission-mode auto --prompt hi`: the typed launch was `clauth start personal-0 -- --model sonnet --effort low --permission-mode auto`. Trust is kept per launch mechanism, so the dialog came up again and `create` failed fast at detection, as headless `create` must: exit 1, `prompt_status: unsent`, and `agent_options` all three. After answering the dialog: `Sonnet 5 with low effort` and `⏵⏵ auto mode on`, with **no** first-use dialog for `auto`. That was the one thing that could have put a screen between the launch and the prompt. |
+| unknown model id | **an ordinary error, not a dialog.** Path A, headless, `--model no-such-model --prompt hi`: exit 0, `prompt_status: sent`. The banner read `no-such-model with high effort`, and the prompt was answered with `There's an issue with the selected model (no-such-model). It may not exist or you may not have access to it. Run /model to pick a different model.` Nothing belongs in `dialog.go`. The create is honest about delivery; that the session cannot work is claude's to say, and it does, in the pane. |
+
+Teardown: the disposable session stopped and deleted, no process left with
+a cwd under the scratch tree, the scratch tree removed, `pgrep -x
+herdr-draft` 0. claude recorded its trust in `personal-0`'s own config for
+the throwaway path, which is left as it is.
 
 ### the options row (agent-options spec) — 2026-09-18
 
