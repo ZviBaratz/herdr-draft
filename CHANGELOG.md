@@ -93,9 +93,9 @@ without the popup. It drives herdr exclusively through the public CLI
   resolver, and a test drives a real form and a real `create` request over
   the same files to keep the two from drifting.
 - **A title is kept to what the form's `title` row holds**, whether it
-  came from `--title` or from `--issue`'s Linear issue: tabs and line breaks
-  become spaces, other control characters are dropped, and it is cut to 32
-  runes. A line on stderr gives the title used. Before, one title could
+  came from `--title` or from `--issue`'s Linear issue: a tab, CR or LF
+  becomes a space, other control characters and invalid UTF-8 are dropped,
+  and it is cut to 32 runes. A line on stderr gives the title used. Before, one title could
   build two different sessions: the space and tab labels and a
   title-derived branch differed from the popup's, and so could the agent's
   name (#176, #178).

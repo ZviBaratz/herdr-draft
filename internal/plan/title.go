@@ -1,10 +1,12 @@
-// title.go is the one place the session title's rules exist: the 32-rune
-// cap (spec §6 field 3, "Cap 32 runes") and which characters a title can
-// hold. It is in plan for reap.go's reason: internal/form and
-// internal/create both import plan already, and they read this ONE
-// definition rather than keeping a copy each. The form caps its title row
-// with TitleMaxRunes; `create` cleans with SanitizeTitle and cuts with
-// CutTitle. Before #176 and #178 only the form did either, so one title
+// title.go holds the session title's two rules: the 32-rune cap (spec §6
+// field 3, "Cap 32 runes") and which characters a title can hold. It is in
+// plan for reap.go's reason: internal/form and internal/create both import
+// plan already. The cap is ONE definition both read -- the form's title
+// row is built with TitleMaxRunes, and `create` cuts with CutTitle. The
+// character rule is not ours: it is bubbles' textinput sanitizer, which
+// the row applies itself, so SanitizeTitle is a copy for `create`, held to
+// the row by tests rather than shared by a call (see SanitizeTitle).
+// Before #176 and #178 only the form applied either rule, so one title
 // could build two different sessions.
 package plan
 
@@ -39,12 +41,19 @@ func CutTitle(title string) string {
 // dropped, as is U+FFFD -- which is also what each byte of invalid UTF-8
 // decodes to, so those go too. Everything else is kept.
 //
+// Only TAB, CR and LF become a space. VT, FF and NEL are control
+// characters like any other and are dropped, and U+2028/U+2029 are not
+// control characters at all, so they are kept -- all as the row does.
+//
 // The rule is not this repository's. It is bubbles' textinput sanitizer
 // (v2.1.1, textinput.go's san(): runeutil's ReplaceTabs(" ") and
 // ReplaceNewlines(" ")), which cleans typing, pastes and SetValue alike.
-// The row cannot be routed through this function, so
-// TestTitleField_KeepsWhatPlanKeeps holds the two to one answer instead,
-// and a bubbles upgrade that changes the rule fails there (#178).
+// The row cannot be routed through this function, so two tests in
+// internal/form hold the row to it instead (#178):
+// TestTitleField_KeepsWhatPlanKeeps over a table that includes invalid
+// UTF-8, and TestTitleField_KeepsWhatPlanKeepsForEveryRune over every rune
+// there is. A bubbles upgrade that changes how it treats any character
+// fails one of them.
 //
 // herdr would store a control character in a label verbatim and then drop
 // it when drawing, so a tab or a line break between two words shows as

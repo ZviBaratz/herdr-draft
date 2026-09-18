@@ -393,6 +393,11 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	if !req.set["title"] || strings.TrimSpace(plan.SanitizeTitle(raw)) == "" {
 		if issue != nil {
 			raw, from = issue.Title, issue.Identifier+"'s title"
+			// A --title that was given and is not used is said, or the
+			// caller finds a different title on the session and no reason.
+			if req.set["title"] {
+				fmt.Fprintf(deps.stderr(), "herdr-draft create: --title is blank as the form's title row would hold it, so %s is used instead\n", from)
+			}
 		}
 	}
 	// The title row's rules, from the definitions the row itself is held
@@ -404,6 +409,13 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	// whose title came back changed is told, once.
 	clean := plan.SanitizeTitle(raw)
 	if strings.TrimSpace(clean) == "" {
+		// Refused, as the form refuses an empty title row. When cleaning is
+		// what emptied it, the reason names the title that was given:
+		// "a title is required: pass --title" would tell a caller who did
+		// pass one to do it again.
+		if strings.TrimSpace(raw) != "" {
+			return plan.Input{}, nil, fmt.Errorf("%s has nothing the form's title row keeps; pass a --title with text in it", from)
+		}
 		return plan.Input{}, nil, fmt.Errorf("a title is required: pass --title, or --issue to take one from Linear")
 	}
 	title := plan.CutTitle(clean)
@@ -839,7 +851,7 @@ func reapWarning(req request, in plan.Input) string {
 // changes and names only the title actually used -- a line per change
 // would have the first quote a title the second then cut.
 func titleNote(from, raw, clean, used string) string {
-	const unkept = "has characters the form's title row does not keep (tabs and line breaks become spaces, the rest are dropped)"
+	const unkept = "has characters the form's title row does not keep (a tab, CR or LF becomes a space, and the rest are dropped)"
 	cleaned, cut := clean != raw, used != clean
 	switch {
 	case cleaned && cut:

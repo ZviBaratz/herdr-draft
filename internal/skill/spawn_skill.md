@@ -97,10 +97,10 @@ you are doing right now.
 - `--worktree` / `--no-worktree` choose explicitly. Leave both off and the
   user's own default applies.
 - `--title TEXT` names the session: its agent, and the space or tab it
-  opens. It is kept to what the form's title row holds: tabs and line
-  breaks become spaces, other control characters are dropped, and it is
-  cut to 32 runes. One line on stderr gives the title used whenever that
-  changes it, so write one plain line that fits.
+  opens. It is kept to what the form's title row holds: a tab, CR or LF
+  becomes a space, other control characters and invalid UTF-8 are
+  dropped, and it is cut to 32 runes. One line on stderr gives the title
+  used whenever that changes it, so write one plain line that fits.
 - `--branch NAME` names the branch. Left off, it is derived from the title.
 - `--base REF` is what the branch is cut from. Left off it resolves like
   every other unset value — usually `HEAD`, which is *your current commit*,

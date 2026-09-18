@@ -1552,6 +1552,10 @@ tab bar. `--issue` was not run live, because it needs a real Linear key;
 Teardown: both sessions stopped and deleted, the scratch tree removed,
 `herdr session list` without either, `pgrep -x herdr-draft` 0.
 
+The stderr line quoted above is the wording the run saw. Review tightened it
+in the branch's next commit to `(a tab, CR or LF becomes a space, and the
+rest are dropped)`, because a VT, FF or NEL is dropped, not spaced.
+
 ### a long `create` title is cut to 32 runes (#176) — 2026-09-18
 
 herdr 0.9.0, `zvi/cap-create-titles-at-32-runes`, built from the
@@ -1563,7 +1567,8 @@ plugin state dir, and `[agents] favorites = ["nosuchkind"]` with
 `branch_prefix = "zvi/"`. Every create stopped at `starting agent`, and the
 pass spent no account quota. `--issue` was not run live, because it needs a
 real Linear key. `TestFormAndCommandProduceTheSamePlan` and
-`TestLongTitleIsCutAndSaysSo` cover it.
+`TestTitleIsKeptToWhatTheFormKeeps` (then named
+`TestLongTitleIsCutAndSaysSo`) cover it.
 
 | Case | Result |
 |---|---|

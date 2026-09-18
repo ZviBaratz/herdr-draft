@@ -3,6 +3,7 @@ package form
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -72,8 +73,8 @@ func TestTitleField_ThirtyTwoRuneCap(t *testing.T) {
 // plan.CutTitle. This holds the two to one answer on both ways text reaches
 // the row from outside the keyboard: a seeded title (SetTitle, which is how
 // a Linear issue's arrives) and a paste. A bubbles upgrade that changes its
-// rule fails here, rather than quietly building a different session from
-// `create`.
+// rule fails here or in the sweep below, rather than quietly building a
+// different session from `create`.
 func TestTitleField_KeepsWhatPlanKeeps(t *testing.T) {
 	for _, title := range []string{
 		"fix login redirect loop",
@@ -92,6 +93,13 @@ func TestTitleField_KeepsWhatPlanKeeps(t *testing.T) {
 		// cut of the raw text would.
 		"Fix\a login\tredirect loop when the cookie expires",
 		strings.Repeat("\t", 40),
+		// Invalid UTF-8 of each shape: an overlong NUL, an encoded
+		// surrogate, a code point past U+10FFFF, and a truncated
+		// sequence. Each bad byte decodes to U+FFFD, which the row drops.
+		"a\xc0\x80b",
+		"a\xed\xa0\x80b",
+		"a\xf4\x90\x80\x80b",
+		"a\xe2\x82b",
 	} {
 		want := plan.CutTitle(plan.SanitizeTitle(title))
 
@@ -107,6 +115,44 @@ func TestTitleField_KeepsWhatPlanKeeps(t *testing.T) {
 		if got := pasted.Value(); got != want {
 			t.Errorf("paste %q: the row holds %q, plan keeps %q", title, got, want)
 		}
+	}
+}
+
+// TestTitleField_KeepsWhatPlanKeepsForEveryRune takes the guard above from
+// its table to all of Unicode. The row's rule looks at one rune at a time,
+// so every rune from U+0000 to utf8.MaxRune, fed through in chunks of
+// TitleMaxRunes both ways, is the whole of it: a bubbles upgrade that
+// treats any single character differently fails here. Invalid UTF-8 is not
+// a rune, so its shapes are in the table above.
+func TestTitleField_KeepsWhatPlanKeepsForEveryRune(t *testing.T) {
+	check := func(chunk []rune) {
+		title := string(chunk)
+		want := plan.CutTitle(plan.SanitizeTitle(title))
+
+		seeded := NewTitleField(theme.Default())
+		seeded.SetTitle(title, false)
+		if got := seeded.Value(); got != want {
+			t.Fatalf("SetTitle(%q): the row holds %q, plan keeps %q", title, got, want)
+		}
+
+		pasted := NewTitleField(theme.Default())
+		pasted.Focus()
+		pasted.Update(tea.PasteMsg{Content: title})
+		if got := pasted.Value(); got != want {
+			t.Fatalf("paste %q: the row holds %q, plan keeps %q", title, got, want)
+		}
+	}
+
+	chunk := make([]rune, 0, plan.TitleMaxRunes)
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		chunk = append(chunk, r)
+		if len(chunk) == plan.TitleMaxRunes {
+			check(chunk)
+			chunk = chunk[:0]
+		}
+	}
+	if len(chunk) > 0 {
+		check(chunk)
 	}
 }
 

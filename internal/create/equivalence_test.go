@@ -70,8 +70,9 @@ func TestFormAndCommandProduceTheSamePlan(t *testing.T) {
 		// hands --title. "" is the short title every other scenario shares.
 		title string
 		// paste enters the title as one paste instead of keystrokes, which
-		// is the only way a tab or a line break reaches the title row: the
-		// keyboard's tab moves focus.
+		// is the only way a user's own text with a tab or a line break in
+		// it reaches the title row: the keyboard's tab moves focus. (An
+		// issue's title reaches it seeded, through SetTitle.)
 		paste bool
 		// issue is the Linear issue both sides can see. args names it with
 		// --issue; the form is sent the message IssueField sends when a
