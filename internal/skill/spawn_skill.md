@@ -77,8 +77,8 @@ missing id and a wrong id are treated identically, on purpose.
 
 **What skipping it costs.** No `config.toml`, no `last-used.json`, no
 `projects.json`: no pinned account, no remembered placement for this
-project, no Linear key, no configured agent arguments, no configured
-timeouts. The session is still made — from built-in defaults, which are
+project, no Linear key, no configured agent arguments or session options,
+no configured timeouts. The session is still made — from built-in defaults, which are
 almost certainly not what the user configured.
 
 You are told, on the first line of stderr, but the wording depends on which
@@ -168,6 +168,29 @@ another without pretending to be a pane there.
   fallback.
 
 If the user has not said anything about accounts, pass neither flag.
+
+`claude` also takes three session options, each one flag:
+
+- `--model NAME` — an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full
+  model id such as `claude-opus-5[1m]`.
+- `--effort LEVEL` — `low`, `medium`, `high`, `xhigh` or `max`.
+- `--permission-mode MODE` — `manual`, `plan`, `acceptEdits` or `auto`.
+
+Left off, each comes from the user's configured default, or else claude's
+own settings. **Leave them off unless the user or the task asks for one**:
+the defaults are choices the user already made. `inherit` clears a
+configured default for this one session.
+
+Reasons to pass one: the user named a model or an effort; or the worker
+should propose before it touches anything, which is `--permission-mode
+plan`. **Never pass a more permissive `--permission-mode` than the one you
+are running under.** `acceptEdits` and `auto` let the new agent act without
+asking, so an agent that is itself asking for permission has no business
+handing a worker more than that. The two modes that skip asking altogether
+are not accepted here at all.
+
+These options are claude's. With another `--agent`, passing one is refused
+with exit 2 rather than quietly ignored.
 
 ## 6. Write the prompt
 

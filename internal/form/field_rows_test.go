@@ -78,11 +78,14 @@ func rowFields(palette theme.Palette) []Section {
 	agent := NewAgentField(palette)
 	agent.SetKinds([]string{"claude", "codex", "aider", "goose"})
 
+	options := NewOptionsField(palette)
+	options.SetKind("claude", claudeKind(map[string]string{"effort": "xhigh"}))
+
 	account := NewAccountField(palette)
 	account.SetAgentIsClaude(true)
 	account.SetProfiles(sampleStatus(), sampleNow())
 
-	return []Section{issue, title, prompt, dir, placement, agent, account}
+	return []Section{issue, title, prompt, dir, placement, agent, options, account}
 }
 
 // repoConfigFields is rowFields' companion for v2 spec §11's own state:
@@ -158,7 +161,7 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 	fields := rowFields(palette)
 
 	const w = 80
-	// h = 11 affords all seven rows with no header and no rules; h = 60
+	// h = 12 affords all eight rows with no header and no rules; h = 60
 	// affords the full chrome AND v3 spec §7's top margin. Both show the
 	// whole stack, so no scrolling (stackWindow) can explain a difference.
 	//
@@ -166,7 +169,7 @@ func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 	// written down, because they are precisely what differs between the
 	// two heights -- and this test's whole job is that the row BYTES do
 	// not.
-	const short, tall = 11, 60
+	const short, tall = 12, 60
 	shortFrame, tallFrame := layoutFrame(short, len(fields)), layoutFrame(tall, len(fields))
 	if shortFrame.Header || shortFrame.Rule1 || !tallFrame.Header || !tallFrame.Rule1 {
 		t.Fatalf("this test needs h=%d to drop the chrome and h=%d to keep it; got %+v and %+v",
@@ -489,6 +492,42 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			return f
 		}, agentPanelMaxRows},
 
+		// options (agent-options spec §7.2): one part per option (plus the
+		// name part while `other` is open), the hint, then one line each for
+		// extra_args, every note and the provenance line; an inert kind's
+		// one sentence plus the same extras.
+		{"options/no-kind", func() Section { return NewOptionsField(p) }, 1},
+		{"options/inert-with-extra-args", func() Section {
+			f := NewOptionsField(p)
+			f.SetKind("codex", KindOptions{ExtraArgs: []string{"--full-auto"}})
+			return f
+		}, 1 + 1},
+		{"options/claude", func() Section {
+			f := NewOptionsField(p)
+			f.SetKind("claude", claudeKind(nil))
+			return f
+		}, 3 + 1},
+		{"options/claude-other", func() Section {
+			f := NewOptionsField(p)
+			f.SetKind("claude", claudeKind(map[string]string{"model": "claude-opus-5[1m]"}))
+			return f
+		}, 4 + 1},
+		{"options/claude-every-extra", func() Section {
+			f := NewOptionsField(p)
+			f.SetKind("claude", KindOptions{
+				Specs: claudeSpecs(), Seed: map[string]string{"effort": "low"}, SeedSource: "config.toml",
+				ExtraArgs: []string{"--verbose"},
+			})
+			f.SetNotes([]string{"one", "two"})
+			return f
+		}, 3 + 1 + 1 + 2 + 1},
+		{"options/claude-provenance-gone-once-changed", func() Section {
+			f := NewOptionsField(p)
+			f.SetKind("claude", KindOptions{Specs: claudeSpecs(), Seed: map[string]string{"effort": "low"}, SeedSource: "config.toml"})
+			chipsRight(f, 1) // model moves off the seed
+			return f
+		}, 3 + 1},
+
 		// account: the `active` row, one row per profile, and the status
 		// line, capped at accountPanelMaxRows. PanelRows does not branch
 		// on the agent kind -- an inert account panel still books its
@@ -615,8 +654,8 @@ func TestFieldPanelCeilings_AreTheNumbersThatWereChosen(t *testing.T) {
 			"enough rows to be worth focusing even for a one-line prompt"},
 		{"promptPanelMaxRows", promptPanelMaxRows, 20,
 			"a very tall window must not hand a 40-row textarea to a field most sessions leave empty"},
-		{"titleSessionsMaxRows", titleSessionsMaxRows, 15,
-			"panelCapRows: the region cannot show more than that anyway (v3 spec §7.2), so a larger number would make PanelRows lie about a height it can never be given"},
+		{"titleSessionsMaxRows", titleSessionsMaxRows, 14,
+			"panelCapRows: the region cannot show more than that anyway (v3 spec §7.2; 14 since the agent-options spec's ninth row, §7.4), so a larger number would make PanelRows lie about a height it can never be given"},
 		{"worktreePanelParts", worktreePanelParts, 3,
 			"the chips, the branch and the base selection, one line each"},
 		{"worktreePanelMaxRows", worktreePanelMaxRows, 10,
@@ -727,6 +766,7 @@ func TestFieldLabel_IsBarePlainLowercase(t *testing.T) {
 		"dir":       "project", // the row is "project"; the ID stays "dir"
 		"placement": "placement",
 		"agent":     "agent",
+		"options":   "options",
 		"account":   "account",
 	}
 	for _, s := range rowFields(theme.Default()) {

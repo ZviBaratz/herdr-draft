@@ -31,7 +31,7 @@
 //   - Atrium's isTitle/isTextarea/isDirectoryPicker/... zone tests are
 //     boolean methods reading which concrete field type is focused off the
 //     overlay's own field list. FocusZone replaces that with a plain
-//     value the caller supplies: a ZoneKind (which of the form's 11 fields,
+//     value the caller supplies: a ZoneKind (which of the form's 12 fields,
 //     see the ZoneKind doc) plus the one piece of extra context the
 //     grammar itself needs and no widget can supply on its own --
 //     TitleEmpty, since "does Enter submit from Title" depends on whether
@@ -51,10 +51,11 @@
 //     CompletePrefix() returning false falls through to
 //     nextEnabledIndex(1).
 //   - Atrium's isEnterButton (the Create-form Create button) becomes
-//     ZoneCreate; isVariantPicker/isModelField/isModeField/isEffortField/
-//     isDepsField (Atrium's claude-shaped fields, spec §16 non-goal 3) have
-//     no equivalent zone here at all -- herdr-draft does not re-ship "the
-//     Claude-shaped form."
+//     ZoneCreate. isVariantPicker and isDepsField have no equivalent zone.
+//     isModelField/isModeField/isEffortField -- Atrium's three
+//     Claude-shaped rows -- became ONE zone, ZoneOptions, whose row is
+//     rendered from a per-agent declaration (agent-options spec §2, which
+//     reversed the v1 §16 non-goal that used to be cited here).
 //   - The "ctrl+j" case (MapKey below) is a real addition beyond the
 //     ported source, not an adaptation of anything Atrium's
 //     HandleKeyPress switches on directly: Atrium never special-cases
@@ -205,6 +206,10 @@ const (
 	ZonePlacement
 	// ZoneAgent is the agent chip row (spec §6 field 6).
 	ZoneAgent
+	// ZoneOptions is the agent's session options (agent-options spec §7):
+	// a plain zone like ZoneWorktree, whose ↑↓ and ←→ belong to the
+	// panel's own part grammar.
+	ZoneOptions
 	// ZoneAccount is the clauth account picker (spec §6 field 7).
 	ZoneAccount
 	// ZonePrompt is the prompt textarea (spec §6 field 8) -- the only zone

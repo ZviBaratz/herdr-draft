@@ -24,13 +24,13 @@ without the popup. It drives herdr exclusively through the public CLI
 
 ### The dialog
 
-- **Eight rows, one line each**, in a fixed order — `issue`, `title`,
-  `prompt`, `project`, `worktree`, `placement`, `agent`, `account` — over a
-  single detail panel belonging to the focused row. A row states what the
+- **Nine rows, one line each**, in a fixed order — `issue`, `title`,
+  `prompt`, `project`, `worktree`, `placement`, `agent`, `options`,
+  `account` — over a single detail panel belonging to the focused row. A row states what the
   session will be rather than which knob is set, and its position does not
   move with focus or window height.
 - `issue` is present only when Linear is configured, and `account` only when
-  clauth has at least two profiles. With neither, the form is six rows.
+  clauth has at least two profiles. With neither, the form is seven rows.
 - **`placement` offers `tab in <space>` and defaults to it** whenever the
   project's checkout already has a workspace open (#128), so a repository's
   own space collects its sessions as tabs instead of a new top-level space
@@ -51,6 +51,18 @@ without the popup. It drives herdr exclusively through the public CLI
   but a successful submit still closes the popup at once, so the row stays
   on screen only when a later step fails. `split here` renames nothing,
   because the tab it lands in is yours.
+- **The `options` row chooses the agent's model, effort and permission
+  mode** for this session, which `[agents.extra_args]` could only fix for
+  every session of a kind. It reads `opus · effort xhigh · plan mode`, and
+  its panel has one chip line per option, each starting at `inherit` (send
+  no flag). `other` takes a typed model id such as `claude-opus-5[1m]`. The
+  options are **declared per agent kind** rather than shaped around Claude,
+  so a kind that declares none — every kind but `claude`, today — costs one
+  dim `none for <kind>` line and no focus stop. `bypassPermissions` and
+  `dontAsk` are not offered. The panel also shows what
+  `[agents.extra_args]` appends, which was never on screen before. This
+  reverses the v1 spec's decision to leave these fields out; the
+  agent-options spec says why.
 - **A selected Linear issue seeds title, branch and prompt**, unless you
   have already typed over them.
 - **The prompt panel can end the prompt with pane-reaper's instruction.**
@@ -82,7 +94,14 @@ without the popup. It drives herdr exclusively through the public CLI
 - Flags mirror the form's fields: `--project`, `--title`, `--prompt` (`-`
   reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
   `--reap` / `--no-reap`, `--placement`, `--workspace`, `--agent`,
-  `--account`, `--issue`, `--json`, `--on-failure keep|clean`.
+  `--model`, `--effort`, `--permission-mode`, `--account`, `--issue`,
+  `--json`, `--on-failure keep|clean`.
+- **`--model`, `--effort` and `--permission-mode`** are the `options` row's
+  flags, registered from the same per-kind declaration. `inherit` clears a
+  configured default for one session. An option the agent kind does not
+  declare, like `--effort` with `--agent codex`, is refused rather than
+  ignored, and `--json` reports what the agent was launched with as
+  `agent_options`.
 - **`--placement tab-in` and `--workspace <id>`** place the agent's tab in a
   workspace other than the invoking one — the one already holding the
   project (the default when there is one), or any open workspace by id —
@@ -164,6 +183,8 @@ without the popup. It drives herdr exclusively through the public CLI
   command, a path outside the repository, or a credential. Anything
   rejected is reported rather than silently dropped. `[reaper]` is refused
   with its own reason: it would add an instruction to your agent's prompt.
+  So is `[agents.options]`: it becomes part of a launched agent's command
+  line.
 - Read from the *origin* repository root and re-read when the project row
   changes.
 
@@ -175,6 +196,14 @@ without the popup. It drives herdr exclusively through the public CLI
 - `[worktree] trust_repository` is deliberately `config.toml`-only: it
   waives git's ownership check for one request, so a cloned repository must
   not be able to assert its own trustworthiness.
+- `[agents.options.<kind>]` sets a kind's default `model`, `effort` and
+  `permission_mode` for the popup and `create` alike. It is
+  `config.toml`-only and never remembered from a submit, for `mark_ready`'s
+  reason: how hard a session should think, or whether it should plan
+  first, describes the task rather than the repository. A value the kind
+  does not offer, of any type, is reported and skipped rather than refusing
+  to open. An option you set replaces the same flag in
+  `[agents.extra_args]` instead of following it.
 - `[reaper] mark_ready` turns the prompt's `reap` on by default for the
   popup and `create` alike. It is `config.toml`-only, and never remembered
   from a submit: one reaped session must not make the next one reap, and

@@ -47,12 +47,13 @@ const (
 	// (v3 spec §7.2). Every row a window has spare beyond it becomes
 	// margin above and below the card instead of more blank panel.
 	//
-	// DERIVED FROM THE MANIFEST, and re-derive it if that changes:
-	// herdr-plugin.toml asks for a 32-row popup, which hands this form 30
-	// rows; the eight stack rows and the six chrome lines (header, three
-	// rules, the footer -- and the one row of inset each end) leave
-	// sixteen, and holding one back top and bottom as the card's inset
-	// gives the panel fifteen.
+	// DERIVED FROM THE MANIFEST AND THE ROW COUNT, and re-derive it if
+	// either changes: herdr-plugin.toml asks for a 32-row popup, which
+	// hands this form 30 rows; the nine stack rows and the six chrome
+	// lines (header, three rules, the footer -- and the one row of inset
+	// each end) leave fifteen, and holding one back top and bottom as the
+	// card's inset gives the panel fourteen. It was fifteen over eight
+	// rows, until the agent-options spec (§7.4) added `options`.
 	//
 	// Two things it is deliberately NOT, both of which an earlier draft
 	// got wrong:
@@ -70,7 +71,7 @@ const (
 	// Only the two widgets that window their own content are clipped by
 	// it: issue (24) and prompt (20). Every other field's panel fits
 	// whole.
-	panelCapRows = 15
+	panelCapRows = 14
 )
 
 // contentBox returns the left padding and the inner (label+value) width

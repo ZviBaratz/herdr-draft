@@ -66,7 +66,7 @@ const (
 
 // Section is one field of the form: EXACTLY ONE LINE in the row stack,
 // plus the detail panel it shows while it holds focus (v2 spec §5). The
-// form's eight fields plus this package's own internal Create button, all
+// form's nine fields plus this package's own internal Create button, all
 // deliberately opaque beyond this interface -- the focus ring, the
 // composition and rowlayout.go's frame arithmetic work identically over
 // every Section, whether it is one of the real fields or a test double,
@@ -243,6 +243,7 @@ var zoneKindByID = map[string]ZoneKind{
 	"worktree":  ZoneWorktree,
 	"placement": ZonePlacement,
 	"agent":     ZoneAgent,
+	"options":   ZoneOptions,
 	"account":   ZoneAccount,
 	"prompt":    ZonePrompt,
 	"create":    ZoneCreate,

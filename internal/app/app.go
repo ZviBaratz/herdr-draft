@@ -24,6 +24,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
@@ -539,6 +540,7 @@ type Model struct {
 	worktree  *form.WorktreeField
 	placement *form.PlacementField
 	agent     *form.AgentField
+	options   *form.OptionsField
 	account   *form.AccountField
 	prompt    *form.PromptField
 
@@ -879,6 +881,12 @@ func New(s Setup) Model {
 	m.worktree = form.NewWorktreeField(palette)
 	m.placement = form.NewPlacementField(palette)
 	m.agent = form.NewAgentField(palette)
+	m.options = form.NewOptionsField(palette)
+	// config.toml's refused [agents.options] entries (agent-options spec
+	// §6.2), on the panel of the row they would have configured. They are
+	// about the file rather than a kind, so they are set once and shown
+	// whichever kind the row is on.
+	m.options.SetNotes(s.Config.Agents.OptionWarnings)
 	m.prompt = form.NewPromptField(palette)
 
 	// Spec §10's layered defaults, resolved here rather than as three
@@ -1052,15 +1060,17 @@ func New(s Setup) Model {
 	m.dir.SetHomeDir(s.HomeDir)
 
 	// v2 spec §6's row order, declared HERE and nowhere else: issue,
-	// title, prompt, project, worktree, placement, agent, account. Issue
-	// sits directly above title so one ⇧⇥ reaches it, and title/prompt --
-	// the two fields the fast path is about -- lead, with the machinery
-	// that usually needs no attention below them.
-	sections := make([]form.Section, 0, 8)
+	// title, prompt, project, worktree, placement, agent, options,
+	// account. Issue sits directly above title so one ⇧⇥ reaches it, and
+	// title/prompt -- the two fields the fast path is about -- lead, with
+	// the machinery that usually needs no attention below them. `options`
+	// (agent-options spec §7.1) sits directly under the agent whose
+	// declaration it renders.
+	sections := make([]form.Section, 0, 9)
 	if m.issue != nil {
 		sections = append(sections, m.issue)
 	}
-	sections = append(sections, m.title, m.prompt, m.dir, m.worktree, m.placement, m.agent)
+	sections = append(sections, m.title, m.prompt, m.dir, m.worktree, m.placement, m.agent, m.options)
 	if m.account != nil {
 		sections = append(sections, m.account)
 	}
@@ -1530,6 +1540,7 @@ func (m Model) buildPlanInput() plan.Input {
 		Space:            m.resolved.Space,
 		AgentKind:        m.agent.Value(),
 		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],
+		AgentOptions:     m.agentOptions(),
 		AccountPin:       m.accountPin(),
 		AccountLaunch:    m.accountLaunch(),
 		AccountConfigDir: m.autoPick.ConfigDir,
@@ -2093,6 +2104,72 @@ func (m *Model) syncDerivedInertness() {
 	if m.account != nil {
 		m.account.SetAgentIsClaude(m.agent.Value() == claudeKind)
 	}
+	// The options row follows the agent row (agent-options spec §7): a
+	// kind it has not shown yet is built from the declaration and seeded
+	// from config.toml, and one it has shown gets back what it held.
+	// OptionsField.SetKind is a no-op for the kind already showing, so
+	// this is cheap on every routed message.
+	if kind := m.agent.Value(); kind != m.options.Kind() {
+		m.options.SetKind(kind, kindOptions(m.cfg, kind))
+	}
+}
+
+// kindOptions is everything the options row needs about one agent kind:
+// the declaration as the form's own specs, the config.toml seed and its
+// provenance -- both from defaults.AgentOptions, the one place the chain
+// exists -- and extra_args with what it already pins.
+func kindOptions(cfg config.Config, kind string) form.KindOptions {
+	seed, from := defaults.AgentOptions(cfg, kind)
+	source := ""
+	for _, t := range from {
+		if t != defaults.TierBuiltin {
+			source = t.String()
+		}
+	}
+	extra := cfg.Agents.ExtraArgs[kind]
+	return form.KindOptions{
+		Specs:      optionSpecs(kind),
+		Seed:       seed,
+		SeedSource: source,
+		ExtraArgs:  extra,
+		Pinned:     agentopts.Pinned(kind, extra),
+	}
+}
+
+// optionSpecs translates a kind's agentopts declaration into the form's
+// own OptionSpec values, which is how the form renders options without
+// importing the package that declares them.
+func optionSpecs(kind string) []form.OptionSpec {
+	var out []form.OptionSpec
+	for _, o := range agentopts.For(kind) {
+		spec := form.OptionSpec{
+			Name:     o.Name,
+			Label:    o.Label,
+			Flag:     o.Flag,
+			FreeText: o.FreeText,
+			Valid:    o.ValidFree,
+			Row:      o.Row,
+		}
+		for _, c := range o.Choices {
+			spec.Choices = append(spec.Choices, form.OptionChoice{Value: c.Value, Label: c.Label})
+		}
+		out = append(out, spec)
+	}
+	return out
+}
+
+// agentOptions is the options row's values for the plan, but only while
+// the row is showing the kind the agent row will launch. syncDerivedInertness
+// keeps the two together after every routed message, so a mismatch means a
+// submit arrived before the sync did. Options chosen for another kind must
+// never ride along with this one; the launched kind's own config.toml
+// default is what the row would have shown, and what `create` would send.
+func (m Model) agentOptions() agentopts.Values {
+	if kind := m.agent.Value(); m.options.Kind() != kind {
+		vals, _ := defaults.AgentOptions(m.cfg, kind)
+		return vals
+	}
+	return m.options.Values()
 }
 
 // refreshFormContext sets the header's right-hand text (v2 spec §4): live

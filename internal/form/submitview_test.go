@@ -586,12 +586,24 @@ func TestSubmitView_SecondRuleOnlyWhereThereIsSomethingToRule(t *testing.T) {
 	running.SetSteps(sampleStepsRunning())
 	runFrame := layoutFrame(h, len(sampleStepsRunning()))
 	lines := strippedFrameLines(running, w, h)
-	// Line 1 is the rule under the header; nothing below the step rows
-	// may be one while the pipeline is still going.
-	for i, line := range lines[2 : regionLastLine(runFrame, h)+1] {
+	// The first rule is the one under the header; nothing below the step
+	// rows may be one while the pipeline is still going. Found rather than
+	// assumed to be line 1: a short step list leaves the frame room for a
+	// top margin above the header (v3 spec §7.1's last rung).
+	rule1 := -1
+	for i, line := range lines {
+		if strings.Contains(line, "──") {
+			rule1 = i
+			break
+		}
+	}
+	if rule1 < 0 {
+		t.Fatalf("progress screen has no rule under its header:\n%s", strings.Join(lines, "\n"))
+	}
+	for i, line := range lines[rule1+1 : regionLastLine(runFrame, h)+1] {
 		if strings.Contains(line, "──") {
 			t.Errorf("progress screen draws a second rule at line %d with nothing under it:\n%s",
-				i+2, strings.Join(lines, "\n"))
+				i+rule1+1, strings.Join(lines, "\n"))
 			break
 		}
 	}

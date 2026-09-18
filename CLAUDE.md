@@ -142,6 +142,16 @@ Layering, outermost to innermost:
   `Resolved.From` records which tier supplied each field, which is what
   lets a panel say `from .herdr-draft.toml` and `create --json` print its
   provenance.
+- **`internal/agentopts`** — the per-agent-kind declaration of session
+  options (agent-options spec §4): Claude's model, effort and permission
+  mode, their offered values, their flags, and the argv a choice becomes
+  (`Launch`, which also displaces the same flag in `[agents.extra_args]`).
+  Pure, and it imports nothing from this module, so `plan` can build from
+  it and `config` can validate against it. `internal/form` does **not** import it: the app turns each
+  `Option` into a `form.OptionSpec`. The form's `options` row, `create`'s
+  flags and `config.toml`'s `[agents.options.<kind>]` are all rendered from
+  or validated against it, which is why declaring another kind's options
+  is a change to this package alone.
 - **`internal/herdrc`** — `context.go` decodes the plugin invocation
   context; `runner.go`'s `CLIRunner` is the only place that shells out to
   the `herdr` binary (`Runner` interface, fakeable in tests).

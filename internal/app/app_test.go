@@ -1006,7 +1006,7 @@ func TestNew_SectionOrder(t *testing.T) {
 		Clauth:       &fakeClauth{},
 		ClauthStatus: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}, {Name: "b"}}},
 	})
-	want := []string{"issue", "title", "prompt", "dir", "worktree", "placement", "agent", "account", "create"}
+	want := []string{"issue", "title", "prompt", "dir", "worktree", "placement", "agent", "options", "account", "create"}
 	if got := full.form.SectionIDs(); !equalStrings(got, want) {
 		t.Errorf("SectionIDs() for the widest configuration = %v, want %v.\nA field ADDED here also needs an entry in internal/form's panelRowsCases (field_rows_test.go), which states the panel rows each field books: that table's own coverage guard iterates the form package's hand-maintained fixtures, so it cannot see a section added only in this layer.",
 			got, want)
@@ -1016,7 +1016,7 @@ func TestNew_SectionOrder(t *testing.T) {
 	// rows are absent entirely (v2 spec §6.1's "absent by design"), and
 	// the rest keep their order.
 	minimal := newTestModel(t, testSetup{})
-	wantMinimal := []string{"title", "prompt", "dir", "worktree", "placement", "agent", "create"}
+	wantMinimal := []string{"title", "prompt", "dir", "worktree", "placement", "agent", "options", "create"}
 	if got := minimal.form.SectionIDs(); !equalStrings(got, wantMinimal) {
 		t.Errorf("SectionIDs() for the minimal configuration = %v, want %v", got, wantMinimal)
 	}

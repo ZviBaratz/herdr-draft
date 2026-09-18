@@ -129,6 +129,10 @@ func zoneRungs(zone FocusZone) []string {
 		return []string{"←→ choose"}
 	case ZoneAgent:
 		return []string{"←→ favorites · ↑↓ all kinds", "↑↓ all kinds"}
+	case ZoneOptions:
+		// OptionsField.FooterRungs overrides this per part; this is the
+		// chip-part answer, for a caller that asks the zone alone.
+		return []string{"↑↓ option · ←→ value", "←→ value"}
 	case ZoneAccount:
 		// The one rung that has to name ↵ despite the button beside it
 		// already carrying the glyph, because here ↵ does something else

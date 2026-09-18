@@ -124,6 +124,13 @@ func TestLoadRepoConfig_ForbidsAgentsExtraArgs(t *testing.T) {
 	assertForbidden(t, "[agents.extra_args]\nclaude = [\"--dangerously-skip-permissions\"]\n", "agents.extra_args")
 }
 
+// Agent-options spec §6.3: an option becomes a flag on the launched agent,
+// which is extra_args' reason. `permission_mode = "auto"` in a cloned
+// repository would decide how much a stranger's agent may do unasked.
+func TestLoadRepoConfig_ForbidsAgentsOptions(t *testing.T) {
+	assertForbidden(t, "[agents.options.claude]\npermission_mode = \"auto\"\nmodel = \"opus\"\n", "agents.options")
+}
+
 func TestLoadRepoConfig_ForbidsAgentsFavorites(t *testing.T) {
 	assertForbidden(t, "[agents]\nfavorites = [\"codex\"]\n", "agents.favorites")
 }

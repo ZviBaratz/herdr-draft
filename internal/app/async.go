@@ -45,6 +45,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
@@ -1139,7 +1140,7 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 		return ""
 	case plan.OpAgentStart:
 		if op.Agent != nil {
-			return op.Agent.Name
+			return withOptions(op.Agent.Name, in)
 		}
 		return ""
 	case plan.OpClauthLaunch:
@@ -1161,7 +1162,7 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 		// one thing only -- whether the two disagree, which is the
 		// substitution itself and is worth a clause.
 		if len(op.RunEnv) > 0 {
-			return "as " + in.AccountPin + ", through your shell's claude"
+			return withOptions("as "+in.AccountPin+", through your shell's claude", in)
 		}
 		prog := "clauth"
 		if len(op.RunArgv) > 0 && op.RunArgv[0] != "" {
@@ -1182,7 +1183,7 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 			// documents the fallback; a document is not a report.
 			detail += " (wrapper mode had no config dir)"
 		}
-		return detail
+		return withOptions(detail, in)
 	case plan.OpAwaitDetection:
 		return "waiting for the agent"
 	default:
@@ -1594,4 +1595,23 @@ func NewClauthSource(opts clauth.LoadOpts) clauthSource { return clauthLoader{op
 
 func (l clauthLoader) Status(ctx context.Context) (clauth.Status, error) {
 	return clauth.Load(ctx, l.opts)
+}
+
+// withOptions appends the session options the agent is launched with to a
+// launch step's detail, the way the options row states them ("opus ·
+// effort xhigh"), so the progress screen says what was started and not
+// only where. Only the CHOSEN options: what [agents.extra_args] passes on
+// its own was configured, not chosen, and the options panel is where it is
+// shown.
+func withOptions(detail string, in plan.Input) string {
+	var parts []string
+	for _, o := range agentopts.For(in.AgentKind) {
+		if v := in.AgentOptions[o.Name]; v != "" {
+			parts = append(parts, o.Row(v))
+		}
+	}
+	if len(parts) == 0 {
+		return detail
+	}
+	return detail + " · " + strings.Join(parts, " · ")
 }

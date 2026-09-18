@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
@@ -232,6 +233,50 @@ mark_ready = true
 				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
 				Placement: plan.PlacementNewSpace, AgentKind: "claude",
 				MarkReady:        true,
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
+			// The agent-options spec's config.toml tier (§6.1), with
+			// extra_args beside it: both paths carry the options as
+			// AgentOptions and extra_args exactly as configured -- the
+			// displacement between them is plan.Build's, once, for both.
+			name: "agent options come off config.toml for both paths",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+[agents.extra_args]
+claude = ["--verbose", "--model", "opus"]
+[agents.options.claude]
+model = "claude-opus-5[1m]"
+effort = "xhigh"
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				ExtraArgs:        []string{"--verbose", "--model", "opus"},
+				AgentOptions:     agentopts.Values{"model": "claude-opus-5[1m]", "effort": "xhigh"},
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
+			// Options are per kind: claude's never reach a codex session,
+			// on either path.
+			name: "another kind's options do not ride along",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude", "codex"]
+default = "codex"
+[agents.options.claude]
+effort = "low"
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "codex",
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
@@ -935,6 +980,77 @@ func TestFormAndCommandMarkReadyTheSameWay(t *testing.T) {
 			}
 			if fromCommand.MarkReady != tc.want || fromCommand.Prompt != prompt {
 				t.Errorf("MarkReady = %v, Prompt = %q; want %v and the typed prompt", fromCommand.MarkReady, fromCommand.Prompt, tc.want)
+			}
+		})
+	}
+}
+
+// TestFormAndCommandAgentOptionsTheSameWay is the options row's half of
+// "every create flag has a form control behind it" (agent-options spec
+// §8.1): a flag and the keystrokes a person would make in the row must build
+// the same plan.Input, over a config.toml default the two both move off.
+//
+// It couples to the key grammar for TestFormAndCommandMarkReadyTheSameWay's
+// reason. ⇧⇥ ⇧⇥ from the title reaches the row because this form has no
+// issue or account row: the ring wraps to Create, then to `options`.
+func TestFormAndCommandAgentOptionsTheSameWay(t *testing.T) {
+	const projectDir = "/projects/thing"
+	const title = "fix login redirect loop"
+	contextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + projectDir +
+		`","tab_id":"tT0","focused_pane_id":"pP0"}`
+	repoConfig := func(string) config.RepoConfig { return config.RepoConfig{} }
+	back := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+
+	for _, tc := range []struct {
+		name    string
+		options string
+		flags   []string
+		keys    []tea.KeyPressMsg
+		want    agentopts.Values
+	}{
+		{
+			name:    "a configured effort, moved one level up",
+			options: "effort = \"high\"\n",
+			flags:   []string{"--effort", "xhigh"},
+			keys:    []tea.KeyPressMsg{back, back, {Code: tea.KeyDown}, {Code: tea.KeyRight}},
+			want:    agentopts.Values{"effort": "xhigh"},
+		},
+		{
+			name:    "a configured model, cleared back to inherit",
+			options: "model = \"opus\"\npermission_mode = \"plan\"\n",
+			flags:   []string{"--model", "inherit"},
+			keys:    []tea.KeyPressMsg{back, back, {Code: tea.KeyLeft}, {Code: tea.KeyLeft}},
+			want:    agentopts.Values{"permission_mode": "plan"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir, stateDir := t.TempDir(), t.TempDir()
+			writeConfig(t, configDir, "branch_prefix = \"zvi/\"\n[agents]\nfavorites = [\"claude\"]\n[agents.options.claude]\n"+tc.options)
+
+			fromCommand := commandPlanInput(t, commandCase{
+				configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+				projectDir: projectDir, repoConfig: repoConfig,
+				args: append([]string{"--title", title}, tc.flags...),
+			})
+
+			m := formModel(t, formCase{
+				configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+				repoConfig: repoConfig, title: title,
+			})
+			if got := m.PlanInput().AgentOptions; reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("test setup: the form already resolved %v before any keystroke, so the keystrokes prove nothing", got)
+			}
+			for _, k := range tc.keys {
+				m = send(m, k)
+			}
+			fromForm := m.PlanInput()
+
+			if !reflect.DeepEqual(fromCommand, fromForm) {
+				t.Fatalf("the command and the form disagree.\ncommand: %s\nform:    %s",
+					showInput(fromCommand), showInput(fromForm))
+			}
+			if !reflect.DeepEqual(fromCommand.AgentOptions, tc.want) {
+				t.Errorf("AgentOptions = %v, want %v", fromCommand.AgentOptions, tc.want)
 			}
 		})
 	}

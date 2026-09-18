@@ -87,6 +87,11 @@ v1).
 draft persistence, Linear writes, model/effort/permission chip fields,
 marketplace publication, fixing the resume/account-binding gap (#3228).
 
+> **Reversed, agent-options spec (2026-09-18).** Model, effort and permission
+> mode are now per-session options, declared per agent kind — see
+> `docs/specs/2026-09-18-agent-options-design.md` §2 for why this non-goal's
+> reasoning no longer holds.
+
 ## 4. Architecture overview
 
 ```
@@ -499,6 +504,11 @@ silently.
    args; Atrium's own retrospective flagged the "Claude-shaped form" as a
    mistake (adapter-declared schemas were its intended fix). Do not re-ship
    that mistake.
+
+   > **Reversed, agent-options spec (2026-09-18).** Built as the
+   > adapter-declared schema this item names as the fix: one `options` row
+   > rendered from a per-kind declaration, not three Claude-shaped rows. The
+   > spec's §2 answers both halves of the reasoning above.
 4. Linear writes of any kind.
 5. Resume/account binding across herdr restore — upstream #3228; support it
    in herdr-draft's README and revisit when herdr grows resume templates.

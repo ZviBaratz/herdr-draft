@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 )
@@ -111,7 +112,17 @@ type Input struct {
 	// to refuse for the `here` placements, one layer down.
 	Space     Space
 	AgentKind string
+	// ExtraArgs is `[agents.extra_args]` for AgentKind, exactly as
+	// configured. Build does not pass it on as it is: it goes through
+	// agentopts.Launch with AgentOptions below, which is where a chosen
+	// option displaces the same flag here.
 	ExtraArgs []string
+	// AgentOptions is the session options chosen for AgentKind -- the
+	// form's `options` row, or create's --model/--effort/--permission-mode,
+	// over config.toml's [agents.options.<kind>] (agent-options spec §5).
+	// nil when nothing is set. Build refuses an option the kind does not
+	// declare, which neither caller can produce.
+	AgentOptions agentopts.Values
 	// AccountPin is a clauth account pin, or "" for the active/unpinned
 	// account. Pinning is only valid when AgentKind == "claude" (spec
 	// §6.7); Build rejects any other combination.
@@ -248,6 +259,9 @@ func Build(in Input) ([]Op, error) {
 	}
 	if in.AccountPin != "" && in.AgentKind != claudeAgentKind {
 		return nil, fmt.Errorf("plan: build: account pinning is only supported for the %q agent kind, got %q", claudeAgentKind, in.AgentKind)
+	}
+	if err := agentopts.Validate(in.AgentKind, in.AgentOptions); err != nil {
+		return nil, fmt.Errorf("plan: build: agent options: %w", err)
 	}
 	if in.UseWorktree && in.Placement != PlacementNewSpace {
 		return nil, fmt.Errorf("plan: build: a worktree session runs in the worktree's own space, so placement %s does not apply -- route it through EffectivePlacement first", placementName(in.Placement))
@@ -518,7 +532,7 @@ func launchOps(in Input) []Op {
 			Agent: &herdrc.AgentStartReq{
 				Name:      AgentName(in.Title),
 				Kind:      in.AgentKind,
-				ExtraArgs: in.ExtraArgs,
+				ExtraArgs: agentArgs(in),
 			},
 			// Path A does its detection waiting server-side, so this
 			// budget is unused unless the start comes back BLOCKED and
@@ -563,12 +577,21 @@ func launchOps(in Input) []Op {
 // is the layer that knows herdr types this rather than execing it, and it
 // quotes there (#72).
 func clauthLaunchCommand(in Input) (argv []string, env []herdrc.EnvVar, downgraded bool) {
+	args := agentArgs(in)
 	if in.AccountLaunch == LaunchWrapper && in.AccountConfigDir != "" {
-		return append([]string{"claude"}, in.ExtraArgs...),
+		return append([]string{"claude"}, args...),
 			[]herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: in.AccountConfigDir}}, false
 	}
-	return append(resolveLauncher(in.Launcher, in.AccountPin), in.ExtraArgs...),
+	return append(resolveLauncher(in.Launcher, in.AccountPin), args...),
 		nil, in.AccountLaunch == LaunchWrapper
+}
+
+// agentArgs is what the agent is started with after its own command:
+// extra_args with the chosen options applied (agent-options spec §5.1).
+// Both launch paths take it from here and nowhere else, so an option can
+// never reach one path and not the other.
+func agentArgs(in Input) []string {
+	return agentopts.Launch(in.AgentKind, in.ExtraArgs, in.AgentOptions)
 }
 
 // maxAgentNameLen is AgentName's own output cap (spec: "clamp to 30 runes

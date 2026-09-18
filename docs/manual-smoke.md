@@ -1499,6 +1499,111 @@ default, and the headless worktree-on result were observed on 2026-09-17
 (Recorded runs). The form walk, the two `create` variants, and "Also
 record" were not. Do not write a result you did not see.
 
+## What the options row added
+
+### Cell 15 — the agent's model, effort and permission mode
+
+**Why this cell exists.** The tests pin every argv the plan builds for both
+launch paths, and every state of the row and its panel. None of them can
+tell you whether the claude that starts in the pane is running the model,
+effort and mode the row claimed. That is decided by claude, from a
+command line the tests only ever compare with an expectation. Nor can they
+tell you whether the declaration still matches the claude you have
+installed (agent-options spec §9).
+
+**Drift first, before you open anything.** Compare the installed claude
+against `internal/agentopts`' declaration:
+
+```bash
+claude --version
+claude --help | grep -A2 -- '--effort'
+claude --help | grep -A3 -- '--permission-mode'
+```
+
+**Expected:** `--effort` lists exactly `low, medium, high, xhigh, max`, and
+`--permission-mode`'s choices include `manual`, `plan`, `acceptEdits` and
+`auto`. A value the declaration offers that claude no longer lists is a
+defect to fix before release. A choice claude lists that the declaration
+does not is only a gap: it is never offered, so nothing breaks.
+
+**Setup:** a throwaway repo, and a `config.toml` in the redirected config
+directory carrying:
+
+```toml
+[agents.extra_args]
+claude = ["--model", "sonnet"]
+
+[agents.options.claude]
+effort = "high"
+```
+
+**Steps, form, unpinned (Path A):** `project` → the throwaway repo, worktree
+off, and an account row left on `active` (or clauth absent). Read the
+`options` row before touching it.
+
+**Expected at rest:** `sonnet · effort high`, with `sonnet` dim, and the
+panel's last lines `[agents.extra_args] adds: --model sonnet` and `from
+config.toml`. Then walk the panel:
+
+1. `↑`/`↓` move between `model`, `effort` and `mode`, and `←`/`→` move the
+   chips of the line under `▸`.
+2. On `model`, choose `other`: a `name` line opens under it. Type
+   `claude-opus-5[1m]`. Paste `--foo` into it, and nothing lands.
+3. `mode` → `plan`. The row now reads `claude-opus-5[1m] · effort high ·
+   plan mode`, and the hint on the model line says the model replaces
+   extra args' `sonnet`.
+4. Move the `agent` row to `codex` and back to `claude`. On codex the row
+   reads `none for codex` and `⇥` skips it. Back on claude, your choices are
+   all still there.
+
+Submit with a prompt. **Expected:** the progress screen's agent step names
+the options. `herdr[S] pane read <agent-pane>` shows claude's banner naming
+the 1M-context model at high effort, and claude's footer shows plan mode.
+The pane's command must not contain `--model sonnet`: the option replaced
+it.
+
+**Steps, form, pinned (Path B):** the same walk with an account pinned on
+the `account` row. **Expected:** the same banner and footer. The typed
+command in the pane's scrollback reads `clauth start <account> --
+--effort high ...`, with the bracketed model id quoted for the shell.
+
+**Steps, headless:**
+
+```bash
+herdr-draft create --project /var/tmp/hd-smoke-15 --title "probe 15" --no-worktree \
+  --model opus --permission-mode plan --json
+herdr-draft create --project /var/tmp/hd-smoke-15 --title "probe 15b" --no-worktree \
+  --effort inherit --json
+herdr-draft create --project /var/tmp/hd-smoke-15 --title "x" --agent codex --effort high; echo "exit $?"
+herdr-draft create --project /var/tmp/hd-smoke-15 --title "x" --permission-mode bypassPermissions; echo "exit $?"
+```
+
+**Expected:**
+- The first reports `"agent_options": {"model": "opus", "effort": "high",
+  "permission_mode": "plan"}` and provenance `option.model: flag`,
+  `option.effort: config.toml`.
+- The second has no `agent_options` at all, and its pane runs with extra
+  args' `--model sonnet` and no `--effort`.
+- The last two exit 2 before anything is created. The codex one names the
+  option codex does not declare, and the bypass one gives its reason.
+
+**Also record, the model error.** Set `model = "no-such-model"` through the
+`other` line and submit with a prompt. Record verbatim what claude shows in
+the pane, and what the progress screen and `create --json` reported.
+Agent-options spec §10 leaves a wrong model id to claude. If claude shows a
+stable blocking screen that the prompt was typed into, that is the evidence
+for adding it to `dialog.go`'s signatures; if it shows an ordinary error,
+record that nothing is needed. **On claude 2.1.277 it is an ordinary
+error** (Recorded runs, 2026-09-18): claude starts, its banner names the
+unknown id, and the prompt is delivered and answered in the transcript with
+`There's an issue with the selected model (no-such-model)`. Re-check it when
+claude's major version moves.
+
+**Run on 2026-09-18** (Recorded runs), in two passes: the form, its panel
+and Path B's typed command without an agent, then real launches on both
+paths. The headless refusals were covered by tests, not against a live
+herdr. Do not write a result you did not see.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:
@@ -1531,6 +1636,45 @@ record" were not. Do not write a result you did not see.
   alongside the release.
 
 ## Recorded runs
+
+### the options row, launching claude (agent-options spec) — 2026-09-18
+
+herdr 0.9.0, claude **2.1.277** (it updated itself during the day; the drift
+check passed again on it, with the same `--effort` levels and
+`--permission-mode` choices), `zvi/session-configuration` at `3749c82`
+(#181), not merged. Route A0 with isolated `XDG_*` dirs, a throwaway repo,
+and a scratch plugin config and state dir. Three launches on `personal-0`,
+two one-word prompts: the pass cost the account about 1% of its 5h window.
+
+| Case | Result |
+|---|---|
+| Path A, the form (Route B) | **as expected.** Typing `claude-opus-5[1m]` onto the model chips jumped to `other`; `effort high`, `plan`; `⌃S`. The progress screen read `… claude  options-smoke · claude-opus-5[1m] · effort high · plan mode` and the footer `answer the dialog in the pane — your prompt goes out as soon as you do`, over the trust dialog. herdr typed `claude --model 'claude-opus-5[1m]' --effort high --permission-mode plan`. After `Down`, a check that `❯` sat on "Yes, I trust this folder", and `Enter`, the prompt went out and the form closed. claude's banner read `Opus 5 (1M context) with high effort`, its footer `⏸ plan mode on`, and it answered `hi` in plan mode. |
+| Path B, headless, pinned | **as expected.** `--account personal-0 --model sonnet --effort low --permission-mode auto --prompt hi`: the typed launch was `clauth start personal-0 -- --model sonnet --effort low --permission-mode auto`. Trust is kept per launch mechanism, so the dialog came up again and `create` failed fast at detection, as headless `create` must: exit 1, `prompt_status: unsent`, and `agent_options` all three. After answering the dialog: `Sonnet 5 with low effort` and `⏵⏵ auto mode on`, with **no** first-use dialog for `auto`. That was the one thing that could have put a screen between the launch and the prompt. |
+| unknown model id | **an ordinary error, not a dialog.** Path A, headless, `--model no-such-model --prompt hi`: exit 0, `prompt_status: sent`. The banner read `no-such-model with high effort`, and the prompt was answered with `There's an issue with the selected model (no-such-model). It may not exist or you may not have access to it. Run /model to pick a different model.` Nothing belongs in `dialog.go`. The create is honest about delivery; that the session cannot work is claude's to say, and it does, in the pane. |
+
+Teardown: the disposable session stopped and deleted, no process left with
+a cwd under the scratch tree, the scratch tree removed, `pgrep -x
+herdr-draft` 0. claude recorded its trust in `personal-0`'s own config for
+the throwaway path, which is left as it is.
+
+### the options row (agent-options spec) — 2026-09-18
+
+herdr 0.9.0, claude 2.1.276, `zvi/session-configuration` as it stood before
+the independent review's fixes, not merged. Route A0 with its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME`, a
+scratch plugin config and state dir, and `[clauth] enabled = false` for the
+form, so no account row. No claude was started: the pass spent no account
+quota and wrote nothing of the user's.
+
+| Case | Result |
+|---|---|
+| drift | **as expected.** `--effort` listed `low, medium, high, xhigh, max`, and `--permission-mode` listed `acceptEdits, auto, bypassPermissions, manual, dontAsk, plan`. |
+| form at rest | **as expected.** With `[agents.extra_args] claude = ["--model", "sonnet"]` and `[agents.options.claude] effort = "high"` plus a refused `permission_mode = "bypassPermissions"`: the row read `sonnet · effort high` (`sonnet` dim). The panel read `inherit sends nothing of its own; [agents.extra_args] passes --model sonnet`, `[agents.extra_args] adds: --model sonnet`, the refusal warning, and `from config.toml`. The footer rung was `↑↓ option · ←→ value`. |
+| form walk | **as expected.** `←` on model reached `other` and opened `name`. `claude-opus-5[1m]` typed in. A following space was refused, and the row read `… · effort xhigh · plan mode` after `→` on effort and `→ →` on mode. The rest of `send-text ' --dangerous'` landed after the refused space, as `claude-opus-5[1m]--dangerous`. That is a valid id, because the rule only forbids a leading dash, so it is one argument to `--model` and not a flag. |
+| codex round trip | **as expected.** Agent `→` to codex: `options  none for codex`. `←` back: every choice restored. |
+| Path B, headless | **as expected.** `[clauth] launcher = ["echo", "LAUNCHED", "{account}"]`, extra args `["--model", "sonnet", "--verbose"]`, `--model 'claude-opus-5[1m]' --permission-mode plan --account personal-1`. The pane was typed `echo LAUNCHED personal-1 --verbose --model 'claude-opus-5[1m]' --effort high --permission-mode plan`, and echo printed the id unquoted. Extra args' `--model sonnet` was replaced and `--verbose` kept. `--json` reported all three options, with provenance `option.effort: config.toml` and the other two `flag`. Exit 1 at detection, as an echo launcher must. |
+
+Teardown: the disposable session stopped and deleted, the scratch tree
+removed, `pgrep -x herdr-draft` 0.
 
 ### control characters in a `create` title (#178) — 2026-09-18
 
