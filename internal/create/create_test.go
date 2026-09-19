@@ -2149,6 +2149,36 @@ func TestPromptWaitTimeoutHumanOutputDoesNotClaimItWasNotSent(t *testing.T) {
 	}
 }
 
+// TestFailedSendHumanOutputDoesNotClaimTheAgentIsWorking is #228's review.
+// The line that hands an unconfirmed prompt back is written for every
+// unconfirmed shape, and it used to explain itself with "the agent may
+// already be working on it" -- #108's timeout, where that is the whole
+// point. A send herdr failed never finished its Enter, so no agent is
+// working on it; what the pane may hold is part of it, unsubmitted. The
+// line has to hold for both.
+func TestFailedSendHumanOutputDoesNotClaimTheAgentIsWorking(t *testing.T) {
+	h := newHarness(t)
+	h.runner.failAt = "AgentPrompt"
+	h.runner.failErr = fmt.Errorf("%w: %w", herdrc.ErrPromptSendFailed, codedErr{
+		msg: "herdr agent prompt wS1:pP1 ...: exit status 1: " +
+			`{"error":{"code":"agent_prompt_failed","message":"pty actor closed"},"id":"cli:agent:prompt"}`,
+	})
+
+	if code := h.run("--title", "t", "--no-worktree", "--prompt", "the handoff"); code != ExitFailed {
+		t.Fatalf("exit = %d, want %d", code, ExitFailed)
+	}
+
+	all := h.stdout.String() + h.stderr.String()
+	for _, claim := range []string{"working on it", "the prompt was not sent"} {
+		if strings.Contains(all, claim) {
+			t.Errorf("output claims %q for a send herdr failed:\n%s", claim, all)
+		}
+	}
+	if !strings.Contains(all, "read the pane") || !strings.Contains(all, "the handoff") {
+		t.Errorf("output does not send the caller to the pane with the text in hand:\n%s", all)
+	}
+}
+
 // TestOrdinaryUnsentPromptStillSaysUnsent is the control. The dialog
 // guard's refusal really did not deliver the prompt, so that path must
 // keep its old wording, its `prompt_sent: false` and its `unsent_prompt`

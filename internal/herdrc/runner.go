@@ -535,8 +535,9 @@ const promptSendFailedCode = "agent_prompt_failed"
 //     (https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/api/agents.rs#L175-L199):
 //     the pane's input is closed or a live handoff is under way ("pty actor
 //     closed"), or its command queue is full ("pty input queue is full")
-//     (https://github.com/herdrdev/herdr/blob/v0.9.0/src/pty/actor/unix.rs#L143-L177).
-//     Nothing typed.
+//     (https://github.com/herdrdev/herdr/blob/v0.9.0/src/pty/actor/unix.rs#L143-L177);
+//     for a Copilot agent only, the focus event herdr sends first could not
+//     be encoded or queued. Nothing typed.
 //   - Queued, for any error the submission's completion reports
 //     (https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/api/agents.rs#L84-L92):
 //     the actor quiescing for a handoff before it starts ("pty actor is not
@@ -550,16 +551,18 @@ const promptSendFailedCode = "agent_prompt_failed"
 //     submission",
 //     https://github.com/herdrdev/herdr/blob/v0.9.0/src/pty/actor/unix.rs#L921-L929).
 //     The completion channel dropping without an answer reads "pty actor
-//     closed" again.
+//     closed" again, and that one can follow typing: the actor's thread
+//     runs unguarded and herdr does not abort on panic, so a panic
+//     mid-text unwinds it and drops the reply.
 //
 // With --wait, prompt_agent hands the dispatch's answer back verbatim
 // (herdr:src/api/wait.rs at v0.9.0), so all of them reach the CLI as one
 // code. Nor does the message separate them, which is the other place one
-// might look: the two that cover every path that may have typed -- a write
-// error and "PTY actor closed during input submission" -- each cover a path
-// that typed nothing as well. So "nothing was typed" is a claim no evidence
-// available here supports, and it is the claim that invites a resend and
-// permits the clean.
+// might look: the three that cover every path that may have typed -- a
+// write error, "PTY actor closed during input submission" and "pty actor
+// closed" -- each cover a path that typed nothing as well. So "nothing was
+// typed" is a claim no evidence available here supports, and it is the
+// claim that invites a resend and permits the clean.
 //
 // What those paths share is that every one that may have typed ends with
 // herdr's PTY actor for the pane gone (a failed write breaks out of its
@@ -568,7 +571,7 @@ const promptSendFailedCode = "agent_prompt_failed"
 // destroying the pane's record rather than a double paste -- and it is a
 // fact about herdr's internals, not a contract, which is why the posture
 // does not rest on it.
-var ErrPromptSendFailed = errors.New("herdr failed the send and does not say how much of the prompt it had typed")
+var ErrPromptSendFailed = errors.New("the send failed before or during typing")
 
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement
 // focus as two explicit mutually exclusive flags rather than a single

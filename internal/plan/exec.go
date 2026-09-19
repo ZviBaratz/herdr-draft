@@ -960,19 +960,32 @@ func explainPromptKilledAgent(err error) error {
 
 // explainPromptSendFailed says what herdr's `agent_prompt_failed` leaves
 // the user with (#228): a send that failed at a point herdr does not name,
-// so a pane that may hold none, some or all of the prompt. The instruction
-// is the one every unconfirmed shape ends on -- look before pasting --
-// because a paste into a pane already holding part of the prompt submits
-// both, joined.
+// so a pane that may hold some or all of the prompt, typed and not
+// submitted -- at herdr v0.9.0 a submission reports success as soon as its
+// Enter is written, so a failed one never finished its Enter. The
+// instruction is the one every unconfirmed shape ends on -- look before
+// pasting -- because a paste into an input box already holding part of the
+// prompt submits both, joined.
+//
+// afterStall is the one piece of history the pane's contents depend on and
+// the error cannot carry: the failed send was the stall's retry, so one
+// whole copy, Enter and all, had already gone out before it (#228's review).
+// The first-send sentence would describe a pane that might hold none of it.
 //
 // herdr's own message is left in the wrapped error rather than
 // interpreted: it names the failure ("PTY actor closed during input
 // submission", an OS write error), and the same message covers a
 // submission that had typed nothing and one halfway through, so reading
 // the phase out of it would be guessing.
-func explainPromptSendFailed(err error) error {
-	return fmt.Errorf("herdr failed the send and does not say how far it got, so the pane may hold part "+
-		"or all of the prompt -- read the pane before pasting it or removing this session: %w", err)
+func explainPromptSendFailed(err error, afterStall bool) error {
+	if afterStall {
+		return fmt.Errorf("herdr failed the retry of a stalled send and does not say how far it got, so one "+
+			"copy of the prompt has already gone out and the pane may hold some or all of a second -- read "+
+			"the pane before pasting it or removing this session: %w", err)
+	}
+	return fmt.Errorf("herdr failed the send and does not say how far it got, so the pane may hold some "+
+		"or all of the prompt, typed but not submitted -- read the pane before pasting it or removing this "+
+		"session: %w", err)
 }
 
 // explainStalledPrompt says what is left after a prompt stalled TWICE --
@@ -1028,13 +1041,13 @@ func promptTextMayBeTyped(err error) bool {
 // the sentinels above it name the evidence the step ended on, so they win
 // over the weaker "something went out at some point" when both are true.
 // Four are herdr's and two are confirmPromptLanded's verdicts (#154), and
-// all are ungated for the same reason: each is only ever produced once
-// herdr may have typed the text, so each carries textAlreadySent in itself
-// -- ErrPromptSendFailed included, which promptTextMayBeTyped counts though
-// it proves nothing either way (#228). What they do not all carry is how
-// many sends there were: a stall whose retry is swallowed ends on the
-// dialog's sentence, and a stall whose retry herdr fails ends on the failed
-// send's, and both are worded to hold for two.
+// all are ungated for the same reason: none of them can rule out that
+// herdr typed the text, so each carries textAlreadySent in itself. Five
+// prove it; ErrPromptSendFailed proves nothing either way (#228), and is
+// here because "unsent" is the one claim it cannot support. What they do
+// not all carry is how many sends there were: a stall whose retry is
+// swallowed ends on the dialog's sentence, and a stall whose retry herdr
+// fails ends on the failed send's, and both are worded to hold for two.
 func classifyPromptDelivery(runErr error, textAlreadySent bool) (bool, unconfirmedCause) {
 	switch {
 	case errors.Is(runErr, herdrc.ErrPromptWaitTimeout):
@@ -1599,12 +1612,14 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// happened to be beside it, and it cost `create` its only
 				// retry and the popup its retry whenever a user set
 				// `trust_wait_ms = 0`.
+				retried := false
 				if errors.Is(err, herdrc.ErrPromptStalled) {
 					select {
 					case <-ctx.Done():
 					case <-time.After(promptRetrySettle):
 					}
 					err = send()
+					retried = true
 				}
 				switch {
 				case errors.Is(err, herdrc.ErrPromptWaitTimeout):
@@ -1614,7 +1629,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				case errors.Is(err, herdrc.ErrPromptAgentGone):
 					err = explainPromptKilledAgent(err)
 				case errors.Is(err, herdrc.ErrPromptSendFailed):
-					err = explainPromptSendFailed(err)
+					err = explainPromptSendFailed(err, retried)
 				}
 			default:
 				err = fmt.Errorf("plan: execute: unknown op kind %v", op.Kind)
@@ -2165,9 +2180,11 @@ func unconfirmedCleanReason(cause unconfirmedCause) string {
 			"exited, which nothing here can see, and if it is still running it has the prompt. " +
 			"Read the pane before removing anything."
 	case causeSendFailed:
-		return "herdr failed the send (agent_prompt_failed), which it reports the same way whether " +
-			"it had typed none, some or all of the prompt, so what the pane holds is unknown. " +
-			"Read the pane before removing anything."
+		// Worded to hold after a stall's retry as well as on a first send:
+		// "a send", and no claim that the pane may hold nothing.
+		return "herdr failed a send (agent_prompt_failed) without saying how far it got, so what " +
+			"the pane holds is unknown -- it may include some or all of the prompt, typed but never " +
+			"submitted. Read the pane before removing anything."
 	}
 	// causeWaitTimedOut, and the zero value with it. CleanCheck cannot
 	// reach that zero value -- the cause is set on the same line as the

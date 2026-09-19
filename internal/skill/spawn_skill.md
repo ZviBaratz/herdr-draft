@@ -505,9 +505,9 @@ empty.
 And it covers herdr failing the send itself, with its code
 "agent_prompt_failed" in `error`. herdr gives that code both when it typed
 nothing and when the pane failed partway through the text, so the input box
-may hold part of the prompt, unsubmitted. Usually the pane was closing, and
-there may be nothing left to read: if the pane is gone, tell the user and
-let them decide where the text goes. If it is there, read it before
+may hold part of the prompt, unsubmitted. The likeliest cause is the pane
+closing, so there may be nothing left to read: if the pane is gone, tell the
+user and let them decide where the text goes. If it is there, read it before
 anything else.
 
 `--on-failure keep` is the default and is the right one for you: a
