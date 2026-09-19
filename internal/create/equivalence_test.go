@@ -446,6 +446,17 @@ favorites = ["claude"]
 			want:       baseScenarioWant("old-branch"),
 		},
 		{
+			// #198: the list offers a branch only a remote has by the name
+			// git resolves, and projects.json then remembers that name. It
+			// needs no special case on either path: it names a commit, so
+			// it is kept as written.
+			name:       "a remembered origin/develop, a branch only a remote has, is kept",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "origin/develop"),
+			args:       []string{"--title", title},
+			want:       baseScenarioWant("origin/develop"),
+		},
+		{
 			// Another spelling of HEAD itself is the HEAD row too, found by
 			// git. The form used to drop it to "", and while #193's hole was
 			// open -- the clean gate counting from it inside the new worktree,
@@ -1061,6 +1072,9 @@ var repoCommits = map[string]string{
 	"main":       "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
 	"dev":        "2c3d4e5f60718293a4b5c6d7e8f9012345678ab1",
 	"old-branch": "3d4e5f60718293a4b5c6d7e8f9012345678ab12c",
+	// A remote-tracking branch: only its qualified name resolves, and the
+	// bare develop is deliberately absent, as it is from a fresh clone.
+	"origin/develop": "4e5f60718293a4b5c6d7e8f9012345678ab12c3d",
 }
 
 // repoCommitsIn is repoCommits keyed as fakeGit.commits is, "<dir> <ref>".

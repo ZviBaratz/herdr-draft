@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -132,11 +133,6 @@ func TestListBranches(t *testing.T) {
 	if branches[0] != "feature-b" {
 		t.Errorf("expected feature-b first (newest), got %v", branches)
 	}
-	for _, b := range branches {
-		if b == "origin/HEAD" {
-			t.Errorf("origin/HEAD should be dropped, got %v", branches)
-		}
-	}
 
 	// Cap at limit.
 	branches, err = ListBranches(ctx, repo, 2)
@@ -183,14 +179,124 @@ func TestListBranchesDedupesLocalAndRemote(t *testing.T) {
 	}
 }
 
+// cloneOf clones upstream the way a first user's clone is made: origin/HEAD
+// set, the default branch local, and every other branch remote-only.
+func cloneOf(t *testing.T, upstream string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "clone")
+	gitRun(t, upstream, "clone", "-q", upstream, dir)
+	return dir
+}
+
+// #198: the list stripped origin/ from every remote-tracking name, so a
+// branch only origin has was offered by its bare name. That name is no ref
+// in the clone, and git handed it as a worktree's start point checks out a
+// new local branch named after it instead of the one asked for. The list
+// now offers such a branch by the name git resolves as written, and a
+// branch with a local copy stays one row, under its local name.
+func TestListBranchesOffersARemoteOnlyBranchByANameThatResolves(t *testing.T) {
+	upstream := mkRepo(t)
+	gitRun(t, upstream, "checkout", "-qb", "develop")
+	gitCommitAt(t, upstream, "develop", time.Now().Add(time.Hour))
+	gitRun(t, upstream, "checkout", "-q", "main")
+	clone := cloneOf(t, upstream)
+	ctx := context.Background()
+
+	got, err := ListBranches(ctx, clone, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if want := []string{"origin/develop", "main"}; !slices.Equal(got, want) {
+		t.Fatalf("ListBranches in a fresh clone = %q, want %q", got, want)
+	}
+	for _, name := range got {
+		if _, err := ResolveRef(ctx, clone, name); err != nil {
+			t.Errorf("ListBranches offered %q, which names nothing in the clone: %v", name, err)
+		}
+	}
+
+	gitRun(t, clone, "branch", "-q", "develop", "origin/develop")
+	got, err = ListBranches(ctx, clone, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if want := []string{"develop", "main"}; !slices.Equal(got, want) {
+		t.Fatalf("ListBranches with a local develop = %q, want %q -- one row, under the local name", got, want)
+	}
+}
+
+// #148: `origin` is %(refname:short) for refs/remotes/origin/HEAD, a
+// symref naming the remote's default branch rather than a branch of its
+// own. The old check compared the short name with "HEAD", which it never
+// is, and its test had no remote, so it could not fail. This one has a
+// real origin/HEAD, and a second remote with its HEAD set too.
+//
+// It is a symref that is dropped, not a name ending in HEAD: a branch
+// called release/HEAD is a branch, and git lets anyone make one. git's
+// short name for origin's copy of it is origin/release, by the same rule
+// that makes `origin` of origin/HEAD, and that name resolves to it.
+func TestListBranchesDropsARemoteHEAD(t *testing.T) {
+	upstream := mkRepo(t)
+	gitRun(t, upstream, "checkout", "-qb", "release/HEAD")
+	gitRun(t, upstream, "commit", "-q", "--allow-empty", "-m", "release")
+	gitRun(t, upstream, "checkout", "-q", "main")
+	clone := cloneOf(t, upstream)
+	if got := strings.TrimSpace(gitOut(t, clone, "symbolic-ref", "refs/remotes/origin/HEAD")); got != "refs/remotes/origin/main" {
+		t.Fatalf("setup: origin/HEAD is %q, want refs/remotes/origin/main", got)
+	}
+	gitRun(t, clone, "remote", "add", "fork", upstream)
+	gitRun(t, clone, "fetch", "-q", "fork")
+	gitRun(t, clone, "remote", "set-head", "fork", "main")
+	ctx := context.Background()
+
+	got, err := ListBranches(ctx, clone, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	for _, name := range got {
+		if name == "origin" || name == "fork" {
+			t.Errorf("ListBranches = %q, which offers %q: a remote's HEAD, not a branch", got, name)
+		}
+	}
+	for _, want := range []string{"main", "origin/release", "fork/main"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("ListBranches = %q, missing %q", got, want)
+		}
+	}
+	if got, want := revOf(t, clone, "origin/release"), revOf(t, upstream, "release/HEAD"); got != want {
+		t.Errorf("origin/release resolves to %s, want release/HEAD's own commit, %s", got, want)
+	}
+}
+
+func revOf(t *testing.T, dir, rev string) string {
+	t.Helper()
+	return strings.TrimSpace(gitOut(t, dir, "rev-parse", "--verify", "--quiet", rev))
+}
+
+// `git branch -a` lists a detached HEAD as a row of its own, "(HEAD
+// detached at <sha>)", and the list offered it as a base, which is no ref
+// at all. The HEAD row is already the base that means "where HEAD is".
+func TestListBranchesOffersNoDetachedHEADRow(t *testing.T) {
+	repo := mkRepo(t)
+	gitRun(t, repo, "checkout", "-q", "--detach")
+
+	got, err := ListBranches(context.Background(), repo, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if want := []string{"main"}; !slices.Equal(got, want) {
+		t.Fatalf("ListBranches with HEAD detached = %q, want %q", got, want)
+	}
+}
+
 // TestResolveRefAnswersTheBaseRule holds real git to the two facts #194's
 // base rule stands on (app.SettleBase, app.NamesHead), which every other
 // test of that rule takes from a fake:
 //
-//   - A branch that exists only on a remote is listed under its bare name
-//     (ListBranches strips origin/), and that name resolves to nothing. So a
-//     remembered or configured `develop` in a fresh clone falls back to HEAD,
-//     while `origin/develop` resolves.
+//   - A branch that exists only on a remote resolves by its remote-tracking
+//     name, origin/develop, which is how the list offers it (#198), and not
+//     by its bare name. So a remembered or configured `develop` in a fresh
+//     clone falls back to HEAD, while `origin/develop` is kept.
 //   - HEAD^0, @~0, HEAD~0, HEAD^{commit}, HEAD@{0} and @{0} are HEAD itself
 //     -- the six spellings measured letting #193's clean gate remove work --
 //     and HEAD~1 is not.
@@ -210,8 +316,8 @@ func TestResolveRefAnswersTheBaseRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListBranches: %v", err)
 	}
-	if !strings.Contains(strings.Join(branches, " "), "develop") {
-		t.Fatalf("setup: ListBranches = %v, want the remote-only develop listed under its bare name", branches)
+	if !slices.Contains(branches, "origin/develop") {
+		t.Fatalf("setup: ListBranches = %q, want the remote-only develop listed as origin/develop", branches)
 	}
 	if got, err := ResolveRef(ctx, repo, "develop"); err == nil {
 		t.Errorf("ResolveRef(develop) = %s with only origin/develop present, want an error", got)

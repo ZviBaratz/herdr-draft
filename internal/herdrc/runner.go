@@ -25,8 +25,10 @@ type CreatedTopology struct {
 	// own worktree.branch -- herdr's answer rather than the request's
 	// (WorktreeInfo, herdr:src/api/schema/worktrees.rs at v0.9.0). The two
 	// differ when herdr trims the name, or invents one for a request that
-	// named none. Empty for every other creation, and for a detached
-	// checkout.
+	// named none -- and when git checks out another branch than the one
+	// asked for, which a base naming a remote-only branch by its bare name
+	// makes it do (#198; plan's worktree step refuses that reply). Empty for
+	// every other creation, and for a detached checkout.
 	Branch string
 }
 

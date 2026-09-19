@@ -168,11 +168,13 @@ func TestPopup_ABaseThatDoesNotResolveFallsBackAndSaysSo(t *testing.T) {
 }
 
 // TestPopup_AListedBaseThatDoesNotResolveStillFallsBack: the list is not the
-// test. It names a branch that exists only on a remote as its bare name
-// (gitx.ListBranches strips origin/), which rev-parse does not resolve, and
-// which `git worktree add -b <branch> <path> <name>` answers by making a
-// branch of that name instead of the one asked for. `create` has no list to
-// consult, so the form must not treat membership as an answer either.
+// test. It used to name a branch that exists only on a remote by its bare
+// name, which rev-parse does not resolve, and which `git worktree add -b
+// <branch> <path> <name>` answers by making a branch of that name instead
+// of the one asked for. gitx.ListBranches now offers such a branch as
+// origin/<name> (#198), but a list is still a snapshot, and `create` has no
+// list to consult, so the form must not treat membership as an answer
+// either.
 func TestPopup_AListedBaseThatDoesNotResolveStillFallsBack(t *testing.T) {
 	m := baseModel(t, "develop", nil)
 

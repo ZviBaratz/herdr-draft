@@ -1313,10 +1313,19 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				if newBranch && topo.Branch == op.Worktree.Branch {
 					createdBranch = op.Worktree.Branch
 				}
-
 				if existed[topo.WorkspaceID] {
 					reused = true
 					reusedLabel = labelOf[topo.WorkspaceID]
+				}
+				// After the reuse verdict, which CleanCheck needs for this
+				// failure as for any other, and before the claim, which would
+				// add a tab to the user's workspace for an agent that will not
+				// be started.
+				if err := wrongBranch(op.Worktree.Branch, topo.Branch); err != nil {
+					return err
+				}
+
+				if reused {
 					if i == agentPaneIdx {
 						// The correction: a fresh TAB, not a split -- a
 						// split changes the geometry of a tab the user
@@ -1772,6 +1781,38 @@ func branchIsAbsent(ctx context.Context, dir, branch string) bool {
 	}
 	exists, err := gitx.LocalBranchExists(ctx, dir, branch)
 	return err == nil && !exists
+}
+
+// wrongBranch is the worktree step's check of herdr's reply against the
+// request (#198). herdr hands the base to `git worktree add -b <branch>
+// <path> <base>` (build_worktree_add_new_branch_command, herdr:src/worktree.rs
+// at v0.9.0), and git 2.53, given a base that names a branch only a remote
+// has by its bare name, checks out a new local branch named after the base,
+// tracking the remote's, and never makes the one asked for. herdr reports
+// success, and the reply's worktree.branch is the branch git checked out.
+// The base list no longer offers such a name and `create` refuses one
+// (#194), so this is for every other way to reach git's guess, and for
+// anything else that leaves a worktree on a branch nobody asked for: the
+// reply is the only evidence of what the checkout is on.
+//
+// The request is compared as herdr reads it, trimmed
+// (start_api_worktree_create, herdr:src/app/api/worktrees/deferred.rs at
+// v0.9.0). A request that names no branch gets one herdr invented, and a
+// reply that names none is a detached checkout, for which herdr omits the
+// field. Neither contradicts the request, and a create is not failed over a
+// field herdr did not send.
+//
+// It fails a step herdr has already made a checkout for, so Execute records
+// the space as it does for any failure after `worktree create` returned,
+// and the keep-or-clean gate is offered. The clean keeps the branch git
+// made, because CreatedBranch is only claimed when the reply names the
+// branch that was asked for.
+func wrongBranch(asked, got string) error {
+	asked = strings.TrimSpace(asked)
+	if asked == "" || got == "" || got == asked {
+		return nil
+	}
+	return fmt.Errorf("herdr checked out %q, not %q", got, asked)
 }
 
 // commitAt resolves base to a commit in dir, the directory herdr cuts the
