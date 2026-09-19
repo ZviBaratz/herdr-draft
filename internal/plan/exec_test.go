@@ -3596,8 +3596,15 @@ func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 	if strings.Contains(msg, "can be removed") || strings.Contains(msg, "nothing was delivered") {
 		t.Errorf("step message = %q, want it to send the user to the pane rather than offer a removal", msg)
 	}
-	if !strings.Contains(msg, "the agent exited as the prompt was sent") {
-		t.Errorf("step message = %q, want its head kept: it is the clause the popup's truncation leaves", msg)
+	// The head is the clause the popup's truncation leaves, so it states
+	// what was seen. "Exited" is the likeliest cause of that, not an
+	// observation: the reads fail the same way whatever went wrong.
+	if !strings.HasPrefix(strings.TrimPrefix(msg, "plan: execute: sending prompt: "),
+		"the agent stopped answering as the prompt was sent") {
+		t.Errorf("step message = %q, want it to open with what was seen", msg)
+	}
+	if strings.Contains(msg, "the agent exited") {
+		t.Errorf("step message = %q, want the exit offered as the likeliest cause, not asserted", msg)
 	}
 }
 
@@ -3757,7 +3764,7 @@ func TestExecutePromptAgentGoneFromHerdrIsUnconfirmed(t *testing.T) {
 		t.Errorf("CleanCheck = %+v, want the clean refused for the agent-gone evidence", d)
 	}
 	msg := progressed[len(progressed)-1].Err.Error()
-	if !strings.Contains(msg, "the agent exited as the prompt was sent") {
+	if !strings.Contains(msg, "the agent stopped answering as the prompt was sent") {
 		t.Errorf("step message = %q, want herdr's code explained, not passed through raw", msg)
 	}
 }

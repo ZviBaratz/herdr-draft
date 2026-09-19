@@ -1093,8 +1093,8 @@ func TestAssembledSubmit_WaitingOnThePromptDialogFrame(t *testing.T) {
 // that most needs it: it is the longest of the three the prompt step can
 // produce, so it is where head-keeping truncation (v2 spec §7) is most
 // likely to cut something the user needs. The clause that has to survive
-// is the first one -- that the agent exited AS the prompt was sent, which
-// is the fact that sends them to the pane.
+// is the first one -- that the agent stopped answering AS the prompt was
+// sent, which is the fact that sends them to the pane.
 //
 // Since #154 the screen also refuses the removal it used to offer. herdr
 // had typed the prompt and its Enter into the pane, and "exited" is

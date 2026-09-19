@@ -924,15 +924,20 @@ func explainAbandonedDialog(err error) error {
 // used to offer, and the instruction is the one every unconfirmed shape
 // gives: read the pane first.
 //
+// Its head says what was seen, not what it most likely means, because the
+// head is the clause the popup's truncation leaves. It used to open "the
+// agent exited", beside a remove line saying "most likely it exited" about
+// the same evidence.
+//
 // Two callers reach it holding the same fact from different witnesses:
 // confirmPromptLanded, whose reads of the pane failed (errAgentGoneAfterSend),
 // and herdr's own wait, which saw the agent go first
 // (herdrc.ErrPromptAgentGone). err carries whichever it was, which is what
 // lets classifyPromptDelivery name the evidence.
 func explainPromptKilledAgent(err error) error {
-	return fmt.Errorf("the agent exited as the prompt was sent -- most likely a dialog that had not "+
-		"painted yet, answered by the prompt's own Enter; read the pane before removing this session "+
-		"or starting it again: %w", err)
+	return fmt.Errorf("the agent stopped answering as the prompt was sent -- most likely it exited "+
+		"because a dialog that had not painted yet took the prompt's own Enter; read the pane before "+
+		"removing this session or starting it again: %w", err)
 }
 
 // explainStalledPrompt says what is left after a prompt stalled TWICE --
