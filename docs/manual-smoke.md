@@ -1677,7 +1677,8 @@ arg or merely followed it.
 ### an empty branch (#199's open question) — 2026-09-19
 
 herdr 0.9.0, git 2.53.0. `main` at `21813c3`, built from `git archive`, and
-`zvi/refuse-empty-branch` at `192dc50`, not merged. Route A0 and Route B,
+`zvi/refuse-empty-branch` at `192dc50`, since rebased unchanged as
+`719dd7d`, not merged. Route A0 and Route B,
 isolated as #199's run below: its own `XDG_*` dirs, `onboarding = false`,
 `[worktrees] directory` under the scratch tree, and a scratch plugin config
 with `branch_prefix = "zvi/"`, `default_worktree = true` and `[agents]
@@ -1691,6 +1692,12 @@ backspaces cleared it.
 | the form: the worktree row focused in the opening state, before a title | no verdict | no verdict |
 | the form: the branch input cleared | no verdict | no verdict |
 | the form: the same, `⌃S` | **the defect.** `✓ worktree  from HEAD`, naming no branch. `c remove it` removed the session and left `worktree/silver-meadow-372f` behind. | **as expected.** Refused: `branch name required` under the branch input, which kept the cursor. Nothing created. |
+
+The independent review then reworded `create`'s refusal. It now names where
+the branch it offers comes from (`leave it off to use the branch derived from
+the title, "zvi/fix-empty"`), and offers none when that one would be refused
+too. That change is held by `TestCreateRefusesAnEmptyBranch` and was not run
+live again.
 
 Teardown: both leftover branches deleted, the disposable session stopped and
 deleted, no process with a cwd under the scratch tree, the tree removed, and

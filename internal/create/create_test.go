@@ -2645,18 +2645,59 @@ func TestCreateIgnoresAnInvalidBranchWithoutAWorktree(t *testing.T) {
 // more often an unset variable than a request. The refusal names the branch
 // that leaving the flag off would use.
 func TestCreateRefusesAnEmptyBranch(t *testing.T) {
-	h := newHarness(t)
+	for _, tc := range []struct {
+		name    string
+		issue   *linear.Issue
+		args    []string
+		want    []string
+		wantNot []string
+	}{
+		{
+			name: "the fallback is the title's",
+			args: []string{"--title", "fix login"},
+			want: []string{"--branch is empty", "leave it off", "derived from the title", `fix-login"`},
+		},
+		{
+			name:  "the fallback is the issue's",
+			issue: &linear.Issue{Identifier: "LIN-42", Title: "Fix login", BranchName: "zvi/lin-42-fix-login"},
+			args:  []string{"--issue", "lin-42"},
+			want:  []string{"--branch is empty", "leave it off", `LIN-42's branch, "zvi/lin-42-fix-login"`},
+		},
+		{
+			// Leaving the flag off would be refused as well (#232's review),
+			// so the refusal must not send the caller there.
+			name:    "the fallback is refused too",
+			issue:   &linear.Issue{Identifier: "LIN-42", Title: "Fix login", BranchName: "zvi/old "},
+			args:    []string{"--issue", "lin-42"},
+			want:    []string{"--branch is empty", `LIN-42's branch, "zvi/old "`, "ends with a space", "pass --branch"},
+			wantNot: []string{"leave it off"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			if tc.issue != nil {
+				h.deps.Linear = &fakeLinear{issues: []linear.Issue{*tc.issue}}
+			}
 
-	code := h.run("--title", "fix login", "--branch", "", "--worktree")
-	if code != ExitUsage {
-		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
-	}
-	stderr := h.stderr.String()
-	if !strings.Contains(stderr, "--branch is empty") || !strings.Contains(stderr, `fix-login"`) {
-		t.Errorf("stderr should say --branch is empty and name the branch leaving it off would use:\n%s", stderr)
-	}
-	if h.createdAnything() {
-		t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+			code := h.run(append(tc.args, "--branch", "", "--worktree")...)
+			if code != ExitUsage {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+			}
+			stderr := h.stderr.String()
+			for _, w := range tc.want {
+				if !strings.Contains(stderr, w) {
+					t.Errorf("stderr should mention %s:\n%s", w, stderr)
+				}
+			}
+			for _, w := range tc.wantNot {
+				if strings.Contains(stderr, w) {
+					t.Errorf("stderr should not mention %s:\n%s", w, stderr)
+				}
+			}
+			if h.createdAnything() {
+				t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+			}
+		})
 	}
 }
 

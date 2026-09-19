@@ -773,7 +773,7 @@ func TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd(t *testing.T) {
 			name: "step-one dead end",
 			setup: func(m *Model) {
 				m.submitDeadEnd = true
-				m.submitView.SetDeadEnd(plan.ExecResult{FailedIndex: 0}, false, "")
+				m.submitView.SetDeadEnd(plan.ExecResult{FailedIndex: 0}, "")
 			},
 			wantQuit: true,
 		},
@@ -1592,16 +1592,6 @@ func TestSubmit_DeadEndSaysNothingWasCreatedOnlyWithEvidence(t *testing.T) {
 			worktree: true,
 			branch:   "zvi/collide",
 			want:     []string{"herdr may have made part of it before failing", "zvi/collide", "look before retrying"},
-			wantNot:  []string{"nothing was created"},
-		},
-		{
-			// The branch row cleared by hand: nothing refuses that, and
-			// herdr then names the branch itself
-			// (herdr:src/app/api/worktrees/deferred.rs at v0.9.0), so a
-			// branch, its checkout and a workspace may all still exist.
-			name:     "no evidence, worktree, no branch named",
-			worktree: true,
-			want:     []string{"herdr may have made part of it before failing — any of a branch, its checkout and a workspace for it; look before retrying"},
 			wantNot:  []string{"nothing was created"},
 		},
 		{

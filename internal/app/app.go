@@ -1548,8 +1548,11 @@ func (m Model) beginSubmit() (Model, tea.Cmd) {
 //   - A branch that cannot be made (BranchRefusal, #199), computed here for
 //     the branch as it stands. It refocuses the worktree row with the
 //     cursor in the branch input, and pushes the verdict the panel shows
-//     there -- the same text handleTitleResult pushes once the debounced
-//     check lands, so a submit that beat the check still says why.
+//     there. For a wrong name that is the text handleTitleResult pushes once
+//     the debounced check lands, so a submit that beat the check still says
+//     why. For an empty one it is the only place the verdict comes from:
+//     "branch name required" is said at submit, as "title required" is, and
+//     never by the check.
 //   - Branch/workspace-label duplicates (titleDupBlocked, kept live by
 //     handleTitleResult) -- the SAME live verdict TitleField is already
 //     showing; this does not compute a new message, only blocks.

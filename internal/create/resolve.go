@@ -476,6 +476,8 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	if issueBranch != "" && branch == issueBranch {
 		branchFrom = issue.Identifier + "'s branch"
 	}
+	// What the flag replaces, for an empty --branch's refusal to offer.
+	derivedFrom := branchFrom
 	if req.set["branch"] {
 		branch = req.branch
 		branchFrom = "--branch"
@@ -517,10 +519,15 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	// that refusal next.
 	if err := app.BranchRefusal(useWorktree && t.isGitRepo, branch); err != nil {
 		// Only --branch can be empty -- BranchFor never derives an empty
-		// name -- and it is a missing name, not a wrong one. Naming what
-		// leaving it off would use is the whole remedy.
+		// name -- and it is a missing name, not a wrong one. The remedy is
+		// the branch leaving it off would use, and where that comes from --
+		// unless that one is refused too, when sending the caller there
+		// would only earn a second refusal.
 		if errors.Is(err, gitx.ErrBranchNameEmpty) {
-			return plan.Input{}, nil, fmt.Errorf("--branch is empty; leave it off to use the derived branch %q", derived)
+			if derivedErr := app.BranchRefusal(true, derived); derivedErr != nil {
+				return plan.Input{}, nil, fmt.Errorf("--branch is empty, and %s, %q, cannot be used either: %v; pass --branch with a name", derivedFrom, derived, derivedErr)
+			}
+			return plan.Input{}, nil, fmt.Errorf("--branch is empty; leave it off to use %s, %q", derivedFrom, derived)
 		}
 		remedy := ""
 		if branchFrom != "--branch" {

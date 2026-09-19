@@ -1467,7 +1467,7 @@ func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 			if m.submitInput.UseWorktree {
 				branch = m.submitInput.Branch
 			}
-			m.submitView.SetDeadEnd(msg.result, m.submitInput.UseWorktree, branch)
+			m.submitView.SetDeadEnd(msg.result, branch)
 		}
 		// A dead end still owes the user their prompt back. This branch
 		// used to return nil because plan.Execute only ever set PromptText

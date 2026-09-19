@@ -116,13 +116,11 @@ type SubmitView struct {
 	// close button -- a footer that advertised "esc close" at any other
 	// point would be advertising a key the app deliberately ignores.
 	deadEnd bool
-	// deadEndWorktree/deadEndBranch are SetDeadEnd's: whether the plan
-	// had a worktree, and the branch its worktree create was asked to
-	// make, "" when it named none.
-	deadEndWorktree bool
-	deadEndBranch   string
-	result          plan.ExecResult
-	clean           plan.CleanDecision
+	// deadEndBranch is SetDeadEnd's: the branch the plan's worktree create
+	// was asked to make, "" for a plan with no worktree.
+	deadEndBranch string
+	result        plan.ExecResult
+	clean         plan.CleanDecision
 
 	// cleanErr is SetCleanFailed's own recorded error, or nil before that
 	// setter is ever called (the common case: keep succeeds silently, or
@@ -205,15 +203,14 @@ func (v *SubmitView) SetFailure(res plan.ExecResult, clean plan.CleanDecision) {
 // nothing was made (deadEndLines). There is no CleanDecision to pass,
 // because there is nothing to decide about.
 //
-// worktree and branch say what deadEndLines names as possibly left behind
-// when there is no such evidence: whether the plan had a worktree, and the
-// branch its worktree create was asked to make. The branch can be "" with
-// a worktree, since nothing refuses a branch row cleared by hand, and
-// herdr then names the branch itself. The app layer passes both because
-// this view never sees the plan's Input.
-func (v *SubmitView) SetDeadEnd(res plan.ExecResult, worktree bool, branch string) {
+// branch says what deadEndLines names as possibly left behind when there is
+// no such evidence: the branch the plan's worktree create was asked to make,
+// "" for a plan with no worktree. A worktree always names one -- an empty
+// branch is refused before any submit (#199), where herdr used to invent a
+// name -- so "" means no worktree. The app layer passes it because this view
+// never sees the plan's Input.
+func (v *SubmitView) SetDeadEnd(res plan.ExecResult, branch string) {
 	v.deadEnd = true
-	v.deadEndWorktree = worktree
 	v.deadEndBranch = branch
 	v.result = res
 }
@@ -678,12 +675,8 @@ func (v *SubmitView) deadEndLines(width int) []string {
 	if !v.result.NothingCreated {
 		style = lipgloss.NewStyle().Foreground(v.palette.Warning)
 		text = "herdr may have made part of it before failing"
-		switch {
-		case v.deadEndBranch != "":
+		if v.deadEndBranch != "" {
 			text += " — any of the branch " + v.deadEndBranch + ", its checkout and a workspace for it"
-		case v.deadEndWorktree:
-			// A branch row cleared by hand: herdr names the branch itself.
-			text += " — any of a branch, its checkout and a workspace for it"
 		}
 		text += "; look before retrying"
 	}
