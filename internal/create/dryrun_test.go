@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/picker"
 )
@@ -123,6 +124,18 @@ func TestDryRun_ReportsWhatTheRunWould(t *testing.T) {
 			args:  []string{"--title", "review the parser", "--no-worktree", "--prompt", "-", "--no-reap", "--model", "sonnet"},
 			setup: openRepoSpace,
 		},
+		{
+			name: "an account the picker chooses",
+			args: []string{"--title", "fix login", "--worktree", "--account", "auto"},
+			setup: func(h *harness) {
+				h.deps.Picker = &fakePicker{res: picker.Result{Profile: "alpha-2"}}
+			},
+		},
+		{
+			name:  "a worktree from inside a linked checkout, base unset",
+			args:  []string{"--title", "fix login", "--worktree"},
+			setup: inLane,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reports := make([]jsonReport, 2)
@@ -148,7 +161,7 @@ func TestDryRun_ReportsWhatTheRunWould(t *testing.T) {
 			}
 			// Guards the comparison below against passing on two reports
 			// that are equal because both are empty.
-			if dry.Account != "alpha-1" || len(dry.LaunchOptions) == 0 || len(dry.Provenance) == 0 {
+			if dry.Account == "" || len(dry.LaunchOptions) == 0 || len(dry.Provenance) == 0 {
 				t.Fatalf("the dry run's report is missing what it exists to show:\n%+v", dry)
 			}
 			if !reflect.DeepEqual(resolvedOnly(real), resolvedOnly(dry)) {
@@ -193,6 +206,22 @@ func TestDryRun_RefusesWhatTheRunRefuses(t *testing.T) {
 			want: ExitUsage,
 		},
 		{
+			name: "the picker refuses",
+			args: []string{"--no-worktree", "--account", "auto"},
+			setup: func(h *harness) {
+				h.deps.Picker = &fakePicker{err: &picker.RefusalError{Code: picker.ExitExhausted, Reason: "pool exhausted (resets 22:49)"}}
+			},
+			want: ExitUsage,
+		},
+		{
+			name: "a pinned profile clauth reports signed out",
+			args: []string{"--no-worktree", "--account", "alpha-2"},
+			setup: func(h *harness) {
+				h.deps.Clauth = &fakeClauth{status: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "alpha-2", AuthStatus: "expired"}}}}
+			},
+			want: ExitUsage,
+		},
+		{
 			name:  "herdr unreachable",
 			args:  []string{"--no-worktree"},
 			setup: func(h *harness) { h.runner.listErr = errors.New("connection refused") },
@@ -200,7 +229,8 @@ func TestDryRun_RefusesWhatTheRunRefuses(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, dry := range []bool{false, true} {
+			stderr := make([]string, 2)
+			for i, dry := range []bool{false, true} {
 				h := newHarness(t)
 				if tc.setup != nil {
 					tc.setup(h)
@@ -215,6 +245,13 @@ func TestDryRun_RefusesWhatTheRunRefuses(t *testing.T) {
 				if h.stdout.Len() != 0 {
 					t.Errorf("dry=%v: a refusal printed on stdout:\n%s", dry, h.stdout)
 				}
+				stderr[i] = h.stderr.String()
+			}
+			// The same reason, not just the same code: the caller fixes the
+			// command from this text, so a dry run that refused for another
+			// reason would send them to fix the wrong thing.
+			if stderr[0] != stderr[1] {
+				t.Errorf("the dry run's refusal differs from the run's.\nrun: %s\ndry: %s", stderr[0], stderr[1])
 			}
 		})
 	}

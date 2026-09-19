@@ -271,8 +271,7 @@ func TestRenderedSkillHasNoFormattingError(t *testing.T) {
 // document names its flag and every value it offers, each in backticks. The
 // skill tells an agent to CHOOSE among these for every session, so a value
 // the declaration gains and the document omits is one no spawned session is
-// ever given -- and a value the document keeps after the declaration drops it
-// is a flag create refuses with exit 2.
+// ever given. TestSkillRecommendsOnlyAcceptedValues is the other direction.
 //
 // One line, not the whole document, because the whole document names `plan`
 // and `auto` in other senses; the line that introduces the flag is where a
@@ -284,29 +283,122 @@ func TestSkillListsEveryDeclaredValue(t *testing.T) {
 		t.Fatal("claude declares no options -- every assertion below would pass vacuously")
 	}
 	for _, o := range opts {
-		flag := "--" + agentopts.FlagName(o.Name)
-		found := false
-		for _, line := range lines {
-			if !strings.Contains(line, "`"+flag+" ") {
-				continue
-			}
-			all := true
-			for _, c := range o.Choices {
-				if !strings.Contains(line, "`"+c.Value+"`") {
-					all = false
-				}
-			}
-			if all {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, ok := flagLine(lines, o); !ok {
 			var want []string
 			for _, c := range o.Choices {
 				want = append(want, "`"+c.Value+"`")
 			}
-			t.Errorf("no line introduces `%s ...` with every value claude offers: %s", flag, strings.Join(want, ", "))
+			t.Errorf("no line introduces `--%s ...` with every value claude offers: %s", agentopts.FlagName(o.Name), strings.Join(want, ", "))
+		}
+	}
+}
+
+// flagLine finds the line that introduces o's flag and names every value o
+// offers, in backticks.
+func flagLine(lines []string, o agentopts.Option) (string, bool) {
+	flag := "--" + agentopts.FlagName(o.Name)
+	for _, line := range lines {
+		if !strings.Contains(line, "`"+flag+" ") {
+			continue
+		}
+		all := true
+		for _, c := range o.Choices {
+			if !strings.Contains(line, "`"+c.Value+"`") {
+				all = false
+			}
+		}
+		if all {
+			return line, true
+		}
+	}
+	return "", false
+}
+
+// backticked is every `word` on a line, less the flag-shaped ones -- a
+// flag's own name is not a value of it.
+var backtickedWord = regexp.MustCompile("`([^`\\s]+)`")
+
+func backticked(line string) []string {
+	var out []string
+	for _, m := range backtickedWord.FindAllStringSubmatch(line, -1) {
+		if !strings.HasPrefix(m[1], "-") {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
+// linesBetween returns the lines from the one starting with from, up to
+// and not including the next one starting with to, failing the test when
+// either is missing -- the section this test reads has moved, and the test
+// must move with it rather than pass on nothing.
+func linesBetween(t *testing.T, lines []string, from, to string) []string {
+	t.Helper()
+	for i, line := range lines {
+		if !strings.HasPrefix(line, from) {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if strings.HasPrefix(lines[j], to) {
+				return lines[i:j]
+			}
+		}
+		t.Fatalf("no line starting %q after %q -- if the section moved, move this test with it", to, from)
+	}
+	t.Fatalf("no line starting %q -- if the section moved, move this test with it", from)
+	return nil
+}
+
+// TestSkillRecommendsOnlyAcceptedValues is the reverse of the test above:
+// every value the skill tells an agent to pass must be one create accepts.
+// The places it recommends values are the flag lines, the task table's model
+// and effort columns, and the permission-mode guidance. A value the
+// declaration drops while the document keeps it is a recommendation create
+// refuses with exit 2 -- for `xhigh`, every "judgement" spawn (#209's
+// review).
+//
+// Checked with agentopts.Normalize, which is create's own check, so an alias
+// the declaration stops offering still passes for the model: create accepts
+// it as a typed model id.
+func TestSkillRecommendsOnlyAcceptedValues(t *testing.T) {
+	lines := strings.Split(renderedSkill(), "\n")
+	check := func(option, value, where string) {
+		if v, err := agentopts.Normalize("claude", option, value); err != nil || v == "" {
+			t.Errorf("%s recommends %s `%s`, which create does not accept: %v", where, option, value, err)
+		}
+	}
+
+	for _, o := range agentopts.For("claude") {
+		line, ok := flagLine(lines, o)
+		if !ok {
+			continue // TestSkillListsEveryDeclaredValue reports it
+		}
+		for _, v := range backticked(line) {
+			check(o.Name, v, "the --"+agentopts.FlagName(o.Name)+" line")
+		}
+	}
+
+	rows := 0
+	for _, row := range linesBetween(t, lines, "| the task | model | effort |", "Each row down the table")[2:] {
+		cells := strings.Split(row, "|")
+		if len(cells) < 5 {
+			continue
+		}
+		rows++
+		for _, v := range backticked(cells[2]) {
+			check("model", v, "the task table")
+		}
+		for _, v := range backticked(cells[3]) {
+			check("effort", v, "the task table")
+		}
+	}
+	if rows == 0 {
+		t.Fatal("the task table has no rows -- every assertion on it passed vacuously")
+	}
+
+	for _, line := range linesBetween(t, lines, "**Permission mode follows who decides first:**", "These options are claude's.") {
+		for _, v := range backticked(line) {
+			check("permission_mode", v, "the permission-mode guidance")
 		}
 	}
 }
@@ -352,6 +444,29 @@ func TestSkillNamesOnlyRealJSONKeys(t *testing.T) {
 			if !allowed[m[1]] {
 				t.Errorf("line %d names `%s`, which is not a --json key, an option name, or a provenance value:\n  %s", i+1, m[1], line)
 			}
+		}
+	}
+}
+
+// unquotedBracketModel is a --model value with a `[` in it that no quote
+// protects: the shape #72 was, typed into a shell.
+var unquotedBracketModel = regexp.MustCompile(`--model\s+[^'"\s]\S*\[`)
+
+// TestSkillQuotesBracketedModelIDs holds the one piece of shell the skill
+// asks an agent to type that a shell will mangle: a model id carrying a
+// variant in brackets, `claude-opus-5[1m]`, which section 5 tells an agent
+// to pass as it stands. Unquoted, zsh refuses the whole command ("no matches
+// found") and bash replaces it with any file in the working directory the
+// pattern matches (#209's tabletop). So the document must show it quoted,
+// and must never show it unquoted after --model.
+func TestSkillQuotesBracketedModelIDs(t *testing.T) {
+	doc := renderedSkill()
+	if !strings.Contains(doc, "--model 'claude-opus-5[1m]'") {
+		t.Error("the skill never shows a bracketed model id quoted for the shell: --model 'claude-opus-5[1m]'")
+	}
+	for i, line := range strings.Split(doc, "\n") {
+		if unquotedBracketModel.MatchString(line) {
+			t.Errorf("line %d passes a bracketed model id unquoted:\n  %s", i+1, line)
 		}
 	}
 }

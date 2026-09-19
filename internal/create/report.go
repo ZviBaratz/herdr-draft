@@ -294,6 +294,13 @@ type jsonReport struct {
 	// agent_options absent. Absent here means no flag at all, so the
 	// agent's own settings decide; provenance's option.<name> says which
 	// source supplied each, "extra_args" included.
+	//
+	// It reads the declared flags and nothing else. Any other argument in
+	// extra_args reaches the agent as written and unreported, one that
+	// skips its permission prompts included, whatever permission_mode says
+	// here. And a `[clauth] launcher` of the form `sh -c "..."` drops every
+	// argument after it (agent-options spec §5.1), which nothing in this
+	// report can see.
 	LaunchOptions agentopts.Values `json:"launch_options,omitempty"`
 
 	OnFailure    string `json:"on_failure,omitempty"`
@@ -314,9 +321,10 @@ type jsonReport struct {
 
 	// Provenance is spec §10's tier attribution, one entry per resolved
 	// value: which file supplied it, or "flag" when the caller did,
-	// "worktree" for the placement a worktree decides, and "checkout" for
-	// the commit a linked checkout supplies as an unset base (see
-	// provenanceFlag and its siblings).
+	// "worktree" for the placement a worktree decides, "checkout" for the
+	// commit a linked checkout supplies as an unset base, and "extra_args"
+	// for a session option left on inherit that [agents.extra_args] passes
+	// anyway (see provenanceFlag and its siblings).
 	Provenance map[string]string `json:"provenance"`
 }
 

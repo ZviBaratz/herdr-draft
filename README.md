@@ -379,8 +379,9 @@ worktree is on). A `mark_ready: true` means the prompt carried
 pane-reaper's instruction. `agent_options` holds the session options chosen
 for the agent, and `launch_options` what its command line actually carried
 for each: the chosen ones, plus whatever `[agents.extra_args]` passes for
-the rest, which `provenance` names `extra_args`. It never prompts. Exit
-codes:
+the rest, which `provenance` names `extra_args`. It reads those three flags
+only: any other argument in `[agents.extra_args]` reaches the agent
+unreported. It never prompts. Exit codes:
 
 | Code | Meaning |
 |---|---|

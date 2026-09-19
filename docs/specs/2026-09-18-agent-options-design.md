@@ -347,7 +347,10 @@ The rules:
 > `extra_args`, not `built-in`. That holds after an explicit `inherit`,
 > which sends no flag of its own and cannot take `extra_args`'s away. The
 > #208 session's report said `built-in` for a model and an effort that
-> `extra_args` had set.
+> `extra_args` had set. It reads the declared flags only. Any other argument
+> in `extra_args` reaches the agent unreported, a permission-skipping one
+> included, and an `sh -c` launcher's loss of the arguments (§5.1) is
+> invisible to it.
 
 ### 8.3 The spawn skill
 
