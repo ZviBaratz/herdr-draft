@@ -114,8 +114,8 @@ without the popup. It drives herdr exclusively through the public CLI
   pick, a `⌃R ⌃R` had the pick submit the rebuilt form, and an edit reached
   the session unchecked. `esc` and the Cancel button still cancel.
 - **A branch git cannot hold is refused where the branch is shown** (#199).
-  The `worktree` panel names what is wrong with it under the three parts,
-  and a submit lands the cursor in the branch input to fix it. The
+  The `worktree` panel names what is wrong with it on the line under the
+  branch, and a submit lands the cursor in the branch input to fix it. The
   duplicate check could not see these names, because git calls a branch it
   could never hold "absent". So `zvi/old ` got past it, and herdr, which
   trims the name, started the session on your existing `zvi/old`. The same

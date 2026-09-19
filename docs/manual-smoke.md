@@ -1677,7 +1677,8 @@ arg or merely followed it.
 ### a branch git cannot hold (#199) — 2026-09-19
 
 herdr 0.9.0, git 2.53.0. `main` at `5cead7a`, built from `git archive`, and
-`zvi/fix-199-branch-name-validity` at `fce2882`, not merged. Route A0 with
+`zvi/fix-199-branch-name-validity` at `fce2882`, since rebased as `50c3687`
+with the refusal unchanged, not merged. Route A0 with
 its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME` under `/var/tmp`,
 `onboarding = false`, `[worktrees] directory` under the same path, and a
 scratch plugin config and state dir with `branch_prefix = "zvi/"`,
@@ -1699,9 +1700,22 @@ and then `⌃S`.
 | the form: the same, `⇥` to the agent row, `⌃S` | — | refused, and focus came back to the worktree row with the cursor in the branch input |
 | the form: the space and `⌃S` sent 12 ms apart, inside the debounce | — | held for the check, then refused as above; nothing created |
 
-Teardown: the disposable session stopped and deleted, no process with a cwd
-under the scratch tree, the tree removed, and none of the pass's binaries
-left running.
+**Second pass, after the independent review** (`3032541`, the same isolation
+and a fresh scratch tree). The review moved the verdict to the line under the
+branch part, and kept it at the panel's three-row floor, where it had been
+dropped while the submit was still refused. It also stopped `create`
+refusing the branch where no worktree can be made. For the 14-row case,
+`stty rows 14 cols 104` ran in the pane before the form started.
+
+| Case | the fix |
+|---|---|
+| the form: `zvi/old ` typed, `⇥` to the agent row, `⌃S` | refused; the panel read `branch  zvi/old`, then `invalid branch name  ends with a space`, then `base` |
+| the same in a 14-row window | refused; the panel's three rows were the chips, the branch and the verdict, the base part giving way |
+| `create --worktree --branch "zvi/a b"` in a directory that is not a repository | `worktree creation requires a git repository at "<plain>"`, exit 2: the more basic refusal first |
+
+Teardown for each pass: the disposable session stopped and deleted, no process
+with a cwd under the scratch tree, the tree removed, and none of the pass's
+binaries left running.
 
 ### `create --dry-run` and `launch_options` (#209) — 2026-09-19
 
