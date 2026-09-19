@@ -70,6 +70,14 @@ type fakeRunner struct {
 	readTextShowsAfter int
 	readCalls          int
 
+	// postPromptErr is what AgentRead fails with once AgentPrompt has
+	// succeeded -- the pane AFTER a send, as internal/plan's mockRunner and
+	// internal/app's submitFakeRunner model it under the same name. A
+	// failAt of AgentRead cannot express it: that also fails the guard's
+	// read BEFORE the send, so nothing would ever be typed (#154).
+	postPromptErr error
+	promptSent    bool
+
 	// failTimes bounds how many calls to failAt actually fail. Zero means
 	// all of them, which is what every test that leaves it alone means by
 	// failAt; a positive N fails the first N and lets the rest through,
@@ -244,12 +252,19 @@ func (r *fakeRunner) AgentStart(_ context.Context, req herdrc.AgentStartReq) err
 }
 
 func (r *fakeRunner) AgentPrompt(_ context.Context, req herdrc.AgentPromptReq) error {
-	return r.record("AgentPrompt", req.Target, req.Text)
+	if err := r.record("AgentPrompt", req.Target, req.Text); err != nil {
+		return err
+	}
+	r.promptSent = true
+	return nil
 }
 
 func (r *fakeRunner) AgentRead(_ context.Context, target string) (string, error) {
 	if err := r.record("AgentRead", target); err != nil {
 		return "", err
+	}
+	if r.promptSent && r.postPromptErr != nil {
+		return "", r.postPromptErr
 	}
 	r.readCalls++
 	if r.readText == "" || r.readCalls <= r.readTextShowsAfter {
@@ -1244,6 +1259,121 @@ func TestStallThenARefusedRetryIsStillUnconfirmed(t *testing.T) {
 	// the claim this rider retracts.
 	if strings.Contains(out.Error, "prompt not sent") {
 		t.Errorf("error field still says the prompt was not sent:\n%s", out.Error)
+	}
+}
+
+// TestAFirstSendTheCheckRejectsIsUnconfirmed is #154 at the headless verb:
+// the send is a FIRST one, herdr accepts it, and the read straight afterwards
+// finds it did not land. Before #154 nothing had marked the text typed, so
+// the report said `unsent` -- which tells a script to resend -- and
+// `--on-failure clean` removed the one pane whose screen showed what the
+// prompt's Enter had done.
+//
+// Both of the post-send check's verdicts, and herdr's own report of the
+// agent gone, because all three come after herdr has typed the text and
+// Enter. The dialog verdict's timing is the measured
+// one: the guard reads the startup window's dialog-free screen, and the
+// dialog has painted by the time the check looks. The other is a pane that
+// stops answering, which costs about a second in real time here --
+// readAfterSend's poll interval is internal/plan's own unexported var.
+func TestAFirstSendTheCheckRejectsIsUnconfirmed(t *testing.T) {
+	const prompt = "implement the fix"
+
+	for _, tc := range []struct {
+		name  string
+		setup func(*fakeRunner)
+		// evidence is what clean_refused must name; notClaimed is what the
+		// `error` field used to say and must not any more (none, when it
+		// used to pass herdr's own error through); instruction is what it
+		// must say instead.
+		evidence, notClaimed, instruction string
+	}{
+		{
+			name: "a dialog with no trace of the prompt",
+			setup: func(r *fakeRunner) {
+				r.readTextShowsAfter = 1
+				r.readText = "Quick safety check: Is this a project you created or one you trust?\n" +
+					"❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel"
+			},
+			// Not "dialog" alone: the after-a-send sentence says "possibly
+			// typed into a dialog" too, so that would pass for the wrong
+			// cause.
+			evidence:    "no trace of the prompt",
+			notClaimed:  "reach",
+			instruction: "read the pane before pasting",
+		},
+		{
+			name: "a pane that stopped answering",
+			setup: func(r *fakeRunner) {
+				r.postPromptErr = errors.New("herdr agent read wS1:pP1: exit status 1: agent_not_found")
+			},
+			evidence:    "stopped answering",
+			notClaimed:  "can be removed",
+			instruction: "read the pane before removing",
+		},
+		{
+			// herdr's own wait seeing the agent go before the read does:
+			// `agent_not_running` comes only after the dispatch succeeded.
+			name: "herdr reporting the agent no longer running",
+			setup: func(r *fakeRunner) {
+				r.failAt = "AgentPrompt"
+				r.failErr = fmt.Errorf("%w: herdr agent prompt wS1:pP1 ...: exit status 1: "+
+					`{"error":{"code":"agent_not_running","message":"agent is no longer running in the target pane"},"id":"cli:agent:prompt"}`,
+					herdrc.ErrPromptAgentGone)
+			},
+			evidence:    "stopped answering",
+			instruction: "read the pane before removing",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			tc.setup(h.runner)
+
+			code := h.run("--title", "t", "--no-worktree", "--prompt", prompt,
+				"--on-failure", "clean", "--json")
+			if code != ExitFailed {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+			}
+			if n := h.runner.countCalls("AgentPrompt"); n != 1 {
+				t.Fatalf("AgentPrompt called %d times, want 1 -- a first send, never resent: %v",
+					n, h.runner.calls)
+			}
+			for _, closer := range []string{"WorkspaceClose", "PaneClose", "TabClose"} {
+				if h.runner.called(closer) {
+					t.Errorf("clean removed a pane herdr had typed the prompt into (%s): %v",
+						closer, h.runner.calls)
+				}
+			}
+
+			var out jsonReport
+			if err := json.Unmarshal([]byte(h.stdout.String()), &out); err != nil {
+				t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+			}
+			if out.PromptStatus != promptStatusUnconfirmed {
+				t.Errorf("prompt_status = %q, want %q -- herdr accepted the send",
+					out.PromptStatus, promptStatusUnconfirmed)
+			}
+			if out.PromptSent != nil {
+				t.Errorf("prompt_sent = %v, want it absent", *out.PromptSent)
+			}
+			if out.UnconfirmedPrompt != prompt || out.UnsentPrompt != "" {
+				t.Errorf("text came back under the wrong key: unconfirmed=%q unsent=%q",
+					out.UnconfirmedPrompt, out.UnsentPrompt)
+			}
+			if out.Cleaned || !strings.Contains(out.CleanRefused, tc.evidence) {
+				t.Errorf("cleaned=%v clean_refused=%q, want a refusal naming %q",
+					out.Cleaned, out.CleanRefused, tc.evidence)
+			}
+			if tc.notClaimed != "" && strings.Contains(out.Error, tc.notClaimed) {
+				t.Errorf("error field still says %q:\n%s", tc.notClaimed, out.Error)
+			}
+			if !strings.Contains(out.Error, tc.instruction) {
+				t.Errorf("error field does not say %q:\n%s", tc.instruction, out.Error)
+			}
+			if out.PaneID == "" {
+				t.Errorf("no pane id in the report, but the caller was told to read the pane: %+v", out)
+			}
+		})
 	}
 }
 

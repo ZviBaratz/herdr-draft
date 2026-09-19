@@ -257,15 +257,19 @@ Layering, outermost to innermost:
   refusal happens before any text is sent, which is what makes waiting and
   retrying safe, and `errPromptSwallowed` is deliberately not in that set.
   Its two verdicts rest on different evidence and are worth keeping
-  straight — a pane that stops answering means the agent is gone, which is
-  size-independent and unarguable; a dialog still up with no trace of the
-  prompt is weaker and is gated by `promptIsVerifiable`, because
+  straight — a pane that stops answering most likely means the agent is
+  gone, which is size-independent but inferred, since `agent read` fails
+  the same way whatever went wrong; a dialog still up with no trace of the
+  prompt is weaker again and is gated by `promptIsVerifiable`, because
   `ExecResult.PromptUnconfirmed`'s own doc comment already recorded that a
   large prompt is reflowed and scrolled by the agent's TUI and appears
   verbatim nowhere. Note also what does *not* separate the two panes: a
   dialog. "Enter to confirm" is Claude Code's own permission-prompt footer,
   so an agent that received the prompt and immediately asked to act on it
-  is sitting on a matching screen with the prompt delivered.
+  is sitting on a matching screen with the prompt delivered. What the two
+  verdicts share is the posture: both come after herdr accepted the send,
+  so both are **unconfirmed**, never `unsent`, and `CleanCheck` refuses
+  the clean (#154).
 - **Only the popup waits for a person; `create` never does — and that
   difference may not live in `plan.Input`.** `internal/create`'s
   `equivalence_test.go` compares the form's `plan.Input` against the headless
@@ -303,9 +307,18 @@ Layering, outermost to innermost:
   typed the text, no later failure in the same op may take it back to
   "unsent", which is what stops the retry's own guard — correctly refusing a
   dialog that painted during the settle — from re-permitting the clean it
-  had just refused. `ExecResult.promptUnconfirmedCause` carries which of the
-  three it was, purely so `CleanCheck` names the right evidence; the
-  exported flag stays the posture every other package reads.
+  had just refused. "Typed" is **recorded where herdr accepts the send**
+  (`promptIfReady`'s `typed` result), not inferred afterwards from which
+  error came back: #154 was a first send that the post-send check found
+  swallowed, reported `unsent` because the list of errors meaning "the text
+  went out" did not include it. When `agent prompt` itself fails, only an
+  error herdr raises after typing counts (`promptTextWasTyped`: the stall,
+  the timeout, and `agent_not_running`, which herdr's wait raises only after
+  its dispatch succeeded). `agent_prompt_failed` is deliberately not one of
+  them: herdr raises it both before anything is queued and when the write
+  itself fails. `ExecResult.promptUnconfirmedCause` carries
+  which of the five shapes it was, purely so `CleanCheck` names the right
+  evidence; the exported flag stays the posture every other package reads.
 - **Citations into herdr's source name a pinned ref, never a local
   path.** The pin is the herdr release this plugin's floor names
   (`min_herdr_version` in `herdr-plugin.toml`), tagged `v<version>` — the

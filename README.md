@@ -415,7 +415,7 @@ the session will run with.
 
 **A prompt has three fates, not two.** `prompt_status` names which:
 `sent`, `unsent`, or `unconfirmed`. The third means delivery is unknown,
-and it is reached three ways:
+and it is reached four ways:
 
 - **the wait gave up.** `herdr agent prompt --wait` returned before the
   agent's status changed, which is *not* proof the prompt failed to
@@ -435,6 +435,13 @@ and it is reached three ways:
   first send stalls because the agent's screen had not finished painting,
   and by the time the retry looks, the dialog is up — so herdr-draft
   correctly refuses to type into it, having already typed once.
+- **the send went out and was not seen to land.** herdr-draft reads the
+  pane straight after every send herdr accepts. If it finds a dialog with
+  none of the prompt on it, the prompt's Enter may have answered that
+  dialog. If the pane stops answering, or herdr's own wait reports the
+  agent no longer running, the agent most likely exited. Either way the
+  text and Enter went into the pane, which is the rule above applied to a
+  first send.
 
 Read `prompt_status` rather than inferring from the other fields:
 
@@ -444,8 +451,8 @@ Read `prompt_status` rather than inferring from the other fields:
 | `unsent` | `false` | `unsent_prompt` | **read the pane first**, then resend |
 | `unconfirmed` | *absent* | `unconfirmed_prompt` | **read the pane. Never resend.** |
 
-**`unsent` is not permission to resend blind.** It means the text is not in
-front of the agent — not that it was never typed — and it covers three
+**`unsent` is not permission to resend blind.** It means herdr never
+accepted the text, not that the pane is ready for it, and it covers two
 shapes:
 
 - **the guard refused to send**, because the pane was showing a blocking
@@ -453,8 +460,6 @@ shapes:
   dialog, where the trailing Enter answers whichever option is highlighted.
   That is the failure #116 exists to prevent, arriving through the front
   door.
-- **the send went out and left no trace** on the screen afterwards. There
-  may be no agent left to receive a second copy.
 - **the plan stopped before the prompt step**, so nothing was typed — and
   there may be no pane to read at all, if it failed before one was made.
 
@@ -471,12 +476,13 @@ of it. Resending that one is how an agent that is working gets its
 instructions twice.
 
 `--on-failure clean` is **refused** for an `unconfirmed` prompt, with the
-reason in `clean_refused` — which names whichever of the three shapes it
+reason in `clean_refused` — which names whichever of the four shapes it
 was. After a wait that gave up, the session may have an agent working in
-it right now and cleaning up would kill it mid-turn. After two stalls, or
-after any failure that followed a send, what the pane holds is unknown and
-worth reading before anything is removed. The ids are still reported in
-every case, so nothing is stranded without a way back to it.
+it right now and cleaning up would kill it mid-turn. After two stalls, a
+send that was not seen to land, or any failure that followed a send, what
+the pane holds is unknown and worth reading before anything is removed.
+The ids are still reported in every case, so nothing is stranded without
+a way back to it.
 
 **The reported ids name the agent, not the space.**
 `workspace_id`/`tab_id`/`pane_id` — and `workspace=`/`tab=`/`pane=` on the
@@ -1441,12 +1447,21 @@ failed; the reason is on the row itself and in its panel. See
 [`[linear]`](#linear).
 
 **"prompt not sent" after a submit.** The session was created and the agent
-started, but the prompt couldn't be delivered (the agent was showing a
-dialog, or `agent prompt --wait` timed out). The failure screen says
+started, but the prompt was never typed: the agent was showing a dialog, or
+its screen had not painted yet. The failure screen says
 `prompt not sent — saved for manual paste:` with the full path on the line
 under it — `unsent-prompt.txt` in the plugin state directory — so you can
-paste it into the agent by hand. The session itself is fine: press `k`
-(keep it).
+paste it into the agent by hand once the pane is clear. The session itself
+is fine: press `k` (keep it).
+
+**"delivery unconfirmed" after a submit.** The prompt *was* typed into the
+pane, but nothing confirmed it landed: the wait for the agent timed out, a
+send stalled twice, or the pane afterwards showed a dialog with none of the
+prompt on it or stopped answering. Read the pane before anything else. The
+agent may be working on the prompt already, so pasting the saved copy
+without looking can send it twice. `remove` is unavailable here for the
+same reason; press `k`, and remove the session yourself once the pane shows
+it is safe to.
 
 **A row shows a value you didn't choose.** Something above your own
 `config.toml` supplied it. Check the row's panel for

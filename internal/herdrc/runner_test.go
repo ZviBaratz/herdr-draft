@@ -1717,6 +1717,48 @@ func TestCLIRunnerAgentPromptStalled(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerAgentPromptAgentGone: herdr's `agent_not_running` from
+// `agent prompt --wait` is a third fact, and it is a post-send one (#154).
+//
+// herdr v0.9.0 builds that code only after the prompt's dispatch has
+// succeeded, which means the text and Enter are already in the pane
+// (src/api/wait.rs: agent_wait_not_running, reached from the identity check
+// straight after the dispatch and from the wait loop). Its pre-dispatch
+// lookup fails as `agent_not_found` instead, and the app's own prompt
+// handler never raises it. It is #116's killed agent, noticed by herdr's
+// wait before herdr-draft's own read of the pane.
+func TestCLIRunnerAgentPromptAgentGone(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "agent_not_running", "agent is no longer running in the target pane")
+	r := &CLIRunner{Bin: bin}
+
+	err := r.AgentPrompt(context.Background(), AgentPromptReq{Target: "w1:p2", Text: "hi", WaitTimeout: time.Second})
+
+	if !errors.Is(err, ErrPromptAgentGone) {
+		t.Fatalf("error %q is not ErrPromptAgentGone", err)
+	}
+	if errors.Is(err, ErrPromptStalled) || errors.Is(err, ErrPromptWaitTimeout) {
+		t.Errorf("error %q is also one of the other prompt sentinels", err)
+	}
+	if !strings.Contains(err.Error(), "agent_not_running") {
+		t.Errorf("error %q drops herdr's own code", err)
+	}
+}
+
+// TestCLIRunnerAgentPromptNotFoundIsNotAgentGone: the pre-dispatch refusal
+// stays unclassified. `agent_not_found` is what herdr answers before it has
+// typed anything, so reading it as ErrPromptAgentGone would mark a prompt
+// typed that never left.
+func TestCLIRunnerAgentPromptNotFoundIsNotAgentGone(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "agent_not_found", "agent w1:p2 not found")
+	r := &CLIRunner{Bin: bin}
+
+	err := r.AgentPrompt(context.Background(), AgentPromptReq{Target: "w1:p2", Text: "hi", WaitTimeout: time.Second})
+
+	if err == nil || errors.Is(err, ErrPromptAgentGone) {
+		t.Fatalf("error %v, want a failure that is not ErrPromptAgentGone", err)
+	}
+}
+
 // TestCLIRunnerPaneRunEmitsAnEnvPrefixAsAShellAssignment: an environment
 // prefix must reach the pane as a SHELL ASSIGNMENT -- unquoted name, `=`,
 // quoted value. This is the one place #72's quote-everything rule cannot

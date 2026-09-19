@@ -230,7 +230,11 @@ without the popup. It drives herdr exclusively through the public CLI
   before the agent's status changed, which is not proof the prompt failed
   to arrive — so the text comes back as `unconfirmed_prompt` rather than
   `unsent_prompt`, and `--on-failure clean` is refused, because the session
-  may have an agent working in it right now.
+  may have an agent working in it right now. It is also every other
+  failure after herdr has accepted the send, including a first send that
+  the read straight afterwards finds did not land, or that herdr's own
+  wait reports the agent gone after (#154): `unsent` means herdr never
+  took the text.
 - **The reported ids name the agent, not the space.** `--json` carries the
   space's triple alongside the agent's. The two differ when herdr answers a
   worktree create with a workspace that was already open, and the agent is
@@ -419,10 +423,13 @@ without the popup. It drives herdr exclusively through the public CLI
   the run reported a clean create. A pane can also carry a shell prompt and
   nothing else for a second or so before an agent's own screen appears,
   which no signature will ever match, so the pane is read again *after* the
-  send: a create is only called clean once the pane says the prompt landed. An agent that has stopped answering, or a dialog still up with no
-  trace of the prompt on it, is a failure with the prompt saved. This check
-  never resends: text has already gone out, so a second copy is the injury
-  it exists to report. The one failure that does get another send is a
+  send: a create is only called clean once the pane says the prompt landed.
+  An agent that has stopped answering, or a dialog still up with no trace
+  of the prompt on it, is a failure with the prompt saved, and its delivery
+  is **unconfirmed**, not unsent: the text and its Enter went into the pane,
+  so the clean is refused and both the popup and `create` say to read the
+  pane first (#154). This check never resends: text has already gone out,
+  so a second copy is the injury it exists to report. The one failure that does get another send is a
   *stall* — see below — and it is the only one.
 - **A first-run trust dialog is a pause, not a failure.** Every worktree is
   a directory the agent has never been trusted in, so its first launch there
@@ -466,7 +473,11 @@ without the popup. It drives herdr exclusively through the public CLI
   the same step reports the prompt as unsent or permits the clean — which
   matters most when the retry itself is refused, the first send having
   stalled against a screen that had not painted and the dialog being up by
-  the time the retry looks.
+  the time the retry looks. "Gone out" is recorded the moment herdr
+  accepts the send, or read from one of the herdr errors that only come
+  after it has typed. It is no longer inferred from whichever error ended
+  the step, which is how a first send found not to have landed used to
+  escape it (#154).
 - `herdr pane run` types its argv into a shell rather than exec'ing it, so
   the runner shell-quotes every element — and the argv path that has no
   shell deliberately does not.

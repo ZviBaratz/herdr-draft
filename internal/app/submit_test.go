@@ -73,6 +73,12 @@ type submitFakeRunner struct {
 	postPromptErr error
 	promptSent    bool
 
+	// postPromptText is what AgentRead returns once AgentPrompt has been
+	// called: the other thing a send into a dialog leaves behind, when the
+	// Enter chose something that did not exit (#154). internal/plan's
+	// mockRunner carries the same dial under the same name.
+	postPromptText string
+
 	// dialogClears makes AgentRead stop returning readText once
 	// AwaitDetection has succeeded: the pane as it looks after the person
 	// answered the dialog. Without it a wait ends against a screen that
@@ -176,6 +182,9 @@ func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 	r.readCalls++
 	if r.promptSent && r.postPromptErr != nil {
 		return "", r.postPromptErr
+	}
+	if r.promptSent && r.postPromptText != "" {
+		return r.postPromptText, nil
 	}
 	if r.blankReads {
 		return "", nil
