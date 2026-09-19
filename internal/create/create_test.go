@@ -1271,7 +1271,10 @@ func TestStallThenARefusedRetryIsStillUnconfirmed(t *testing.T) {
 //
 // Both of the post-send check's verdicts, and herdr's own report of the
 // agent gone, because all three come after herdr has typed the text and
-// Enter. The dialog verdict's timing is the measured
+// Enter -- and herdr failing the send itself (#228), which may come before
+// or after, with nothing to say which, and so earns the same posture for
+// the opposite reason: not proof it was typed, but no proof it was not.
+// The dialog verdict's timing is the measured
 // one: the guard reads the startup window's dialog-free screen, and the
 // dialog has painted by the time the check looks. The other is a pane that
 // stops answering, which costs about a second in real time here --
@@ -1324,6 +1327,23 @@ func TestAFirstSendTheCheckRejectsIsUnconfirmed(t *testing.T) {
 			evidence:    "stopped answering",
 			instruction: "read the pane before removing",
 		},
+		{
+			// herdr failing the send itself (#228): `agent_prompt_failed`
+			// comes before anything is queued and partway through the text
+			// alike, so it is not the `unsent` it used to be reported as.
+			// It used to pass herdr's own error through, so nothing to
+			// un-claim; what it must add is how far the send got.
+			name: "herdr failing the send partway",
+			setup: func(r *fakeRunner) {
+				r.failAt = "AgentPrompt"
+				r.failErr = fmt.Errorf("%w: %w", herdrc.ErrPromptSendFailed, codedErr{
+					msg: "herdr agent prompt wS1:pP1 ...: exit status 1: " +
+						`{"error":{"code":"agent_prompt_failed","message":"PTY actor closed during input submission"},"id":"cli:agent:prompt"}`,
+				})
+			},
+			evidence:    "agent_prompt_failed",
+			instruction: "read the pane before pasting",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
@@ -1340,7 +1360,7 @@ func TestAFirstSendTheCheckRejectsIsUnconfirmed(t *testing.T) {
 			}
 			for _, closer := range []string{"WorkspaceClose", "PaneClose", "TabClose"} {
 				if h.runner.called(closer) {
-					t.Errorf("clean removed a pane herdr had typed the prompt into (%s): %v",
+					t.Errorf("clean removed a pane herdr may have typed the prompt into (%s): %v",
 						closer, h.runner.calls)
 				}
 			}
@@ -1350,7 +1370,7 @@ func TestAFirstSendTheCheckRejectsIsUnconfirmed(t *testing.T) {
 				t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
 			}
 			if out.PromptStatus != promptStatusUnconfirmed {
-				t.Errorf("prompt_status = %q, want %q -- herdr accepted the send",
+				t.Errorf("prompt_status = %q, want %q -- herdr may have typed it",
 					out.PromptStatus, promptStatusUnconfirmed)
 			}
 			if out.PromptSent != nil {
@@ -2116,6 +2136,36 @@ func TestPromptWaitTimeoutHumanOutputDoesNotClaimItWasNotSent(t *testing.T) {
 	// The text still has to be recoverable -- losing it is the worse error.
 	if !strings.Contains(all, "the handoff") {
 		t.Errorf("output dropped the prompt text entirely:\n%s", all)
+	}
+}
+
+// TestFailedSendHumanOutputDoesNotClaimTheAgentIsWorking is #228's review.
+// The line that hands an unconfirmed prompt back is written for every
+// unconfirmed shape, and it used to explain itself with "the agent may
+// already be working on it" -- #108's timeout, where that is the whole
+// point. A send herdr failed never finished its Enter, so no agent is
+// working on it; what the pane may hold is part of it, unsubmitted. The
+// line has to hold for both.
+func TestFailedSendHumanOutputDoesNotClaimTheAgentIsWorking(t *testing.T) {
+	h := newHarness(t)
+	h.runner.failAt = "AgentPrompt"
+	h.runner.failErr = fmt.Errorf("%w: %w", herdrc.ErrPromptSendFailed, codedErr{
+		msg: "herdr agent prompt wS1:pP1 ...: exit status 1: " +
+			`{"error":{"code":"agent_prompt_failed","message":"pty actor closed"},"id":"cli:agent:prompt"}`,
+	})
+
+	if code := h.run("--title", "t", "--no-worktree", "--prompt", "the handoff"); code != ExitFailed {
+		t.Fatalf("exit = %d, want %d", code, ExitFailed)
+	}
+
+	all := h.stdout.String() + h.stderr.String()
+	for _, claim := range []string{"working on it", "the prompt was not sent"} {
+		if strings.Contains(all, claim) {
+			t.Errorf("output claims %q for a send herdr failed:\n%s", claim, all)
+		}
+	}
+	if !strings.Contains(all, "read the pane") || !strings.Contains(all, "the handoff") {
+		t.Errorf("output does not send the caller to the pane with the text in hand:\n%s", all)
 	}
 }
 

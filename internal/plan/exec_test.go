@@ -3323,20 +3323,49 @@ func TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape(t *testing.T) {
 			"report it a whole turn after the send", gone.Reason)
 	}
 
+	// herdr failing the send itself (#228). Its evidence is herdr's code and
+	// nothing else -- no dialog was seen, no read failed, nothing timed out --
+	// and what it cannot say is how much of the prompt went in before the
+	// failure, which the sentence has to admit rather than guess at.
+	sendFailed := CleanCheck(context.Background(), in, ExecResult{
+		FailedIndex:            2,
+		PromptText:             "implement the fix",
+		PromptUnconfirmed:      true,
+		promptUnconfirmedCause: causeSendFailed,
+	})
+	if sendFailed.Allowed {
+		t.Fatalf("a send herdr failed partway allowed the clean: %+v", sendFailed)
+	}
+	if !strings.Contains(sendFailed.Reason, "agent_prompt_failed") {
+		t.Errorf("send-failed reason = %q, want it to name herdr's code, the only evidence there is", sendFailed.Reason)
+	}
+	if !strings.Contains(sendFailed.Reason, "how far it got") {
+		t.Errorf("send-failed reason = %q, want it to say herdr did not say how much it typed", sendFailed.Reason)
+	}
+	// One sentence serves a first send and a stall's retry alike, so it may
+	// not say the pane could hold none of the prompt: after a stall, one
+	// whole copy has gone out.
+	if strings.Contains(sendFailed.Reason, "none") {
+		t.Errorf("send-failed reason = %q, want no claim that nothing may be in the pane", sendFailed.Reason)
+	}
+
 	decisions := map[string]CleanDecision{
 		"timeout": timeout, "stalled": stalled, "after-send": afterSend,
-		"swallowed": swallowed, "gone": gone,
+		"swallowed": swallowed, "gone": gone, "send-failed": sendFailed,
 	}
 	for name, d := range decisions {
 		if !strings.Contains(strings.ToLower(d.Reason), "read the pane") {
 			t.Errorf("%s reason = %q, want it to send the user to the pane", name, d.Reason)
 		}
 	}
-	for _, name := range []string{"swallowed", "gone"} {
+	for _, name := range []string{"swallowed", "gone", "send-failed"} {
 		r := decisions[name].Reason
 		if strings.Contains(r, "timed out") || strings.Contains(r, "twice") || strings.Contains(r, "already gone out") {
 			t.Errorf("%s reason = %q, want its own evidence rather than a neighbour's", name, r)
 		}
+	}
+	if r := sendFailed.Reason; strings.Contains(r, "dialog") || strings.Contains(r, "stopped answering") {
+		t.Errorf("send-failed reason = %q, want no dialog or lost agent -- neither was seen", r)
 	}
 	seen := map[string]string{}
 	for name, d := range decisions {
@@ -3779,6 +3808,186 @@ func TestExecutePromptAgentGoneFromHerdrIsUnconfirmed(t *testing.T) {
 	}
 	if strings.Contains(msg, "as the prompt was sent") {
 		t.Errorf("step message = %q, want no claim about when the agent went", msg)
+	}
+}
+
+// sendFailedPromptErr is `agent prompt` failing as herdr v0.9.0 does when the
+// pane's input closes under an active submission -- a message it gives
+// whether the submission had typed nothing yet or was halfway through (#228).
+func sendFailedPromptErr() error {
+	return fmt.Errorf("%w: %w", herdrc.ErrPromptSendFailed, herdrErr{
+		msg: `herdr agent prompt pane-1 implement the fix --wait: exit status 1: ` +
+			`{"error":{"code":"agent_prompt_failed","message":"PTY actor closed during input submission"},"id":"cli:agent:prompt"}`,
+	})
+}
+
+// TestExecutePromptSendFailedIsUnconfirmed is #228. herdr answers
+// `agent_prompt_failed` before it has queued anything and after a write
+// failed partway through the text alike, and nothing here can tell which, so
+// a FIRST send failing this way is not "unsent": the pane may hold some or
+// all of it. It is never resent either -- the send may be half in the pane.
+func TestExecutePromptSendFailedIsUnconfirmed(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = false
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:    "AgentPrompt",
+		failErr:   sendFailedPromptErr(),
+		failCount: 99,
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Fatalf("AgentPrompt called %d times, want 1 -- a send that may be half in the pane is never resent", n)
+	}
+	if !result.PromptUnconfirmed || result.promptUnconfirmedCause != causeSendFailed {
+		t.Errorf("posture = %v/%q, want unconfirmed/%q", result.PromptUnconfirmed,
+			result.promptUnconfirmedCause, causeSendFailed)
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want the prompt handed back", result.PromptText)
+	}
+	if d := CleanCheck(context.Background(), in, result); d.Allowed ||
+		d.Reason != unconfirmedCleanReason(causeSendFailed) {
+		t.Errorf("CleanCheck = %+v, want the clean refused for the failed send's evidence", d)
+	}
+	last := progressed[len(progressed)-1].Err
+	if msg := last.Error(); !strings.Contains(msg, "does not say how far it got") ||
+		!strings.Contains(msg, "read the pane before pasting") {
+		t.Errorf("step message = %q, want herdr's code explained, and a look at the pane before any paste", msg)
+	}
+	if msg := last.Error(); strings.Contains(msg, "already gone out") {
+		t.Errorf("step message = %q, want no earlier copy -- this was the only send", msg)
+	}
+	if !errors.Is(last, herdrc.ErrPromptSendFailed) {
+		t.Errorf("the explained step error no longer matches ErrPromptSendFailed: %v", last)
+	}
+}
+
+// TestPromptTextMayBeTypedCountsWhatHerdrCannotRuleOut pins the helper's
+// own contract rather than leaving it to the posture tests. Each of the four
+// sentinels also has a case of its own in classifyPromptDelivery, which wins
+// whatever this returns, so a posture test cannot see an entry dropped here
+// -- and this is still the fact promptIfReady records as `typed`, which a
+// later refusal in the same op is worded from.
+func TestPromptTextMayBeTypedCountsWhatHerdrCannotRuleOut(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"a stall", stalledPromptErr(), true},
+		{"a wait that timed out", fmt.Errorf("%w: herdr agent prompt ...", herdrc.ErrPromptWaitTimeout), true},
+		{"the agent gone after the send", fmt.Errorf("%w: herdr agent prompt ...", herdrc.ErrPromptAgentGone), true},
+		{"herdr failing the send (#228)", sendFailedPromptErr(), true},
+		{"a refusal before anything was queued", herdrErr{msg: `herdr agent prompt ...: {"error":{"code":"agent_blocked"}}`}, false},
+		{"a prompt that names agent_prompt_failed", errors.New("herdr agent prompt pane-1 why agent_prompt_failed?"), false},
+	} {
+		if got := promptTextMayBeTyped(tc.err); got != tc.want {
+			t.Errorf("%s: promptTextMayBeTyped = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// promptErrSequence is a mockRunner whose AgentPrompt fails with errs in
+// order, one per call, and succeeds once they run out -- the one shape
+// failAt's single error cannot express: a stall and then a different failure
+// on its retry.
+type promptErrSequence struct {
+	*mockRunner
+	errs []error
+}
+
+func (p *promptErrSequence) AgentPrompt(ctx context.Context, req herdrc.AgentPromptReq) error {
+	if len(p.errs) == 0 {
+		return p.mockRunner.AgentPrompt(ctx, req)
+	}
+	p.record("AgentPrompt", req.Target, req.Text)
+	err := p.errs[0]
+	p.errs = p.errs[1:]
+	return err
+}
+
+// TestExecuteStallThenAFailedSendIsUnconfirmed: the stall's retry fails as
+// `agent_prompt_failed`. The first send's text and Enter went out whole, and
+// the retry may have added some or all of a second copy, so the step says
+// so -- the first-send sentence would describe a pane that might hold none
+// of it -- and there is never a third send. The clean's sentence is the
+// cause's one, worded to hold for either.
+func TestExecuteStallThenAFailedSendIsUnconfirmed(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+
+	in := validInput()
+	in.UseWorktree = false
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &promptErrSequence{
+		mockRunner: &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}},
+		errs:       []error{stalledPromptErr(), sendFailedPromptErr()},
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
+		t.Fatalf("AgentPrompt called %d times, want 2 -- the stall and its one retry: %v", n, m.calls)
+	}
+	if !result.PromptUnconfirmed || result.promptUnconfirmedCause != causeSendFailed {
+		t.Errorf("posture = %v/%q, want unconfirmed/%q", result.PromptUnconfirmed,
+			result.promptUnconfirmedCause, causeSendFailed)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	if !strings.Contains(msg, "one copy of the prompt has already gone out") {
+		t.Errorf("step message = %q, want it to say the stalled send's copy went out", msg)
+	}
+	if !strings.Contains(msg, "read the pane before pasting") {
+		t.Errorf("step message = %q, want a look at the pane before any paste", msg)
+	}
+}
+
+// TestExecuteAPromptNamingAFailedSendIsNotOne is #144 for #228's code: the
+// failure's text carries the prompt, and a prompt that asks about
+// agent_prompt_failed, refused before anything was sent, is still unsent.
+// Only the code herdrc parsed counts.
+func TestExecuteAPromptNamingAFailedSendIsNotOne(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = false
+	in.Prompt = "why does agent_prompt_failed happen?"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt: "AgentPrompt",
+		failErr: herdrErr{msg: `herdr agent prompt pane-1 why does agent_prompt_failed happen? --wait: exit status 1: ` +
+			`{"error":{"code":"agent_blocked","message":"agent pane-1 is blocked and requires interactive input"},"id":"cli:agent:prompt"}`},
+		failCount: 99,
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = true (cause %q) for a refusal whose prompt merely names agent_prompt_failed",
+			result.promptUnconfirmedCause)
+	}
+	if d := CleanCheck(context.Background(), in, result); !d.Allowed {
+		t.Errorf("CleanCheck = %+v, want the clean allowed -- nothing was typed", d)
 	}
 }
 
