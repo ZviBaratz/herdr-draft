@@ -93,7 +93,8 @@ without the popup. It drives herdr exclusively through the public CLI
   remembered choices. A `⌃S` sent sooner was built from the previous
   project's answers, so a worktree could be sent to a repository the form
   had already left. It now waits for the answer about the path the row
-  holds, even while you keep typing, then validates and goes on by itself.
+  holds — the one you end on, if you keep typing in the row meanwhile —
+  then validates and goes on by itself.
 - Mouse: click a row to focus it, click a panel line to select it, wheel to
   scroll the panel.
 - The popup is a fixed **104×32 cells**, a manifest value rather than a

@@ -255,6 +255,14 @@ type Setup struct {
 	// fewer than two profiles) it is shown nowhere, deliberately: the popup can
 	// pin no account there, so no picker could have been used.
 	PickerUnavailable string
+
+	// dirReqVersion is where the project row's request counter resumes. Only
+	// a ⌃R⌃R rebuild sets it (handleClearRequested), to the discarded form's
+	// own counter: a check that form still has in flight lands after the
+	// rebuild, and starting again from zero would let its version meet one
+	// the fresh form issues -- passing another path's answer off as the
+	// fresh form's own, and releasing a submit held for it (#195).
+	dirReqVersion int
 }
 
 // Bootstrap performs spec §9's pre-open refusal plus every other piece of
@@ -907,6 +915,8 @@ func New(s Setup) Model {
 		pickerUnavailable: s.PickerUnavailable,
 
 		fetchedRepos: map[string]bool{},
+
+		dirReqVersion: s.dirReqVersion,
 	}
 
 	m.dir = form.NewDirField(palette)
@@ -1783,6 +1793,8 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		LinearUnavailable: m.linearUnavailable,
 		ClauthUnavailable: m.clauthUnavailable,
 		PickerUnavailable: m.pickerUnavailable,
+
+		dirReqVersion: m.dirReqVersion,
 	})
 	// Spec §10: "⌃R⌃R clears back to the repository default" -- explicitly
 	// NOT back to what you last did in this project. New has already

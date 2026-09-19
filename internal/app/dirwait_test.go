@@ -212,3 +212,56 @@ func TestSubmit_AFreshFormWaitsForItsOpeningCheck(t *testing.T) {
 	}
 	drainSubmitProgress(t, m, submitChain(t, out))
 }
+
+// TestSubmit_AStaleAnswerDoesNotEndTheWait: a check that was running for a
+// value the user has typed past lands and is dropped, and a ⌃S sent after it
+// is still held -- the stale answer did not count as the current one landing.
+func TestSubmit_AStaleAnswerDoesNotEndTheWait(t *testing.T) {
+	git := newFakeGit()
+	m := settledRepoForm(t, git)
+
+	git.isGitRepo = false
+	first := fireDirDebounce(t, &m, retypeProject(&m, "/scratch"))
+	retypeProject(&m, "-two")
+	m, _ = landDirCheck(t, m, first)
+
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("a submit of %q went ahead after only /scratch's check landed: git repo %v, worktree %v",
+			m.submitInput.ProjectDir, m.submitInput.IsGitRepo, m.submitInput.UseWorktree)
+	}
+}
+
+// TestSubmit_ACheckFromBeforeAClearDoesNotReleaseIt: ⌃R⌃R rebuilds the form,
+// and a check the discarded form had in flight still lands afterwards. Its
+// answer is about a path the fresh form never asked about, so it must not
+// pass for the fresh form's own check -- which it did while the rebuild
+// started the request counter again from zero, and the two versions could
+// meet.
+func TestSubmit_ACheckFromBeforeAClearDoesNotReleaseIt(t *testing.T) {
+	git := newFakeGit()
+	m := settledRepoForm(t, git)
+	m.width, m.height = 104, 32
+
+	// The check in flight when the form is cleared: /good, a repository.
+	before := fireDirDebounce(t, &m, retypeProject(&m, "/good"))().(dirResultMsg)
+
+	next, _ := m.Update(form.ClearRequestedMsg{})
+	m = settle(t, next.(Model))
+	m.title.SetTitle("Fix pagination", false)
+	git.dirExists, git.isGitRepo = false, false
+	retypeProject(&m, "/nowhere")
+
+	next, _ = m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatal("test setup: the submit was not held")
+	}
+	next, _ = m.Update(before)
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("the check for %s, from before the clear, released a submit of %q: git repo %v",
+			before.req.key, m.submitInput.ProjectDir, m.submitInput.IsGitRepo)
+	}
+}
