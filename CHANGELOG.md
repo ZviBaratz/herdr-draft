@@ -95,7 +95,10 @@ without the popup. It drives herdr exclusively through the public CLI
   had already left. It now waits for the answer about the path the row
   holds — the one you end on, if you keep typing in the row meanwhile —
   and for the check of the base that project remembers, when it remembers
-  one (#194), then validates and goes on by itself.
+  one (#194), then validates and goes on by itself. It waits for the title's
+  duplicate check the same way (#137), so a duplicate title typed and
+  submitted at once no longer gets past the refusal, and a duplicate fixed
+  at once is no longer refused with no warning on screen.
 - Mouse: click a row to focus it, click a panel line to select it, wheel to
   scroll the panel.
 - The popup is a fixed **104×32 cells**, a manifest value rather than a

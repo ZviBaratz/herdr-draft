@@ -371,7 +371,9 @@ func TestPopup_ASubmitWaitsForTheBaseCheck(t *testing.T) {
 		t.Fatalf("base checks held = %d, want the one the dir check scheduled", len(held))
 	}
 	m.title.SetTitle("fix the thing", false)
-	m.reactToChanges()
+	// Its title check lands first: a submit waits for that one too (#137),
+	// and this test is about the base check.
+	m = landTitle(t, m, m.reactToChanges())
 
 	next, _ := m.Update(form.SubmitMsg{})
 	m = next.(Model)
@@ -415,7 +417,9 @@ func TestPopup_AStaleBaseCheckDoesNotReleaseASubmit(t *testing.T) {
 		t.Fatalf("base checks held: %d for /repo-a and %d for /repo-b, want one each", len(fromA), len(fromB))
 	}
 	m.title.SetTitle("fix the thing", false)
-	m.reactToChanges()
+	// Its title check lands first: a submit waits for that one too (#137),
+	// and this test is about the base check.
+	m = landTitle(t, m, m.reactToChanges())
 
 	next, _ := m.Update(fromA[0])
 	next, _ = next.(Model).Update(form.SubmitMsg{})
