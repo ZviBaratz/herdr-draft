@@ -81,17 +81,21 @@ func TestSettleBase(t *testing.T) {
 // is a branch, and HEAD~1 is another commit.
 func TestSettleBase_ASpellingOfHeadIsTheHeadRow(t *testing.T) {
 	git := newFakeGit()
+	// The six spellings measured letting the clean gate remove work, which
+	// gitx's TestResolveRefAnswersTheBaseRule holds real git to.
+	spellings := []string{"HEAD^0", "@~0", "HEAD~0", "HEAD^{commit}", "HEAD@{0}", "@{0}"}
 	git.commits = map[string]string{
-		"/repo HEAD": "0a1b2c3", "/repo HEAD^0": "0a1b2c3", "/repo @{0}": "0a1b2c3",
-		"/repo main": "0a1b2c3", "/repo HEADroom": "0a1b2c3", "/repo HEAD~1": "1b2c3d4",
+		"/repo HEAD": "0a1b2c3", "/repo main": "0a1b2c3", "/repo HEADroom": "0a1b2c3", "/repo HEAD~1": "1b2c3d4",
+	}
+	cases := []struct{ ref, want string }{{"HEAD~1", "HEAD~1"}, {"main", "main"}, {"HEADroom", "HEADroom"}}
+	for _, ref := range spellings {
+		git.commits["/repo "+ref] = "0a1b2c3"
+		cases = append(cases, struct{ ref, want string }{ref, ""})
 	}
 	resolve := func(base string) defaults.Resolved {
 		return defaults.Resolve(defaults.Sources{Project: config.ProjectDefaults{Base: base}, HaveProject: true})
 	}
-	for _, tc := range []struct{ ref, want string }{
-		{"HEAD^0", ""}, {"@{0}", ""},
-		{"HEAD~1", "HEAD~1"}, {"main", "main"}, {"HEADroom", "HEADroom"},
-	} {
+	for _, tc := range cases {
 		got, note := SettleBase(context.Background(), git, "/repo", resolve(tc.ref))
 		if got.BaseRef != tc.want || note != "" {
 			t.Errorf("SettleBase(%q) = %q, note %q; want %q and no note", tc.ref, got.BaseRef, note, tc.want)

@@ -179,7 +179,9 @@ func TestListBranchesDedupesLocalAndRemote(t *testing.T) {
 //     (ListBranches strips origin/), and that name resolves to nothing. So a
 //     remembered or configured `develop` in a fresh clone falls back to HEAD,
 //     while `origin/develop` resolves.
-//   - HEAD^0, @~0 and @{0} are HEAD itself, and HEAD~1 is not.
+//   - HEAD^0, @~0, HEAD~0, HEAD^{commit}, HEAD@{0} and @{0} are HEAD itself
+//     -- the six spellings measured letting #193's clean gate remove work --
+//     and HEAD~1 is not.
 func TestResolveRefAnswersTheBaseRule(t *testing.T) {
 	repo := mkRepo(t)
 	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "second")
@@ -210,7 +212,7 @@ func TestResolveRefAnswersTheBaseRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRef(HEAD): %v", err)
 	}
-	for _, ref := range []string{"HEAD^0", "@~0", "@{0}"} {
+	for _, ref := range []string{"HEAD^0", "@~0", "HEAD~0", "HEAD^{commit}", "HEAD@{0}", "@{0}"} {
 		if got, err := ResolveRef(ctx, repo, ref); err != nil || got != head {
 			t.Errorf("ResolveRef(%s) = %s, %v; want HEAD's own %s", ref, got, err, head)
 		}
