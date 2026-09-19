@@ -283,7 +283,7 @@ run it.
 | exit | meaning | what to do |
 |---|---|---|
 | 0 | created | report where it is |
-| 1 | the plan started and failed | part of the session may exist — a space, or only a worktree's checkout and branch; look at it before retrying |
+| 1 | the plan started and failed | part of the session may exist — a space, or only some of a worktree: its branch, its checkout; look at it before retrying |
 | 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, and a pinned account clauth reports as signed out | fix the command and re-run |
 | 3 | herdr is unreachable, found before anything started | nothing was created; stop |
 | 4 | the plan started, and its first step failed before making anything | nothing exists and there is nothing to clean up; the error says why the step failed, so report it, or re-run once it is dealt with |

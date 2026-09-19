@@ -387,10 +387,12 @@ launched with. It never prompts. Exit codes:
 
 Exit 4 needs evidence, not just a failed first step: herdr refused that
 step before acting, or it was never asked. A worktree step that herdr
-fails *after* git has run leaves a checkout, a branch or both, and that
-is exit 1. With `--json`, exit 4 still prints the object — `ok: false`,
-`failed_step` and `error` — with no `workspace_id`/`space_*` ids, since
-there is nothing for them to name.
+fails *after* git has run can leave the branch, its checkout and even a
+workspace on it, and that is exit 1, with no space reported for
+`--on-failure clean` to remove — `clean_refused` says so. With `--json`,
+exit 4 still prints the object — `ok: false`, `failed_step` and `error` —
+with no `workspace_id`/`space_*` ids, since there is nothing for them to
+name.
 
 **A prompt has three fates, not two.** `prompt_status` names which:
 `sent`, `unsent`, or `unconfirmed`. The third means delivery is unknown,

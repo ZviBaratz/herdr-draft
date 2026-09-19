@@ -430,8 +430,14 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 		return ExitOK
 	}
 
-	if rep.result.Created != nil {
+	switch {
+	case rep.result.Created != nil:
 		applyOnFailure(ctx, deps, &rep)
+	case rep.onFailure == onFailureClean && !rep.result.NothingCreated:
+		// No space to act on, and no evidence nothing was made (#192).
+		// Said, because under --json an absent `cleaned` beside an absent
+		// `clean_refused` read as nothing left to clean.
+		rep.cleanRefused = "no space was reported, so there was nothing to remove"
 	}
 	rep.write(deps.stdout(), deps.stderr())
 	if rep.result.NothingCreated {

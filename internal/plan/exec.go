@@ -1246,7 +1246,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 		// below, so a busy-retry that eventually succeeds never sees it.
 		var promptTyped bool
 
-		runErr := retryBusy(ctx, func() error {
+		attempt := func() error {
 			// Reset per ATTEMPT, not per op: retryBusy may re-run this closure,
 			// and state a first attempt reached must not leak into a second one
 			// that fails earlier -- a stale reused=true would give CleanCheck a
@@ -1510,6 +1510,20 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				err = fmt.Errorf("plan: execute: unknown op kind %v", op.Kind)
 			}
 			return err
+		}
+
+		// unproven is sticky across attempts, as promptTyped is. retryBusy
+		// reads an error's TEXT, which holds the argv and so the title, so
+		// an attempt that made a checkout can be retried into a refusal
+		// that is evidence only about the retry. NothingCreated needs every
+		// attempt to show it made nothing (#192).
+		var unproven bool
+		runErr := retryBusy(ctx, func() error {
+			err := attempt()
+			if err != nil && (gotTopo || !neverAsked && !errors.Is(err, herdrc.ErrNothingCreated)) {
+				unproven = true
+			}
+			return err
 		})
 
 		if runErr != nil && isCosmeticKind(op.Kind) {
@@ -1543,10 +1557,10 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			wrapped := fmt.Errorf("plan: execute: %s: %w", op.Label, runErr)
 			emitProgress(onProgress, i, total, op.Label, StepFailed, wrapped)
 			result.FailedIndex = i
-			// !gotTopo because a reuse claim's refused `tab create` is
-			// marked too, and by then worktree create has made a checkout.
-			result.NothingCreated = i == 0 && !gotTopo &&
-				(neverAsked || errors.Is(runErr, herdrc.ErrNothingCreated))
+			// unproven counts gotTopo too, because a reuse claim's refused
+			// `tab create` is marked as well, and by then worktree create has
+			// made a checkout.
+			result.NothingCreated = i == 0 && !unproven
 			result.PromptText = unsentPromptText(ops, i)
 			// Set here rather than inside the retried closure above: a
 			// busy-retry that eventually succeeds must not leave the flag

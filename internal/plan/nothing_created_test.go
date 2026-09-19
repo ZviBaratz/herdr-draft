@@ -9,10 +9,18 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 )
 
-// refusedUnchanged is a failure the way herdrc.CLIRunner reports one herdr
-// refused before changing anything (#192).
+// markedErr is a failure marked herdrc.ErrNothingCreated the way
+// herdrc.CLIRunner marks one: errors.Is finds the mark, and the text is
+// herdr's alone.
+type markedErr struct{ msg string }
+
+func (e markedErr) Error() string        { return e.msg }
+func (e markedErr) Is(target error) bool { return target == herdrc.ErrNothingCreated }
+
+// refusedUnchanged is a failure herdr refused before changing anything
+// (#192), as herdrc.CLIRunner reports it.
 func refusedUnchanged(code string) error {
-	return fmt.Errorf("%w: herdr said %s", herdrc.ErrNothingCreated, code)
+	return markedErr{msg: fmt.Sprintf(`herdr: exit status 1: {"error":{"code":%q}}`, code)}
 }
 
 // TestExecute_NothingCreatedWhenHerdrRefusesTheSpace is #192's own case: the
@@ -170,5 +178,51 @@ func TestExecute_NotNothingCreatedWhenAnOpRanFirst(t *testing.T) {
 	}
 	if result.NothingCreated {
 		t.Error("NothingCreated = true, but an agent was started before the space was refused")
+	}
+}
+
+// worktreeAttempts answers each WorktreeCreate with the next error in errs.
+type worktreeAttempts struct {
+	mockRunner
+	errs []error
+}
+
+func (m *worktreeAttempts) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreateReq) (herdrc.CreatedTopology, error) {
+	m.calls = append(m.calls, "WorktreeCreate("+req.Branch+")")
+	err := m.errs[0]
+	m.errs = m.errs[1:]
+	return herdrc.CreatedTopology{}, err
+}
+
+// TestExecute_NothingCreatedNeedsEveryAttemptsEvidence: retryBusy retries
+// any error whose TEXT holds agent_pane_busy, and a worktree create's text
+// holds its argv, the title among it. So an attempt that made a checkout can
+// be retried, and the retry's refusal is evidence only about the retry.
+// Found by the independent review.
+func TestExecute_NothingCreatedNeedsEveryAttemptsEvidence(t *testing.T) {
+	withBusyRetryOverrides(t, 0, nil)
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	m := &worktreeAttempts{errs: []error{
+		// herdr made the checkout and its branch, then failed; the title
+		// in --label is what retryBusy reads as busy.
+		errors.New(`herdr worktree create --label fix agent_pane_busy: exit status 1: {"error":{"code":"worktree_open_failed"}}`),
+		refusedUnchanged("worktree_operation_in_progress"),
+	}}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if len(m.errs) != 0 {
+		t.Fatalf("WorktreeCreate ran %d time(s), want 2 -- the scenario needs the retry", 2-len(m.errs))
+	}
+	if result.FailedIndex != 0 {
+		t.Fatalf("FailedIndex = %d, want 0", result.FailedIndex)
+	}
+	if result.NothingCreated {
+		t.Error("NothingCreated = true, but the first attempt left a checkout behind")
 	}
 }
