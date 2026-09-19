@@ -4,10 +4,12 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/skill"
 )
 
@@ -261,5 +263,95 @@ func TestSkillInstallDirMatchesItsName(t *testing.T) {
 func TestRenderedSkillHasNoFormattingError(t *testing.T) {
 	if i := strings.Index(renderedSkill(), "%!"); i >= 0 {
 		t.Errorf("the rendered skill carries a formatting error at byte %d", i)
+	}
+}
+
+// TestSkillListsEveryDeclaredValue holds the skill's option list to the
+// declaration (#209): for each option claude declares, some line of the
+// document names its flag and every value it offers, each in backticks. The
+// skill tells an agent to CHOOSE among these for every session, so a value
+// the declaration gains and the document omits is one no spawned session is
+// ever given -- and a value the document keeps after the declaration drops it
+// is a flag create refuses with exit 2.
+//
+// One line, not the whole document, because the whole document names `plan`
+// and `auto` in other senses; the line that introduces the flag is where a
+// reader looks for what it takes.
+func TestSkillListsEveryDeclaredValue(t *testing.T) {
+	lines := strings.Split(renderedSkill(), "\n")
+	opts := agentopts.For("claude")
+	if len(opts) == 0 {
+		t.Fatal("claude declares no options -- every assertion below would pass vacuously")
+	}
+	for _, o := range opts {
+		flag := "--" + agentopts.FlagName(o.Name)
+		found := false
+		for _, line := range lines {
+			if !strings.Contains(line, "`"+flag+" ") {
+				continue
+			}
+			all := true
+			for _, c := range o.Choices {
+				if !strings.Contains(line, "`"+c.Value+"`") {
+					all = false
+				}
+			}
+			if all {
+				found = true
+				break
+			}
+		}
+		if !found {
+			var want []string
+			for _, c := range o.Choices {
+				want = append(want, "`"+c.Value+"`")
+			}
+			t.Errorf("no line introduces `%s ...` with every value claude offers: %s", flag, strings.Join(want, ", "))
+		}
+	}
+}
+
+// snakeToken is a backticked snake_case word -- the shape of every --json
+// key, and of nothing else the document writes in backticks.
+var snakeToken = regexp.MustCompile("`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`")
+
+// jsonKeys is every key --json can print, from jsonReport's own tags.
+func jsonKeys() map[string]bool {
+	keys := map[string]bool{}
+	rt := reflect.TypeOf(jsonReport{})
+	for i := 0; i < rt.NumField(); i++ {
+		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			keys[name] = true
+		}
+	}
+	return keys
+}
+
+// TestSkillNamesOnlyRealJSONKeys is TestSkillInventsNoFlag's counterpart for
+// the report: every backticked snake_case word in the document is a key
+// --json prints, a session option's name (the keys inside agent_options and
+// launch_options), or a provenance value no tier name covers. The skill's
+// §7 and §8 tell an agent which keys to read before and after a create; a
+// key the report does not have is one the agent reads as absent, and
+// absent already means something for most of them.
+func TestSkillNamesOnlyRealJSONKeys(t *testing.T) {
+	allowed := jsonKeys()
+	if !allowed["prompt_status"] {
+		t.Fatal("jsonKeys() did not find prompt_status -- the reflection is wrong, and every assertion below with it")
+	}
+	for _, name := range agentopts.Names() {
+		allowed[name] = true
+	}
+	for _, v := range []string{provenanceExtraArgs} {
+		allowed[v] = true
+	}
+
+	for i, line := range strings.Split(renderedSkill(), "\n") {
+		for _, m := range snakeToken.FindAllStringSubmatch(line, -1) {
+			if !allowed[m[1]] {
+				t.Errorf("line %d names `%s`, which is not a --json key, an option name, or a provenance value:\n  %s", i+1, m[1], line)
+			}
+		}
 	}
 }

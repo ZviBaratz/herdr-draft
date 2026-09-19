@@ -105,12 +105,13 @@ you are doing right now.
 - `--base REF` is what the branch is cut from. Left off it resolves like
   every other unset value — usually `HEAD`, which is *your current commit*,
   though a repository's own `.herdr-draft.toml` can set a different
-  default. If you are on a feature branch and the new work should start
-  from `main`, pass it rather than assume. `--base HEAD` is your current
-  commit whatever a default says. With a worktree, a `--base` that names
-  no commit is refused with exit 2 and nothing created. A remembered or
-  configured one that names no commit is dropped for `HEAD`, with a
-  `herdr-draft create:` line on stderr saying so.
+  default. Decide it rather than leave it: if you are on a feature branch
+  and the new work should start from `main`, pass it, and section 7 shows
+  the base either way. `--base HEAD` is your current commit whatever a
+  default says. With a worktree, a `--base` that names no commit is
+  refused with exit 2 and nothing created. A remembered or configured one
+  that names no commit is dropped for `HEAD`, with a `herdr-draft create:`
+  line on stderr saying so.
 - `--project DIR` is the repository. Left off, it resolves to the working
   directory. That is right inside another session's worktree too. herdr
   requires the new worktree to be created from the repository's primary
@@ -161,10 +162,11 @@ on a space of its own.
 `tab-in`. A script running in one space can therefore start a session in
 another without pretending to be a pane there.
 
-## 5. Agent and account
+## 5. Agent, account and session options
 
 - `--agent KIND` picks which agent to start — `claude`, or whatever else
-  the user has configured. Left off, their default applies.
+  the user has configured. Left off, their default applies. Leave it off
+  unless they asked for another.
 - `--account NAME` pins a clauth account, and applies to `claude` only.
   Left off, or given as `active`, whatever account is active is used.
 - `--account auto` asks the user's configured account picker to choose one
@@ -174,7 +176,9 @@ another without pretending to be a pane there.
   picker configured — without one it is a usage error, not a quiet
   fallback.
 
-If the user has not said anything about accounts, pass neither flag.
+If the user has not said anything about accounts, pass neither flag. Show
+which account the session will run under anyway (section 7): it is the
+account the session is billed to.
 
 `claude` also takes three session options, each one flag:
 
@@ -183,21 +187,70 @@ If the user has not said anything about accounts, pass neither flag.
 - `--effort LEVEL` — `low`, `medium`, `high`, `xhigh` or `max`.
 - `--permission-mode MODE` — `manual`, `plan`, `acceptEdits` or `auto`.
 
-Left off, each comes from the user's configured default, or else claude's
-own settings. **Leave them off unless the user or the task asks for one**:
-the defaults are choices the user already made. `inherit` clears a
-configured default for this one session.
+**Choose all three for the task, and pass them, unless the user named
+them.** Left off, each comes from the user's `[agents.options]`, else from
+whatever their `[agents.extra_args]` passes, else from claude's own
+settings. That is a configuration chosen for no task in particular, and
+nobody sees it before the session starts. It is how a one-line wording fix
+ends up on the largest model at the highest effort. If the user tells you
+to use their defaults, pass none of the three, and show what the defaults
+resolve to (section 7).
 
-Reasons to pass one: the user named a model or an effort; or the worker
-should propose before it touches anything, which is `--permission-mode
-plan`. **Never pass a more permissive `--permission-mode` than the one you
-are running under.** `acceptEdits` and `auto` let the new agent act without
-asking, so an agent that is itself asking for permission has no business
-handing a worker more than that. The two modes that skip asking altogether
-are not accepted here at all.
+`inherit` sends no flag of its own, which clears a configured
+`[agents.options]` default for this one session. `[agents.extra_args]` can
+still pass the flag.
+
+**Model and effort follow the shape of the task:**
+
+| the task | model | effort |
+|---|---|---|
+| mechanical and fully specified: a wording fix, a rename, a patch someone already wrote | `sonnet` | `low` or `medium` |
+| routine, with a clear spec: a bug whose cause is known, a test to add, a feature that copies an existing pattern | `sonnet`, or `opus` where the repository's conventions are heavy | `medium` or `high` |
+| judgement: design, a bug whose cause is unknown, a change across packages, a review | `opus` | `high` or `xhigh` |
+| the hardest and longest: open-ended investigation, a long autonomous build, work a previous session failed at | `fable` | `xhigh` or `max` |
+
+Each row down the table is a model that costs more per token, and `fable`
+costs the most. Each step up the effort scale spends more tokens every
+turn. On a
+subscription account that cost comes out of a usage window that the user's
+other sessions share, yours included. Judge it per *finished* task: a
+session that fails and has to be redone costs more than a stronger first
+attempt. So step down only for work that is plainly mechanical, and
+between two neighbouring rows of real engineering, take the higher. If the
+user has said quota is tight, take the lower, and say what you would have
+picked otherwise. `haiku` is the smallest model, and a session that has to
+learn a repository's conventions before it can start is rarely small
+enough for it.
+
+**Keep the user's own model id.** When the family you chose is the one
+their default already names, pass the id the dry run reports for it
+(section 7): `claude-opus-5[1m]` rather than `opus`. An id can carry a
+variant that the alias does not.
+
+**Permission mode follows who decides first:**
+
+- `plan` when the first decisions are the user's: a brief that asks for a
+  proposal, an issue that lists decisions for them to make, anything whose
+  right first deliverable is a plan. Leaving plan mode needs the user, so
+  `plan` is always allowed.
+- `acceptEdits` or `auto` for implementation in the session's own
+  worktree, where the work is specified and the worktree limits the
+  damage. The ceiling below applies.
+- `plan` or `manual` for read-only work, which covers every
+  `--no-worktree` session (section 3).
+
+**Never pass a more permissive `--permission-mode` than the one you are
+running under.** `plan` and `manual` are always allowed. `acceptEdits` is
+allowed only when you run under `acceptEdits` or `auto`, and `auto` only
+when you run under `auto`. If nothing in your own
+context says which mode you are in, assume `manual`. `acceptEdits` and
+`auto` let the new agent act without asking, so an agent that is itself
+asking for permission has no business handing a worker more than that. The
+two modes that skip asking altogether are not accepted here at all.
 
 These options are claude's. With another `--agent`, passing one is refused
-with exit 2 rather than quietly ignored.
+with exit 2 rather than quietly ignored. Leave them off, and say in the
+confirmation that the session runs on that agent's own settings.
 
 ## 6. Write the prompt
 
@@ -250,19 +303,59 @@ gone idle. Pass it only when the user runs pane-reaper, and only for a
 worker nobody will steer afterwards — never for an orchestrator or a
 `/loop` session, which must not close themselves. It adds nothing to an
 empty prompt or a slash command. `--no-reap` turns it off where the user's
-configuration turned it on. With neither, leave the choice to that
-configuration.
+configuration turned it on. With neither, that configuration decides, and
+the dry run's `mark_ready` says which way it went (section 7). When that is
+`true` for a session someone will steer, pass `--no-reap`. Every
+`plan`-mode session is one: it stops to wait for the user's approval.
 
 ## 7. Confirm once, then do it
 
 Building the command is your job. Choosing among plausible ones is the
-user's. Before running anything, ask **once**, with `AskUserQuestion`, and
-show the **exact command** for each option rather than a label — a
-placement is a word, but a command is reviewable.
+user's. Before running anything, ask **once**, with `AskUserQuestion`.
 
-Put the one you would run first, and beside it the two nearest
-alternatives: usually the other worktree answer and, for a session without
-a worktree, the other placement.
+**First, dry-run it.** Add `--dry-run --json` to the command you mean to
+offer, leave the three option flags off, and keep the same `--prompt`:
+
+```bash
+# with section 2's three exports above it, in the same command
+"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree --base main --prompt - --dry-run --json < ~/handoffs/login-redirect.md
+```
+
+A dry run resolves and checks everything a create would, reports what it
+would create, and stops. Nothing is created or remembered, and
+`--account auto` asks the picker without spending a pick, although the
+real pick can still come out differently. The exit code is 0 when the
+create would go ahead. Otherwise it is 2 or 3, with the reason the real
+create would give, so a command that fails here gets fixed before the
+user sees it. The report is section 8's `--json` object, with `dry_run`
+true and no ids. What you read from it:
+
+- `launch_options`: what each session option would be without your
+  flags. That means the user's `[agents.options]`, or whatever
+  `[agents.extra_args]` passes, which `provenance` marks `config.toml` or
+  `extra_args` under `option.model` and its siblings. An option missing
+  from it is left to claude's own settings. These are the defaults your
+  choice replaces.
+- `account`, `agent_kind`, `mark_ready`, and either `branch` and `base`
+  or `placement`: the values the command line leaves to the defaults.
+
+Then choose the three options (section 5).
+
+**Then ask.** Put the command you would run first, and beside it the two
+nearest alternatives. Let them vary the choice you are least sure of. That
+is often the model or the effort. Otherwise it is the worktree answer, or,
+for a session without a worktree, the placement. For each option:
+
+- in its **preview**, the exact `create` line, with all three option
+  flags. Section 2's exports are the same in every option, so say that
+  once instead of repeating them. Under the line, put what it resolves to
+  that it does not state: the account, the branch and base (or where the
+  pane lands), and whether the session will reap itself.
+- in its **description**, one line of reason for the options, such as
+  `sonnet` at `medium` because the brief spells out the change, and the
+  default each choice replaces where the two differ.
+
+A label is not reviewable. A command, and what it resolves to, is.
 
 **Offer "write the brief to a file and create nothing" as one of the
 options whenever the user's own words asked for a document** — "write a
@@ -272,9 +365,9 @@ list is the only way to find out without guessing. Show the path you would
 write.
 
 Then honour whichever they pick. Do not ask again, and do not ask a second
-question about a flag they did not raise. If they already gave you the
-whole topology ("split it beside me, no worktree"), they have answered;
-run it.
+question about a flag they did not raise. If they already gave you all of
+it ("split it beside me, no worktree, sonnet in plan mode"), they have
+answered; run it.
 
 ## 8. Read the result
 
@@ -293,6 +386,12 @@ choice whenever you are going to act on the result. Note that on exit 2
 and exit 3 it prints **nothing** on stdout, so a pipe into `jq` gets empty
 input — read the exit status before you read the JSON. On exit 4 it prints
 the object with `ok: false`, `failed_step` and `error`, and no ids at all.
+
+**Check `launch_options` against what the user approved.** It is what the
+agent was started with for each session option: the flags you passed, and
+whatever `[agents.extra_args]` passed for the ones you did not.
+`provenance` says where each value came from. If it differs from the
+confirmation, tell the user.
 
 **The ids name the agent, not the space.** `workspace_id`, `tab_id` and
 `pane_id` are where the agent actually is, which is what you address next.
