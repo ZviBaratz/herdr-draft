@@ -36,6 +36,11 @@ func settledRepoForm(t *testing.T, git *fakeGit) Model {
 // keystroke through Update runs after it, returning the checks it scheduled.
 // Typed a key at a time through Update, every keystroke would also batch the
 // input's blink timer, which really sleeps.
+//
+// The edit also schedules a title check, since that check's key includes the
+// project, and a submit waits for it too (#137). A test about the project
+// row's hold lands that one before its ⌃S (landTitle), so the hold it
+// asserts is the project row's alone.
 func retypeProject(m *Model, path string) []tea.Cmd {
 	m.form.FocusByID("dir")
 	typeDir(m, path)
@@ -103,6 +108,7 @@ func TestSubmit_WaitsForTheProjectCheckThenRefusesAMissingDirectory(t *testing.T
 	if got := m.dir.Value(); got != "/nowhere" {
 		t.Fatalf("test setup: project = %q, want /nowhere", got)
 	}
+	m = landTitle(t, m, cmds)
 	// ⌃S submits from any row. Sent from the title, where the refusal
 	// visibly moves focus away from.
 	m.form.FocusByID("title")
@@ -114,9 +120,6 @@ func TestSubmit_WaitsForTheProjectCheckThenRefusesAMissingDirectory(t *testing.T
 			m.submitInput.ProjectDir, m.submitInput.IsGitRepo, m.submitInput.UseWorktree)
 	}
 
-	// The title check the edit scheduled too lands first: a submit waits for
-	// it as well (#137), and it is one git call to the dir check's four.
-	m = landTitle(t, m, cmds)
 	m, _ = landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
 	if m.submitting {
 		t.Fatal("the submit went ahead for a directory that is not there")
@@ -136,6 +139,7 @@ func TestSubmit_WaitsForTheProjectCheckThenGoesOnWithItsAnswers(t *testing.T) {
 
 	git.isGitRepo = false
 	cmds := retypeProject(&m, "/scratch")
+	m = landTitle(t, m, cmds)
 
 	next, _ := m.Update(form.SubmitMsg{})
 	m = next.(Model)
@@ -144,7 +148,6 @@ func TestSubmit_WaitsForTheProjectCheckThenGoesOnWithItsAnswers(t *testing.T) {
 			m.submitInput.IsGitRepo, m.submitInput.UseWorktree)
 	}
 
-	m = landTitle(t, m, cmds) // the title check the edit scheduled, first
 	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
 	if !m.submitting {
 		t.Fatal("the check landed and the held submit did not go on")
@@ -166,7 +169,9 @@ func TestSubmit_OnlyTheCheckOfTheCurrentValueReleasesIt(t *testing.T) {
 	m := settledRepoForm(t, git)
 
 	git.isGitRepo = false
-	first := fireDirDebounce(t, &m, retypeProject(&m, "/scratch"))
+	firstCmds := retypeProject(&m, "/scratch")
+	m = landTitle(t, m, firstCmds)
+	first := fireDirDebounce(t, &m, firstCmds)
 	next, _ := m.Update(form.SubmitMsg{})
 	m = next.(Model)
 	if m.submitting {
@@ -178,12 +183,12 @@ func TestSubmit_OnlyTheCheckOfTheCurrentValueReleasesIt(t *testing.T) {
 	if got := m.dir.Value(); got != "/scratch-two" {
 		t.Fatalf("test setup: project = %q, want /scratch-two", got)
 	}
+	m = landTitle(t, m, cmds)
 	m, _ = landDirCheck(t, m, first)
 	if m.submitting {
 		t.Fatal("the check for /scratch released a submit of /scratch-two")
 	}
 
-	m = landTitle(t, m, cmds) // the title check the edit scheduled, first
 	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
 	if !m.submitting {
 		t.Fatal("the check for the current value landed and the held submit did not go on")
@@ -232,7 +237,7 @@ func TestSubmit_AStaleAnswerDoesNotEndTheWait(t *testing.T) {
 
 	git.isGitRepo = false
 	first := fireDirDebounce(t, &m, retypeProject(&m, "/scratch"))
-	retypeProject(&m, "-two")
+	m = landTitle(t, m, retypeProject(&m, "-two"))
 	m, _ = landDirCheck(t, m, first)
 
 	next, _ := m.Update(form.SubmitMsg{})
@@ -261,7 +266,7 @@ func TestSubmit_ACheckFromBeforeAClearDoesNotReleaseIt(t *testing.T) {
 	m = settle(t, next.(Model))
 	m.title.SetTitle("Fix pagination", false)
 	git.dirExists, git.isGitRepo = false, false
-	retypeProject(&m, "/nowhere")
+	m = landTitle(t, m, retypeProject(&m, "/nowhere"))
 
 	next, _ = m.Update(form.SubmitMsg{})
 	m = next.(Model)
@@ -295,10 +300,10 @@ func TestSubmit_AReleasedSubmitWaitsForTheBaseCheckItsProjectStarts(t *testing.T
 	}))
 	m.title.SetTitle("Fix pagination", false)
 	cmds := retypeProject(&m, "/repo-b")
+	m = landTitle(t, m, cmds)
 
 	next, _ := m.Update(form.SubmitMsg{})
 	m = next.(Model)
-	m = landTitle(t, m, cmds) // the title check the edit scheduled, first
 	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
 	if m.submitting {
 		t.Fatalf("the submit went on with /repo-b's base check still out, from base %q", m.submitInput.BaseRef)
