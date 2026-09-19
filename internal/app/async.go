@@ -613,6 +613,11 @@ type titleResultMsg struct {
 	req          request
 	branchExists bool
 	labelTaken   bool
+	// branch is the branch the check was scheduled for, and branchInvalid
+	// its refusal (BranchRefusal) -- nil for a branch that can be made, or
+	// for none at all.
+	branch        string
+	branchInvalid error
 }
 
 // scheduleTitleCheck bumps the title-duplicate source's own request
@@ -643,6 +648,15 @@ func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn bool) t
 // §8: "herdr workspaces/panes ... form-open") -- combining both into one
 // result so they land on TitleField's single verdict line together,
 // rather than flickering in one at a time.
+//
+// Whether the branch can be made at all is decided first, and a branch
+// that cannot is never looked up (#199): `git show-ref --verify` answers
+// "absent" for a name git could never hold, so the duplicate verdict would
+// rest on an answer to a question that has none. The refusal rides this
+// check rather than being drawn on each keystroke because it is pure but
+// not quiet: every prefixed branch passes through "zvi/" as it is typed,
+// and "zvi/" is not a branch name. The submit does not wait on it for its
+// correctness -- checkSubmitValidation asks BranchRefusal itself.
 func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 	git := m.deps.Git
 	workspaces := m.workspaces
@@ -651,12 +665,13 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 	return func() tea.Msg {
 		labelTaken := workspaceLabelTaken(workspaces, req.key)
 
+		invalid := BranchRefusal(worktreeOn, branch)
 		branchExists := false
-		if worktreeOn && branch != "" && dir != "" {
+		if invalid == nil && worktreeOn && branch != "" && dir != "" {
 			exists, err := git.BranchExists(context.Background(), pathx.ExpandTilde(dir), branch)
 			branchExists = err == nil && exists
 		}
-		return titleResultMsg{req: req, branchExists: branchExists, labelTaken: labelTaken}
+		return titleResultMsg{req: req, branchExists: branchExists, labelTaken: labelTaken, branch: branch, branchInvalid: invalid}
 	}
 }
 
@@ -704,6 +719,7 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.titleLandedVersion = msg.req.version
+	m.worktree.SetBranchVerdict(msg.branch, branchVerdictText(msg.branchInvalid))
 	m.title.SetVerdict(msg.req.key, m.titleNote(titleVerdictText(msg.branchExists, msg.labelTaken)))
 	// titleDupBlocked mirrors the SAME verdict just pushed above --
 	// checkSubmitValidation (app.go, spec §9) reads this directly rather
@@ -737,7 +753,10 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 // stays a pure statement about the two duplicate checks.
 //
 // A session with no worktree creates no branch, so it has no resting note
-// to give: the panel is then genuinely empty, which is honest.
+// to give: the panel is then genuinely empty, which is honest. Nor does a
+// branch the submit would refuse (#199): "branch will be zvi/old " would
+// promise, in text that reads exactly like the user's existing zvi/old, a
+// branch that will not be made. The worktree panel says why.
 func (m Model) titleNote(verdict string) string {
 	if verdict != "" {
 		return verdict
@@ -745,10 +764,19 @@ func (m Model) titleNote(verdict string) string {
 	if !m.worktree.Enabled() || !m.worktree.On() {
 		return ""
 	}
-	if branch := m.worktree.Branch(); branch != "" {
+	if branch := m.worktree.Branch(); branch != "" && BranchRefusal(true, branch) == nil {
 		return "branch will be " + branch
 	}
 	return ""
+}
+
+// branchVerdictText is the worktree panel's line for a refused branch, in v2
+// spec §6's `<state>  <reason>` shape, or "" for none.
+func branchVerdictText(invalid error) string {
+	if invalid == nil {
+		return ""
+	}
+	return "invalid branch name  " + invalid.Error()
 }
 
 func titleVerdictText(branchExists, labelTaken bool) string {

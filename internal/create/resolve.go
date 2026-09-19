@@ -467,8 +467,15 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		issueBranch = issue.BranchName
 	}
 	branch := app.BranchFor(res, issueBranch, title)
+	// Where the branch came from, for a refusal of it (#199) to say: a
+	// caller who never typed a name has to be told which one was used.
+	branchFrom := "the branch derived from the title"
+	if issueBranch != "" && branch == issueBranch {
+		branchFrom = issue.Identifier + "'s branch"
+	}
 	if req.set["branch"] {
 		branch = req.branch
+		branchFrom = "--branch"
 		// A branch given outright never consults the prefix, so the prefix
 		// stops being a resolved value: reporting the tier that would have
 		// supplied it would attribute a value nothing used.
@@ -495,6 +502,18 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	if req.worktree != nil {
 		useWorktree = *req.worktree
 		prov[defaults.FieldWorktree] = provenanceFlag
+	}
+
+	// A branch git cannot hold, refused as the form's submit refuses it
+	// (#199) -- here, with the request's other faults, so it needs no herdr
+	// and is decided before run()'s duplicate check asks git about a name
+	// `show-ref` would only call absent.
+	if err := app.BranchRefusal(useWorktree, branch); err != nil {
+		remedy := ""
+		if branchFrom != "--branch" {
+			remedy = "; pass --branch to name one yourself"
+		}
+		return plan.Input{}, nil, fmt.Errorf("%s %q cannot be used as a branch name: %v%s", branchFrom, branch, err, remedy)
 	}
 
 	placement := res.Placement

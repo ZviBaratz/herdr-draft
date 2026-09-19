@@ -323,6 +323,8 @@ type fakeGit struct {
 	commits      map[string]string
 	resolveErr   error
 	resolveCalls []string
+	// branchAsks records every name BranchExists was asked about.
+	branchAsks []string
 }
 
 var _ GitSource = (*fakeGit)(nil)
@@ -332,6 +334,7 @@ func newFakeGit() *fakeGit { return &fakeGit{exists: true, isRepo: true} }
 func (g *fakeGit) DirExists(string) bool { return g.exists }
 func (g *fakeGit) IsGitRepo(string) bool { return g.isRepo }
 func (g *fakeGit) BranchExists(_ context.Context, _ string, name string) (bool, error) {
+	g.branchAsks = append(g.branchAsks, name)
 	return g.branches[name], nil
 }
 func (g *fakeGit) RepoRoot(_ context.Context, dir string) (string, error) {
@@ -1438,6 +1441,12 @@ func TestFailureLineNamesTheSpaceNotTheAgent(t *testing.T) {
 // runner's Bin never has to exist. If the refusal were ever lost, this
 // would try to execute that path and the assertion below would fail with a
 // different message rather than passing.
+// TestBranchLeadingDash: a --branch git would read as an option is a usage
+// error, refused with the other names git cannot hold (#199) before herdr
+// is asked anything. internal/herdrc refuses the same value one layer down
+// (appendFlag), and the real CLIRunner stays wired in here so that a
+// regression in the first refusal is caught by the second's exit 4 instead
+// of passing silently.
 func TestBranchLeadingDash(t *testing.T) {
 	h := newHarness(t)
 	h.deps.Runner = &refusingRunner{
@@ -1446,15 +1455,15 @@ func TestBranchLeadingDash(t *testing.T) {
 	}
 
 	code := h.run("--title", "t", "--worktree", "--branch", "--oops")
-	if code != ExitNothingCreated {
-		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitNothingCreated, h.stderr)
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
 	}
 	stderr := h.stderr.String()
-	if !strings.Contains(stderr, `begins with "-"`) {
-		t.Errorf("stderr = %q, want internal/herdrc's own refusal reason", stderr)
+	if !strings.Contains(stderr, `--branch "--oops"`) || !strings.Contains(stderr, `begins with "-"`) {
+		t.Errorf("stderr = %q, want it to name the flag and the reason", stderr)
 	}
-	if !strings.Contains(stderr, "nothing was created") {
-		t.Errorf("stderr = %q, want it to say nothing was created", stderr)
+	if h.createdAnything() {
+		t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
 	}
 }
 
@@ -2397,6 +2406,112 @@ func TestCreateIgnoresAnExistingBranchWithoutAWorktree(t *testing.T) {
 
 	if code := h.run("--title", "fix login", "--branch", "feature/login", "--no-worktree"); code != ExitOK {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+}
+
+// #199: a branch git cannot hold is refused before anything is made, naming
+// the flag and what is wrong with it. The duplicate refusal above cannot see
+// these names: `git show-ref --verify` answers "absent" for a name git could
+// never hold, so "zvi/old " went through it -- and herdr trims it into
+// zvi/old, the user's existing branch, and checks that out over the base.
+//
+// It is decided before the duplicate check asks git about the name, which
+// would only answer "absent".
+func TestCreateRefusesABranchGitCannotHold(t *testing.T) {
+	for _, tc := range []struct{ branch, reason string }{
+		// The issue's own table.
+		{"zvi/old ", "ends with a space"},
+		{" zvi/old", "begins with a space"},
+		{"zvi/a..b", `contains ".."`},
+		{"zvi/a~1", `contains '~'`},
+		{"zvi/a:b", `contains ':'`},
+		{"zvi/a b", "contains a space"},
+		{"zvi/old.lock", `ends with ".lock"`},
+		// git would take this one; herdr's trim would not leave it alone.
+		{"zvi/old" + string(rune(0xa0)), "ends with whitespace (U+00A0)"},
+	} {
+		t.Run(tc.branch, func(t *testing.T) {
+			h := newHarness(t)
+			h.git.branches = map[string]bool{"zvi/old": true}
+
+			code := h.run("--title", "fix login", "--branch", tc.branch, "--worktree")
+			if code != ExitUsage {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+			}
+			stderr := h.stderr.String()
+			if want := "--branch " + strconv.Quote(tc.branch); !strings.Contains(stderr, want) {
+				t.Errorf("stderr should name the flag and its value as %s:\n%s", want, stderr)
+			}
+			if !strings.Contains(stderr, tc.reason) {
+				t.Errorf("stderr should say what is wrong (%s):\n%s", tc.reason, stderr)
+			}
+			if h.createdAnything() {
+				t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+			}
+			if len(h.git.branchAsks) > 0 {
+				t.Errorf("BranchExists was asked about %q: validity is decided before the duplicate check", h.git.branchAsks)
+			}
+		})
+	}
+}
+
+// And without herdr: a request wrong on its face is a usage error, not
+// "herdr unreachable", as every other fault in the request itself is.
+func TestCreateRefusesABranchGitCannotHoldWithHerdrDown(t *testing.T) {
+	h := newHarness(t)
+	h.runner.listErr = errors.New("connection refused")
+
+	if code := h.run("--title", "fix login", "--branch", "zvi/old ", "--worktree"); code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+}
+
+// A branch named by the Linear issue is held to the same rule, and the
+// refusal says where the name came from: the caller never typed it.
+func TestCreateRefusesAnIssueBranchGitCannotHold(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Linear = &fakeLinear{issues: []linear.Issue{{
+		Identifier: "LIN-42", Title: "Fix login redirect loop", BranchName: "zvi/old ",
+	}}}
+
+	code := h.run("--issue", "lin-42", "--worktree")
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+	stderr := h.stderr.String()
+	for _, want := range []string{"LIN-42", `"zvi/old "`, "ends with a space", "--branch"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr should mention %s:\n%s", want, stderr)
+		}
+	}
+	if h.createdAnything() {
+		t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+	}
+}
+
+// Without a worktree no branch is made, so there is nothing to refuse: the
+// condition the duplicate check has, and the form's (#199).
+func TestCreateIgnoresAnInvalidBranchWithoutAWorktree(t *testing.T) {
+	h := newHarness(t)
+
+	if code := h.run("--title", "fix login", "--branch", "zvi/a b", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+}
+
+// NOT DECIDED (#199): an empty --branch is not refused. It is left out of
+// herdr's argv, and herdr names the branch itself
+// (worktree/<adjective>-<noun>-NNNN). Whether it should be refused instead
+// was left to the owner; this pins today's behaviour so a change to it is a
+// decision rather than a side effect.
+func TestCreateEmptyBranchStillLetsHerdrNameIt(t *testing.T) {
+	h := newHarness(t)
+
+	if code := h.run("--title", "fix login", "--branch", "", "--worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if want := "WorktreeCreate(/projects/thing,,"; !strings.Contains(strings.Join(h.runner.calls, " "), want) {
+		t.Errorf("calls = %v, want a worktree create naming no branch (%s...)", h.runner.calls, want)
 	}
 }
 

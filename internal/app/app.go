@@ -1349,6 +1349,28 @@ func BranchFor(res defaults.Resolved, issueBranch, title string) string {
 	return gitx.BranchSlug(res.BranchPrefix, title)
 }
 
+// BranchRefusal is why a session must not be created on branch, or nil when
+// nothing stands in its way: a name git cannot hold, or one herdr would trim
+// into a different name (gitx.ValidateBranchName, #199). Only a session with
+// a worktree makes a branch, so without one there is nothing to refuse --
+// the same condition the duplicate check has.
+//
+// An empty branch is not refused. It is left out of herdr's argv and herdr
+// names the branch itself (worktree/<adjective>-<noun>-NNNN). Whether that
+// should stand was left open on #199 for the owner; this is where the answer
+// goes, for both paths at once.
+//
+// Exported for internal/create, for WorkspaceLabelled's reason: the form's
+// submit and the command's pre-flight refuse the same names because they ask
+// the same function, and no plan.Input field records a refusal for
+// equivalence_test.go to catch a drift by.
+func BranchRefusal(useWorktree bool, branch string) error {
+	if !useWorktree || branch == "" {
+		return nil
+	}
+	return gitx.ValidateBranchName(branch)
+}
+
 // handleSubmit is form.SubmitMsg's own handler (spec §9's submit
 // pipeline): runs every blocking validation FIRST (checkSubmitValidation),
 // refusing to create anything at all when one fires -- no plan.Build call,
@@ -1514,6 +1536,11 @@ func (m Model) beginSubmit() (Model, tea.Cmd) {
 //     verdict ahead of "title required" would be more useful to the
 //     user.
 //   - Directory validity (dirInvalid, kept live by handleDirResult).
+//   - A branch that cannot be made (BranchRefusal, #199), computed here for
+//     the branch as it stands. It refocuses the worktree row with the
+//     cursor in the branch input, and pushes the verdict the panel shows
+//     there -- the same text handleTitleResult pushes once the debounced
+//     check lands, so a submit that beat the check still says why.
 //   - Branch/workspace-label duplicates (titleDupBlocked, kept live by
 //     handleTitleResult) -- the SAME live verdict TitleField is already
 //     showing; this does not compute a new message, only blocks.
@@ -1528,6 +1555,15 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 	}
 	if m.dirInvalid {
 		return m.form.FocusByID("dir"), true
+	}
+	// Before the duplicate refusal, which is about whether a branch of this
+	// name exists -- a question with no answer for a name git cannot hold
+	// (#199). Asked here rather than read off the check's last verdict: it
+	// is pure, so the answer can be had for the branch exactly as it stands.
+	branch := m.worktree.Branch()
+	if err := BranchRefusal(m.worktree.Enabled() && m.worktree.On(), branch); err != nil {
+		m.worktree.SetBranchVerdict(branch, branchVerdictText(err))
+		return tea.Batch(m.form.FocusByID("worktree"), m.worktree.FocusBranch()), true
 	}
 	if m.titleDupBlocked {
 		return m.form.FocusByID("title"), true

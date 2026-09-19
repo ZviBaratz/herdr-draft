@@ -730,6 +730,108 @@ func TestWorktreeField_NotesSurviveAnOffWorktree(t *testing.T) {
 	}
 }
 
+// TestWorktreeField_BranchVerdictSitsUnderTheParts is #199's form half: the
+// branch the app refuses is refused where the branch is shown. The verdict
+// is booked in PanelRows, sits directly under the three parts ahead of the
+// notes and the provenance line -- it is about the value on the line above
+// it, and it is the one of the three that stops a submit -- and never
+// touches the row (v2 spec §6: verdicts render in the panel).
+func TestWorktreeField_BranchVerdictSitsUnderTheParts(t *testing.T) {
+	const note = `ignoring branch_prefix "-x": starts with "-"`
+	const verdict = "invalid branch name  ends with a space"
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	turnOn(w)
+	w.SetBranch("zvi/old ", false)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+	w.SetNotes([]string{note})
+	w.SetProvenance(".herdr-draft.toml")
+
+	rowBefore, bare := w.Row(60), w.PanelRows()
+	w.SetBranchVerdict("zvi/old ", verdict)
+
+	if got := w.PanelRows(); got != bare+1 {
+		t.Fatalf("PanelRows() with a verdict = %d, want %d", got, bare+1)
+	}
+	if got := w.Row(60); got != rowBefore {
+		t.Errorf("Row(60) changed when a verdict was set:\n before: %q\n  after: %q", rowText(rowBefore), rowText(got))
+	}
+
+	panel := w.Panel(60, w.PanelRows())
+	for i, want := range []string{verdict, note, "from .herdr-draft.toml"} {
+		if got := panelLineAt(panel, worktreePanelParts+i); got != want {
+			t.Errorf("panel line %d = %q, want %q", worktreePanelParts+i, got, want)
+		}
+	}
+
+	// A short panel keeps the verdict longest of the three, and the floor
+	// still keeps the parts whole.
+	short := ansi.Strip(w.Panel(60, worktreePanelParts+1))
+	if !strings.Contains(short, verdict) || strings.Contains(short, note) {
+		t.Errorf("Panel one row above the floor = %q, want the verdict kept and the note dropped", short)
+	}
+	if floor := ansi.Strip(w.Panel(60, panelFloor)); strings.Contains(floor, verdict) {
+		t.Errorf("Panel at the %d-row floor = %q, want the parts alone", panelFloor, floor)
+	}
+}
+
+// TestWorktreeField_BranchVerdictIsForTheValueItNamed: a verdict is about
+// the branch it was computed for. Once the branch says something else the
+// verdict is not drawn and its row is not booked -- the app's next answer
+// replaces it -- and a worktree that is off, or impossible, makes no branch
+// to be wrong about.
+func TestWorktreeField_BranchVerdictIsForTheValueItNamed(t *testing.T) {
+	const verdict = "invalid branch name  ends with a space"
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	turnOn(w)
+	w.SetBranch("zvi/old ", false)
+	bare := w.PanelRows()
+	w.SetBranchVerdict("zvi/old ", verdict)
+
+	w.SetBranch("zvi/old", false)
+	if got := w.PanelRows(); got != bare {
+		t.Errorf("PanelRows() after the branch changed = %d, want %d: the verdict was for another value", got, bare)
+	}
+	if got := ansi.Strip(w.Panel(60, w.PanelRows()+1)); strings.Contains(got, verdict) {
+		t.Errorf("Panel after the branch changed = %q, want no verdict", got)
+	}
+
+	w.SetBranch("zvi/old ", false)
+	if !strings.Contains(ansi.Strip(w.Panel(60, w.PanelRows())), verdict) {
+		t.Fatal("test setup: the verdict should show again for the value it named")
+	}
+	w.SetOn(false)
+	if got := ansi.Strip(w.Panel(60, w.PanelRows())); strings.Contains(got, verdict) {
+		t.Errorf("Panel with the worktree off = %q, want no verdict", got)
+	}
+	w.SetOn(true)
+	w.SetGitTarget(false)
+	if got := ansi.Strip(w.Panel(60, w.PanelRows())); strings.Contains(got, verdict) {
+		t.Errorf("Panel on a non-git target = %q, want no verdict", got)
+	}
+}
+
+// TestWorktreeField_FocusBranch: the app refuses a submit on the branch by
+// focusing this field, and the part to land on is the one the fix is typed
+// into -- not the chips, where Focus alone parks the cursor.
+func TestWorktreeField_FocusBranch(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.Focus()
+
+	w.FocusBranch()
+	if got := w.FooterRungs()[0]; !strings.Contains(got, "type to edit") {
+		t.Fatalf("rung after FocusBranch = %q, want the branch part's", got)
+	}
+	w.Update(rn('x'))
+	if got := w.Branch(); got != "x" {
+		t.Errorf("Branch() after typing = %q, want the keystroke to reach the branch input", got)
+	}
+}
+
 // TestWorktreeField_RowVocabulary pins v2 spec §6's worktree row in each
 // of its three states, and the elision order the row promises.
 func TestWorktreeField_RowVocabulary(t *testing.T) {
