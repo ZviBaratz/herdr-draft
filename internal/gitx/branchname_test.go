@@ -148,6 +148,18 @@ func TestValidateBranchName_ComponentReasonsLeadWithTheRule(t *testing.T) {
 	}
 }
 
+// TestValidateBranchName_EmptyIsItsOwnError: callers word an empty name
+// differently from a wrong one -- "--branch is empty", "branch name
+// required" -- so they need to tell it apart without matching text.
+func TestValidateBranchName_EmptyIsItsOwnError(t *testing.T) {
+	if err := ValidateBranchName(""); !errors.Is(err, ErrBranchNameEmpty) {
+		t.Errorf("ValidateBranchName(\"\") = %v, want ErrBranchNameEmpty", err)
+	}
+	if err := ValidateBranchName("zvi/a b"); errors.Is(err, ErrBranchNameEmpty) {
+		t.Errorf("ValidateBranchName(%q) = %v, which is not the empty name", "zvi/a b", err)
+	}
+}
+
 // refusedThoughGitAccepts are the names ValidateBranchName refuses on
 // purpose although git would make the branch. Each is refused for a reason
 // of its own, recorded here so the agreement test below cannot be passed by

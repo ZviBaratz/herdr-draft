@@ -209,22 +209,56 @@ func TestSubmit_AnInvalidBranchWithoutAWorktreeIsNotRefused(t *testing.T) {
 	drainSubmitProgress(t, m, submitChain(t, out))
 }
 
-// TestSubmit_AnEmptyBranchIsStillLeftToHerdr pins what #199 did NOT decide:
-// an emptied branch input is not refused, and herdr names the branch itself.
-// Whether it should be refused was left to the owner; this is here so that a
-// change to it is a decision rather than a side effect.
-func TestSubmit_AnEmptyBranchIsStillLeftToHerdr(t *testing.T) {
+// TestSubmit_RefusesAnEmptyBranch: an emptied branch input is refused at
+// submit, the way an empty title is (#199's open question, decided
+// 2026-09-19). herdr would invent a worktree/<adjective>-<noun>-NNNN branch
+// that ignores branch_prefix and that a clean cannot show this run made.
+//
+// Like "title required", it is said at submit and not while the form is
+// being filled in: the debounced check does not call an empty branch wrong,
+// or the worktree panel would say so before anyone had finished typing.
+func TestSubmit_RefusesAnEmptyBranch(t *testing.T) {
 	m := settledBranchForm(t, newFakeGit())
-	cmds := retypeBranch(&m, "")
+	m = landTitle(t, m, retypeBranch(&m, ""))
+	if panel := branchPanel(m); strings.Contains(panel, "branch name required") {
+		t.Errorf("the emptied branch was called wrong before any submit:\n%s", panel)
+	}
+	m.form.FocusByID("dir")
 
 	next, _ := m.Update(form.SubmitMsg{})
 	m = next.(Model)
-	m, out := landTitleCheck(t, m, fireTitleDebounce(t, &m, cmds))
-	if !m.submitting {
-		t.Fatalf("a submit with an empty branch was refused (focus %q)", m.form.FocusedID())
+	if m.submitting {
+		t.Fatal("a submit with an empty branch went ahead")
 	}
-	if got := m.submitInput.Branch; got != "" {
-		t.Errorf("submitted branch %q, want none", got)
+	if got := m.form.FocusedID(); got != "worktree" {
+		t.Errorf("focus ended on %q, want the worktree row, which says why", got)
 	}
-	drainSubmitProgress(t, m, submitChain(t, out))
+	if rung := m.worktree.FooterRungs()[0]; !strings.Contains(rung, "type to edit") {
+		t.Errorf("footer rung %q: want the cursor in the branch input", rung)
+	}
+	if panel := branchPanel(m); !strings.Contains(panel, "branch name required") {
+		t.Errorf("worktree panel does not say why:\n%s", panel)
+	}
+}
+
+// TestBranchVerdict_NoneInTheOpeningState: the form opens with the worktree
+// on and no branch yet, because the branch is derived from a title nobody
+// has typed. That state must not read as a refusal.
+func TestBranchVerdict_NoneInTheOpeningState(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
+	m := settle(t, newSubmitTestModel(t, runner, testSetup{
+		Git:    newFakeGit(),
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo"},
+		Config: config.Config{DefaultWorktree: true},
+	}))
+	if !m.worktree.On() || m.worktree.Branch() != "" {
+		t.Fatalf("test setup: want the worktree on and no branch, got on %v, branch %q", m.worktree.On(), m.worktree.Branch())
+	}
+	// The worktree turning on schedules a title check, which lands 150 ms
+	// after the form opens -- with no title and no branch. settle drops title
+	// checks, so this lands that one.
+	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On())})
+	if panel := branchPanel(m); strings.Contains(panel, "branch name required") || strings.Contains(panel, "invalid branch name") {
+		t.Errorf("the opening state reads as a refusal:\n%s", panel)
+	}
 }

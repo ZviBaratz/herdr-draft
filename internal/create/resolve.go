@@ -6,6 +6,7 @@ package create
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
+	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/pathx"
@@ -466,13 +468,16 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	if issue != nil {
 		issueBranch = issue.BranchName
 	}
-	branch := app.BranchFor(res, issueBranch, title)
+	derived := app.BranchFor(res, issueBranch, title)
+	branch := derived
 	// Where the branch came from, for a refusal of it (#199) to say: a
 	// caller who never typed a name has to be told which one was used.
 	branchFrom := "the branch derived from the title"
 	if issueBranch != "" && branch == issueBranch {
 		branchFrom = issue.Identifier + "'s branch"
 	}
+	// What the flag replaces, for an empty --branch's refusal to offer.
+	derivedFrom := branchFrom
 	if req.set["branch"] {
 		branch = req.branch
 		branchFrom = "--branch"
@@ -513,6 +518,17 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	// the directory, and fixing the branch first would only earn the caller
 	// that refusal next.
 	if err := app.BranchRefusal(useWorktree && t.isGitRepo, branch); err != nil {
+		// Only --branch can be empty -- BranchFor never derives an empty
+		// name -- and it is a missing name, not a wrong one. The remedy is
+		// the branch leaving it off would use, and where that comes from --
+		// unless that one is refused too, when sending the caller there
+		// would only earn a second refusal.
+		if errors.Is(err, gitx.ErrBranchNameEmpty) {
+			if derivedErr := app.BranchRefusal(true, derived); derivedErr != nil {
+				return plan.Input{}, nil, fmt.Errorf("--branch is empty, and %s, %q, cannot be used either: %v; pass --branch with a name", derivedFrom, derived, derivedErr)
+			}
+			return plan.Input{}, nil, fmt.Errorf("--branch is empty; leave it off to use %s, %q", derivedFrom, derived)
+		}
 		remedy := ""
 		if branchFrom != "--branch" {
 			remedy = "; pass --branch to name one yourself"

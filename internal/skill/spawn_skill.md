@@ -103,7 +103,8 @@ you are doing right now.
   used whenever that changes it, so write one plain line that fits.
 - `--branch NAME` names the branch. Left off, it is derived from the title.
   With a worktree, a name git cannot use as a branch, or one with
-  whitespace at either end, is refused with exit 2 and nothing created.
+  whitespace at either end, is refused with exit 2 and nothing created. So
+  is an empty `--branch`: leave the flag off instead.
 - `--base REF` is what the branch is cut from. Left off it resolves like
   every other unset value — usually `HEAD`, which is *your current commit*,
   though a repository's own `.herdr-draft.toml` can set a different

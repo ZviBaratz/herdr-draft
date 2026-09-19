@@ -1361,17 +1361,20 @@ func BranchFor(res defaults.Resolved, issueBranch, title string) string {
 // a worktree makes a branch, so without one there is nothing to refuse --
 // the same condition the duplicate check has.
 //
-// An empty branch is not refused. It is left out of herdr's argv and herdr
-// names the branch itself (worktree/<adjective>-<noun>-NNNN). Whether that
-// should stand was left open on #199 for the owner; this is where the answer
-// goes, for both paths at once.
+// An empty branch is refused too, as gitx.ErrBranchNameEmpty (#199's open
+// question, decided 2026-09-19). Left out of herdr's argv, it had herdr
+// invent a worktree/<adjective>-<noun>-NNNN branch that ignores
+// branch_prefix, that the duplicate check never saw, and that the clean
+// could never show this run made (plan's branchIsAbsent), so a failed create
+// left it behind. Neither path offers "let herdr name it", and in `create`
+// an empty --branch is far more often an unset variable than a request.
 //
 // Exported for internal/create, for WorkspaceLabelled's reason: the form's
 // submit and the command's pre-flight refuse the same names because they ask
 // the same function, and no plan.Input field records a refusal for
 // equivalence_test.go to catch a drift by.
 func BranchRefusal(useWorktree bool, branch string) error {
-	if !useWorktree || branch == "" {
+	if !useWorktree {
 		return nil
 	}
 	return gitx.ValidateBranchName(branch)
@@ -1545,8 +1548,11 @@ func (m Model) beginSubmit() (Model, tea.Cmd) {
 //   - A branch that cannot be made (BranchRefusal, #199), computed here for
 //     the branch as it stands. It refocuses the worktree row with the
 //     cursor in the branch input, and pushes the verdict the panel shows
-//     there -- the same text handleTitleResult pushes once the debounced
-//     check lands, so a submit that beat the check still says why.
+//     there. For a wrong name that is the text handleTitleResult pushes once
+//     the debounced check lands, so a submit that beat the check still says
+//     why. For an empty one it is the only place the verdict comes from:
+//     "branch name required" is said at submit, as "title required" is, and
+//     never by the check.
 //   - Branch/workspace-label duplicates (titleDupBlocked, kept live by
 //     handleTitleResult) -- the SAME live verdict TitleField is already
 //     showing; this does not compute a new message, only blocks.

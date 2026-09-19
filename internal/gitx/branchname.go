@@ -57,13 +57,12 @@ import (
 // 2.53.0, `git worktree add -b @` makes a branch named "@"), "HEAD" as one
 // component of a longer name, and bytes above 0x7F.
 //
-// The empty name is refused here, because git refuses it. Whether a caller
-// should ask at all when nothing was named is a different question: an
-// empty --branch is omitted from herdr's argv, and herdr then invents a
-// name of its own. See app.BranchRefusal.
+// The empty name is refused, because git refuses it, and with its own
+// error, ErrBranchNameEmpty, because callers word it as a missing name
+// rather than a wrong one.
 func ValidateBranchName(name string) error {
 	if name == "" {
-		return errors.New("is empty")
+		return ErrBranchNameEmpty
 	}
 	if r, _ := utf8.DecodeRuneInString(name); unicode.IsSpace(r) {
 		return fmt.Errorf("begins with %s", describeSpace(r))
@@ -101,6 +100,11 @@ func ValidateBranchName(name string) error {
 
 	return nil
 }
+
+// ErrBranchNameEmpty is ValidateBranchName's answer for "": no name at all,
+// which callers say differently from a wrong one ("--branch is empty",
+// "branch name required").
+var ErrBranchNameEmpty = errors.New("is empty")
 
 // describeSpace names a whitespace rune for a reason phrase: "a space" for
 // the one everybody can picture, and the code point for the rest, because a

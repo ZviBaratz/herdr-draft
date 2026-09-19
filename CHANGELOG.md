@@ -136,6 +136,10 @@ without the popup. It drives herdr exclusively through the public CLI
   goes for whitespace git would take but herdr trims, such as a trailing
   no-break space. Other invalid names failed inside herdr, at the create's
   first step. A branch derived from the title is always one git can hold.
+  An emptied branch input is refused at submit too, as `branch name
+  required`: herdr would have invented a `worktree/<adjective>-<noun>-NNNN`
+  name that ignores `branch_prefix`, and a failed create's clean could not
+  show that branch was its own, so it was left behind.
 - Mouse: click a row to focus it, click a panel line to select it, wheel to
   scroll the panel.
 - The popup is a fixed **104×32 cells**, a manifest value rather than a
@@ -230,7 +234,9 @@ without the popup. It drives herdr exclusively through the public CLI
   refused request spends no pick (#145), and `--account active` means no
   pin, as it does in `config.toml` (#146). A branch git cannot hold, from
   `--branch` or the Linear issue, is refused the same way and names where it
-  came from (#199). That check runs before herdr is asked anything.
+  came from (#199). That check runs before herdr is asked anything. An
+  empty `--branch` is refused as well, naming the branch leaving it off
+  would use: it is far more often an unset variable than a request.
 - **Cleaning a failed worktree session deletes the branch it made** (#173),
   so a retry with the same title is no longer refused over a branch the
   failure left behind; herdr's `worktree remove` keeps branches by design.

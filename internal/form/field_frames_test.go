@@ -245,6 +245,24 @@ func TestFrames_WorktreeBranchVerdict(t *testing.T) {
 	assertFrame(t, "worktree-branch-verdict-80x24", buildWorktreeBranchVerdictForm(theme.Default()), 80, 24)
 }
 
+// TestFrames_WorktreeBranchRequired is the other refusal the branch part
+// carries: a submit refused over a branch input cleared by hand. The editor
+// shows its own dim placeholder, `branch name`, with the verdict under it.
+func TestFrames_WorktreeBranchRequired(t *testing.T) {
+	palette := theme.Default()
+	w := NewWorktreeField(palette)
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBranch("", false)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+	w.SetBranchVerdict("", "branch name required")
+
+	m := fieldFrame(palette, w)
+	w.FocusBranch()
+	assertFrame(t, "worktree-branch-required-80x24", m, 80, 24)
+}
+
 // buildWorktreeNonGitForm pins the other end of the field: a target that
 // cannot host a worktree at all, where the row and all three panel parts
 // carry the non-git reason rather than an empty control.
