@@ -172,9 +172,9 @@ without the popup. It drives herdr exclusively through the public CLI
   was created" about one, and says instead what it may have left. With no
   space reported, `--on-failure clean` has nothing to remove, and
   `clean_refused` says so. The popup's failure screen follows the same
-  rule (#208). When the first step fails, `esc close` is still its only
-  key, but "nothing was created" now needs the same evidence, and
-  otherwise the screen names the branch that may be left.
+  rule (#208). When the first step fails, `esc close` is its only key,
+  and it says "nothing was created" only on the same evidence. Otherwise
+  it says what may be left, as `create` does.
 - **It refuses what the form refuses**, before anything is created (exit
   `2`): a branch that already exists when a worktree would create it, a
   title an open workspace already carries, and a pinned account clauth

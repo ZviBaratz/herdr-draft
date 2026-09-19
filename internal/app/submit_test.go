@@ -761,8 +761,11 @@ func TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd(t *testing.T) {
 			},
 		},
 		{
-			name:     "step-one dead end",
-			setup:    func(m *Model) { m.submitDeadEnd = true; m.submitView.SetDeadEnd(plan.ExecResult{FailedIndex: 0}, "") },
+			name: "step-one dead end",
+			setup: func(m *Model) {
+				m.submitDeadEnd = true
+				m.submitView.SetDeadEnd(plan.ExecResult{FailedIndex: 0}, false, "")
+			},
 			wantQuit: true,
 		},
 	}
@@ -1563,12 +1566,14 @@ func TestSubmit_DeadEndSaysNothingWasCreatedOnlyWithEvidence(t *testing.T) {
 	cases := []struct {
 		name           string
 		worktree       bool
+		branch         string
 		nothingCreated bool
 		want, wantNot  []string
 	}{
 		{
 			name:           "evidence",
 			worktree:       true,
+			branch:         "zvi/collide",
 			nothingCreated: true,
 			want:           []string{"nothing was created"},
 			wantNot:        []string{"may have made", "zvi/collide"},
@@ -1576,11 +1581,23 @@ func TestSubmit_DeadEndSaysNothingWasCreatedOnlyWithEvidence(t *testing.T) {
 		{
 			name:     "no evidence, worktree",
 			worktree: true,
+			branch:   "zvi/collide",
 			want:     []string{"herdr may have made part of it before failing", "zvi/collide", "look before retrying"},
 			wantNot:  []string{"nothing was created"},
 		},
 		{
+			// The branch row cleared by hand: nothing refuses that, and
+			// herdr then names the branch itself
+			// (herdr:src/app/api/worktrees/deferred.rs at v0.9.0), so a
+			// branch, its checkout and a workspace may all still exist.
+			name:     "no evidence, worktree, no branch named",
+			worktree: true,
+			want:     []string{"herdr may have made part of it before failing — any of a branch, its checkout and a workspace for it; look before retrying"},
+			wantNot:  []string{"nothing was created"},
+		},
+		{
 			name:    "no evidence, no worktree",
+			branch:  "zvi/collide",
 			want:    []string{"herdr may have made part of it before failing; look before retrying"},
 			wantNot: []string{"nothing was created", "branch"},
 		},
@@ -1590,7 +1607,7 @@ func TestSubmit_DeadEndSaysNothingWasCreatedOnlyWithEvidence(t *testing.T) {
 			m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
 			m.submitView = form.NewSubmitView(m.palette)
 			m.submitting = true
-			m.submitInput = plan.Input{ProjectDir: "/repo", UseWorktree: tc.worktree, Branch: "zvi/collide"}
+			m.submitInput = plan.Input{ProjectDir: "/repo", UseWorktree: tc.worktree, Branch: tc.branch}
 
 			m2, _ := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{
 				FailedIndex:    0,

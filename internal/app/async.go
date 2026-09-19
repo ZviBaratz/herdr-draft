@@ -1390,11 +1390,11 @@ const execErrorPrefix = "plan: execute: "
 // called). No space is not the same as nothing made, though (#208): herdr
 // can fail a worktree create after git has made the branch, so the view
 // says "nothing was created" only on ExecResult.NothingCreated, and
-// without it names the branch as what may be left. Otherwise,
-// plan.CleanCheck needs to run first -- real git I/O for a worktree
-// space, via gitx.Disposable -- before SubmitView's failure prompt can be
-// shown at all, so that's deferred to its own Cmd (runCleanCheckCmd)
-// rather than called synchronously here.
+// without it says what may be left, naming the branch when the plan had
+// one. Otherwise, plan.CleanCheck needs to run first -- real git I/O for
+// a worktree space, via gitx.Disposable -- before SubmitView's failure
+// prompt can be shown at all, so that's deferred to its own Cmd
+// (runCleanCheckCmd) rather than called synchronously here.
 func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 	if msg.result.FailedIndex == -1 {
 		// Persist spec §12's state BEFORE quitting -- the quit is deferred
@@ -1415,13 +1415,13 @@ func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 			// The view needs to be told too, so its footer offers the one
 			// key this state actually honors ("esc close") and says so
 			// nowhere else -- see SubmitView.footerParts. It gets the
-			// branch because, without evidence that nothing was made, the
-			// branch is what may be left (#208).
+			// worktree and its branch because, without evidence that
+			// nothing was made, they are what may be left (#208).
 			branch := ""
 			if m.submitInput.UseWorktree {
 				branch = m.submitInput.Branch
 			}
-			m.submitView.SetDeadEnd(msg.result, branch)
+			m.submitView.SetDeadEnd(msg.result, m.submitInput.UseWorktree, branch)
 		}
 		// A dead end still owes the user their prompt back. This branch
 		// used to return nil because plan.Execute only ever set PromptText
