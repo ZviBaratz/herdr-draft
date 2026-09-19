@@ -1907,10 +1907,11 @@ func wrongBranch(asked, got string) error {
 // silently -- a local base, which sets no upstream; a lane's commit, which
 // names no ref; an upstream that is anything else. So is a user who set
 // branch.autoSetupMerge to always, since that is a request for tracking
-// everywhere. `simple` tracks only a branch named like the remote branch it
-// was cut from, and that upstream is removed like any other: both paths
-// refuse a branch name origin already has, so only another remote's branch
-// reaches this, where a push to it would be the harmless one.
+// everywhere. So is a branch named like the remote branch it was cut from
+// (#229) -- the only one `simple` tracks: a plain push then goes to that
+// same branch, which is what `git checkout <branch>` would have set up. Both
+// paths refuse a branch name origin already has, so only another remote's
+// branch reaches that case.
 //
 // A failure is not the create's: the checkout exists by now. It names the
 // command that finishes the job, which works from the session's checkout as
@@ -1937,6 +1938,15 @@ func untrackBase(ctx context.Context, dir, branch, base string) error {
 		return unchecked(err)
 	}
 	if cutFrom != upstream {
+		return nil
+	}
+	// Named like the remote branch it tracks, a push goes to that same
+	// branch, which is the one the user means (#229).
+	merge, err := gitx.UpstreamMerge(ctx, dir, branch)
+	if err != nil {
+		return unchecked(err)
+	}
+	if merge == "refs/heads/"+branch {
 		return nil
 	}
 	setting, err := gitx.AutoSetupMerge(ctx, dir)

@@ -151,3 +151,21 @@ func execGit(dir string, args ...string) *exec.Cmd {
 	cmd.Env = gitTestEnv()
 	return cmd
 }
+
+// TestUpstreamMerge reads the name the branch's upstream has on its remote
+// (branch.<b>.merge), which is what says a push goes to a branch of the same
+// name (#229). A remote named with a slash does not change it.
+func TestUpstreamMerge(t *testing.T) {
+	isolateGitConfig(t)
+	ctx := context.Background()
+	repo := trackingClone(t)
+
+	gitRun(t, repo, "branch", "--no-track", "cut", "origin/develop")
+	if got, err := UpstreamMerge(ctx, repo, "cut"); err != nil || got != "" {
+		t.Fatalf("UpstreamMerge(cut) with no upstream = %q, %v, want \"\", nil", got, err)
+	}
+	gitRun(t, repo, "branch", "--set-upstream-to=team/x/develop", "cut")
+	if got, err := UpstreamMerge(ctx, repo, "cut"); err != nil || got != "refs/heads/develop" {
+		t.Errorf("UpstreamMerge(cut) tracking team/x/develop = %q, %v, want refs/heads/develop", got, err)
+	}
+}

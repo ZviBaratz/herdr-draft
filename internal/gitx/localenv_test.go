@@ -135,6 +135,9 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 	if v, err := AutoSetupMerge(ctx, repo); err != nil || v != "always" {
 		t.Errorf("AutoSetupMerge = %q, %v: it read the inherited repository's config", v, err)
 	}
+	if m, err := UpstreamMerge(ctx, repo, "feature"); err != nil || m != "refs/heads/main" {
+		t.Errorf("UpstreamMerge(feature) = %q, %v: it read the inherited repository's config", m, err)
+	}
 	if err := UnsetUpstream(ctx, repo, "feature"); err != nil {
 		t.Errorf("UnsetUpstream(feature): %v -- it looked for the branch in the inherited repository", err)
 	}

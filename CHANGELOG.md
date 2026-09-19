@@ -101,7 +101,8 @@ without the popup. It drives herdr exclusively through the public CLI
   `push.default=simple`, and under `push.default=upstream` it pushed the
   session's commits onto the shared branch. The upstream is now removed
   once the worktree exists — only on a branch the create made, only when
-  it is the remote-tracking branch the base names, and not when
+  it is the remote-tracking branch the base names, not when the branch has
+  the same name as that remote branch (#229), and not when
   `branch.autoSetupMerge` is `always`. The branch then tracks nothing until
   its first `git push -u` (or `push.autoSetupRemote`). A removal that fails
   does not fail the create: `create`'s worktree line reports it, with the

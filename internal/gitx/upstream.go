@@ -58,3 +58,15 @@ func UnsetUpstream(ctx context.Context, repoDir, branch string) error {
 	}
 	return nil
 }
+
+// UpstreamMerge returns the name branch's upstream has on its remote --
+// branch.<b>.merge, refs/heads/develop for a branch tracking origin/develop
+// -- and "" when it tracks nothing. It is the one part of the upstream that
+// says where a plain push goes by name, whatever the remote is called.
+func UpstreamMerge(ctx context.Context, repoDir, branch string) (string, error) {
+	out, err := runGit(ctx, repoDir, "config", "--default=", "--get", "branch."+branch+".merge")
+	if err != nil {
+		return "", fmt.Errorf("branch.%s.merge: %w", branch, err)
+	}
+	return out, nil
+}

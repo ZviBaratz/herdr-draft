@@ -549,6 +549,8 @@ from the session would be refused (`push.default=simple`) or would push onto
 once the worktree exists. It does so only on a branch this create made, only
 when the upstream is the remote-tracking branch the base names, and not when
 you set `branch.autoSetupMerge = always`, which asks for tracking everywhere.
+A branch with the same name as the remote branch it was cut from keeps its
+upstream too, since a push then goes where you mean (#229).
 A local base such as `main` is left alone: under the default it sets no
 upstream, and under `inherit` the branch takes `main`'s own. The branch gets
 its own upstream on its first `git push -u`, or on a plain `git push` under

@@ -136,6 +136,16 @@ func TestExecuteLeavesAnUpstreamItDidNotCause(t *testing.T) {
 			name: "local base", base: "main", tracks: "main",
 		},
 		{
+			// Named like the remote branch it was cut from (#229): a plain
+			// push goes to that same branch, which is what the user means,
+			// and it is what `git checkout zvi/session` would have set up.
+			// Another remote's, since both paths refuse a name origin has.
+			name: "same name on the remote", base: "team/x/zvi/session", tracks: "team/x/zvi/session",
+			setup: func(t *testing.T, repo string) {
+				gitIn(t, repo, "update-ref", "refs/remotes/team/x/zvi/session", "refs/remotes/origin/develop")
+			},
+		},
+		{
 			// The branch was already there, so herdr checked it out and
 			// the base made nothing: it is the user's, tracking and all.
 			name: "branch already existed", base: "origin/develop", tracks: "",
