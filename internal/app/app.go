@@ -848,14 +848,15 @@ type Model struct {
 	// in form.Model's focus ring).
 	submitting bool
 	// submitDeadEnd is true only in the submitting states that have no
-	// other way out: step 1 (topology creation) itself failed, so
-	// SubmitView never gets a SetFailure call at all (spec §9 scopes the
-	// keep-or-clean prompt to "after step 1 succeeded") -- its own k/c
-	// grammar stays permanently inert -- or a remove ran and kept a branch
-	// it had said it would delete, which leaves nothing to keep or remove
-	// either (handleCleanDone, #173). updateSubmitting's Esc/Ctrl+C
-	// escape hatch is scoped to exactly this state (see its own doc
-	// comment): at every OTHER point in the submitting lifecycle --
+	// other way out: step 1 (topology creation) itself failed and reported
+	// no space, so SubmitView never gets a SetFailure call at all (spec §9
+	// scopes the keep-or-clean prompt to "after step 1 succeeded") -- its
+	// own k/c grammar stays permanently inert, having no space to act on,
+	// even when the failure left a branch behind (#208) -- or a remove ran
+	// and kept a branch it had said it would delete, which leaves nothing
+	// to keep or remove either (handleCleanDone, #173). updateSubmitting's
+	// Esc/Ctrl+C escape hatch is scoped to exactly this state (see its own
+	// doc comment): at every OTHER point in the submitting lifecycle --
 	// actively streaming, waiting on plan.CleanCheck, or showing a real
 	// keep-or-clean prompt -- Esc/Ctrl+C must NOT quit, or it would either
 	// strand plan.Execute's own background goroutine forever blocked on

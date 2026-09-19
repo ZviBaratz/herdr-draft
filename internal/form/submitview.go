@@ -107,15 +107,20 @@ type SubmitView struct {
 
 	haveFailure bool
 	// deadEnd marks the one failure with no keep-or-clean choice at all:
-	// step 1 (topology creation) itself failed, so nothing was created
-	// and there is nothing to keep or remove. It is also the ONLY
-	// submitting state Esc/Ctrl+C may quit from (see the app layer's
+	// step 1 (topology creation) itself failed and reported no space, so
+	// there is nothing for keep or remove to act on. That is not the same
+	// as nothing existing (#208), which is why deadEndLines reads the
+	// result's evidence before saying so. It is also the ONLY submitting
+	// state Esc/Ctrl+C may quit from (see the app layer's
 	// updateSubmitting), so it is the only one whose footer offers a
 	// close button -- a footer that advertised "esc close" at any other
 	// point would be advertising a key the app deliberately ignores.
 	deadEnd bool
-	result  plan.ExecResult
-	clean   plan.CleanDecision
+	// deadEndBranch is SetDeadEnd's branch: the one the plan's worktree
+	// create was asked to make, or "" for a plan without a worktree.
+	deadEndBranch string
+	result        plan.ExecResult
+	clean         plan.CleanDecision
 
 	// cleanErr is SetCleanFailed's own recorded error, or nil before that
 	// setter is ever called (the common case: keep succeeds silently, or
@@ -184,15 +189,22 @@ func (v *SubmitView) SetFailure(res plan.ExecResult, clean plan.CleanDecision) {
 // SetFailure: SetFailure means "there is a created space to decide
 // about", and this means the opposite.
 //
-// It takes the result anyway, and for one reason: a dead end can still
-// carry an unsent prompt. Since #90 generalised ExecResult.PromptText from
-// "the prompt op failed" to "the prompt did not land", a plan that never
-// got past `worktree create` reports the prompt the user had composed, and
+// It takes the result anyway, for two reasons. A dead end can still carry
+// an unsent prompt: since #90 generalised ExecResult.PromptText from "the
+// prompt op failed" to "the prompt did not land", a plan that never got
+// past `worktree create` reports the prompt the user had composed, and
 // unsentPromptLines needs to know there is one in order to say so while
-// the save is still in flight. There is no CleanDecision to pass, because
-// there is nothing to decide about.
-func (v *SubmitView) SetDeadEnd(res plan.ExecResult) {
+// the save is still in flight. And only its NothingCreated may say that
+// nothing was made (deadEndLines). There is no CleanDecision to pass,
+// because there is nothing to decide about.
+//
+// branch is the branch the plan's worktree create was asked to make, or ""
+// for a plan without a worktree: what deadEndLines names as possibly left
+// behind when there is no such evidence. The app layer passes it because
+// this view never sees the plan's Input.
+func (v *SubmitView) SetDeadEnd(res plan.ExecResult, branch string) {
 	v.deadEnd = true
+	v.deadEndBranch = branch
 	v.result = res
 }
 
@@ -576,15 +588,14 @@ func (v *SubmitView) regionLines(width, region int, rule bool) []string {
 // unavailable. Empty while the pipeline is still running.
 func (v *SubmitView) failureBody(width int) []string {
 	if v.deadEnd {
-		// The unsent prompt goes ABOVE the dead-end line, following this
-		// stack's own least- to most-important ordering: "nothing was
-		// created" is what explains the single `esc close` button, so it
-		// is the line that must survive regionLines clipping from the top.
-		// A dead end can carry an unsent prompt since #90 generalised
+		// The unsent prompt goes ABOVE the dead-end lines, following this
+		// stack's own least- to most-important ordering: they explain the
+		// single `esc close` button, so they are the lines that must
+		// survive regionLines clipping from the top. A dead end
+		// can carry an unsent prompt since #90 generalised
 		// ExecResult.PromptText -- a plan that never got past `worktree
 		// create` still had one composed.
-		return append(v.unsentPromptLines(width), indentedLine(dimText(v.palette).Render(
-			"nothing was created — there is nothing to keep or remove"), width))
+		return append(v.unsentPromptLines(width), v.deadEndLines(width)...)
 	}
 	if !v.haveFailure {
 		return nil
@@ -610,6 +621,35 @@ func (v *SubmitView) failureBody(width int) []string {
 		// spell the same idiom two ways.
 		out = append(out, indentedLine(lipgloss.NewStyle().Foreground(v.palette.Warning).Render(
 			"remove unavailable"+unavailableReasonSep+v.clean.Reason), width))
+	}
+	return out
+}
+
+// deadEndLines explains the dead end, and what it may claim depends on the
+// evidence (#208). "nothing was created" is said only with
+// ExecResult.NothingCreated: herdr refused the first step before acting,
+// or was never asked. No space reported is not that claim. herdr can fail
+// a worktree create after git has made the branch, and even a workspace on
+// the checkout, so without the evidence this says what may be left, in
+// `create`'s own words (internal/create/report.go, failureLine) with this
+// view's dash, and in the warning colour, since it asks the user to go and
+// look. It is wrapped at spaces rather than clipped (wrapAtSpaces), so the
+// branch, the thing to look for, comes out whole.
+func (v *SubmitView) deadEndLines(width int) []string {
+	if v.result.NothingCreated {
+		return []string{indentedLine(dimText(v.palette).Render(
+			"nothing was created — there is nothing to keep or remove"), width)}
+	}
+	text := "herdr may have made part of it before failing"
+	if v.deadEndBranch != "" {
+		text += " — any of the branch " + v.deadEndBranch + ", its checkout and a workspace for it"
+	}
+	text += "; look before retrying"
+
+	warn := lipgloss.NewStyle().Foreground(v.palette.Warning)
+	var out []string
+	for _, l := range wrapAtSpaces(text, width-gutterWidth) {
+		out = append(out, indentedLine(warn.Render(l), width))
 	}
 	return out
 }
