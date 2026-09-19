@@ -25,9 +25,11 @@ func TestWorktree_RefusesAPlacementItCannotHonour(t *testing.T) {
 		// repoSpace opens the repository's own space first, which is what
 		// makes tab-in and --workspace resolvable at all.
 		repoSpace bool
-		// fromDefault is set where the worktree was not passed on the
-		// command line: the refusal must then say where it came from.
-		fromDefault bool
+		// config is written to config.toml first when set.
+		config string
+		// from is where the refusal must say the worktree came from, set
+		// where it was not passed on the command line; "" for the flag.
+		from string
 	}{
 		{name: "tab-here", args: []string{"--title", "t", "--worktree", "--placement", "tab-here"}},
 		{name: "split-here", args: []string{"--title", "t", "--worktree", "--placement", "split-here"}},
@@ -36,14 +38,20 @@ func TestWorktree_RefusesAPlacementItCannotHonour(t *testing.T) {
 		// Refused for the worktree first: fixing an id that could never be
 		// used anyway would be a wasted round.
 		{name: "--workspace with an unknown id", args: []string{"--title", "t", "--worktree", "--workspace", "w9"}},
-		// No --worktree: config.Load's built-in default_worktree turns it on.
-		{name: "tab-here under the default worktree", args: []string{"--title", "t", "--placement", "tab-here"}, fromDefault: true},
+		// No --worktree: config.Load's built-in default_worktree turns it
+		// on. This case used to say "from config.toml" with no config.toml
+		// written at all (#220).
+		{name: "tab-here under the default worktree", args: []string{"--title", "t", "--placement", "tab-here"}, from: "the built-in default"},
+		{name: "tab-here under a configured worktree", args: []string{"--title", "t", "--placement", "tab-here"}, config: "default_worktree = true\n", from: "config.toml"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wS9", "tT9", "pP9"
 			if tc.repoSpace {
 				openRepoSpace(h)
+			}
+			if tc.config != "" {
+				writeConfig(t, h.env.ConfigDir, tc.config)
 			}
 
 			if code := h.run(tc.args...); code != ExitUsage {
@@ -52,8 +60,12 @@ func TestWorktree_RefusesAPlacementItCannotHonour(t *testing.T) {
 			if !strings.Contains(h.stderr.String(), "--no-worktree") {
 				t.Errorf("stderr = %q, want the remedy (--no-worktree) named", h.stderr)
 			}
-			if said := strings.Contains(h.stderr.String(), "the worktree is on here from config.toml"); said != tc.fromDefault {
-				t.Errorf("stderr = %q; naming the worktree's tier = %v, want %v", h.stderr, said, tc.fromDefault)
+			said := strings.Contains(h.stderr.String(), "the worktree is on here from")
+			if said != (tc.from != "") {
+				t.Errorf("stderr = %q; naming where the worktree came from = %v, want %v", h.stderr, said, tc.from != "")
+			}
+			if tc.from != "" && !strings.Contains(h.stderr.String(), "the worktree is on here from "+tc.from) {
+				t.Errorf("stderr = %q, want it to say the worktree is on here from %s", h.stderr, tc.from)
 			}
 			if h.createdAnything() {
 				t.Errorf("herdr was asked to create something on a usage error: %v", h.runner.calls)

@@ -202,7 +202,12 @@ without the popup. It drives herdr exclusively through the public CLI
   (#194).
 - Progress goes to stderr one line per step; the result to stdout, or a
   single JSON object under `--json` carrying a `provenance` map naming the
-  tier each value came from.
+  tier each value came from. A value `config.toml` leaves out is `built-in`
+  there, even though the plugin fills in its own default for it: the
+  `$USER/` branch prefix, a worktree, a new space. A key `config.toml` does
+  set is credited to it whatever its case, and `branch_prefix = ""` (no
+  prefix) is credited to it as well. The three defaults used to read
+  `config.toml` with no `config.toml` at all (#220).
 - Exit codes: `0` created, `1` the plan started and failed, and part of
   the session may exist (`--on-failure` applied), `2` bad usage or an
   unresolvable request, `3` herdr unreachable, `4` the plan started and its
@@ -279,7 +284,8 @@ without the popup. It drives herdr exclusively through the public CLI
   some *other* repository and loses to what you last did in this one.
 - One more tier is a fact about the machine, not a file: `herdr workspace
   list`. It decides placement only, for a session without a worktree:
-  `new-space` from the three memory and user-config tiers yields to
+  `new-space` from the built-in default, `config.toml` or either memory
+  tier yields to
   `tab-in` when the project's space is open, a remembered `tab-in` falls
   back once it is gone, and a `here` placement, a `.herdr-draft.toml`, and
   `--placement` all stand.

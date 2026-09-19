@@ -43,10 +43,12 @@ func TestResolve_Precedence(t *testing.T) {
 			wantPlacement:    plan.PlacementNewSpace,
 			wantAgentKind:    "",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix: TierBuiltin,
 				// config.Config.DefaultWorktree is a plain bool, so a
 				// zero-value Config still SUPPLIES a value (false) rather
-				// than falling through -- see Resolve's own comment.
+				// than falling through -- see Resolve's own comment. Its
+				// empty BranchPrefix is supplied the same way: nothing is
+				// Defaulted, so "" is config.toml asking for no prefix (#220).
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierBuiltin,
@@ -126,7 +128,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantPlacement: plan.PlacementNewSpace,
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierGlobalMemory,
 				FieldAgentKind:        TierBuiltin,
@@ -146,7 +148,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantPlacement: plan.PlacementTabHere,
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierUserConfig,
 				FieldAgentKind:        TierBuiltin,
@@ -170,7 +172,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantAgentKind: "codex",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierUserConfig,
@@ -188,7 +190,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantAgentKind: "anything-at-all",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierGlobalMemory,
@@ -207,7 +209,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantWorktree: false,
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierGlobalMemory,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierBuiltin,
@@ -292,7 +294,7 @@ func TestResolve_Precedence(t *testing.T) {
 			wantFrom: map[string]Tier{
 				// branch_prefix and linear_branch_name have no per-project
 				// tier at all, so the repo config keeps them.
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierProjectMemory,
 				FieldPlacement:        TierProjectMemory,
 				FieldAgentKind:        TierBuiltin,
@@ -364,7 +366,7 @@ func TestResolve_Precedence(t *testing.T) {
 			},
 
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierBuiltin,
@@ -439,7 +441,7 @@ func TestResolve_Precedence(t *testing.T) {
 			wantAgentKind: "codex",
 			wantBaseRef:   "release",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierGlobalMemory,
 				FieldAgentKind:        TierUserConfig,
@@ -463,7 +465,7 @@ func TestResolve_Precedence(t *testing.T) {
 			wantWorktree:  false,
 			wantAgentKind: "codex",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierUserConfig,
@@ -484,7 +486,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantAgentKind: "codex",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierUserConfig,
@@ -789,5 +791,36 @@ func TestRememberedPlacement_AWorktreeSubmitKeepsWhatWasRecorded(t *testing.T) {
 	noWorktree := plan.Input{Placement: plan.PlacementTabIn}
 	if got := RememberedPlacement(noWorktree, "split-here"); got != "tab-in" {
 		t.Errorf("submit without a worktree records %q, want its own tab-in", got)
+	}
+}
+
+// #220: a value config.Load filled in from its own defaults is the
+// built-in's, not config.toml's -- the value applies, and the attribution
+// says where it really came from. The same Config with nothing defaulted
+// (every Config built in code, as TestResolve_Precedence's are) keeps the
+// config.toml attribution.
+func TestResolve_CreditsLoadsOwnDefaultsToTheBuiltin(t *testing.T) {
+	cfg := config.Config{BranchPrefix: "me/", DefaultWorktree: true, DefaultPlacement: "new-space"}
+	for _, tc := range []struct {
+		name      string
+		defaulted config.DefaultedKeys
+		want      Tier
+	}{
+		{"Load filled all three in", config.DefaultedKeys{BranchPrefix: true, DefaultWorktree: true, DefaultPlacement: true}, TierBuiltin},
+		{"the file set all three", config.DefaultedKeys{}, TierUserConfig},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := cfg
+			c.Defaulted = tc.defaulted
+			res := Resolve(Sources{Config: c, KnownAgentKinds: knownKinds})
+			if res.BranchPrefix != "me/" || !res.UseWorktree || res.Placement != plan.PlacementNewSpace {
+				t.Errorf("the values changed: prefix %q, worktree %v, placement %v", res.BranchPrefix, res.UseWorktree, res.Placement)
+			}
+			for _, f := range []string{FieldBranchPrefix, FieldWorktree, FieldPlacement} {
+				if got := res.From[f]; got != tc.want {
+					t.Errorf("From[%s] = %v, want %v", f, got, tc.want)
+				}
+			}
+		})
 	}
 }

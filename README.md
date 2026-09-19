@@ -1050,8 +1050,8 @@ repository, and loses to what you last did in this one. `⌃R ⌃R` clears back
 to the repository default.
 
 One tier is not a file. When the project's checkout already has a workspace
-open, `new space` from `config.toml`, `last-used.json` and `projects.json`
-yields to `tab in <that space>`, so the repository's own space collects its
+open, `new space` from the built-in default, `config.toml`,
+`last-used.json` and `projects.json` yields to `tab in <that space>`, so the repository's own space collects its
 sessions as tabs instead of a new top-level space appearing per task; a
 remembered `tab in` falls back to `new space` once the space is gone. A
 `here` placement stands (it is a choice about this pane), a
