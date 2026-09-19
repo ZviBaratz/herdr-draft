@@ -283,14 +283,16 @@ run it.
 | exit | meaning | what to do |
 |---|---|---|
 | 0 | created | report where it is |
-| 1 | the plan started and failed | the session may half-exist; look at it |
+| 1 | the plan started and failed | part of the session may exist — a space, or only a worktree's checkout and branch; look at it before retrying |
 | 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, and a pinned account clauth reports as signed out | fix the command and re-run |
-| 3 | herdr is unreachable | nothing was created; stop |
+| 3 | herdr is unreachable, found before anything started | nothing was created; stop |
+| 4 | the plan started, and its first step failed before making anything | nothing exists and there is nothing to clean up; the error says why the step failed, so report it, or re-run once it is dealt with |
 
 `--json` prints one object instead of a human line, and is the right
 choice whenever you are going to act on the result. Note that on exit 2
 and exit 3 it prints **nothing** on stdout, so a pipe into `jq` gets empty
-input — read the exit status before you read the JSON.
+input — read the exit status before you read the JSON. On exit 4 it prints
+the object with `ok: false`, `failed_step` and `error`, and no ids at all.
 
 **The ids name the agent, not the space.** `workspace_id`, `tab_id` and
 `pane_id` are where the agent actually is, which is what you address next.

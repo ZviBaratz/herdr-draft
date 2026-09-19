@@ -303,6 +303,117 @@ func TestCLIRunnerWorktreeCreateNonZeroExit(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerCreateCallsMarkWhatChangedNothing pins #192's evidence: the
+// four calls that make a session's space report, as ErrNothingCreated, a
+// failure that herdr (or this package) is known to have refused before
+// anything existed -- and only that. A worktree create is the one with
+// failures that come AFTER a change: herdr 0.9.0 runs `git worktree add`
+// and can then fail to open the workspace (worktree_open_failed), and git
+// itself creates a new branch before refusing a checkout path that is
+// already there (worktree_create_failed). Those, a code this list has never
+// seen, and a failure that carries no code at all must stay unmarked, since
+// the mark is what lets `create` tell a caller nothing exists.
+func TestCLIRunnerCreateCallsMarkWhatChangedNothing(t *testing.T) {
+	worktree := func(r *CLIRunner) error {
+		_, err := r.WorktreeCreate(context.Background(), WorktreeCreateReq{Cwd: "/r", Branch: "b", Label: "t"})
+		return err
+	}
+	workspace := func(r *CLIRunner) error {
+		_, err := r.WorkspaceCreate(context.Background(), WorkspaceCreateReq{Cwd: "/r", Label: "t"})
+		return err
+	}
+	tab := func(r *CLIRunner) error {
+		_, err := r.TabCreate(context.Background(), TabCreateReq{Workspace: "w1", Cwd: "/r"})
+		return err
+	}
+	split := func(r *CLIRunner) error {
+		_, err := r.PaneSplit(context.Background(), PaneSplitReq{PaneID: "w1:p1", Direction: "right"})
+		return err
+	}
+
+	tests := []struct {
+		name string
+		call func(*CLIRunner) error
+		// code is herdr's error envelope code; "" fails with plain stderr
+		// and no envelope at all.
+		code string
+		want bool
+	}{
+		// herdr's worktree refusals that come before git runs
+		// (src/app/api/worktrees.rs and worktrees/deferred.rs at v0.9.0),
+		// and the CLI's own before any request is sent.
+		{"worktree, linked_worktree_source", worktree, "linked_worktree_source", true},
+		{"worktree, not_git_worktree", worktree, "not_git_worktree", true},
+		{"worktree, invalid_request", worktree, "invalid_request", true},
+		{"worktree, workspace_not_found", worktree, "workspace_not_found", true},
+		{"worktree, worktree_operation_in_progress", worktree, "worktree_operation_in_progress", true},
+		{"worktree, server_not_running", worktree, "server_not_running", true},
+		{"worktree, protocol_mismatch", worktree, "protocol_mismatch", true},
+
+		// After, or possibly after, git ran.
+		{"worktree, worktree_create_failed", worktree, "worktree_create_failed", false},
+		{"worktree, worktree_open_failed", worktree, "worktree_open_failed", false},
+		{"worktree, stale_worktree_operation", worktree, "stale_worktree_operation", false},
+		{"worktree, a code herdr may add later", worktree, "worktree_something_new", false},
+		{"worktree, no envelope", worktree, "", false},
+
+		// The other three change nothing when they fail: each builds its
+		// pane before it touches herdr's state (src/app/creation.rs,
+		// src/app/api/tabs.rs and panes.rs at v0.9.0).
+		{"workspace, workspace_create_failed", workspace, "workspace_create_failed", true},
+		{"tab, workspace_not_found", tab, "workspace_not_found", true},
+		{"split, pane_split_failed", split, "pane_split_failed", true},
+		{"workspace, no envelope", workspace, "", false},
+		{"tab, no envelope", tab, "", false},
+		{"split, no envelope", split, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin := fakeHerdrFail(t, "herdr went away")
+			if tt.code != "" {
+				bin = fakeHerdrFailEnvelope(t, tt.code, "refused")
+			}
+			err := tt.call(&CLIRunner{Bin: bin})
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if got := errors.Is(err, ErrNothingCreated); got != tt.want {
+				t.Errorf("errors.Is(err, ErrNothingCreated) = %v, want %v\nerror: %s", got, tt.want, err)
+			}
+		})
+	}
+}
+
+// TestCLIRunnerNothingCreatedKeepsTheMessage pins that the mark adds a fact
+// and not a word: the error's text is what `create` prints and what --json
+// carries as `error`, and cliError's text is also what isBusyPaneError and
+// its siblings substring-match.
+func TestCLIRunnerNothingCreatedKeepsTheMessage(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "linked_worktree_source", "New and open worktree actions start from the repo parent workspace.")
+	_, err := (&CLIRunner{Bin: bin}).WorktreeCreate(context.Background(), WorktreeCreateReq{Cwd: "/r", Branch: "b"})
+	if !errors.Is(err, ErrNothingCreated) {
+		t.Fatalf("error %q is not ErrNothingCreated", err)
+	}
+	if want := "herdr worktree create --cwd /r --branch b --no-focus: exit status 1: "; !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("error = %q\nwant it to begin %q, as an unmarked failure's does", err, want)
+	}
+}
+
+// TestCLIRunnerCreateCallRefusedHereChangedNothing: a value this package
+// refuses to hand to herdr at all (appendFlag) never reached it, which is
+// the plainest evidence there is.
+func TestCLIRunnerCreateCallRefusedHereChangedNothing(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+	_, err := (&CLIRunner{Bin: bin}).WorktreeCreate(context.Background(), WorktreeCreateReq{Cwd: "/r", Branch: "-b"})
+	if !errors.Is(err, errRefused) {
+		t.Fatalf("error %q is not a refusal to run", err)
+	}
+	if !errors.Is(err, ErrNothingCreated) {
+		t.Errorf("error %q is not ErrNothingCreated", err)
+	}
+	assertNeverExecuted(t, argvLog)
+}
+
 func TestCLIRunnerWorkspaceCreate(t *testing.T) {
 	stdout := readFixture(t, filepath.Join("testdata", "live", "workspace_create.json"))
 	bin, argvLog := fakeHerdr(t, stdout)

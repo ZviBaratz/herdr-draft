@@ -673,6 +673,21 @@ with `--json`. Exit codes: 0 created, 1 failed after the topology was created
 (with `--on-failure` applied), 2 bad usage, 3 herdr unreachable. Never
 prompts.
 
+> **Amended, #192 (2026-09-19): exit 4, and what exit 1 covers.** The code
+> never did what the sentence above says. It returned 1 whether or not the
+> topology had been created, and only `--json` showed which, by leaving out
+> the `space_*` ids. The codes are now: 0 created; 1 the plan started and
+> failed, and part of the session may exist (`--on-failure` applied); 2 bad
+> usage; 3 herdr unreachable, found by the probe before the plan starts; 4
+> the plan started and its first step failed before anything existed, so
+> there is nothing to keep or clean. 4 needs evidence
+> (`plan.ExecResult.NothingCreated`): herdr refused the step before acting,
+> or was never asked. A space missing from the reply is not enough. herdr's
+> `worktree create` can fail after `git worktree add` has made the checkout
+> and its branch (`worktree_open_failed` at v0.9.0), and git itself makes a
+> new branch before it refuses a checkout path that already exists. Those
+> failures stay 1, and so does any first-step failure that shows neither.
+
 `main.go` dispatches on `os.Args[1]`: absent means the popup, exactly as
 today; an unknown verb prints usage and exits 2.
 

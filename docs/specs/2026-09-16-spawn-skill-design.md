@@ -338,7 +338,9 @@ observed failure modes.
    is the default and is the right one for an agent, because a half-built
    session a human can look at is worth more than a tidy machine. Finish by
    reading the pane (`herdr agent read <pane> --source detection`) rather
-   than trusting the exit status.
+   than trusting the exit status. (Amended, #192: exit 4 came later, for a
+   plan whose first step failed before anything existed. Under `--json` it
+   still prints the object.)
 
 Plus a short **precedence** note: when the ask is *hand this work to
 another agent*, this supersedes herdr's skill's sibling-pane default

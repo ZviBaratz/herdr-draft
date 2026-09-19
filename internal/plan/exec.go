@@ -134,6 +134,20 @@ type ExecResult struct {
 	FailedIndex int
 	PromptText  string
 
+	// NothingCreated reports EVIDENCE that the failed plan left nothing
+	// behind: its first op, the one that makes the space, failed before
+	// anything was made. That is either the reuse check failing before
+	// `worktree create` was called, or a refusal herdrc marks
+	// herdrc.ErrNothingCreated. It is what `create`'s exit 4 means (#192).
+	//
+	// Created == nil is not the same claim, and the difference is the point.
+	// Created is only set from herdr's success reply, and herdr 0.9.0 can
+	// fail a worktree create after `git worktree add` has run: the checkout
+	// and its branch are on disk and the reply is an error. So a failed
+	// plan with Created == nil and NothingCreated false may have left
+	// something behind, and nothing here can say what.
+	NothingCreated bool
+
 	// SpaceReused reports that the worktree op's own workspace was
 	// already open BEFORE Execute ran, rather than freshly created
 	// (placement spec §5.2/§3) -- an exact fact, from a before/after
@@ -1217,6 +1231,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 		var reusedLabel string
 		var claimed *herdrc.CreatedTopology
 		var createdBranch, baseCommit string
+		// neverAsked is a worktree op that failed before `worktree create`
+		// was called, which is evidence of its own that nothing was made.
+		var neverAsked bool
 
 		// promptTyped is the one piece of per-op state that is deliberately
 		// NOT reset per attempt, unlike everything above it and unlike the
@@ -1238,7 +1255,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			// agent_pane_busy and none of the three calls in OpWorktreeCreate
 			// can return it, which is exactly why it is worth three lines rather
 			// than a reader's trust.
-			gotTopo, reused, claimed = false, false, nil
+			gotTopo, reused, claimed, neverAsked = false, false, nil, false
 			reusedLabel, createdBranch, baseCommit = "", "", ""
 
 			var err error
@@ -1269,6 +1286,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// in a workspace herdr had just made).
 				before, listErr := r.WorkspaceList(ctx)
 				if listErr != nil {
+					neverAsked = true
 					return fmt.Errorf("checking which workspaces already exist: %w", listErr)
 				}
 				existed := make(map[string]bool, len(before))
@@ -1525,6 +1543,10 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			wrapped := fmt.Errorf("plan: execute: %s: %w", op.Label, runErr)
 			emitProgress(onProgress, i, total, op.Label, StepFailed, wrapped)
 			result.FailedIndex = i
+			// !gotTopo because a reuse claim's refused `tab create` is
+			// marked too, and by then worktree create has made a checkout.
+			result.NothingCreated = i == 0 && !gotTopo &&
+				(neverAsked || errors.Is(runErr, herdrc.ErrNothingCreated))
 			result.PromptText = unsentPromptText(ops, i)
 			// Set here rather than inside the retried closure above: a
 			// busy-retry that eventually succeeds must not leave the flag

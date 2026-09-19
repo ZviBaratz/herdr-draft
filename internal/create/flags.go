@@ -137,9 +137,12 @@ flags:
 
 exit codes:
   0  created
-  1  the plan started and failed (--on-failure applied)
+  1  the plan started and failed, and part of the session may exist
+     (--on-failure applied)
   2  bad usage, or a request that cannot be resolved
-  3  herdr is unreachable
+  3  herdr is unreachable, found before the plan starts
+  4  the plan started, and its first step failed before making anything:
+     nothing exists
 
 tab-here and split-here need herdr's own pane environment
 (HERDR_WORKSPACE_ID / HERDR_TAB_ID / HERDR_PANE_ID), which herdr sets for
