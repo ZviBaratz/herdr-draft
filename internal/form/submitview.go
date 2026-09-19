@@ -122,6 +122,11 @@ type SubmitView struct {
 	// no clean was ever attempted).
 	cleanErr error
 
+	// keptBranch/keptReason are SetCleanedKeepingBranch's: a remove that
+	// ran, took the checkout and its workspace, and left the branch. Like
+	// deadEnd, a state with nothing left to decide.
+	keptBranch, keptReason string
+
 	// waitingHint is SetWaitingHint's own footer instruction for a step
 	// waiting on the user, or "" for defaultWaitingHint.
 	waitingHint string
@@ -211,6 +216,20 @@ func (v *SubmitView) SetCleanFailed(err error) {
 	v.cleanErr = err
 }
 
+// SetCleanedKeepingBranch records a remove that ran -- the checkout and its
+// workspace are gone -- and kept the branch the line above the buttons said
+// it would delete, with plan.CleanOutcome's reason why (#173).
+//
+// It ends the keep-or-remove choice rather than reporting a failure beside
+// it. The space is gone, so there is nothing left to keep, and a second
+// remove would ask herdr for a workspace it no longer has -- which is where
+// the first version of this left the user: "remove failed", with `c` still
+// offered and failing the same way every time (#190's review). What is left
+// is a branch to mention, so the view says so and offers `esc close`.
+func (v *SubmitView) SetCleanedKeepingBranch(branch, reason string) {
+	v.keptBranch, v.keptReason = branch, reason
+}
+
 // SetUnsentPrompt records where the app layer saved a prompt that never
 // reached the agent (spec §9 step 3: "prompt text surfaced back to the
 // user for manual paste"), or the error that stopped it from saving.
@@ -241,7 +260,7 @@ func (v *SubmitView) SetUnsentPrompt(path string, err error) {
 // key grammar in this file that also quit would be a second, unscoped
 // way out of exactly the state that must not have one.
 func (v *SubmitView) Update(msg tea.KeyPressMsg) tea.Cmd {
-	if !v.haveFailure {
+	if !v.haveFailure || v.keptBranch != "" {
 		return nil
 	}
 	switch msg.String() {
@@ -570,6 +589,9 @@ func (v *SubmitView) failureBody(width int) []string {
 	if !v.haveFailure {
 		return nil
 	}
+	if v.keptBranch != "" {
+		return append(v.unsentPromptLines(width), v.keptBranchLines(width)...)
+	}
 
 	out := make([]string, 0, 5)
 	if v.cleanErr != nil {
@@ -610,6 +632,59 @@ func removeLine(branch plan.BranchFate) string {
 		return "remove deletes the worktree and its workspace, but keeps the branch"
 	}
 	return "remove undoes everything this create made"
+}
+
+// keptBranchLines says what a remove that kept its branch left behind: the
+// statement, the branch on a line of its own, then the reason, wrapped
+// rather than clipped. The reason can end in the command that finishes the
+// job, which is the one part a clipped line would have cut off. Wrapping is
+// at spaces only (wrapAtSpaces), so neither the branch nor that command is
+// ever split across lines: both are things to copy.
+func (v *SubmitView) keptBranchLines(width int) []string {
+	inner := width - gutterWidth
+	warn := lipgloss.NewStyle().Foreground(v.palette.Warning)
+	out := []string{
+		indentedLine(warn.Render("removed the worktree and its workspace, but not its branch"), width),
+		indentedLine(v.keptBranch, width),
+	}
+	for _, l := range wrapAtSpaces(v.keptReason, inner) {
+		out = append(out, indentedLine(dimText(v.palette).Render(l), width))
+	}
+	return out
+}
+
+// wrapAtSpaces fills lines of at most limit cells, breaking only at spaces,
+// and never inside a `backticked` span, which is a command to copy and is
+// kept as one word. ansi.Wrap and ansi.Wordwrap both treat a hyphen as a
+// breakpoint too, which splits a branch name like
+// zvi/fix-login-redirect-loop in two. A word wider than limit gets a line
+// of its own and is clipped there, not broken.
+func wrapAtSpaces(s string, limit int) []string {
+	var words []string
+	for _, field := range strings.Fields(s) {
+		if n := len(words); n > 0 && strings.Count(words[n-1], "`")%2 == 1 {
+			words[n-1] += " " + field
+			continue
+		}
+		words = append(words, field)
+	}
+	var lines []string
+	line := ""
+	for _, word := range words {
+		switch {
+		case line == "":
+			line = word
+		case ansi.StringWidth(line)+1+ansi.StringWidth(word) <= limit:
+			line += " " + word
+		default:
+			lines = append(lines, line)
+			line = word
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // indentedLine renders one explanation line inside the content box: the
@@ -756,7 +831,7 @@ func (v *SubmitView) footerLine(width int) string {
 // instead.
 func (v *SubmitView) footerParts() (hint string, buttons []string) {
 	switch {
-	case v.deadEnd:
+	case v.deadEnd, v.keptBranch != "":
 		return "", []string{submitButton("esc", "close", buttonPrimary, v.palette)}
 	case v.haveFailure:
 		keep := submitButton("k", "keep it", buttonPrimary, v.palette)

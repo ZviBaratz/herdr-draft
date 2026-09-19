@@ -128,7 +128,10 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 	if n, err := CommitsAhead(ctx, repo, "refs/heads/feature", "main"); err != nil || n != 0 {
 		t.Errorf("CommitsAhead(feature, main) = %d, %v: it counted in the inherited repository", n, err)
 	}
-	if err := DeleteBranch(ctx, repo, "feature"); err != nil {
+	if n, err := CommitsOnlyOn(ctx, repo, "feature"); err != nil || n != 0 {
+		t.Errorf("CommitsOnlyOn(feature) = %d, %v: it counted in the inherited repository", n, err)
+	}
+	if _, err := DeleteBranch(ctx, repo, "feature"); err != nil {
 		t.Errorf("DeleteBranch(feature): %v -- it looked for the branch in the inherited repository", err)
 	}
 	if ok, err := LocalBranchExists(ctx, repo, "feature"); err != nil || ok {

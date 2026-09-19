@@ -153,11 +153,14 @@ without the popup. It drives herdr exclusively through the public CLI
   failure left behind; herdr's `worktree remove` keeps branches by design.
   The branch goes only if this run made it — checked just before the
   create, since herdr checks an existing branch out and answers the same
-  — and only if it holds no commit its base lacks, counted again just
-  before anything is removed. `--json` names it as `deleted_branch`. The
-  popup's remove does the same, and its line says what remove deletes
-  rather than "everything this create made", which was never true of the
-  repository workspace herdr opens beside a first worktree.
+  — only if it holds no commit its base lacks, counted again just before
+  anything is removed, and only if, once the checkout is gone, nothing
+  else is left holding a commit of its own: the agent keeps running while
+  herdr removes the checkout. `--json` reports `deleted_branch` with its
+  tip, or `kept_branch` and why. The popup's remove does the same, and its
+  line says what remove deletes rather than "everything this create made",
+  which was never true of the repository workspace herdr opens beside a
+  first worktree.
 - **A prompt has three fates, not two**: `prompt_status` is `sent`,
   `unsent` or `unconfirmed`. The third is `agent prompt --wait` giving up
   before the agent's status changed, which is not proof the prompt failed

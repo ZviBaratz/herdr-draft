@@ -571,8 +571,35 @@ func CommitsAhead(ctx context.Context, repoDir, ref, base string) (int, error) {
 	return count, nil
 }
 
+// CommitsOnlyOn counts the commits the local branch name holds that nothing
+// else does -- no other ref, and no worktree's HEAD: `git rev-list --count
+// refs/heads/<name> --not --exclude=refs/heads/<name> --all`. That is
+// exactly what deleting the branch would make unreachable, which "ahead of
+// the base" (CommitsAhead) only approximates: a commit made after the base
+// was counted from is ahead of it and held by nothing else, and a base no
+// ref holds any more is not ahead of itself and is held by nothing else
+// either.
+//
+// A checkout with the branch out holds its commits through its own HEAD,
+// so this reads 0 for any branch still checked out anywhere. It means
+// something once the branch's checkout is gone, which is when plan.Clean
+// asks it (#173).
+func CommitsOnlyOn(ctx context.Context, repoDir, name string) (int, error) {
+	ref := "refs/heads/" + name
+	out, err := runGit(ctx, repoDir, "rev-list", "--count", ref, "--not", "--exclude="+ref, "--all")
+	if err != nil {
+		return 0, fmt.Errorf("count commits only %s holds: %w", name, err)
+	}
+	count, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("parse rev-list --count output %q: %w", out, err)
+	}
+	return count, nil
+}
+
 // DeleteBranch deletes the local branch name in repoDir, with `git branch
-// -D`.
+// -D`, and returns the commit it pointed at: `git branch <name> <tip>` is
+// the whole way back, and a report that carries it lets anyone take it.
 //
 // The force is deliberate, and it is the caller's own check that earns it.
 // `-d` asks whether the branch is merged into its upstream, or, with no
@@ -580,12 +607,16 @@ func CommitsAhead(ctx context.Context, repoDir, ref, base string) (int, error) {
 // it refuses a branch with no commits of its own whenever that checkout
 // sits somewhere else: a branch cut from main while the primary checkout
 // is on another branch, or one cut from a bare commit (#171). plan.Clean
-// asks the question that matters instead, CommitsAhead against the base
-// the branch was cut from, before it calls this. git's other guard stays:
-// a branch checked out in any worktree is still refused.
-func DeleteBranch(ctx context.Context, repoDir, name string) error {
-	if _, err := runGit(ctx, repoDir, "branch", "-D", "--", name); err != nil {
-		return fmt.Errorf("delete branch %s: %w", name, err)
+// asks the question that matters instead, CommitsOnlyOn, before it calls
+// this. git's other guard stays: a branch checked out in any worktree is
+// still refused.
+func DeleteBranch(ctx context.Context, repoDir, name string) (tip string, err error) {
+	tip, err = runGit(ctx, repoDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+name+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("delete branch %s: %w", name, err)
 	}
-	return nil
+	if _, err := runGit(ctx, repoDir, "branch", "-D", "--", name); err != nil {
+		return "", fmt.Errorf("delete branch %s: %w", name, err)
+	}
+	return tip, nil
 }

@@ -190,6 +190,19 @@ type LinkedCheckout struct {
 	Commit string
 }
 
+// WorktreeSource is the directory `worktree create` runs in, and so the
+// repository the worktree's branch lives in: from a linked checkout, the
+// primary checkout (LinkedCheckout.RepoRoot, since herdr refuses a linked
+// one as a source); otherwise ProjectDir. Build's worktree op and the
+// clean's branch operations both read it, so the branch is looked for
+// where it was made even once the lane that asked for it is gone.
+func WorktreeSource(in Input) string {
+	if in.Linked.RepoRoot != "" {
+		return in.Linked.RepoRoot
+	}
+	return in.ProjectDir
+}
+
 // WorktreeBase is the base `worktree create` is given: from a linked
 // checkout, the commit its base names there (LinkedCheckout.Commit);
 // otherwise BaseRef, where "" is herdr's default, the source checkout's
@@ -355,10 +368,7 @@ func Build(in Input) ([]Op, error) {
 // itself.
 func topologyOp(in Input) []Op {
 	if in.UseWorktree {
-		source := in.ProjectDir
-		if in.Linked.RepoRoot != "" {
-			source = in.Linked.RepoRoot
-		}
+		source := WorktreeSource(in)
 		return []Op{{
 			Kind:  OpWorktreeCreate,
 			Label: "creating worktree",

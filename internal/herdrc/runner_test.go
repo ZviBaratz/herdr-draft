@@ -223,6 +223,9 @@ func TestCLIRunnerWorktreeCreate(t *testing.T) {
 		TabID:        "w3:t1",
 		PaneID:       "w3:p1",
 		CheckoutPath: "/home/user/.herdr/worktrees/throwaway-repo/probe-x",
+		// The reply's own worktree.branch: what herdr checked out, after
+		// its own trim, not what was asked for (#173).
+		Branch: "probe/x",
 	}
 	if topo != want {
 		t.Errorf("topo = %+v, want %+v", topo, want)

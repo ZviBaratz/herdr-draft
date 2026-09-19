@@ -49,6 +49,18 @@ func mkRepo(t *testing.T) string {
 	return dir
 }
 
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = gitTestEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return string(out)
+}
+
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -299,13 +311,48 @@ func TestCommitsAhead(t *testing.T) {
 	}
 }
 
+// TestCommitsOnlyOn pins the question a delete actually has to ask: which
+// commits would become unreachable. "Ahead of the base" is a proxy for it,
+// and the two differ when the base is a commit no ref holds any more.
+func TestCommitsOnlyOn(t *testing.T) {
+	repo := mkRepo(t)
+	ctx := context.Background()
+
+	gitRun(t, repo, "branch", "feature")
+	if n, err := CommitsOnlyOn(ctx, repo, "feature"); err != nil || n != 0 {
+		t.Fatalf("CommitsOnlyOn(feature at main) = %d, %v, want 0", n, err)
+	}
+
+	gitRun(t, repo, "checkout", "-q", "feature")
+	gitRun(t, repo, "commit", "-qm", "work", "--allow-empty")
+	gitRun(t, repo, "checkout", "-q", "main")
+	if n, err := CommitsOnlyOn(ctx, repo, "feature"); err != nil || n != 1 {
+		t.Fatalf("CommitsOnlyOn(feature with a commit of its own) = %d, %v, want 1", n, err)
+	}
+
+	// The same commit held by another ref is not lost by deleting this one.
+	gitRun(t, repo, "branch", "keeper", "feature")
+	if n, err := CommitsOnlyOn(ctx, repo, "feature"); err != nil || n != 0 {
+		t.Fatalf("CommitsOnlyOn(feature, also held by keeper) = %d, %v, want 0", n, err)
+	}
+
+	if _, err := CommitsOnlyOn(ctx, repo, "no-such-branch"); err == nil {
+		t.Error("CommitsOnlyOn of a missing branch returned no error")
+	}
+}
+
 func TestDeleteBranch(t *testing.T) {
 	repo := mkRepo(t)
 	ctx := context.Background()
 
 	gitRun(t, repo, "branch", "gone")
-	if err := DeleteBranch(ctx, repo, "gone"); err != nil {
+	want := strings.TrimSpace(gitOut(t, repo, "rev-parse", "refs/heads/gone"))
+	tip, err := DeleteBranch(ctx, repo, "gone")
+	if err != nil {
 		t.Fatalf("DeleteBranch: %v", err)
+	}
+	if tip != want {
+		t.Errorf("DeleteBranch returned tip %q, want %q -- the one-line way back is `git branch gone <tip>`", tip, want)
 	}
 	if ok, err := LocalBranchExists(ctx, repo, "gone"); err != nil || ok {
 		t.Fatalf("after DeleteBranch, LocalBranchExists(gone) = %v, %v, want false", ok, err)
@@ -319,7 +366,7 @@ func TestDeleteBranch(t *testing.T) {
 	gitRun(t, repo, "commit", "-qm", "newer", "--allow-empty")
 	gitRun(t, repo, "branch", "cut-from-main")
 	gitRun(t, repo, "checkout", "-q", "older")
-	if err := DeleteBranch(ctx, repo, "cut-from-main"); err != nil {
+	if _, err := DeleteBranch(ctx, repo, "cut-from-main"); err != nil {
 		t.Fatalf("DeleteBranch refused a branch with no commits beyond main: %v", err)
 	}
 	gitRun(t, repo, "checkout", "-q", "main")
@@ -328,7 +375,7 @@ func TestDeleteBranch(t *testing.T) {
 	// out is refused, whatever the caller believed.
 	linked := filepath.Join(t.TempDir(), "lane")
 	gitRun(t, repo, "worktree", "add", "-q", "-b", "lane", linked)
-	if err := DeleteBranch(ctx, repo, "lane"); err == nil {
+	if _, err := DeleteBranch(ctx, repo, "lane"); err == nil {
 		t.Fatal("DeleteBranch deleted a branch checked out in a linked worktree")
 	}
 	if ok, err := LocalBranchExists(ctx, repo, "lane"); err != nil || !ok {

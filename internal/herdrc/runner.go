@@ -21,6 +21,13 @@ type CreatedTopology struct {
 	TabID        string
 	PaneID       string
 	CheckoutPath string
+	// Branch is the branch a worktree create checked out, from the reply's
+	// own worktree.branch -- herdr's answer rather than the request's
+	// (WorktreeInfo, herdr:src/api/schema/worktrees.rs at v0.9.0). The two
+	// differ when herdr trims the name, or invents one for a request that
+	// named none. Empty for every other creation, and for a detached
+	// checkout.
+	Branch string
 }
 
 // WorkspaceInfo mirrors herdr's WorkspaceInfo response shape
@@ -571,6 +578,9 @@ func (r *CLIRunner) WorktreeCreate(ctx context.Context, req WorktreeCreateReq) (
 			WorkspaceID string           `json:"workspace_id"`
 			Worktree    *ContextWorktree `json:"worktree"`
 		} `json:"workspace"`
+		Worktree struct {
+			Branch string `json:"branch"`
+		} `json:"worktree"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return CreatedTopology{}, fmt.Errorf("herdr worktree create: parse response: %w", err)
@@ -580,6 +590,7 @@ func (r *CLIRunner) WorktreeCreate(ctx context.Context, req WorktreeCreateReq) (
 		WorkspaceID: result.RootPane.WorkspaceID,
 		TabID:       result.RootPane.TabID,
 		PaneID:      result.RootPane.PaneID,
+		Branch:      result.Worktree.Branch,
 	}
 	if result.Workspace.Worktree != nil {
 		topo.CheckoutPath = result.Workspace.Worktree.CheckoutPath

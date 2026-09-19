@@ -801,11 +801,13 @@ type Model struct {
 	// on it entirely (SubmitView is not a form.Section and takes no part
 	// in form.Model's focus ring).
 	submitting bool
-	// submitDeadEnd is true only in the one submitting state that has no
+	// submitDeadEnd is true only in the submitting states that have no
 	// other way out: step 1 (topology creation) itself failed, so
 	// SubmitView never gets a SetFailure call at all (spec §9 scopes the
 	// keep-or-clean prompt to "after step 1 succeeded") -- its own k/c
-	// grammar stays permanently inert. updateSubmitting's Esc/Ctrl+C
+	// grammar stays permanently inert -- or a remove ran and kept a branch
+	// it had said it would delete, which leaves nothing to keep or remove
+	// either (handleCleanDone, #173). updateSubmitting's Esc/Ctrl+C
 	// escape hatch is scoped to exactly this state (see its own doc
 	// comment): at every OTHER point in the submitting lifecycle --
 	// actively streaming, waiting on plan.CleanCheck, or showing a real

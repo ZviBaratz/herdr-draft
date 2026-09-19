@@ -194,6 +194,12 @@ func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreate
 	}
 	topo := r.nextSpace()
 	topo.CheckoutPath = "/checkouts/" + req.Branch
+	// herdr's reply names the branch it used: the request's, trimmed, or
+	// one it invented for a request that named none (#173).
+	topo.Branch = strings.TrimSpace(req.Branch)
+	if topo.Branch == "" {
+		topo.Branch = "worktree/brave-river-0000"
+	}
 	if r.worktreeAdd != nil {
 		topo.CheckoutPath = r.worktreeAdd(req)
 	}

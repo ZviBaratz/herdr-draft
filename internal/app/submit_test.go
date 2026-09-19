@@ -959,6 +959,89 @@ func TestSubmit_CleanAllowedCallsPlanCleanAndQuits(t *testing.T) {
 	}
 }
 
+// cleanDoneModel is a model sitting on a worktree failure screen whose
+// remove promises to delete the branch, as CleanCheck says for one this run
+// made (#173).
+func cleanDoneModel(t *testing.T) Model {
+	t.Helper()
+	m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{})
+	m.submitting = true
+	m.submitCleanDecision = plan.CleanDecision{Allowed: true, Branch: plan.BranchDeleted}
+	m.submitView = form.NewSubmitView(m.palette)
+	m.submitView.SetFailure(plan.ExecResult{FailedIndex: 0}, m.submitCleanDecision)
+	return m
+}
+
+// A refusal Clean makes before removing anything is CleanCheck's verdict
+// gone stale, not a failure: remove becomes unavailable with the reason, as
+// it would have been had the check run a moment later, instead of "remove
+// failed" over a `c` that refuses the same way every time (#190's review).
+func TestSubmit_CleanRefusalMakesRemoveUnavailable(t *testing.T) {
+	m := cleanDoneModel(t)
+	reason := "branch zvi/x now has 1 commit(s) of its own"
+
+	m, cmd := m.updateSubmitting(cleanDoneMsg{err: &plan.CleanRefusal{Reason: reason}})
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("a refused clean quit the popup; the space is untouched and still the user's to decide about")
+		}
+	}
+	if m.submitCleanDecision.Allowed {
+		t.Error("submitCleanDecision.Allowed = true after a refusal, so a CleanMsg would run the refused clean again")
+	}
+	frame := ansi.Strip(m.submitView.ViewAt(80, 24))
+	if !strings.Contains(frame, "remove unavailable") || !strings.Contains(frame, reason) {
+		t.Errorf("frame does not show the refusal as remove unavailable:\n%s", frame)
+	}
+	if strings.Contains(frame, "remove failed") || strings.Contains(frame, "c remove it") {
+		t.Errorf("frame still reads as a failure with remove on offer:\n%s", frame)
+	}
+}
+
+// A remove that ran but kept the branch its line promised to delete says so
+// and ends: the space is gone, so there is no keep-or-remove left, and esc
+// closes the popup.
+func TestSubmit_CleanThatKeptAPromisedBranchSaysSo(t *testing.T) {
+	m := cleanDoneModel(t)
+	outcome := plan.CleanOutcome{KeptBranch: "zvi/x", KeptReason: "it holds 1 commit(s) nothing else does"}
+
+	m, cmd := m.updateSubmitting(cleanDoneMsg{outcome: outcome})
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("the popup quit over a branch it had promised to delete and kept; nobody would learn it is still there")
+		}
+	}
+	frame := ansi.Strip(m.submitView.ViewAt(80, 24))
+	for _, want := range []string{"zvi/x", outcome.KeptReason, "esc close"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("frame does not say %q:\n%s", want, frame)
+		}
+	}
+	_, cmd = m.updateSubmitting(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("esc on the finished screen did nothing, want it to close the popup")
+	}
+	if _, quit := cmd().(tea.QuitMsg); !quit {
+		t.Fatalf("esc produced %#v, want tea.Quit", cmd())
+	}
+}
+
+// A branch kept the way the line already said -- "…but keeps the branch" --
+// is no news, and the popup closes as after any other finished clean.
+func TestSubmit_CleanThatKeptAnAnnouncedBranchCloses(t *testing.T) {
+	m := cleanDoneModel(t)
+	m.submitCleanDecision.Branch = plan.BranchKept
+	outcome := plan.CleanOutcome{KeptBranch: "zvi/x", KeptReason: "nothing shows this run made it"}
+
+	_, cmd := m.updateSubmitting(cleanDoneMsg{outcome: outcome})
+	if cmd == nil {
+		t.Fatal("updateSubmitting returned no cmd, want tea.Quit")
+	}
+	if _, quit := cmd().(tea.QuitMsg); !quit {
+		t.Fatalf("got %#v, want tea.Quit", cmd())
+	}
+}
+
 // TestSubmit_CleanFailureSurfacesErrorAndStaysInPrompt is fix round 1's
 // own regression test (reviewer finding -- silent failure): a failed
 // plan.Clean call must NOT quit -- quitting either way made a failed

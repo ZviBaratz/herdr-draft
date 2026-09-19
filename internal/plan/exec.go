@@ -156,8 +156,24 @@ type ExecResult struct {
 	// form and create both refuse an existing branch before submit, but
 	// neither refusal is a guarantee: the form's is a debounced verdict
 	// submit does not wait for, and both treat a failed check as "no such
-	// branch".
+	// branch". It is also only claimed when herdr's reply names the same
+	// branch (CreatedTopology.Branch): herdr trims the name it is given, and
+	// git reads a name it cannot hold -- trailing whitespace, say -- as
+	// simply absent, so "absent" alone once claimed the user's own branch
+	// under a padded spelling of it.
 	CreatedBranch string
+
+	// BaseCommit is the commit the worktree was cut from: the create's base
+	// (herdr's HEAD when it names none) resolved in the directory herdr cuts
+	// the worktree in, immediately before the create -- the same moment as
+	// CreatedBranch's evidence. Empty when that could not be read.
+	//
+	// The clean counts "commits beyond the base" from it. Resolving an
+	// unset base again at clean time asked the primary checkout's HEAD
+	// NOW, which the popup's failure screen can leave minutes behind: a
+	// checkout switched in between turned a pristine branch into "1
+	// commit(s) not on <sha>" (cleanBase).
+	BaseCommit string
 
 	// PromptUnconfirmed reports that delivery of the prompt is UNKNOWN
 	// rather than known to be false (#108). It is reached two ways, and
@@ -1200,7 +1216,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 		var reused bool
 		var reusedLabel string
 		var claimed *herdrc.CreatedTopology
-		var createdBranch string
+		var createdBranch, baseCommit string
 
 		// promptTyped is the one piece of per-op state that is deliberately
 		// NOT reset per attempt, unlike everything above it and unlike the
@@ -1223,7 +1239,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			// can return it, which is exactly why it is worth three lines rather
 			// than a reader's trust.
 			gotTopo, reused, claimed = false, false, nil
-			reusedLabel, createdBranch = "", ""
+			reusedLabel, createdBranch, baseCommit = "", "", ""
 
 			var err error
 			switch op.Kind {
@@ -1267,13 +1283,14 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// proof there is. Not a gate -- an unreadable answer just
 				// leaves the branch unclaimed, which a clean keeps.
 				newBranch := branchIsAbsent(ctx, op.Worktree.Cwd, op.Worktree.Branch)
+				baseCommit = commitAt(ctx, op.Worktree.Cwd, op.Worktree.Base)
 
 				topo, err = r.WorktreeCreate(ctx, *op.Worktree)
 				if err != nil {
 					return err
 				}
 				gotTopo = true
-				if newBranch {
+				if newBranch && topo.Branch == op.Worktree.Branch {
 					createdBranch = op.Worktree.Branch
 				}
 
@@ -1501,6 +1518,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				result.SpaceReused = reused
 				result.SpaceLabel = reusedLabel
 				result.CreatedBranch = createdBranch
+				result.BaseCommit = baseCommit
 			}
 			wrapped := fmt.Errorf("plan: execute: %s: %w", op.Label, runErr)
 			emitProgress(onProgress, i, total, op.Label, StepFailed, wrapped)
@@ -1524,6 +1542,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 					result.SpaceLabel = reusedLabel
 				}
 				result.CreatedBranch = createdBranch
+				result.BaseCommit = baseCommit
 			}
 			if i == agentPaneIdx {
 				// The whole topology, not just the pane: a reuse claim
@@ -1557,6 +1576,37 @@ type CleanDecision struct {
 	// the popup's line and create's report to say. NoBranch whenever the
 	// clean is refused: a refused clean does nothing to anything.
 	Branch BranchFate
+}
+
+// CleanOutcome is what a Clean that removed the space did with its
+// worktree's branch -- the zero value for a space with no worktree. Exactly
+// one of the two pairs is set for a worktree.
+type CleanOutcome struct {
+	// DeletedBranch is the branch Clean deleted, or found already gone: its
+	// name is free again either way, which is what a caller about to retry
+	// with the same title needs. DeletedTip is the commit it pointed at when
+	// Clean deleted it, and `git branch <DeletedBranch> <DeletedTip>` puts
+	// it back; empty for a branch that was already gone.
+	DeletedBranch, DeletedTip string
+
+	// KeptBranch is the branch that outlived a clean that removed the
+	// checkout, and KeptReason says why, ready to show beside it: nothing
+	// shows this run made it (the case CleanCheck predicts as BranchKept),
+	// or it turned out to hold commits nothing else does, or git would not
+	// delete it -- the last carrying the command that finishes the job.
+	KeptBranch, KeptReason string
+}
+
+// CleanRefusal is Clean declining to start: before removing anything, it
+// found that CleanCheck's verdict no longer holds -- the branch it would
+// delete has gained a commit, or cannot be read at all. Nothing was
+// removed, so the space is exactly as it was, and Reason is a sentence of
+// the same kind as CleanDecision.Reason: a caller shows it where it shows
+// CleanCheck's own refusals, and stops offering the clean (#173).
+type CleanRefusal struct{ Reason string }
+
+func (e *CleanRefusal) Error() string {
+	return "plan: clean: " + e.Reason + " -- nothing was removed"
 }
 
 // BranchFate is what Clean does with a worktree's branch (#173). herdr's
@@ -1632,7 +1682,7 @@ func CleanCheck(ctx context.Context, in Input, result ExecResult) CleanDecision 
 		checkout = result.Created.CheckoutPath
 	}
 
-	base, err := resolveBaseRef(ctx, in)
+	base, err := cleanBase(ctx, in, result)
 	if err != nil {
 		return CleanDecision{
 			Allowed: false,
@@ -1686,48 +1736,144 @@ func branchIsAbsent(ctx context.Context, dir, branch string) bool {
 	return err == nil && !exists
 }
 
+// commitAt resolves base to a commit in dir, the directory herdr cuts the
+// worktree in -- "HEAD" when base is empty, which is the default herdr
+// applies itself (start_api_worktree_create,
+// herdr:src/app/api/worktrees/deferred.rs at v0.9.0). "" when it cannot be
+// read, and with no directory at all, for branchIsAbsent's reason.
+func commitAt(ctx context.Context, dir, base string) string {
+	if dir == "" {
+		return ""
+	}
+	if base == "" {
+		base = "HEAD"
+	}
+	commit, err := gitx.ResolveRef(ctx, dir, base)
+	if err != nil {
+		return ""
+	}
+	return commit
+}
+
+// cleanBase is the commit the clean gate counts "commits beyond the base"
+// from: ExecResult.BaseCommit, recorded as the create used it, or --
+// when it could not be recorded -- resolveBaseRef's reading of the plan,
+// taken now.
+func cleanBase(ctx context.Context, in Input, result ExecResult) (string, error) {
+	if result.BaseCommit != "" {
+		return result.BaseCommit, nil
+	}
+	return resolveBaseRef(ctx, in)
+}
+
+// branchName is the worktree's branch as herdr named it in its reply, which
+// is the request's own name unless herdr trimmed it or invented one for a
+// request that named none.
+func branchName(in Input, result ExecResult) string {
+	if result.Created != nil && result.Created.Branch != "" {
+		return result.Created.Branch
+	}
+	return in.Branch
+}
+
 // branchToDelete is the branch Clean deletes once the checkout is gone, or
-// "" for none. It is judged BEFORE anything is removed, and an error means
-// Clean removes nothing.
+// "" for none. It is judged BEFORE anything is removed, and an error -- a
+// *CleanRefusal -- means Clean removes nothing.
 //
 // CleanCheck already refused a worktree carrying commits its base does not
 // have, so this asks again only because that verdict can be stale: the
 // popup computes it when the step fails, and `c` may be pressed minutes
-// later. A commit made in between is safe today only because the branch
-// outlives `worktree remove`; deleting the branch is what would lose it.
-// So the branch itself is counted against the base CleanCheck counted
-// from, and a branch that now holds work stops the whole clean rather than
-// half of it -- a checkout removed with its branch kept is exactly the
-// state #173 is about, reached by a different road.
+// later. A commit made in between would be lost by the delete, so the
+// branch itself is counted against the base CleanCheck counted from, and a
+// branch that now holds work stops the whole clean rather than half of it.
+// It cannot close the window the removal itself leaves open -- the agent is
+// still running while herdr removes its checkout -- which is what
+// settleBranch's second look is for.
 //
 // A branch already gone is nothing to delete, not a reason to refuse.
 func branchToDelete(ctx context.Context, in Input, result ExecResult) (string, error) {
 	if branchFate(in, result) != BranchDeleted {
 		return "", nil
 	}
-	branch := result.CreatedBranch
-	if in.ProjectDir == "" {
-		return "", fmt.Errorf("no project directory to find branch %s in", branch)
+	branch, dir := result.CreatedBranch, WorktreeSource(in)
+	if dir == "" {
+		return "", &CleanRefusal{Reason: fmt.Sprintf("no directory to find branch %s in", branch)}
 	}
-	exists, err := gitx.LocalBranchExists(ctx, in.ProjectDir, branch)
+	exists, err := gitx.LocalBranchExists(ctx, dir, branch)
 	if err != nil {
-		return "", fmt.Errorf("could not check branch %s: %w", branch, err)
+		return "", &CleanRefusal{Reason: fmt.Sprintf("could not check branch %s: %s", branch, gitMessage(err))}
 	}
 	if !exists {
 		return "", nil
 	}
-	base, err := resolveBaseRef(ctx, in)
+	base, err := cleanBase(ctx, in, result)
 	if err != nil {
-		return "", fmt.Errorf("could not determine what branch %s was cut from: %w", branch, err)
+		return "", &CleanRefusal{Reason: fmt.Sprintf("could not determine what branch %s was cut from: %s", branch, gitMessage(err))}
 	}
-	ahead, err := gitx.CommitsAhead(ctx, in.ProjectDir, "refs/heads/"+branch, base)
+	ahead, err := gitx.CommitsAhead(ctx, dir, "refs/heads/"+branch, base)
 	if err != nil {
-		return "", fmt.Errorf("could not count the commits on branch %s: %w", branch, err)
+		return "", &CleanRefusal{Reason: fmt.Sprintf("could not count the commits on branch %s: %s", branch, gitMessage(err))}
 	}
 	if ahead != 0 {
-		return "", fmt.Errorf("branch %s now has %d commit(s) not on %s", branch, ahead, base)
+		return "", &CleanRefusal{Reason: fmt.Sprintf("branch %s now has %d commit(s) of its own", branch, ahead)}
 	}
 	return branch, nil
+}
+
+// settleBranch decides the worktree branch's fate once the checkout is
+// gone, with the answer branchToDelete gave before the removal.
+//
+// It looks again before deleting, and asks the question a delete actually
+// turns on: which commits would nothing else hold (gitx.CommitsOnlyOn).
+// The look before the removal cannot answer that for the whole clean. The
+// agent keeps running while herdr removes its checkout -- herdr stops a
+// workspace's panes first only for a forced remove, and this one is not
+// (should_shutdown_workspace_terminal_runtimes_for_worktree_remove,
+// herdr:src/app/worktrees.rs at v0.9.0) -- so a commit can land after that
+// look and before the delete. Once the checkout is gone nothing can commit
+// to the branch, so this look has no such window.
+//
+// A branch that fails it is kept and reported, never an error: the
+// checkout and its workspace are already gone, so the clean is done, and
+// what is left is a branch to mention.
+func settleBranch(ctx context.Context, in Input, result ExecResult, branch string) CleanOutcome {
+	switch branchFate(in, result) {
+	case NoBranch:
+		return CleanOutcome{}
+	case BranchKept:
+		return CleanOutcome{KeptBranch: branchName(in, result), KeptReason: "nothing shows this run made it"}
+	}
+	if branch == "" {
+		return CleanOutcome{DeletedBranch: result.CreatedBranch}
+	}
+	dir := WorktreeSource(in)
+	only, err := gitx.CommitsOnlyOn(ctx, dir, branch)
+	switch {
+	case err != nil:
+		return CleanOutcome{KeptBranch: branch, KeptReason: "could not check what only it holds: " + gitMessage(err)}
+	case only != 0:
+		return CleanOutcome{KeptBranch: branch, KeptReason: fmt.Sprintf("it holds %d commit(s) nothing else does", only)}
+	}
+	tip, err := gitx.DeleteBranch(ctx, dir, branch)
+	if err != nil {
+		return CleanOutcome{KeptBranch: branch, KeptReason: fmt.Sprintf(
+			"git would not delete it (%s); `git branch -D %s` finishes the job", gitMessage(err), branch)}
+	}
+	return CleanOutcome{DeletedBranch: branch, DeletedTip: tip}
+}
+
+// gitMessage is the part of a gitx error a person reads: git's own first
+// line of complaint, without the command, the directory and the exit
+// status gitx wraps it in for a log. The whole error when it has no such
+// part.
+func gitMessage(err error) string {
+	msg, _, _ := strings.Cut(err.Error(), "\n")
+	if i := strings.LastIndex(msg, "exit status "); i >= 0 {
+		if _, rest, ok := strings.Cut(msg[i:], ": "); ok && rest != "" {
+			return rest
+		}
+	}
+	return msg
 }
 
 // unconfirmedCleanReason is the sentence CleanCheck refuses with, chosen by
@@ -1770,13 +1916,11 @@ func unconfirmedCleanReason(cause unconfirmedCause) string {
 //
 // The sentinel is resolved against Input.ProjectDir -- the repo the
 // worktree was created from -- to the commit its HEAD names now.
-// Disclosed approximation: "now" is when the keep-or-clean prompt is being
-// prepared, seconds after creation, not the instant of creation itself, so
-// a commit landing on the origin repo's HEAD in that window would shift
-// the base. Capturing the commit at creation time instead would mean
-// threading a resolved base through Build, Op, Execute and ExecResult for
-// a race no interactive submit can realistically hit; the trade is
-// deliberate. A non-empty BaseRef (any other picker row) is used as-is:
+// "Now" is a disclosed approximation, and since #173 a fallback:
+// ExecResult.BaseCommit records the commit at creation, and cleanBase uses
+// this only when that could not be read. The approximation stopped being
+// harmless once a clean re-checked the branch when `c` is pressed, which can
+// be minutes after the failure screen appeared. A non-empty BaseRef (any other picker row) is used as-is:
 // git resolves it in the worktree, which shares the origin repo's object
 // store. So is a linked checkout's commit (WorktreeBase): the plan already
 // named the exact commit the worktree was cut from, so neither the
@@ -1808,7 +1952,10 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 // because a branch left over is what refuses a retry with the same title --
 // but only a branch this run made (ExecResult.CreatedBranch), only while it
 // holds nothing its base does not (branchToDelete, judged before anything
-// is removed), and only once the checkout is gone.
+// is removed, whose refusal is a *CleanRefusal), and only once the checkout
+// is gone and nothing else is found to hold its commits (settleBranch). The
+// CleanOutcome says which, so a caller can report a branch kept by a clean
+// that otherwise finished.
 //
 // When Execute claimed a pane for the agent that differs from the space's
 // own (a reuse correction, placement spec §5.1/§5.2), that claimed pane is
@@ -1837,49 +1984,43 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 //
 // CleanCheck still allows every non-worktree plan, because with this
 // dispatch the clean really does remove only what the create made.
-func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) error {
+func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) (CleanOutcome, error) {
 	if result.Created == nil {
-		return fmt.Errorf("plan: clean: nothing was created")
+		return CleanOutcome{}, fmt.Errorf("plan: clean: nothing was created")
 	}
 	created := *result.Created
 
 	branch, err := branchToDelete(ctx, in, result)
 	if err != nil {
-		return fmt.Errorf("plan: clean: %w -- nothing was removed", err)
+		return CleanOutcome{}, err
 	}
 
 	if result.AgentAt != nil && result.AgentAt.PaneID != "" && result.AgentAt.PaneID != created.PaneID {
 		if err := r.PaneClose(ctx, result.AgentAt.PaneID); err != nil {
-			return fmt.Errorf("plan: clean: close agent pane: %w", err)
+			return CleanOutcome{}, fmt.Errorf("plan: clean: close agent pane: %w", err)
 		}
 	}
 
 	if in.UseWorktree {
 		if err := r.WorktreeRemove(ctx, created.WorkspaceID); err != nil {
-			return fmt.Errorf("plan: clean: remove worktree: %w", err)
+			return CleanOutcome{}, fmt.Errorf("plan: clean: remove worktree: %w", err)
 		}
 		// After the removal, never before: git refuses to delete a branch
 		// that is still checked out, and that refusal is worth keeping.
-		if branch != "" {
-			if err := gitx.DeleteBranch(ctx, in.ProjectDir, branch); err != nil {
-				return fmt.Errorf("plan: clean: removed the worktree, but not its branch: %w -- "+
-					"delete it yourself with `git branch -D %s`", err, branch)
-			}
-		}
-		return nil
+		return settleBranch(ctx, in, result, branch), nil
 	}
 
 	switch in.Placement {
 	case PlacementTabHere, PlacementTabIn:
 		if err := r.TabClose(ctx, created.TabID); err != nil {
-			return fmt.Errorf("plan: clean: close tab: %w", err)
+			return CleanOutcome{}, fmt.Errorf("plan: clean: close tab: %w", err)
 		}
-		return nil
+		return CleanOutcome{}, nil
 	case PlacementSplitHere:
 		if err := r.PaneClose(ctx, created.PaneID); err != nil {
-			return fmt.Errorf("plan: clean: close pane: %w", err)
+			return CleanOutcome{}, fmt.Errorf("plan: clean: close pane: %w", err)
 		}
-		return nil
+		return CleanOutcome{}, nil
 	}
 
 	// Unreachable once the dispatch above is right, and written anyway:
@@ -1888,12 +2029,12 @@ func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) er
 	// next change to what topologyOp returns rather than being re-derived
 	// from them. Refusing leaves litter; closing loses the user's work.
 	if created.WorkspaceID != "" && created.WorkspaceID == in.Ctx.WorkspaceID {
-		return fmt.Errorf(
+		return CleanOutcome{}, fmt.Errorf(
 			"plan: clean: refusing to close %s -- it is the workspace this create was invoked from, "+
 				"not one this create made", created.WorkspaceID)
 	}
 	if err := r.WorkspaceClose(ctx, created.WorkspaceID); err != nil {
-		return fmt.Errorf("plan: clean: close workspace: %w", err)
+		return CleanOutcome{}, fmt.Errorf("plan: clean: close workspace: %w", err)
 	}
-	return nil
+	return CleanOutcome{}, nil
 }
