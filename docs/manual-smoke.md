@@ -1694,6 +1694,46 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### `agent_args`, the whole argument list (#219) — 2026-09-19
+
+herdr 0.9.0. `zvi/219-agent-args` at `33e418f`, not merged, built with
+`go build`. Route A0 with its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME`
+under `/var/tmp`, `onboarding = false`, `[worktrees] directory` under the
+same path, a throwaway repository with one commit on `main`, and a
+scratch plugin state dir and this plugin config:
+
+```toml
+[agents]
+favorites = ["claude"]
+[agents.extra_args]
+claude = ["--verbose", "--model", "claude-opus-5[1m]", "--effort=xhigh"]
+[clauth]
+default = "smoke"
+launcher = ["<scratch>/fake-claude", "{account}", "--"]
+[timeouts]
+detection_ms = 3000
+```
+
+`--verbose` stands in for any argument that is not one of the three option
+flags, and `--effort=xhigh` is there to be displaced in its `=` spelling.
+`fake-claude` printed its argv and slept, so no claude started and the
+pass spent no account quota. The account is pinned so the real run takes
+the launcher: unpinned, `herdr agent start` would have started the real
+claude. Each `create` ran headlessly with `--no-worktree --placement
+new-space`, the three plugin variables and no pane ids. Around each dry
+run I took a snapshot of the workspace list, the repository's branches,
+the worktree directory and the plugin state dir.
+
+| Case | Result |
+|---|---|
+| `--dry-run --json` | exit 0. `agent_args`: `--verbose`, `--model`, `claude-opus-5[1m]`, `--effort=xhigh`, as `extra_args` has them. `launch_options` held the model and `xhigh`. None of the four changed. |
+| the same with `--effort high --permission-mode plan` | exit 0. `agent_args`: `--verbose`, `--model`, `claude-opus-5[1m]`, `--effort`, `high`, `--permission-mode`, `plan`, with `--effort=xhigh` gone. None of the four changed. |
+| the same for real | It typed the launch and stopped at detection, as it must with a stub (exit 1, kept), with the same `agent_args`. The pane showed the stub's argv as `[smoke] [--] [--verbose] [--model] [claude-opus-5[1m]] [--effort] [high] [--permission-mode] [plan]`: the launcher's two words, then `agent_args` element for element. |
+
+Teardown: I stopped and deleted the disposable session and removed the
+tree. No process from the pass was left, and none had a cwd under the
+scratch tree.
+
 ### does `/spawn` fire, and does it choose the options? (Cell 13, #209) — 2026-09-19
 
 herdr 0.9.0, Claude Code 2.1.278 on Opus 5 at `high` in auto mode, with
