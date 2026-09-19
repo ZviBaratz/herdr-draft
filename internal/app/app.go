@@ -580,6 +580,13 @@ type Model struct {
 	linked       linkedProject
 	linkedCommit string
 
+	// baseSettleVersion is the staleness guard on scheduleBaseSettle's
+	// answers, and baseNote the note the last one carried: why a tier's base
+	// was dropped, shown on the worktree panel while the HEAD row it fell
+	// back to still stands (#194). "" when nothing was dropped.
+	baseSettleVersion int
+	baseNote          string
+
 	// linearIssues is the last Linear issue list this Model has seen --
 	// New's own Setup.LinearCache, refreshed by handleLinearResult
 	// alongside its m.issue.SetIssues call. Kept for the same reason as
@@ -1195,6 +1202,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePickerCommit(msg)
 	case linkedCommitMsg:
 		return m.handleLinkedCommit(msg)
+	case baseSettledMsg:
+		return m.handleBaseSettled(msg)
 	default:
 		return m.routeToForm(msg)
 	}
@@ -1527,7 +1536,7 @@ func (m Model) linkedBaseRef() string { return cmp.Or(m.worktree.Base(), "HEAD")
 // the primary checkout HEAD -- the base row's row 0 -- is the primary's
 // commit. At submit rather than with the dir check, because a lane's own
 // agent may commit while the popup is up, and HEAD means the commit the lane
-// is on when the session is made. It is `create`'s withLinkedCheckout for
+// is on when the session is made. It is `create`'s withBase for
 // the popup, and exported for ResolveAccount's reason: internal/create's
 // equivalence test drives the form to a comparable plan.Input through it and
 // WithLinkedCommit.
@@ -1906,7 +1915,7 @@ func (m *Model) snapshotAppliedDefaults() {
 // meaningless for a target that cannot host a worktree (the chip row is
 // inert), so a remembered `true` waits for a repository rather than being
 // spent on a plain directory.
-func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.RepoConfig) {
+func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.RepoConfig) tea.Cmd {
 	m.projectKey = key
 	m.repoConfig = repo
 	entry, have := m.projects.Get(key)
@@ -1964,6 +1973,11 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	if !m.agentTouched {
 		m.agent.SetKind(m.resolved.AgentKind)
 	}
+	// The previous project's offer and note are about a base that is no
+	// longer this form's, and a ref offered there may name nothing here.
+	m.worktree.OfferBase("")
+	m.baseNote = ""
+	var settle tea.Cmd
 	if !m.baseTouched {
 		// The remembered base almost always arrives BEFORE the branch list
 		// naming it: this runs off the debounced dir check, and the
@@ -1972,6 +1986,10 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 		// the list lands (see its own doc comment), which is the whole
 		// reason it is not a plain SelectID here.
 		m.worktree.SetBase(m.resolved.BaseRef)
+		// And the list is not the test of whether it can be used: it is the
+		// 50 newest branches. Git is, in the background -- see SettleBase,
+		// which `create` calls with the same resolution (#194).
+		settle = m.scheduleBaseSettle()
 	}
 
 	// The branch follows the project too, which it did not have to before
@@ -1999,6 +2017,7 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	// the values the calls above just applied.
 	m.showRepoConfig()
 	m.snapshotAppliedDefaults()
+	return settle
 }
 
 // repoConfigLoader returns the .herdr-draft.toml reader to use --
@@ -2060,8 +2079,54 @@ func (m *Model) showRepoConfig() {
 	m.dir.SetNotes(m.repoConfigNotes())
 	// config.toml's own refused branch_prefix follows the resolution the same
 	// way, because a repository's .herdr-draft.toml can take the prefix over
-	// -- see BranchPrefixWarning.
-	m.worktree.SetNotes(m.branchPrefixNotes())
+	// -- see BranchPrefixWarning. A dropped base's note joins it for the
+	// reason provenance follows the touched flags: it says HEAD is used, which
+	// stops being true once the user picks a base of their own.
+	notes := m.branchPrefixNotes()
+	if m.baseNote != "" && !m.baseTouched {
+		notes = append(notes, m.baseNote)
+	}
+	m.worktree.SetNotes(notes)
+}
+
+// SettleBase is #194's rule 3, and the one place it is written: a base some
+// tier supplied is kept if it names a commit in dir, the project, and
+// otherwise falls back to the HEAD row (defaults.Resolved.WithoutBase), with
+// a note saying so. The note is "" when nothing was dropped. HEAD and @
+// arrive here already mapped to "" by defaults.Resolve (rule 2), and ""
+// asks git nothing.
+//
+// It exists because the base picker's branch list was the only test a
+// remembered base ever met, and the list is not a test of anything: it is
+// the 50 most recently committed branches (maxBaseRefs). So a branch deleted
+// since, an older one, a tag, or HEAD itself all fell back to row 0 in the
+// form without a word, while `create` handed the same ref to herdr as it was.
+// ResolveCommit is git's own answer, `rev-parse --verify <ref>^{commit}` --
+// the same question `git worktree add` asks of its start point.
+//
+// Both paths call it with their resolution before anything else reads the
+// base: `create` at once, the form from the background check its dir check
+// schedules (async.go's scheduleBaseSettle), since a `git rev-parse` does not
+// belong in Update. dir is the project, which from a lane is the lane --
+// where #171 resolves a base -- so a lane falls back here too instead of
+// meeting that refusal. An explicit --base is not a tier's and is not
+// settled: `create` refuses one that does not resolve.
+func SettleBase(ctx context.Context, git commitResolver, dir string, res defaults.Resolved) (defaults.Resolved, string) {
+	if res.BaseRef == "" {
+		return res, ""
+	}
+	if _, err := git.ResolveCommit(ctx, dir, res.BaseRef); err == nil {
+		return res, ""
+	}
+	return res.WithoutBase(), fmt.Sprintf("ignoring base %q from %s: no such commit here; using HEAD",
+		res.BaseRef, res.From[defaults.FieldBaseRef])
+}
+
+// commitResolver is the one git question SettleBase asks -- a subset of both
+// this package's gitSource and internal/create's GitSource, so either path
+// hands over the source it already has.
+type commitResolver interface {
+	ResolveCommit(ctx context.Context, dir, ref string) (string, error)
 }
 
 // BranchPrefixWarning is config.toml's refused-branch_prefix warning when it

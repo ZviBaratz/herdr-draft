@@ -351,6 +351,11 @@ files to keep them from drifting. The project directory defaults to the
 working directory. A successful create records what it used, so the form's
 next open defaults to it too.
 
+`--base HEAD` and `--base @` mean what leaving `--base` off means when
+nothing else chooses a base: the form's `HEAD` row, which is no base at all.
+A `--base` that names no commit in the project is refused before anything
+is created, rather than handed to herdr to fail at the worktree step.
+
 **Inside a linked worktree** (another session's, say) the project is that
 checkout. herdr will not create a worktree *from* a linked checkout, so a
 worktree session is created from the repository's primary checkout
@@ -972,6 +977,21 @@ field you have not touched yourself. It is keyed by the **git repository
 root**, so a linked worktree and its origin share one memory rather than
 accumulating one entry each.
 
+A remembered or configured **base** is checked against the repository
+before it is used, the same way by the form and by `create`:
+
+- One that names a commit is kept. The worktree panel's base list holds
+  only the 50 most recently committed branches, so a base it does not name
+  — an older branch, a tag, `HEAD~1` — is offered right after the `HEAD`
+  row.
+- `HEAD` and `@` are the `HEAD` row.
+- One that names no commit falls back to `HEAD`, and the worktree panel
+  says which base was dropped and where it came from: `ignoring base
+  "old-feature" from projects.json: no such commit here; using HEAD`.
+  `create` prints the same on stderr. A branch deleted since is the usual
+  case. A branch you have only on a remote is another: the list shows it
+  under its bare name, but git does not resolve that name to it.
+
 `create --json` prints a `provenance` map naming the tier each value came
 from. In the form, only the repository tier is attributed — `from
 .herdr-draft.toml`, on its own line in the panel of the row showing the
@@ -1003,7 +1023,12 @@ The list above is therefore the *complete* set of keys it may set:
 - `branch_prefix` — same rules and same validation as the `config.toml`
   key. An unusable value is ignored with a reason, and *your own*
   configured prefix applies instead (not the built-in default).
-- `default_worktree`, `default_placement`, `default_base` — as above.
+- `default_worktree`, `default_placement`, `default_base` — as above. A
+  `default_base` has to name a commit in each clone that uses it, or it
+  falls back to `HEAD` there with a note (see
+  [Where defaults come from](#where-defaults-come-from)). A team branch
+  that a fresh clone has only as `origin/develop` needs
+  `default_base = "origin/develop"`, not `"develop"`.
 - `linear_branch_name` (default: `true`) — whether a selected Linear
   issue's own `branchName` owns the branch. Set it to `false` in a
   repository with its own branch naming: the branch is then derived from

@@ -291,7 +291,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	// different branch_prefix, or turns linear_branch_name off, produces a
 	// different branch for the same title (see applyProjectDefaults).
 	branchBefore := m.worktree.Branch()
-	m.applyProjectDefaults(msg.memoryKey, msg.isGitRepo, msg.repoConfig)
+	settle := m.applyProjectDefaults(msg.memoryKey, msg.isGitRepo, msg.repoConfig)
 
 	var cmd tea.Cmd
 	if m.worktree.On() != worktreeOnBefore || m.worktree.Branch() != branchBefore {
@@ -309,7 +309,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		// is going to be created (see Model.titleNote).
 		m.title.SetVerdict(m.title.Value(), m.titleNote(""))
 	}
-	return m, cmd
+	return m, tea.Batch(cmd, settle)
 }
 
 // --- path-mode directory browsing (spec §6 field 2) ----------------------
@@ -515,6 +515,63 @@ func (m Model) handleFetchPruneDone(msg fetchPruneDoneMsg) (Model, tea.Cmd) {
 	}
 	m.baseReqVersion++
 	return m, m.runBaseCheck(request{version: m.baseReqVersion, key: msg.path})
+}
+
+// --- a tier's base: does it still name a commit? (#194) ------------------
+
+// baseSettledMsg is SettleBase's answer about the base one resolution
+// supplied: that resolution back, with the base dropped to HEAD when it
+// does not resolve, and the note saying so. version is baseSettleVersion at
+// scheduling time.
+type baseSettledMsg struct {
+	version  int
+	resolved defaults.Resolved
+	note     string
+}
+
+// scheduleBaseSettle asks, off the update loop, whether the base the current
+// resolution supplies names a commit in the project, and returns nil when
+// there is no base to ask about. It is not debounced: applyProjectDefaults
+// schedules it once per dir check, which already was.
+//
+// Bumping the version here is what retires an answer about an earlier
+// resolution, so every call site must come through this rather than build
+// the Cmd itself.
+func (m *Model) scheduleBaseSettle() tea.Cmd {
+	m.baseSettleVersion++
+	if m.resolved.BaseRef == "" {
+		return nil
+	}
+	v := m.baseSettleVersion
+	git, dir, res := m.deps.Git, pathx.ExpandTilde(m.dir.Value()), m.resolved
+	return func() tea.Msg {
+		settled, note := SettleBase(context.Background(), git, dir, res)
+		return baseSettledMsg{version: v, resolved: settled, note: note}
+	}
+}
+
+// handleBaseSettled applies SettleBase's answer: a base that resolves is
+// offered in the picker whether or not the branch list names it (rule 1),
+// and one that does not becomes the HEAD row, with its note on the worktree
+// panel (rule 3). The resolution itself is replaced too, so the provenance
+// line stops crediting a tier with a base it no longer supplies.
+//
+// A stale answer -- the project has changed since, and with it the
+// resolution -- moves nothing, and neither does any answer once the user has
+// chosen a base of their own: noteUserEdits runs before this, so their
+// choice has already been recorded and stands.
+func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
+	if msg.version != m.baseSettleVersion || m.baseTouched {
+		return m, nil
+	}
+	m.resolved = msg.resolved
+	m.baseNote = msg.note
+	m.worktree.OfferBase(m.resolved.BaseRef)
+	m.worktree.SetBase(m.resolved.BaseRef)
+	m.showRepoConfig()
+	// The app moved the base, not the user -- see snapshotAppliedDefaults.
+	m.snapshotAppliedDefaults()
+	return m, nil
 }
 
 // --- title duplicate verdict (spec §6 field 3) ---------------------------

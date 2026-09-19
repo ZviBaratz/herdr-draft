@@ -357,6 +357,10 @@ func newHarness(t *testing.T) *harness {
 	runner := newFakeRunner()
 	runner.t = t
 	git := newFakeGit()
+	// The project is a repository with commits in it, so an explicit --base
+	// has something to name (#194 refuses one that names nothing). A lane
+	// replaces these with its own (inLane).
+	git.commits = repoCommitsIn("/projects/thing")
 	h := &harness{
 		env: Env{
 			ConfigDir: t.TempDir(),

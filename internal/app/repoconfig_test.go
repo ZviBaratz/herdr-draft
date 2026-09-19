@@ -147,7 +147,11 @@ func TestRepoConfig_TouchingAValueRetiresItsProvenance(t *testing.T) {
 // committed file changes what the form opens on, and every value is
 // attributed to the repo tier so a panel can say where it came from.
 func TestRepoConfig_ReachesTheFormThroughTheDirCheck(t *testing.T) {
+	// trunk exists, or #194's check would drop it back to HEAD.
+	git := newFakeGit()
+	git.commits = map[string]string{"/repo-a trunk": "4e5f607"}
 	m, repo := repoConfigModel(t, "/repo-a", testSetup{
+		Git:   git,
 		State: config.State{LastWorktree: ptrBool(true), LastPlacement: "new-space"},
 	}, map[string]config.RepoConfig{
 		"/repo-a": {
