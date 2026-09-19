@@ -128,6 +128,16 @@ type mockRunner struct {
 	// WORKTREE's checkout" and "Created holds the SPLIT's checkout" are the
 	// same assertion, so the §9 clobber regression cannot be pinned at all.
 	splitTopo *herdrc.CreatedTopology
+
+	// onWorktreeCreate and onWorktreeRemove, when non-nil, run inside the
+	// matching call, before it answers -- so a test can make the fake do
+	// to a real repository what herdr does (#173): `worktree create` makes
+	// or checks out the branch, and `worktree remove` removes the checkout
+	// and keeps the branch. Without them, "the branch did not exist until
+	// the create" and "the checkout is gone before the branch is deleted"
+	// are orderings no test can see.
+	onWorktreeCreate func(herdrc.WorktreeCreateReq)
+	onWorktreeRemove func(workspaceID string)
 }
 
 var _ herdrc.Runner = (*mockRunner)(nil)
@@ -158,6 +168,9 @@ func (m *mockRunner) WorktreeCreate(ctx context.Context, req herdrc.WorktreeCrea
 	m.record("WorktreeCreate", req.Cwd, req.Branch, req.Base)
 	if m.shouldFail("WorktreeCreate") {
 		return herdrc.CreatedTopology{}, m.failErr
+	}
+	if m.onWorktreeCreate != nil {
+		m.onWorktreeCreate(req)
 	}
 	return m.topo, nil
 }
@@ -312,6 +325,9 @@ func (m *mockRunner) WorktreeRemove(ctx context.Context, workspaceID string) err
 	m.record("WorktreeRemove", workspaceID)
 	if m.shouldFail("WorktreeRemove") {
 		return m.failErr
+	}
+	if m.onWorktreeRemove != nil {
+		m.onWorktreeRemove(workspaceID)
 	}
 	return nil
 }
@@ -1371,7 +1387,7 @@ func TestCleanWorktreeCallsWorktreeRemove(t *testing.T) {
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
 	result := ExecResult{Created: &created, AgentAt: &created}
 
-	if err := Clean(context.Background(), m, in, result); err != nil {
+	if _, err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
 	want := []string{"WorktreeRemove(ws-1)"}
@@ -1393,7 +1409,7 @@ func TestCleanNewSpaceClosesTheWorkspaceItCreated(t *testing.T) {
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-2"}
 	result := ExecResult{Created: &created, AgentAt: &created}
 
-	if err := Clean(context.Background(), m, in, result); err != nil {
+	if _, err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
 	want := []string{"WorkspaceClose(ws-2)"}
@@ -1433,7 +1449,7 @@ func TestCleanHerePlacementRemovesOnlyWhatItCreated(t *testing.T) {
 			created := herdrc.CreatedTopology{WorkspaceID: "ws-USER", TabID: "tab-NEW", PaneID: "pane-NEW"}
 			result := ExecResult{Created: &created, AgentAt: &created}
 
-			if err := Clean(context.Background(), m, in, result); err != nil {
+			if _, err := Clean(context.Background(), m, in, result); err != nil {
 				t.Fatalf("Clean: %v", err)
 			}
 			if !reflect.DeepEqual(m.calls, tc.want) {
@@ -1460,7 +1476,7 @@ func TestCleanRefusesToCloseTheInvokingWorkspace(t *testing.T) {
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-USER", TabID: "tab-NEW", PaneID: "pane-NEW"}
 	result := ExecResult{Created: &created, AgentAt: &created}
 
-	err := Clean(context.Background(), m, in, result)
+	_, err := Clean(context.Background(), m, in, result)
 	if err == nil {
 		t.Fatalf("Clean closed the invoking workspace instead of refusing it; calls = %v", m.calls)
 	}
@@ -1479,7 +1495,7 @@ func TestCleanPropagatesRunnerError(t *testing.T) {
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1"}
 	result := ExecResult{Created: &created, AgentAt: &created}
 
-	err := Clean(context.Background(), m, in, result)
+	_, err := Clean(context.Background(), m, in, result)
 	if !errors.Is(err, m.failErr) {
 		t.Fatalf("Clean error = %v, want it to wrap %v", err, m.failErr)
 	}
@@ -1605,7 +1621,7 @@ func TestClean_ClosesTheClaimedPaneBeforeRemovingTheWorktree(t *testing.T) {
 	created := herdrc.CreatedTopology{WorkspaceID: "w9", PaneID: "worktree-pane"}
 	result := ExecResult{Created: &created, AgentAt: &herdrc.CreatedTopology{PaneID: "claimed-pane"}} // != created.PaneID ("worktree-pane")
 
-	if err := Clean(context.Background(), m, in, result); err != nil {
+	if _, err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
 	want := []string{"PaneClose(claimed-pane)", "WorktreeRemove(w9)"}
@@ -1621,7 +1637,7 @@ func TestClean_NoPaneCloseWhenAgentPaneMatchesTheSpace(t *testing.T) {
 	created := herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "p1"}
 	result := ExecResult{Created: &created, AgentAt: &herdrc.CreatedTopology{PaneID: "p1"}} // == created.PaneID
 
-	if err := Clean(context.Background(), m, in, result); err != nil {
+	if _, err := Clean(context.Background(), m, in, result); err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
 	want := []string{"WorktreeRemove(ws-1)"}

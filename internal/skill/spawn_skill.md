@@ -337,6 +337,15 @@ machine. Passing `--on-failure clean` does not override that for an
 `unconfirmed` prompt — the clean is refused at failure time and the session
 kept, with the reason under `clean_refused`.
 
+If you do clean a worktree session and mean to retry, read the branch
+fields. `deleted_branch` names the branch the clean deleted, and the same
+title can be run again. `kept_branch` names one it left in place, with the
+reason in `kept_branch_reason`: nothing showed this run made it, or it
+holds a commit nothing else does, or git would not delete it. The clean
+still happened, but the same title is refused with exit 2 until you pass
+`--branch` with a new name. Do not delete a kept branch to get past that
+without reading the reason: one that holds a commit holds work.
+
 **Finish by looking at the pane**, not by trusting the exit status:
 
 ```bash

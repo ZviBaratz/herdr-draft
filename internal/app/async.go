@@ -1571,12 +1571,15 @@ func (m Model) handleCleanRequested() (Model, tea.Cmd) {
 }
 
 // cleanDoneMsg reports plan.Clean's own outcome.
-type cleanDoneMsg struct{ err error }
+type cleanDoneMsg struct {
+	outcome plan.CleanOutcome
+	err     error
+}
 
 func runCleanCmd(r herdrc.Runner, in plan.Input, result plan.ExecResult) tea.Cmd {
 	return func() tea.Msg {
-		err := plan.Clean(context.Background(), r, in, result)
-		return cleanDoneMsg{err: err}
+		outcome, err := plan.Clean(context.Background(), r, in, result)
+		return cleanDoneMsg{outcome: outcome, err: err}
 	}
 }
 
@@ -1592,11 +1595,40 @@ func runCleanCmd(r herdrc.Runner, in plan.Input, result plan.ExecResult) tea.Cmd
 // available -- "c" retries plan.Clean via handleCleanRequested, "k" gives
 // up and keeps the space as-is, the same choice the user already had for
 // the ORIGINAL step failure.
+//
+// Two outcomes are neither of those (#173, #190's review):
+//
+//   - a *plan.CleanRefusal: Clean found CleanCheck's verdict stale before
+//     removing anything. The space is untouched, so this is the verdict a
+//     moment later, not a failure -- remove becomes unavailable with the
+//     reason, which also stops `c` asking again for a refusal it would get
+//     again.
+//   - a clean that ran but kept the branch the line had promised to
+//     delete. The space is gone, so there is nothing left to keep or
+//     remove, and quitting would bury the one thing still true: the branch
+//     is there. The view says so, and esc closes it (submitDeadEnd).
+//
+// A branch kept the way the line already said is no news, and quits.
 func (m Model) handleCleanDone(msg cleanDoneMsg) (Model, tea.Cmd) {
-	if msg.err != nil {
+	var refusal *plan.CleanRefusal
+	switch {
+	case errors.As(msg.err, &refusal):
+		m.submitCleanDecision = plan.CleanDecision{Allowed: false, Reason: refusal.Reason}
+		if m.submitView != nil {
+			m.submitView.SetCleanFailed(nil)
+			m.submitView.SetFailure(m.submitResult, m.submitCleanDecision)
+		}
+		return m, nil
+	case msg.err != nil:
 		if m.submitView != nil {
 			m.submitView.SetCleanFailed(msg.err)
 		}
+		return m, nil
+	case msg.outcome.KeptBranch != "" && m.submitCleanDecision.Branch == plan.BranchDeleted:
+		if m.submitView != nil {
+			m.submitView.SetCleanedKeepingBranch(msg.outcome.KeptBranch, msg.outcome.KeptReason)
+		}
+		m.submitDeadEnd = true
 		return m, nil
 	}
 	return m, tea.Quit

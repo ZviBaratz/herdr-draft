@@ -524,7 +524,7 @@ away for five minutes) and the run lands where it used to:
 ───────────────────────────────────────────────────────────────────────────────
   prompt not sent — saved for manual paste:
   <state dir>/unsent-prompt.txt
-  remove undoes everything this create made
+  remove deletes the worktree, its branch and its workspace
                                                       k keep it    c remove it
 ```
 
@@ -565,6 +565,12 @@ replaces the rationale line and the button loses its key glyph:
   remove unavailable  uncommitted changes
                                                         k keep it    remove it
 ```
+
+And once with a **pristine** one, pressing `c`: the branch goes with the
+checkout (#173). `git -C <repo> branch` no longer lists it, and the same
+title submitted again passes the title row's duplicate check instead of
+being blocked on `branch exists`. The repository's own workspace that
+`worktree create` opened alongside stays open; the line never claimed it.
 
 **Teardown:** `herdr[S] worktree remove --workspace <worktree-workspace-id>`
 (only removes cleanly when the checkout has no commits beyond base — true

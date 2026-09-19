@@ -31,6 +31,9 @@ type report struct {
 	onFailure    string
 	cleaned      bool
 	cleanRefused string
+	// outcome is what the clean did with the worktree's branch (#173).
+	// Meaningful only when cleaned.
+	outcome plan.CleanOutcome
 
 	json bool
 }
@@ -104,6 +107,17 @@ func (r report) failureLine() string {
 		b.WriteString("\nnothing was created")
 	case r.cleaned:
 		b.WriteString("\nthe session it had created was removed (--on-failure clean)")
+		switch o := r.outcome; {
+		case o.DeletedBranch != "":
+			b.WriteString(", with its branch " + o.DeletedBranch)
+			if o.DeletedTip != "" {
+				// The short form git's own "Deleted branch" line uses: enough
+				// for `git branch <name> <tip>` to find it.
+				b.WriteString(" (was " + shortCommit(o.DeletedTip) + ")")
+			}
+		case o.KeptBranch != "":
+			b.WriteString(", but not its branch " + o.KeptBranch + ": " + o.KeptReason)
+		}
 	case r.cleanRefused != "":
 		b.WriteString("\nkept the session it had created: " + r.cleanRefused)
 	default:
@@ -224,6 +238,18 @@ type jsonReport struct {
 	Cleaned      bool   `json:"cleaned,omitempty"`
 	CleanRefused string `json:"clean_refused,omitempty"`
 
+	// DeletedBranch is the worktree branch the clean deleted -- the one
+	// this run made (#173) -- and DeletedBranchTip the commit it pointed
+	// at, so `git branch <deleted_branch> <deleted_branch_tip>` puts it
+	// back. KeptBranch is a worktree branch the clean left in place, and
+	// KeptBranchReason why: nothing showed this run made it, it held
+	// commits nothing else did, or git would not delete it. A kept branch
+	// still refuses a retry that derives the same name.
+	DeletedBranch    string `json:"deleted_branch,omitempty"`
+	DeletedBranchTip string `json:"deleted_branch_tip,omitempty"`
+	KeptBranch       string `json:"kept_branch,omitempty"`
+	KeptBranchReason string `json:"kept_branch_reason,omitempty"`
+
 	// Provenance is spec §10's tier attribution, one entry per resolved
 	// value: which file supplied it, or "flag" when the caller did,
 	// "worktree" for the placement a worktree decides, and "checkout" for
@@ -282,6 +308,10 @@ func (r report) writeJSON(w io.Writer) {
 		out.OnFailure = r.onFailure
 		out.Cleaned = r.cleaned
 		out.CleanRefused = r.cleanRefused
+		if r.cleaned {
+			out.DeletedBranch, out.DeletedBranchTip = r.outcome.DeletedBranch, r.outcome.DeletedTip
+			out.KeptBranch, out.KeptBranchReason = r.outcome.KeptBranch, r.outcome.KeptReason
+		}
 	}
 
 	enc := json.NewEncoder(w)
@@ -289,4 +319,13 @@ func (r report) writeJSON(w io.Writer) {
 	// The only way this fails is an unencodable value, and every field
 	// above is a string, bool or map[string]string.
 	_ = enc.Encode(out)
+}
+
+// shortCommit is the first seven characters of a full commit id, git's own
+// default abbreviation; an id already shorter is returned as it is.
+func shortCommit(id string) string {
+	if len(id) > 7 {
+		return id[:7]
+	}
+	return id
 }

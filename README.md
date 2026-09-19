@@ -462,6 +462,37 @@ the agent is where the space's own pane is. `--on-failure clean` removes
 only what the run actually created: the tab for `tab-here` or `tab-in`, the
 pane for `split-here`, and the workspace or the worktree otherwise.
 
+**A cleaned worktree takes its branch with it**, so a retry with the same
+title is not refused over a branch the failed run left behind. herdr's
+`worktree remove` keeps the branch by design, so herdr-draft deletes it
+itself, with `git branch -D` once the checkout is gone, and only when all
+three of these hold:
+
+- **the run made it.** herdr checks an existing branch out rather than
+  refusing it, and answers the same either way, so herdr-draft looks just
+  before the create, and goes by the branch herdr's reply says it used. A
+  branch that was already there, or that it could not check for, is kept.
+- **it holds nothing its base does not**, counted from the commit the
+  worktree was cut from. The clean is already refused for a checkout with
+  commits of its own. The branch is counted again just before anything is
+  removed, and one that has gained a commit since stops the whole clean,
+  with the reason in `clean_refused`.
+- **nothing else holds its commits.** The agent keeps running while herdr
+  removes its checkout, so a commit can still land then. Once the checkout
+  is gone the branch is looked at once more, and one holding a commit no
+  other branch does is kept.
+
+`deleted_branch` names the branch when it went, and `deleted_branch_tip`
+the commit it pointed at: `git branch <deleted_branch> <deleted_branch_tip>`
+puts it back. A branch the clean left in place is `kept_branch`, with
+`kept_branch_reason` saying why. The clean still happened, so `cleaned` is
+`true`, but a retry that derives the same name is refused until the branch
+is gone. The popup's remove does the same. Its line above the buttons says
+whether the branch goes, and a remove that had to keep it after all says so
+before it closes. Neither closes the repository's own workspace, which
+herdr opens alongside a repository's first worktree; close that yourself if
+you do not want it.
+
 **A worktree session runs in the worktree's own space**, which herdr's
 sidebar groups under the repository's. `--placement` therefore applies only
 with `--no-worktree`. With a worktree, `--placement` other than `new-space`,

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -102,10 +103,13 @@ func TestFrames_Progress(t *testing.T) {
 // TestFrames_FailureCleanOffered is v2 spec §12's failure screen with
 // both buttons live: the stack stays, the failed row carries the reason,
 // and the choice is a button row on the footer.
+//
+// The stack is a worktree plan's, so the decision says what CleanCheck says
+// for one this run made the branch of: remove deletes that branch too (#173).
 func TestFrames_FailureCleanOffered(t *testing.T) {
 	v := newSubmitTestView()
 	v.SetSteps(sampleStepsFailed())
-	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true})
+	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true, Branch: plan.BranchDeleted})
 	assertSubmitFrame(t, "failure-keep-clean-80x24", v, 80, 24)
 }
 
@@ -117,6 +121,18 @@ func TestFrames_FailureCleanDenied(t *testing.T) {
 	v.SetSteps(sampleStepsFailed())
 	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: false, Reason: "uncommitted changes"})
 	assertSubmitFrame(t, "failure-clean-denied-80x24", v, 80, 24)
+}
+
+// TestFrames_CleanedKeepingABranch is a remove that finished without the
+// branch it said it would delete (#173): the checkout and its workspace are
+// gone, the branch holds something, and nothing is left to decide, so the
+// footer offers only `esc close`.
+func TestFrames_CleanedKeepingABranch(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true, Branch: plan.BranchDeleted})
+	v.SetCleanedKeepingBranch("zvi/fix-login-redirect-loop", "it holds 1 commit(s) nothing else does")
+	assertSubmitFrame(t, "failure-cleaned-branch-kept-80x24", v, 80, 24)
 }
 
 // TestFrames_DeadEndWithUnsentPrompt is the failure with nothing to decide
@@ -522,6 +538,93 @@ func TestSubmitView_CleanDisabledShowsItsReason(t *testing.T) {
 		if !strings.Contains(frame, "k keep it") {
 			t.Errorf("ViewAt(80,24) = %q, want keep still live", frame)
 		}
+	}
+}
+
+// TestSubmitView_RemoveLineSaysWhatHappensToTheBranch pins the line above
+// the buttons to what plan.Clean will actually do (#173). It used to say
+// "remove undoes everything this create made" for every plan, which was
+// false twice over for a worktree: herdr's `worktree remove` keeps the
+// branch, and the repository workspace herdr opens beside a first worktree
+// stays open. A worktree's line therefore names what remove deletes, and
+// says so when the branch is kept.
+func TestSubmitView_RemoveLineSaysWhatHappensToTheBranch(t *testing.T) {
+	for _, tc := range []struct {
+		fate plan.BranchFate
+		want string
+	}{
+		{plan.BranchDeleted, "remove deletes the worktree, its branch and its workspace"},
+		{plan.BranchKept, "remove deletes the worktree and its workspace, but keeps the branch"},
+		{plan.NoBranch, "remove undoes everything this create made"},
+	} {
+		v := newSubmitTestView()
+		v.SetSteps(sampleStepsFailed())
+		v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true, Branch: tc.fate})
+
+		frame := strippedFrame(v, 80, 24)
+		if !strings.Contains(frame, tc.want) {
+			t.Errorf("fate %v: frame does not say %q:\n%s", tc.fate, tc.want, frame)
+		}
+		if tc.fate != plan.NoBranch && strings.Contains(frame, "everything") {
+			t.Errorf("fate %v: a worktree's remove line claims everything, and the parent workspace stays:\n%s", tc.fate, frame)
+		}
+	}
+}
+
+// TestSubmitView_CleanedKeepingABranchOffersNothingMore: once a remove has
+// run, k and c are spent -- the space is gone -- and the view says what is
+// left instead of offering a second remove that would fail against a
+// workspace herdr no longer has (#190's review).
+func TestSubmitView_CleanedKeepingABranchOffersNothingMore(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true, Branch: plan.BranchDeleted})
+	v.SetCleanedKeepingBranch("zvi/x", "it holds 1 commit(s) nothing else does")
+
+	frame := strippedFrame(v, 80, 24)
+	for _, want := range []string{"removed the worktree and its workspace, but not its branch", "zvi/x", "it holds 1 commit(s) nothing else does", "esc close"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("frame does not say %q:\n%s", want, frame)
+		}
+	}
+	for _, gone := range []string{"keep it", "remove it", "remove deletes"} {
+		if strings.Contains(frame, gone) {
+			t.Errorf("frame still offers %q after the remove ran:\n%s", gone, frame)
+		}
+	}
+	for _, k := range []rune{'k', 'c'} {
+		if cmd := v.Update(key(k, 0)); cmd != nil {
+			t.Errorf("%q after the remove ran produced %#v, want nothing", k, cmd())
+		}
+	}
+}
+
+// TestSubmitView_KeptBranchReasonWrapsWithoutSplittingTheCommand: the
+// reason git refused a delete with ends in the command that finishes the
+// job. It wraps at 80 cells, and the command has to arrive whole.
+func TestSubmitView_KeptBranchReasonWrapsWithoutSplittingTheCommand(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsFailed())
+	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true, Branch: plan.BranchDeleted})
+	// Worded so the 80-cell wrap point falls inside the command: a wrapper
+	// that breaks at hyphens, or between the command's words, splits it.
+	v.SetCleanedKeepingBranch("zvi/fix-login-redirect-loop",
+		"git would not delete it, because another git held its lock; `git branch -D zvi/fix-login-redirect-loop` finishes the job")
+
+	if frame := strippedFrame(v, 80, 24); !strings.Contains(frame, "`git branch -D zvi/fix-login-redirect-loop`") {
+		t.Fatalf("the command was split across lines:\n%s", frame)
+	}
+}
+
+// TestWrapAtSpacesKeepsNamesWhole: a reason ending in a command to copy,
+// wrapped at a width that falls inside the command, keeps the command on one
+// line -- ansi's own wrappers break it at the hyphen, and a plain space wrap
+// between its words.
+func TestWrapAtSpacesKeepsNamesWhole(t *testing.T) {
+	got := wrapAtSpaces("git would not delete it; `git branch -D zvi/fix-login-redirect-loop` finishes the job", 50)
+	want := []string{"git would not delete it;", "`git branch -D zvi/fix-login-redirect-loop`", "finishes the job"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("wrapAtSpaces = %q, want %q", got, want)
 	}
 }
 

@@ -28,6 +28,7 @@ package create
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -439,19 +440,35 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 // way to override that refusal from the command line, which is the
 // point: a non-interactive caller is the one least able to notice what it
 // would be destroying.
+//
+// A worktree's clean also deletes the branch the run made (#173). What
+// became of it is recorded for the report, because a caller about to retry
+// with the same title needs to know whether the name is free again. A clean
+// that removed the checkout and then kept the branch still happened: it is
+// `cleaned`, with the branch beside it, never clean_refused -- which says
+// the session is still there. A refusal Clean itself makes before removing
+// anything is clean_refused, with CleanCheck's kind of reason.
 func applyOnFailure(ctx context.Context, deps Deps, rep *report) {
 	if rep.onFailure != onFailureClean {
 		return
 	}
-	if decision := plan.CleanCheck(ctx, rep.input, rep.result); !decision.Allowed {
+	decision := plan.CleanCheck(ctx, rep.input, rep.result)
+	if !decision.Allowed {
 		rep.cleanRefused = decision.Reason
 		return
 	}
-	if err := plan.Clean(ctx, deps.Runner, rep.input, rep.result); err != nil {
+	outcome, err := plan.Clean(ctx, deps.Runner, rep.input, rep.result)
+	var refusal *plan.CleanRefusal
+	switch {
+	case errors.As(err, &refusal):
+		rep.cleanRefused = refusal.Reason
+		return
+	case err != nil:
 		rep.cleanRefused = err.Error()
 		return
 	}
 	rep.cleaned = true
+	rep.outcome = outcome
 }
 
 // remember writes the choices this create was made with back to the plugin
