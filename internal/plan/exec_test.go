@@ -3220,7 +3220,7 @@ func TestExecuteDoesNotRetryAnUnconfirmedPrompt(t *testing.T) {
 // TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape keeps the
 // discriminator from rotting back into one generic sentence.
 //
-// PromptUnconfirmed is one posture reached two ways, and the two rest on
+// PromptUnconfirmed is one posture reached several ways, and each rests on
 // different evidence. A wait timeout gave up while the agent was
 // demonstrably busy -- that is what "timed out" names, and it is the reason
 // `clean` would kill a mid-turn agent. A stall timed nothing out; herdr
@@ -3277,12 +3277,59 @@ func TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape(t *testing.T) {
 			afterSend.Reason)
 	}
 
-	for name, d := range map[string]CleanDecision{
+	// The post-send check's two verdicts (#154). Each is the only send the
+	// op made, so "had already gone out once when this step failed" -- the
+	// sentence above -- would describe an earlier attempt that did not
+	// exist. What the user will find differs as well: a dialog the prompt's
+	// Enter may have answered, or a pane with no agent answering in it.
+	swallowed := CleanCheck(context.Background(), in, ExecResult{
+		FailedIndex:            2,
+		PromptText:             "implement the fix",
+		PromptUnconfirmed:      true,
+		promptUnconfirmedCause: causeSwallowedByDialog,
+	})
+	if swallowed.Allowed {
+		t.Fatalf("a prompt a dialog swallowed allowed the clean: %+v", swallowed)
+	}
+	if !strings.Contains(swallowed.Reason, "dialog") {
+		t.Errorf("swallowed reason = %q, want it to name the dialog the prompt went into", swallowed.Reason)
+	}
+
+	gone := CleanCheck(context.Background(), in, ExecResult{
+		FailedIndex:            2,
+		PromptText:             "implement the fix",
+		PromptUnconfirmed:      true,
+		promptUnconfirmedCause: causeAgentGoneAfterSend,
+	})
+	if gone.Allowed {
+		t.Fatalf("an agent that stopped answering after the send allowed the clean: %+v", gone)
+	}
+	if !strings.Contains(gone.Reason, "stopped answering") {
+		t.Errorf("gone reason = %q, want it to name the reads that failed", gone.Reason)
+	}
+
+	decisions := map[string]CleanDecision{
 		"timeout": timeout, "stalled": stalled, "after-send": afterSend,
-	} {
+		"swallowed": swallowed, "gone": gone,
+	}
+	for name, d := range decisions {
 		if !strings.Contains(strings.ToLower(d.Reason), "read the pane") {
 			t.Errorf("%s reason = %q, want it to send the user to the pane", name, d.Reason)
 		}
+	}
+	for _, name := range []string{"swallowed", "gone"} {
+		r := decisions[name].Reason
+		if strings.Contains(r, "timed out") || strings.Contains(r, "twice") || strings.Contains(r, "already gone out") {
+			t.Errorf("%s reason = %q, want its own evidence rather than a neighbour's", name, r)
+		}
+	}
+	seen := map[string]string{}
+	for name, d := range decisions {
+		if other, dup := seen[d.Reason]; dup {
+			t.Errorf("%s and %s share a reason, so one of them names evidence it does not have: %q",
+				name, other, d.Reason)
+		}
+		seen[d.Reason] = name
 	}
 }
 
@@ -3485,6 +3532,13 @@ func TestExecutePromptWaitsThroughAnUnpaintedScreen(t *testing.T) {
 // clean create is what makes the defect cost more than the launch: state
 // is persisted, no unsent-prompt.txt is written, and nobody has a reason
 // to look.
+//
+// It is the unconfirmed posture, not `unsent` (#154). herdr accepted the
+// send, so the text and its Enter went into the pane, and "the agent is
+// gone" is inferred from three reads that failed -- for any reason, since
+// `agent read`'s errors are untyped. Until #154 this test asserted the
+// opposite and called the clean safe; if the inference is wrong, that clean
+// kills an agent holding the prompt, and `unsent` invites a second copy.
 func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 	withDialogPollInterval(t, 0)
 
@@ -3501,7 +3555,9 @@ func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 		postPromptErr: errors.New("herdr agent read pane-1: exit status 1: no agent in pane"),
 	}
 
-	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{},
+		func(p Progress) { progressed = append(progressed, p) })
 
 	wantFailedIndex := len(ops) - 1
 	if result.FailedIndex != wantFailedIndex {
@@ -3510,11 +3566,27 @@ func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 	if result.PromptText != in.Prompt {
 		t.Fatalf("PromptText = %q, want %q (surfaced for manual paste)", result.PromptText, in.Prompt)
 	}
-	if result.PromptUnconfirmed {
-		t.Errorf("PromptUnconfirmed = true, want false -- nothing was delivered, so the clean is safe")
-	}
 	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
 		t.Errorf("AgentPrompt called %d times, want exactly 1 -- verification must never resend (#108)", n)
+	}
+	if !result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = false, want true -- herdr accepted the send, so the text went into " +
+			"the pane, and \"the agent is gone\" is an inference from failed reads")
+	}
+	if result.promptUnconfirmedCause != causeAgentGoneAfterSend {
+		t.Errorf("cause = %q, want %q", result.promptUnconfirmedCause, causeAgentGoneAfterSend)
+	}
+	if d := CleanCheck(context.Background(), in, result); d.Allowed ||
+		d.Reason != unconfirmedCleanReason(causeAgentGoneAfterSend) {
+		t.Errorf("CleanCheck = %+v, want the clean refused for the agent-gone evidence", d)
+	}
+	// The step's own sentence offered the removal the posture now refuses.
+	msg := progressed[len(progressed)-1].Err.Error()
+	if strings.Contains(msg, "can be removed") || strings.Contains(msg, "nothing was delivered") {
+		t.Errorf("step message = %q, want it to send the user to the pane rather than offer a removal", msg)
+	}
+	if !strings.Contains(msg, "the agent exited as the prompt was sent") {
+		t.Errorf("step message = %q, want its head kept: it is the clause the popup's truncation leaves", msg)
 	}
 }
 
@@ -3528,6 +3600,11 @@ func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 // waiting and sending again. A second copy into an agent that did receive
 // the first is the injury #108 exists to prevent, and a post-send check
 // that retries would deliver it by the front door.
+//
+// Nor may it report the prompt `unsent` (#154). This is a FIRST send, so
+// before #154 nothing had marked the text typed, and the result said
+// "resend it" and let the clean remove the pane -- after herdr had typed the
+// text and an Enter that may have answered the very dialog on the screen.
 func TestExecutePromptFailsWhenTheDialogSwallowedIt(t *testing.T) {
 	withDialogPollInterval(t, 0)
 
@@ -3545,7 +3622,9 @@ func TestExecutePromptFailsWhenTheDialogSwallowedIt(t *testing.T) {
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
 	}
 
-	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute}, nil)
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute},
+		func(p Progress) { progressed = append(progressed, p) })
 
 	wantFailedIndex := len(ops) - 1
 	if result.FailedIndex != wantFailedIndex {
@@ -3557,6 +3636,85 @@ func TestExecutePromptFailsWhenTheDialogSwallowedIt(t *testing.T) {
 	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
 		t.Errorf("AgentPrompt called %d times, want exactly 1 -- verification reports, it never resends (#108)", n)
 	}
+	if !result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = false, want true -- herdr accepted this send, so the text and its " +
+			"Enter are in the pane, and no later verdict may take the posture back to \"unsent\"")
+	}
+	if result.promptUnconfirmedCause != causeSwallowedByDialog {
+		t.Errorf("cause = %q, want %q", result.promptUnconfirmedCause, causeSwallowedByDialog)
+	}
+	if d := CleanCheck(context.Background(), in, result); d.Allowed ||
+		d.Reason != unconfirmedCleanReason(causeSwallowedByDialog) {
+		t.Errorf("CleanCheck = %+v, want the clean refused for the swallowed-by-a-dialog evidence", d)
+	}
+	// The step reports what was seen, not a delivery verdict the posture
+	// no longer makes.
+	if msg := progressed[len(progressed)-1].Err.Error(); strings.Contains(msg, "reached") {
+		t.Errorf("step message = %q, want no claim about what reached the agent", msg)
+	}
+}
+
+// TestExecuteAnyFailureAfterAnAcceptedSendIsUnconfirmed pins #154's rule at
+// its root rather than case by case: once herdr has accepted a send, the
+// text is in the pane, so whatever goes wrong afterwards leaves delivery
+// unknown.
+//
+// The two post-send verdicts have causes of their own, so they cannot tell
+// whether that fact is recorded or merely implied by their sentinels. This
+// is the one failure after a send with no sentinel: the check's own context
+// ending while it reads. Neither caller cancels today -- both pass
+// context.Background() -- which is why it is a test of the rule and not a
+// scenario, and why the rule is recorded where the send succeeds instead
+// of being re-derived from a list of errors, the list #154 fell out of.
+func TestExecuteAnyFailureAfterAnAcceptedSendIsUnconfirmed(t *testing.T) {
+	withDialogPollInterval(t, 0)
+
+	in := validInput()
+	in.UseWorktree = false
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := &cancelOnPrompt{
+		mockRunner: &mockRunner{
+			topo:          herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+			postPromptErr: errors.New("herdr agent read pane-1: exit status 1: transient"),
+		},
+		cancel: cancel,
+	}
+
+	result := Execute(ctx, m, ops, ExecOpts{}, nil)
+
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, want, result)
+	}
+	if countCallsWithPrefix(m.calls, "AgentPrompt") != 1 {
+		t.Fatalf("the send never went out, so this proves nothing: %v", m.calls)
+	}
+	if !result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = false, want true -- herdr accepted the send before the check failed")
+	}
+	if result.promptUnconfirmedCause != causeFailedAfterSending {
+		t.Errorf("cause = %q, want %q", result.promptUnconfirmedCause, causeFailedAfterSending)
+	}
+}
+
+// cancelOnPrompt is a mockRunner whose context ends the moment herdr accepts
+// a send: the one way to make the post-send check fail with neither of its
+// verdicts.
+type cancelOnPrompt struct {
+	*mockRunner
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnPrompt) AgentPrompt(ctx context.Context, req herdrc.AgentPromptReq) error {
+	err := c.mockRunner.AgentPrompt(ctx, req)
+	c.cancel()
+	return err
 }
 
 // TestExecutePromptSucceedsWhenTheAgentRaisesItsOwnDialog is the
@@ -3663,6 +3821,7 @@ func TestUnsafeScreenErrorsExcludeASwallowedPrompt(t *testing.T) {
 		{"a dialog on the screen is waitable", fmt.Errorf("wrapped: %w", errAgentOnDialog), true},
 		{"an unpainted screen is waitable", fmt.Errorf("wrapped: %w", errPaneUnpainted), true},
 		{"a swallowed prompt is NOT", fmt.Errorf("wrapped: %w", errPromptSwallowed), false},
+		{"nor is an agent gone after the send", fmt.Errorf("wrapped: %w", errAgentGoneAfterSend), false},
 		{"nor is an unrelated failure", errors.New("herdr agent prompt: exit status 1"), false},
 		{"nor is nothing at all", nil, false},
 	} {

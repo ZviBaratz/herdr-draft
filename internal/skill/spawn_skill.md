@@ -430,18 +430,16 @@ rather than reasoning backwards from what you assume went wrong:
 | value | what it tells you | what to do |
 |---|---|---|
 | `sent` | the prompt reached the agent | nothing |
-| `unsent` | the text is not in front of the agent — which is not the same as never typed | **read the pane first**, then resend `unsent_prompt` |
+| `unsent` | herdr never accepted the text — which is not the same as the pane being ready for it | **read the pane first**, then resend `unsent_prompt` |
 | `unconfirmed` | delivery is **unknown**; it may have arrived in full | **read the pane. Never resend.** The text is under `unconfirmed_prompt` |
 
-`unsent` is not permission to resend blind. It covers three shapes, and
+`unsent` is not permission to resend blind. It covers two shapes, and
 only one of them is the simple one:
 
 - **a guard refused to send**, because the pane was showing a blocking
   dialog or had not finished painting. Resending types your prompt into
   that dialog, where the trailing Enter answers whichever option is
   highlighted.
-- **the send went out and left no trace** on the screen afterwards. There
-  may be no agent left to receive a second copy.
 - **the run stopped before the prompt step**, so nothing was typed. Here
   there may be no pane to read at all, if it failed before one was made.
 
@@ -454,6 +452,12 @@ and nothing observed rules it out. Resending on that is how an agent that
 is already working gets its instructions twice — and note that the text may
 have gone out **more than once** already, so a pane showing two copies of
 the prompt is a thing this status covers rather than a second bug to chase.
+
+Every failure after herdr has typed the prompt is `unconfirmed`, including
+a send herdr accepted that left no trace on the screen afterwards: a dialog
+the prompt's Enter may have answered, or a pane that stopped answering
+because the agent most likely exited. Read the pane and hand it to the
+user. Do not resend on the strength of a screen that looks empty.
 
 `--on-failure keep` is the default and is the right one for you: a
 half-built session a human can open and look at is worth more than a tidy

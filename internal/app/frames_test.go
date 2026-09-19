@@ -1095,6 +1095,11 @@ func TestAssembledSubmit_WaitingOnThePromptDialogFrame(t *testing.T) {
 // likely to cut something the user needs. The clause that has to survive
 // is the first one -- that the agent exited AS the prompt was sent, which
 // is the fact that sends them to the pane.
+//
+// Since #154 the screen also refuses the removal it used to offer. herdr
+// had typed the prompt and its Enter into the pane, and "exited" is
+// inferred from reads that failed, so delivery is unconfirmed. The
+// recovery line says so, and the remove line says why it is unavailable.
 func TestAssembledSubmit_PromptKilledTheAgentFrame(t *testing.T) {
 	runner := &submitFakeRunner{
 		topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
@@ -1131,6 +1136,52 @@ func TestAssembledSubmit_PromptKilledTheAgentFrame(t *testing.T) {
 
 	assertAppSubmitFrame(t, "submit-prompt-killed-agent-80x24", m, 80, 24)
 	assertAppSubmitFrame(t, fmt.Sprintf("submit-prompt-killed-agent-%dx%d", framePopupW, framePopupH),
+		m, framePopupW, framePopupH)
+}
+
+// TestAssembledSubmit_PromptSwallowedFrame is the killed-agent frame's
+// sibling: the same race, with an Enter that chose something that did not
+// exit, so the pane after the send is still on a dialog and none of the
+// prompt is on it.
+//
+// No frame pinned this screen until #154 changed it. It used to say "prompt
+// not sent" and offer `c remove it`, after herdr had typed the text and an
+// Enter into the pane. The screen now has to say three things: answer the
+// dialog (the row), delivery is unconfirmed so read before pasting (the
+// recovery line), and why remove is unavailable, naming the dialog.
+func TestAssembledSubmit_PromptSwallowedFrame(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		postPromptText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
+	}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
+	m.title.SetTitle("Fix login redirect loop", false)
+	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	if want := stepRowIndex(t, m.submitSteps, "prompt"); done.result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", done.result.FailedIndex, want, done.result)
+	}
+	if !done.result.PromptUnconfirmed {
+		t.Fatal("PromptUnconfirmed = false, want true -- herdr accepted the send (#154)")
+	}
+
+	m, cleanCmd := m.handleSubmitDone(done)
+	if cleanCmd == nil {
+		t.Fatal("handleSubmitDone returned no cmd, want the CleanCheck and prompt-save batch")
+	}
+	m, _ = m.handleCleanCheckResult(cleanCheckMsg{
+		result:   done.result,
+		decision: plan.CleanCheck(context.Background(), m.submitInput, done.result),
+	})
+	m.submitView.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
+
+	assertAppSubmitFrame(t, "submit-prompt-swallowed-80x24", m, 80, 24)
+	assertAppSubmitFrame(t, fmt.Sprintf("submit-prompt-swallowed-%dx%d", framePopupW, framePopupH),
 		m, framePopupW, framePopupH)
 }
 
