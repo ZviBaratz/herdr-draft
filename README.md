@@ -448,10 +448,9 @@ and it is reached five ways:
   terminal failed partway through, and it says nothing that tells the two
   apart — so the pane may hold none, some or all of the prompt. It is the
   one shape that is not evidence the text went out; it is here because
-  "never arrived" is not something this command knows either. It comes
-  from the pane's input failing under the send, which in practice means the
-  pane or herdr itself was going away, so there may be no pane left to
-  read. If there is none, the text is yours to reuse.
+  "never arrived" is not something this command knows either. Its likeliest
+  cause is the pane closing under the send, so there may be no pane left
+  to read. If there is none, the text is yours to reuse.
 
 Read `prompt_status` rather than inferring from the other fields:
 
@@ -486,7 +485,7 @@ of it. Resending that one is how an agent that is working gets its
 instructions twice.
 
 `--on-failure clean` is **refused** for an `unconfirmed` prompt, with the
-reason in `clean_refused` — which names whichever of the five shapes it
+reason in `clean_refused` — which names the evidence for whichever shape it
 was. After a wait that gave up, the session may have an agent working in
 it right now and cleaning up would kill it mid-turn. After two stalls, a
 send that was not seen to land, a send herdr failed partway, or any

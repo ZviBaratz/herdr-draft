@@ -3339,8 +3339,14 @@ func TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape(t *testing.T) {
 	if !strings.Contains(sendFailed.Reason, "agent_prompt_failed") {
 		t.Errorf("send-failed reason = %q, want it to name herdr's code, the only evidence there is", sendFailed.Reason)
 	}
-	if !strings.Contains(sendFailed.Reason, "none, some or all") {
-		t.Errorf("send-failed reason = %q, want it to say the pane may hold any amount of the prompt", sendFailed.Reason)
+	if !strings.Contains(sendFailed.Reason, "how far it got") {
+		t.Errorf("send-failed reason = %q, want it to say herdr did not say how much it typed", sendFailed.Reason)
+	}
+	// One sentence serves a first send and a stall's retry alike, so it may
+	// not say the pane could hold none of the prompt: after a stall, one
+	// whole copy has gone out.
+	if strings.Contains(sendFailed.Reason, "none") {
+		t.Errorf("send-failed reason = %q, want no claim that nothing may be in the pane", sendFailed.Reason)
 	}
 
 	decisions := map[string]CleanDecision{
@@ -3859,6 +3865,9 @@ func TestExecutePromptSendFailedIsUnconfirmed(t *testing.T) {
 		!strings.Contains(msg, "read the pane before pasting") {
 		t.Errorf("step message = %q, want herdr's code explained, and a look at the pane before any paste", msg)
 	}
+	if msg := last.Error(); strings.Contains(msg, "already gone out") {
+		t.Errorf("step message = %q, want no earlier copy -- this was the only send", msg)
+	}
 	if !errors.Is(last, herdrc.ErrPromptSendFailed) {
 		t.Errorf("the explained step error no longer matches ErrPromptSendFailed: %v", last)
 	}
@@ -3909,10 +3918,11 @@ func (p *promptErrSequence) AgentPrompt(ctx context.Context, req herdrc.AgentPro
 }
 
 // TestExecuteStallThenAFailedSendIsUnconfirmed: the stall's retry fails as
-// `agent_prompt_failed`. The first send's text and Enter are already in the
-// pane, and the retry may have added some or all of a second copy, so the
-// sentence the user reads is the failed send's -- worded to hold for "all of
-// it" -- and never a third send.
+// `agent_prompt_failed`. The first send's text and Enter went out whole, and
+// the retry may have added some or all of a second copy, so the step says
+// so -- the first-send sentence would describe a pane that might hold none
+// of it -- and there is never a third send. The clean's sentence is the
+// cause's one, worded to hold for either.
 func TestExecuteStallThenAFailedSendIsUnconfirmed(t *testing.T) {
 	withPromptRetrySettle(t, 0)
 
@@ -3929,7 +3939,9 @@ func TestExecuteStallThenAFailedSendIsUnconfirmed(t *testing.T) {
 		errs:       []error{stalledPromptErr(), sendFailedPromptErr()},
 	}
 
-	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{},
+		func(p Progress) { progressed = append(progressed, p) })
 
 	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
 		t.Fatalf("AgentPrompt called %d times, want 2 -- the stall and its one retry: %v", n, m.calls)
@@ -3937,6 +3949,13 @@ func TestExecuteStallThenAFailedSendIsUnconfirmed(t *testing.T) {
 	if !result.PromptUnconfirmed || result.promptUnconfirmedCause != causeSendFailed {
 		t.Errorf("posture = %v/%q, want unconfirmed/%q", result.PromptUnconfirmed,
 			result.promptUnconfirmedCause, causeSendFailed)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	if !strings.Contains(msg, "one copy of the prompt has already gone out") {
+		t.Errorf("step message = %q, want it to say the stalled send's copy went out", msg)
+	}
+	if !strings.Contains(msg, "read the pane before pasting") {
+		t.Errorf("step message = %q, want a look at the pane before any paste", msg)
 	}
 }
 

@@ -192,8 +192,12 @@ func (r report) writeUnsentPrompt(w io.Writer) {
 		// #108's double-paste: the old line asserted a delivery failure
 		// for a prompt the agent was already several tool calls into, and
 		// the documented thing to do with the text below is paste it.
+		//
+		// Worded for every unconfirmed shape, not just #108's: after a
+		// send herdr failed (#228) no agent is working on the prompt, but
+		// its input box may hold part of it.
 		fmt.Fprintf(w, "delivery of the prompt could not be confirmed -- read the pane before "+
-			"resending it, since the agent may already be working on it:\n%s\n", r.result.PromptText)
+			"resending it, since the agent may already have some or all of it:\n%s\n", r.result.PromptText)
 		return
 	}
 	fmt.Fprintf(w, "the prompt was not sent -- reproduced here so it is not lost:\n%s\n", r.result.PromptText)
