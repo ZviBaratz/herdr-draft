@@ -1674,6 +1674,45 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### `create --dry-run` and `launch_options` (#209) — 2026-09-19
+
+herdr 0.9.0. `zvi/fix-209-spawn-skill-session-options` at `8dc7393`, not
+merged, built with `go build`. Route A0 with its own `XDG_CONFIG_HOME` and
+`XDG_STATE_HOME` under `/var/tmp`, `onboarding = false`, `[worktrees]
+directory` under the same path, a throwaway repository with one commit on
+`main`, and a scratch plugin state dir and this plugin config:
+
+```toml
+[agents]
+favorites = ["claude"]
+[agents.extra_args]
+claude = ["--model", "claude-opus-5[1m]", "--effort", "xhigh"]
+[clauth]
+default = "smoke"
+launcher = ["<scratch>/fake-claude", "{account}", "--"]
+picker = "<scratch>/picker"
+[timeouts]
+detection_ms = 3000
+```
+
+`fake-claude` printed its argv and slept, so no claude started and the
+pass spent no account quota. `picker` logged its argv and answered with
+the protocol's recorded object. Each `create` ran headlessly with the three
+plugin variables and no pane ids. Around every dry run I took a snapshot
+of five things: `herdr workspace list`, the repository's branches, the
+worktree directory, the plugin state dir, and the picker's log.
+
+| Case | Result |
+|---|---|
+| `--worktree --base main --dry-run --json` | exit 0. `dry_run: true`, `branch: zvi/smoke-dry`, `account: smoke`. `launch_options` held `claude-opus-5[1m]` and `xhigh`, with provenance `extra_args` for both and `built-in` for `permission_mode`. No ids and no `prompt_status`. None of the five changed. |
+| the same with `--account auto` | exit 0, `account: picked-1`. The picker's argv was `--dir <repo> --json --strict --dry-run`; nothing else changed. |
+| the same with `--effort high`, dry and then for real | The dry run exited 0. The real run made the worktree and typed the launch, then stopped at detection, as it must with a stub (exit 1, kept). Its `--json`, without the ids and the failure fields, was identical to the dry run's. The pane showed the stub's argv as `smoke -- --model claude-opus-5[1m] --effort high`: `launch_options` exactly, with `extra_args`' `xhigh` displaced. |
+| the same title again, dry and then for real | Both exited 2 with `branch "zvi/smoke-dry" already exists, locally or on a remote`. Nothing changed. |
+
+Teardown: I stopped and deleted the disposable session and removed the
+tree. No process from the pass was left, and none had a cwd under the
+scratch tree.
+
 ### the popup's dead end, with and without evidence (#208) — 2026-09-19
 
 herdr 0.9.0, git 2.53.0. `main` at `930f9ad`, built from `git archive`, and
