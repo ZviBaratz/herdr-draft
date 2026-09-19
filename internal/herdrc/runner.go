@@ -449,6 +449,28 @@ const promptStalledCode = "agent_prompt_stalled"
 // the rest of the object out loud.
 var ErrPromptStalled = errors.New("the agent was not accepting input yet, so nothing was processed")
 
+// promptAgentGoneCode is herdr's `error.code` for `agent prompt --wait`
+// finding the agent gone once the prompt had been sent.
+const promptAgentGoneCode = "agent_not_running"
+
+// ErrPromptAgentGone reports that herdr sent the prompt and then found the
+// agent no longer running in the pane.
+//
+// A post-send fact, which is what makes it worth a sentinel (#154). herdr
+// v0.9.0 raises this code only after the prompt's dispatch has succeeded --
+// the text and Enter are in the pane by then -- from the identity check
+// straight after the dispatch, from an agent released or a pane closed,
+// exited or moved while it waits, and from a probe answering
+// `agent_not_found`, which it rewrites to this code (src/api/wait.rs:
+// agent_wait_not_running, agent_wait_probe_error). The lookup it makes
+// BEFORE sending fails as `agent_not_found` instead, and the app's prompt
+// handler never raises it, so this code cannot mean "nothing was typed".
+//
+// In practice it is #116's killed agent -- the prompt's Enter answering a
+// dialog's "No, exit" -- noticed by herdr's wait before herdr-draft's own
+// read of the pane.
+var ErrPromptAgentGone = errors.New("the agent stopped running after the prompt was sent")
+
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement
 // focus as two explicit mutually exclusive flags rather than a single
 // toggle, so every creation call must pass exactly one.
@@ -834,6 +856,8 @@ func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 			return fmt.Errorf("%w: %w", ErrPromptWaitTimeout, err)
 		case promptStalledCode:
 			return fmt.Errorf("%w: %w", ErrPromptStalled, err)
+		case promptAgentGoneCode:
+			return fmt.Errorf("%w: %w", ErrPromptAgentGone, err)
 		}
 		return err
 	}

@@ -453,11 +453,12 @@ is already working gets its instructions twice — and note that the text may
 have gone out **more than once** already, so a pane showing two copies of
 the prompt is a thing this status covers rather than a second bug to chase.
 
-Every failure after herdr has typed the prompt is `unconfirmed`, including
-a send herdr accepted that left no trace on the screen afterwards: a dialog
-the prompt's Enter may have answered, or a pane that stopped answering
-because the agent most likely exited. Read the pane and hand it to the
-user. Do not resend on the strength of a screen that looks empty.
+`unconfirmed` also covers a send that went out and was not seen to land: a
+dialog on the screen with none of the prompt on it, whose highlighted option
+the prompt's Enter may have chosen, or an agent that stopped answering
+straight after the send, most likely because it exited. Read the pane and
+hand it to the user. Do not resend on the strength of a screen that looks
+empty.
 
 `--on-failure keep` is the default and is the right one for you: a
 half-built session a human can open and look at is worth more than a tidy

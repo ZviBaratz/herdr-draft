@@ -3648,9 +3648,106 @@ func TestExecutePromptFailsWhenTheDialogSwallowedIt(t *testing.T) {
 		t.Errorf("CleanCheck = %+v, want the clean refused for the swallowed-by-a-dialog evidence", d)
 	}
 	// The step reports what was seen, not a delivery verdict the posture
-	// no longer makes.
-	if msg := progressed[len(progressed)-1].Err.Error(); strings.Contains(msg, "reached") {
+	// no longer makes -- and it may not tell the user to paste before
+	// they have read the pane, which is what "unconfirmed" means.
+	msg := progressed[len(progressed)-1].Err.Error()
+	if strings.Contains(msg, "reached") {
 		t.Errorf("step message = %q, want no claim about what reached the agent", msg)
+	}
+	if !strings.Contains(msg, "read the pane before pasting") {
+		t.Errorf("step message = %q, want it to put reading the pane before any paste", msg)
+	}
+}
+
+// TestExecuteStallThenASwallowedRetryIsUnconfirmed: the stall retry's second
+// send goes out, and the read after it finds a dialog with no trace of the
+// prompt. Two sends are behind this one, so whatever it reports must not
+// invite a third copy without a look at the pane, and the clean stays
+// refused. The sentence is the dialog's: it names what the user will find,
+// and says nothing about how many sends there were, so it holds for two.
+func TestExecuteStallThenASwallowedRetryIsUnconfirmed(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	withDialogPollInterval(t, 0)
+
+	in := validInput()
+	in.UseWorktree = false
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:    "AgentPrompt",
+		failErr:   stalledPromptErr(),
+		failCount: 1,
+		postPromptText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
+			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 2 {
+		t.Fatalf("AgentPrompt called %d times, want 2 -- the stall and its one retry: %v", n, m.calls)
+	}
+	if !result.PromptUnconfirmed || result.promptUnconfirmedCause != causeSwallowedByDialog {
+		t.Errorf("posture = %v/%q, want unconfirmed/%q", result.PromptUnconfirmed,
+			result.promptUnconfirmedCause, causeSwallowedByDialog)
+	}
+	if d := CleanCheck(context.Background(), in, result); d.Allowed {
+		t.Errorf("CleanCheck allowed the clean after two sends: %+v", d)
+	}
+	if msg := progressed[len(progressed)-1].Err.Error(); !strings.Contains(msg, "read the pane before pasting") {
+		t.Errorf("step message = %q, want no paste before a look at the pane", msg)
+	}
+}
+
+// TestExecutePromptAgentGoneFromHerdrIsUnconfirmed is the post-send verdict
+// that herdr reaches first (#154's review). `agent prompt --wait` answers
+// `agent_not_running` only after its dispatch succeeded, so the text and
+// Enter are in the pane -- #116's killed agent, noticed by herdr's own wait
+// before confirmPromptLanded looks. It is the same evidence as a pane that
+// stops answering and takes the same cause and step message; an allow-list
+// that did not name it reported it `unsent` and let the clean run.
+func TestExecutePromptAgentGoneFromHerdrIsUnconfirmed(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = false
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt: "AgentPrompt",
+		failErr: fmt.Errorf("%w: herdr agent prompt pane-1 ...: exit status 1: "+
+			`{"error":{"code":"agent_not_running","message":"agent is no longer running in the target pane"}}`,
+			herdrc.ErrPromptAgentGone),
+		failCount: 99,
+	}
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Fatalf("AgentPrompt called %d times, want 1 -- a post-send failure is never resent", n)
+	}
+	if !result.PromptUnconfirmed || result.promptUnconfirmedCause != causeAgentGoneAfterSend {
+		t.Errorf("posture = %v/%q, want unconfirmed/%q", result.PromptUnconfirmed,
+			result.promptUnconfirmedCause, causeAgentGoneAfterSend)
+	}
+	if d := CleanCheck(context.Background(), in, result); d.Allowed ||
+		d.Reason != unconfirmedCleanReason(causeAgentGoneAfterSend) {
+		t.Errorf("CleanCheck = %+v, want the clean refused for the agent-gone evidence", d)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	if !strings.Contains(msg, "the agent exited as the prompt was sent") {
+		t.Errorf("step message = %q, want herdr's code explained, not passed through raw", msg)
 	}
 }
 

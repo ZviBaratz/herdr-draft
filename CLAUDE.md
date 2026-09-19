@@ -311,7 +311,12 @@ Layering, outermost to innermost:
   (`promptIfReady`'s `typed` result), not inferred afterwards from which
   error came back: #154 was a first send that the post-send check found
   swallowed, reported `unsent` because the list of errors meaning "the text
-  went out" did not include it. `ExecResult.promptUnconfirmedCause` carries
+  went out" did not include it. When `agent prompt` itself fails, only an
+  error herdr raises after typing counts (`promptTextWasTyped`: the stall,
+  the timeout, and `agent_not_running`, which herdr's wait raises only after
+  its dispatch succeeded). `agent_prompt_failed` is deliberately not one of
+  them: herdr raises it both before anything is queued and when the write
+  itself fails. `ExecResult.promptUnconfirmedCause` carries
   which of the five shapes it was, purely so `CleanCheck` names the right
   evidence; the exported flag stays the posture every other package reads.
 - **Citations into herdr's source name a pinned ref, never a local

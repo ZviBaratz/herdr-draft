@@ -438,9 +438,10 @@ and it is reached four ways:
 - **the send went out and was not seen to land.** herdr-draft reads the
   pane straight after every send herdr accepts. If it finds a dialog with
   none of the prompt on it, the prompt's Enter may have answered that
-  dialog. If the pane stops answering, the agent most likely exited, but
-  that is inferred from reads that failed. Either way the text and Enter
-  went into the pane, which is the rule above applied to a first send.
+  dialog. If the pane stops answering, or herdr's own wait reports the
+  agent no longer running, the agent most likely exited. Either way the
+  text and Enter went into the pane, which is the rule above applied to a
+  first send.
 
 Read `prompt_status` rather than inferring from the other fields:
 
@@ -1446,12 +1447,21 @@ failed; the reason is on the row itself and in its panel. See
 [`[linear]`](#linear).
 
 **"prompt not sent" after a submit.** The session was created and the agent
-started, but the prompt couldn't be delivered (the agent was showing a
-dialog, or `agent prompt --wait` timed out). The failure screen says
+started, but the prompt was never typed: the agent was showing a dialog, or
+its screen had not painted yet. The failure screen says
 `prompt not sent — saved for manual paste:` with the full path on the line
 under it — `unsent-prompt.txt` in the plugin state directory — so you can
-paste it into the agent by hand. The session itself is fine: press `k`
-(keep it).
+paste it into the agent by hand once the pane is clear. The session itself
+is fine: press `k` (keep it).
+
+**"delivery unconfirmed" after a submit.** The prompt *was* typed into the
+pane, but nothing confirmed it landed: the wait for the agent timed out, a
+send stalled twice, or the pane afterwards showed a dialog with none of the
+prompt on it or stopped answering. Read the pane before anything else. The
+agent may be working on the prompt already, so pasting the saved copy
+without looking can send it twice. `remove` is unavailable here for the
+same reason; press `k`, and remove the session yourself once the pane shows
+it is safe to.
 
 **A row shows a value you didn't choose.** Something above your own
 `config.toml` supplied it. Check the row's panel for

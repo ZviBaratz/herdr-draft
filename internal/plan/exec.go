@@ -213,11 +213,12 @@ type ExecResult struct {
 	//     unsafe to type into. That refusal is a PRE-send refusal for the
 	//     attempt and a POST-send one for the prompt, and only the second
 	//     framing is the user's.
-	//   - a send herdr accepted, which confirmPromptLanded then found did
-	//     not land (#154): the pane read straight afterwards is on a dialog
-	//     with none of the prompt on it, or cannot be read at all. Either
-	//     way herdr has typed the text and Enter, so this is the sticky
-	//     rule above applied to a FIRST send -- the case it used to miss,
+	//   - a send that went out and was not seen to land (#154): the pane
+	//     read straight afterwards is on a dialog with none of the prompt
+	//     on it, or cannot be read at all, or herdr's own wait found the
+	//     agent no longer running (herdrc.ErrPromptAgentGone). Each way
+	//     herdr has typed the text and Enter, so this is the sticky rule
+	//     above applied to a FIRST send -- the case it used to miss,
 	//     because "the text went out" was inferred from a list of errors
 	//     rather than recorded when herdr accepted the send.
 	//
@@ -294,9 +295,10 @@ const (
 	// (errPromptSwallowed). The prompt's Enter may have answered it.
 	causeSwallowedByDialog unconfirmedCause = "swallowed-by-dialog"
 
-	// causeAgentGoneAfterSend: herdr accepted a send, and the pane could not
-	// be read afterwards (errAgentGoneAfterSend). Most likely the agent
-	// exited, which is inferred, not observed.
+	// causeAgentGoneAfterSend: the text went out, and then the agent
+	// stopped answering -- the pane could not be read afterwards
+	// (errAgentGoneAfterSend), or herdr's own wait found it no longer
+	// running (herdrc.ErrPromptAgentGone). Most likely it exited.
 	causeAgentGoneAfterSend unconfirmedCause = "agent-gone-after-send"
 )
 
@@ -694,7 +696,7 @@ func confirmPromptLanded(ctx context.Context, r herdrc.Runner, req herdrc.AgentP
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("could not confirm the prompt reached the agent: %w", ctxErr)
 		}
-		return explainPromptKilledAgent(err)
+		return explainPromptKilledAgent(fmt.Errorf("%w: %w", errAgentGoneAfterSend, err))
 	}
 	sig := blockingDialogSignature(screen)
 	if sig == "" {
@@ -703,8 +705,8 @@ func confirmPromptLanded(ctx context.Context, r herdrc.Runner, req herdrc.AgentP
 	if !promptIsVerifiable(req.Text) || promptOnScreen(screen, req.Text) {
 		return nil
 	}
-	return fmt.Errorf("keep this session, answer the dialog in the pane, then paste the prompt -- "+
-		"the agent is showing %q: %w", sig, errPromptSwallowed)
+	return fmt.Errorf("keep this session and answer the dialog, then read the pane before pasting "+
+		"the prompt -- the agent is showing %q: %w", sig, errPromptSwallowed)
 }
 
 // readAfterSend reads paneID, retrying a failed read up to
@@ -968,12 +970,17 @@ func explainAbandonedDialog(err error) error {
 // any reason, since `agent read`'s errors are untyped. So the result takes
 // the unconfirmed posture, CleanCheck refuses the removal this sentence
 // used to offer, and the instruction is the one every unconfirmed shape
-// gives: read the pane first. errAgentGoneAfterSend is wrapped so
-// classifyPromptDelivery can name this evidence rather than a neighbour's.
+// gives: read the pane first.
+//
+// Two callers reach it holding the same fact from different witnesses:
+// confirmPromptLanded, whose reads of the pane failed (errAgentGoneAfterSend),
+// and herdr's own wait, which saw the agent go first
+// (herdrc.ErrPromptAgentGone). err carries whichever it was, which is what
+// lets classifyPromptDelivery name the evidence.
 func explainPromptKilledAgent(err error) error {
 	return fmt.Errorf("the agent exited as the prompt was sent -- most likely a dialog that had not "+
 		"painted yet, answered by the prompt's own Enter; read the pane before removing this session "+
-		"or starting it again: %w: %w", errAgentGoneAfterSend, err)
+		"or starting it again: %w", err)
 }
 
 // explainStalledPrompt says what is left after a prompt stalled TWICE --
@@ -1002,16 +1009,17 @@ func explainStalledPrompt(err error) error {
 // one herdr only ever produces AFTER it has written the prompt text and
 // Enter into the pane.
 //
-// Both sentinels come from `agent prompt --wait`, which dispatches the send
-// and only then watches for an effect (herdr v0.9.0, src/api/wait.rs), so
-// either is proof the text went out. It answers only for a send herdr
+// All three sentinels come from `agent prompt --wait`, which dispatches the
+// send and only then watches for an effect (herdr v0.9.0, src/api/wait.rs),
+// so each is proof the text went out. It answers only for a send herdr
 // refused or failed: one herdr ACCEPTED is typed by definition, and
 // promptIfReady records that directly, whatever the post-send check makes
 // of the screen afterwards. This function used to be the only source of the
 // fact, which is how a first send the check found swallowed was reported
 // `unsent` (#154).
 func promptTextWasTyped(err error) bool {
-	return errors.Is(err, herdrc.ErrPromptStalled) || errors.Is(err, herdrc.ErrPromptWaitTimeout)
+	return errors.Is(err, herdrc.ErrPromptStalled) || errors.Is(err, herdrc.ErrPromptWaitTimeout) ||
+		errors.Is(err, herdrc.ErrPromptAgentGone)
 }
 
 // classifyPromptDelivery turns the error that ended the run, plus whether
@@ -1019,11 +1027,13 @@ func promptTextWasTyped(err error) bool {
 // wording.
 //
 // The last case is the sticky one (#132's rider), and the order matters:
-// the four sentinels describe the terminal failure exactly, so they win over
-// the weaker "something went out at some point" when both are true. Two are
-// herdr's and two are confirmPromptLanded's verdicts (#154), and all four
-// are ungated for the same reason: each is only ever produced after herdr
-// has accepted a send, so each carries textAlreadySent in itself.
+// the sentinels above it name the evidence the step ended on, so they win
+// over the weaker "something went out at some point" when both are true.
+// Three are herdr's and two are confirmPromptLanded's verdicts (#154), and
+// all are ungated for the same reason: each is only ever produced after
+// herdr has typed the text, so each carries textAlreadySent in itself. What
+// they do not all carry is how many sends there were: a stall whose retry is
+// swallowed ends on the dialog's sentence, which is worded to hold for two.
 func classifyPromptDelivery(runErr error, textAlreadySent bool) (bool, unconfirmedCause) {
 	switch {
 	case errors.Is(runErr, herdrc.ErrPromptWaitTimeout):
@@ -1032,7 +1042,7 @@ func classifyPromptDelivery(runErr error, textAlreadySent bool) (bool, unconfirm
 		return true, causeStalledTwice
 	case errors.Is(runErr, errPromptSwallowed):
 		return true, causeSwallowedByDialog
-	case errors.Is(runErr, errAgentGoneAfterSend):
+	case errors.Is(runErr, errAgentGoneAfterSend), errors.Is(runErr, herdrc.ErrPromptAgentGone):
 		return true, causeAgentGoneAfterSend
 	case textAlreadySent:
 		return true, causeFailedAfterSending
@@ -1578,6 +1588,8 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 					err = explainUnconfirmedPrompt(err)
 				case errors.Is(err, herdrc.ErrPromptStalled):
 					err = explainStalledPrompt(err)
+				case errors.Is(err, herdrc.ErrPromptAgentGone):
+					err = explainPromptKilledAgent(err)
 				}
 			default:
 				err = fmt.Errorf("plan: execute: unknown op kind %v", op.Kind)
@@ -2052,8 +2064,8 @@ func unconfirmedCleanReason(cause unconfirmedCause) string {
 			"agent is unknown. Read the pane before removing anything."
 	case causeAgentGoneAfterSend:
 		return "the agent stopped answering as the prompt was typed into it -- most likely it " +
-			"exited, but that is inferred from reads that failed, not seen, and if it is still " +
-			"running it has the prompt. Read the pane before removing anything."
+			"exited, which nothing here can see, and if it is still running it has the prompt. " +
+			"Read the pane before removing anything."
 	}
 	// causeWaitTimedOut, and the zero value with it. CleanCheck cannot
 	// reach that zero value -- the cause is set on the same line as the
