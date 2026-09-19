@@ -592,9 +592,12 @@ func TestExitOne_OnFailureCleanRemovesOnlyTheHerePlacement(t *testing.T) {
 	}
 }
 
-// TestExitOne_TopologyItselfFails covers the failure with nothing to keep
-// or clean: it is still exit 1, and it says so rather than claiming a
-// session exists.
+// TestExitOne_TopologyItselfFails covers a failed first step with no space
+// to keep or clean and no evidence either way about what herdr did: this
+// fake's error is not one herdrc marks herdrc.ErrNothingCreated. It is still
+// exit 1, and it claims neither a session nor the absence of one (#192).
+// TestExitNothingCreated_FirstStepRefused is the same step WITH the
+// evidence.
 func TestExitOne_TopologyItselfFails(t *testing.T) {
 	h := newHarness(t)
 	h.runner.failAt = "WorkspaceCreate"
@@ -603,10 +606,10 @@ func TestExitOne_TopologyItselfFails(t *testing.T) {
 		t.Fatalf("exit = %d, want %d", code, ExitFailed)
 	}
 	if h.runner.called("WorkspaceClose") || h.runner.called("WorktreeRemove") {
-		t.Errorf("nothing was created, but a clean was attempted: %v", h.runner.calls)
+		t.Errorf("no space was reported, but a clean was attempted: %v", h.runner.calls)
 	}
-	if !strings.Contains(h.stderr.String(), "nothing was created") {
-		t.Errorf("stderr = %q, want it to say nothing was created", h.stderr)
+	if want := "\nherdr may have made part of it before failing; look before retrying"; !strings.Contains(h.stderr.String(), want) {
+		t.Errorf("stderr = %q\nwant it to contain %q", h.stderr, want)
 	}
 }
 
@@ -1417,9 +1420,9 @@ func TestFailureLineNamesTheSpaceNotTheAgent(t *testing.T) {
 
 // TestBranchLeadingDash pins that internal/herdrc's argv refusal -- a flag
 // value git would end up reading as an option once herdr passes it on (see
-// appendFlag for the route) -- surfaces here as a
-// plain exit 1 with a readable reason, not as a panic, a confusing wrap,
-// or an attempt to run herdr with a mangled command line.
+// appendFlag for the route) -- surfaces here as a readable reason, not as a
+// panic, a confusing wrap, or an attempt to run herdr with a mangled command
+// line. The exit is 4, not 1 (#192): herdr was never run, so nothing exists.
 //
 // It runs against a REAL herdrc.CLIRunner precisely because a fake could
 // only re-state the rule rather than exercise it: the refusal happens
@@ -1435,8 +1438,8 @@ func TestBranchLeadingDash(t *testing.T) {
 	}
 
 	code := h.run("--title", "t", "--worktree", "--branch", "--oops")
-	if code != ExitFailed {
-		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+	if code != ExitNothingCreated {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitNothingCreated, h.stderr)
 	}
 	stderr := h.stderr.String()
 	if !strings.Contains(stderr, `begins with "-"`) {

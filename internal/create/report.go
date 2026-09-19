@@ -103,8 +103,21 @@ func (r report) failureLine() string {
 		b.WriteString(": " + r.err.Error())
 	}
 	switch {
-	case r.result.Created == nil:
+	case r.result.NothingCreated:
 		b.WriteString("\nnothing was created")
+	case r.result.Created == nil:
+		// No space was reported, and nothing shows herdr refused before it
+		// acted (#192): its worktree create can fail after git has made the
+		// branch, the checkout, and even a workspace on it. So this says
+		// neither thing.
+		b.WriteString("\nherdr may have made part of it before failing")
+		if r.input.UseWorktree {
+			b.WriteString(" -- any of the branch " + r.input.Branch + ", its checkout and a workspace for it")
+		}
+		b.WriteString("; look before retrying")
+		if r.cleanRefused != "" {
+			b.WriteString("\n--on-failure clean: " + r.cleanRefused)
+		}
 	case r.cleaned:
 		b.WriteString("\nthe session it had created was removed (--on-failure clean)")
 		switch o := r.outcome; {

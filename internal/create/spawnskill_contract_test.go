@@ -117,7 +117,7 @@ func TestSkillNamesEveryPromptStatus(t *testing.T) {
 	}
 }
 
-// TestSkillNamesEveryExitCode pins the four a script branches on.
+// TestSkillNamesEveryExitCode pins the five a script branches on.
 //
 // Backticks are stripped first, so a markdown table cell written as
 // "| `2` |" counts. The contract this states, and which the document must
@@ -125,13 +125,13 @@ func TestSkillNamesEveryPromptStatus(t *testing.T) {
 // leading table cell.
 func TestSkillNamesEveryExitCode(t *testing.T) {
 	doc := strings.ReplaceAll(renderedSkill(), "`", "")
-	for _, c := range []string{"0", "1", "2", "3"} {
+	for _, c := range []string{"0", "1", "2", "3", "4"} {
 		if !strings.Contains(doc, "exit "+c) && !strings.Contains(doc, "| "+c+" ") {
 			t.Errorf("the skill does not document exit code %s", c)
 		}
 	}
 	// Guards the loop above against the constants being renumbered.
-	if ExitOK != 0 || ExitFailed != 1 || ExitUsage != 2 || ExitUnreachable != 3 {
+	if ExitOK != 0 || ExitFailed != 1 || ExitUsage != 2 || ExitUnreachable != 3 || ExitNothingCreated != 4 {
 		t.Fatal("create's exit codes moved; this test's literals must move with them")
 	}
 }

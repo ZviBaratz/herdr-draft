@@ -1652,6 +1652,30 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### a create whose first step made nothing (#192) — 2026-09-19
+
+herdr 0.9.0, git 2.53.0. `main` at `7399894`, built from `git archive`, and
+`zvi/fix-192-exit-code-nothing-created` at `5482772`, not merged. Route A0
+with its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME` under `/var/tmp`,
+`onboarding = false`, `[worktrees] directory` under the same path, and a
+scratch plugin config and state dir with `[agents] favorites =
+["nosuchkind"]`. No create got past its first step, so the pass spent no
+account quota. Each `create` ran headlessly with the three plugin variables
+and no pane ids.
+
+| Case | `main` | the fix |
+|---|---|---|
+| `--worktree`, from a lane of a `--separate-git-dir` repository | **the defect.** herdr `linked_worktree_source`, `nothing was created`, **exit 1**. | **as expected.** The same refusal and line, **exit 4**. `--on-failure clean` attempted nothing. `--json`: `ok: false`, `failed_step: creating worktree`, no `workspace_id` or `space_*` ids. Afterwards: no workspace, no `zvi/*` branch, nothing new under the worktree directory. |
+| `--worktree --branch zvi/collide`, where herdr's checkout path `<worktrees>/plain/zvi-collide` already held a file | **a second defect.** herdr `worktree_create_failed`: `Preparing worktree (new branch 'zvi/collide')`, `fatal: ... already exists`. stderr said `nothing was created`, exit 1, but `git branch` listed `zvi/collide`: git makes the branch before it refuses the path. | **as expected.** The same failure, **exit 1**, and `herdr may have made part of it before failing -- the worktree's checkout, or its branch zvi/collide; look before retrying`. The branch was there. Retried unchanged: exit 2, `branch "zvi/collide" already exists`. |
+
+The second case is why exit 4 needs evidence rather than a space missing
+from the reply. Under that simpler rule it would have been exit 4, telling a
+caller nothing existed when a branch did, and the retry that exit invites is
+the one refused above.
+
+Teardown: the disposable session stopped and deleted, no process with a cwd
+under the scratch tree, the tree removed, `pgrep -x herdr-draft` 0.
+
 ### the clean gate's base, on the recorded path (#193) — 2026-09-19
 
 herdr 0.9.0, git 2.53.0. `main` at `7399894`, built from `git archive`, and

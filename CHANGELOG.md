@@ -135,7 +135,7 @@ without the popup. It drives herdr exclusively through the public CLI
   name (#176, #178).
 - **Run inside a linked worktree, it can create a worktree** (#171).
   `--worktree`, and a create with no worktree flag at all, handed herdr the
-  linked checkout as the source, which herdr refuses: exit 1, nothing
+  linked checkout as the source, which herdr refuses, so nothing was
   created. That was the spawn skill's first example, run by an agent in any
   worktree lane. The new worktree is now created from the repository's
   primary checkout, with its base resolved in the lane, so an unset base,
@@ -154,8 +154,16 @@ without the popup. It drives herdr exclusively through the public CLI
 - Progress goes to stderr one line per step; the result to stdout, or a
   single JSON object under `--json` carrying a `provenance` map naming the
   tier each value came from.
-- Exit codes: `0` created, `1` the plan started and failed (`--on-failure`
-  applied), `2` bad usage or an unresolvable request, `3` herdr unreachable.
+- Exit codes: `0` created, `1` the plan started and failed, and part of
+  the session may exist (`--on-failure` applied), `2` bad usage or an
+  unresolvable request, `3` herdr unreachable, `4` the plan started and its
+  first step failed before anything existed (#192). `4` is given only with
+  evidence: herdr refused the step before acting, or was never asked. A
+  worktree step herdr fails after git has run is `1`, and so is any other
+  first-step failure that shows neither: `create` no longer says "nothing
+  was created" about one, and says instead what it may have left. With no
+  space reported, `--on-failure clean` has nothing to remove, and
+  `clean_refused` says so.
 - **It refuses what the form refuses**, before anything is created (exit
   `2`): a branch that already exists when a worktree would create it, a
   title an open workspace already carries, and a pinned account clauth

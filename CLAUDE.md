@@ -105,7 +105,8 @@ Layering, outermost to innermost:
   Env, Deps) int` parses the flags, resolves everything unset through
   `internal/defaults`, builds and executes the same `plan.Op` list the form
   does, and returns the process exit code (0 created, 1 the plan started
-  and failed, 2 bad usage or an unresolvable request, 3 herdr unreachable).
+  and failed, 2 bad usage or an unresolvable request, 3 herdr unreachable,
+  4 the plan's first step failed before anything existed).
   It owns **no precedence of its own** — `equivalence_test.go` drives a
   real `app.Model` and a real `create` request over the same files and
   asserts the two `plan.Input`s are identical field for field, which is the

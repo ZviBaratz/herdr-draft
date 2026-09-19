@@ -45,7 +45,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
-// Exit codes, spec §13's table verbatim.
+// Exit codes, spec §13's table as #192 amended it.
 //
 // ExitUsage covers every pre-flight refusal, not only a malformed command
 // line: a config.toml that will not parse, a project directory that does
@@ -55,15 +55,26 @@ import (
 // keep or clean, and re-running with a corrected invocation is the whole
 // remedy.
 //
-// ExitFailed is the other half: the plan started. It is returned whether
-// or not the topology op itself succeeded, since both leave the caller
-// with "the session was not created" -- --on-failure only has something to
-// act on in the first case, and the JSON report says which happened.
+// ExitUnreachable is the other refusal that comes before the plan: the
+// reachability probe, run after every check that needs no herdr.
+//
+// ExitFailed and ExitNothingCreated are the plan's own: it started, and it
+// failed. They split on what the failure can be shown to have left behind
+// (#192). ExitNothingCreated is a first step that failed before anything
+// existed -- plan.ExecResult.NothingCreated, which needs evidence and not
+// just an absent space -- so there is nothing to look at or clean up, and
+// --on-failure has nothing to act on. ExitFailed is everything else: a
+// session that may exist in part, which --on-failure acts on when a space
+// was reported, and a first step that failed with no evidence either way.
+// That second kind is why an absent space is not enough: herdr's worktree
+// create can fail after git has made the checkout and its branch, and a
+// caller told "nothing exists" would retry into them.
 const (
-	ExitOK          = 0
-	ExitFailed      = 1
-	ExitUsage       = 2
-	ExitUnreachable = 3
+	ExitOK             = 0
+	ExitFailed         = 1
+	ExitUsage          = 2
+	ExitUnreachable    = 3
+	ExitNothingCreated = 4
 )
 
 // Env is the process environment `create` reads, passed in as a struct
@@ -419,10 +430,19 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 		return ExitOK
 	}
 
-	if rep.result.Created != nil {
+	switch {
+	case rep.result.Created != nil:
 		applyOnFailure(ctx, deps, &rep)
+	case rep.onFailure == onFailureClean && !rep.result.NothingCreated:
+		// No space to act on, and no evidence nothing was made (#192).
+		// Said, because under --json an absent `cleaned` beside an absent
+		// `clean_refused` read as nothing left to clean.
+		rep.cleanRefused = "no space was reported, so there was nothing to remove"
 	}
 	rep.write(deps.stdout(), deps.stderr())
+	if rep.result.NothingCreated {
+		return ExitNothingCreated
+	}
 	return ExitFailed
 }
 

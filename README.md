@@ -380,9 +380,19 @@ launched with. It never prompts. Exit codes:
 | Code | Meaning |
 |---|---|
 | 0 | created |
-| 1 | the plan started and failed (`--on-failure` applied) |
+| 1 | the plan started and failed, and part of the session may exist (`--on-failure` applied) |
 | 2 | bad usage, or a request that cannot be resolved |
-| 3 | herdr is unreachable |
+| 3 | herdr is unreachable — found before the plan starts |
+| 4 | the plan started, and its first step failed before making anything: nothing exists |
+
+Exit 4 needs evidence, not just a failed first step: herdr refused that
+step before acting, or it was never asked. A worktree step that herdr
+fails *after* git has run can leave the branch, its checkout and even a
+workspace on it, and that is exit 1, with no space reported for
+`--on-failure clean` to remove — `clean_refused` says so. With `--json`,
+exit 4 still prints the object — `ok: false`, `failed_step` and `error` —
+with no `workspace_id`/`space_*` ids, since there is nothing for them to
+name.
 
 **A prompt has three fates, not two.** `prompt_status` names which:
 `sent`, `unsent`, or `unconfirmed`. The third means delivery is unknown,

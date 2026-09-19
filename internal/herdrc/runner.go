@@ -546,10 +546,67 @@ func (r *CLIRunner) WorkspaceList(ctx context.Context) ([]WorkspaceInfo, error) 
 	return result.Workspaces, nil
 }
 
+// ErrNothingCreated marks a failure of one of the four calls that make a
+// session's space -- WorktreeCreate, WorkspaceCreate, TabCreate, PaneSplit
+// -- that is evidence nothing was made: herdr refused the request before
+// changing anything, or this package refused to run herdr at all
+// (errRefused). It is what lets `create` exit 4 rather than 1 (#192).
+//
+// Its absence is not evidence of the opposite. A failure with no herdr
+// error code -- herdr killed mid-call, a success reply this package could
+// not parse -- says nothing either way, and neither does a worktree code
+// outside refusedBeforeGit: herdr 0.9.0 answers worktree_open_failed after
+// `git worktree add` has made the checkout and its branch, and git itself
+// creates a new branch before refusing a checkout path that already exists,
+// which reaches here as worktree_create_failed.
+//
+// The error's text is left exactly as it was: the mark is a fact for
+// errors.Is, not a word for the reader.
+var ErrNothingCreated = errors.New("herdr refused before creating anything")
+
+// nothingCreatedError attaches ErrNothingCreated to a create call's error.
+type nothingCreatedError struct{ err error }
+
+func (e *nothingCreatedError) Error() string        { return e.err.Error() }
+func (e *nothingCreatedError) Unwrap() error        { return e.err }
+func (e *nothingCreatedError) Is(target error) bool { return target == ErrNothingCreated }
+
+// refusedBeforeGit is herdr's codes for a `worktree create` it refused
+// before running `git worktree add`: the request and source checks in
+// start_api_worktree_create and resolve_worktree_source
+// (herdr:src/app/api/worktrees/deferred.rs and src/app/api/worktrees.rs at
+// v0.9.0), and the two the CLI answers without sending the request at all
+// (src/cli/server_not_running.rs, src/cli/protocol_guard.rs). An allow-list
+// on purpose: a code herdr adds later is unknown, and unknown stays exit 1.
+func refusedBeforeGit(code string) bool {
+	switch code {
+	case "invalid_request", "workspace_not_found", "not_git_worktree",
+		"linked_worktree_source", "worktree_operation_in_progress",
+		"server_not_running", "protocol_mismatch":
+		return true
+	}
+	return false
+}
+
+// refusedWhole is the rule for the three calls that build their pane before
+// touching herdr's state, so fail whole (herdr:src/app/creation.rs,
+// src/app/api/tabs.rs and src/app/api/panes.rs at v0.9.0): any error code
+// herdr answers with means nothing was added.
+func refusedWhole(code string) bool { return code != "" }
+
+// markNothingCreated returns err marked ErrNothingCreated when refused says
+// herdr's code for it changed nothing, or when herdr was never run.
+func markNothingCreated(err error, refused func(code string) bool) error {
+	if err != nil && (errors.Is(err, errRefused) || refused(herdrErrorCode(err))) {
+		return &nothingCreatedError{err}
+	}
+	return err
+}
+
 // WorktreeCreate runs `herdr worktree create`.
-func (r *CLIRunner) WorktreeCreate(ctx context.Context, req WorktreeCreateReq) (CreatedTopology, error) {
+func (r *CLIRunner) WorktreeCreate(ctx context.Context, req WorktreeCreateReq) (_ CreatedTopology, err error) {
+	defer func() { err = markNothingCreated(err, refusedBeforeGit) }()
 	args := []string{"worktree", "create"}
-	var err error
 	if args, err = appendFlag(args, "--cwd", req.Cwd); err != nil {
 		return CreatedTopology{}, err
 	}
@@ -599,9 +656,9 @@ func (r *CLIRunner) WorktreeCreate(ctx context.Context, req WorktreeCreateReq) (
 }
 
 // WorkspaceCreate runs `herdr workspace create`.
-func (r *CLIRunner) WorkspaceCreate(ctx context.Context, req WorkspaceCreateReq) (CreatedTopology, error) {
+func (r *CLIRunner) WorkspaceCreate(ctx context.Context, req WorkspaceCreateReq) (_ CreatedTopology, err error) {
+	defer func() { err = markNothingCreated(err, refusedWhole) }()
 	args := []string{"workspace", "create"}
-	var err error
 	if args, err = appendFlag(args, "--cwd", req.Cwd); err != nil {
 		return CreatedTopology{}, err
 	}
@@ -629,9 +686,9 @@ func (r *CLIRunner) WorkspaceCreate(ctx context.Context, req WorkspaceCreateReq)
 }
 
 // TabCreate runs `herdr tab create`.
-func (r *CLIRunner) TabCreate(ctx context.Context, req TabCreateReq) (CreatedTopology, error) {
+func (r *CLIRunner) TabCreate(ctx context.Context, req TabCreateReq) (_ CreatedTopology, err error) {
+	defer func() { err = markNothingCreated(err, refusedWhole) }()
 	args := []string{"tab", "create"}
-	var err error
 	if args, err = appendFlag(args, "--workspace", req.Workspace); err != nil {
 		return CreatedTopology{}, err
 	}
@@ -692,9 +749,9 @@ func (r *CLIRunner) TabRename(ctx context.Context, req TabRenameReq) error {
 }
 
 // PaneSplit runs `herdr pane split`.
-func (r *CLIRunner) PaneSplit(ctx context.Context, req PaneSplitReq) (CreatedTopology, error) {
+func (r *CLIRunner) PaneSplit(ctx context.Context, req PaneSplitReq) (_ CreatedTopology, err error) {
+	defer func() { err = markNothingCreated(err, refusedWhole) }()
 	args := []string{"pane", "split"}
-	var err error
 	if args, err = appendFlag(args, "--pane", req.PaneID); err != nil {
 		return CreatedTopology{}, err
 	}
