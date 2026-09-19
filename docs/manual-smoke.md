@@ -1652,6 +1652,29 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### a submit inside the title check's debounce (#137) — 2026-09-19
+
+herdr 0.9.0. `main` at `7399894`, built from `git archive`, and
+`zvi/fix-137-submit-waits-for-title-check` at `46c2179`, not merged. Route
+A0 with the isolation of the #195 run below: its own `XDG_*` dirs,
+`onboarding = false`, `[worktrees] directory` under the scratch tree, and a
+scratch plugin config with `[agents] favorites = ["nosuchkind"]`, so no
+claude was started. The form ran by Route B in the host workspace's pane, on
+a throwaway repository with the worktree on. A second workspace labelled
+`busy` was open, and the repository already had a branch `zvi/existing`.
+The form opens on the title, so each pass sent the title and `⌃S` in
+back-to-back `send-text` / `send-keys` calls, 11–24 ms apart.
+
+| Case | `main` | the fix |
+|---|---|---|
+| `busy`, the label of an open workspace, then `⌃S` | **the defect.** `✓ worktree  zvi/busy`, and a second workspace labelled `busy`. | **as expected.** No submit: the title panel read `label in use` and marked the open `busy` with `!`. Nothing was created. |
+| `existing`, whose branch `zvi/existing` exists, then `⌃S` | **the defect.** `✓ worktree  zvi/existing from HEAD`: herdr checked the existing branch out into a new worktree. `c` removed the worktree and kept the branch. | **as expected.** No submit: the title panel read `branch exists`. |
+| `busy`, its `label in use` landed, then `2` and `⌃S` | **the defect.** No submit and no reason: the panel read `branch will be zvi/busy2`, the verdict for `busy` having refused it. | **as expected.** It waited for `busy2`'s check and went on: `✓ worktree  zvi/busy2`, `✓ tab  busy2`. `c` removed it. |
+
+Teardown: the disposable session stopped and deleted, no process left with
+a cwd under the scratch tree, the scratch tree removed, `pgrep -x
+herdr-draft` 0.
+
 ### a create whose first step made nothing (#192) — 2026-09-19
 
 herdr 0.9.0, git 2.53.0. `main` at `7399894`, built from `git archive`, and
