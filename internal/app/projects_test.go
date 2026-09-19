@@ -69,9 +69,13 @@ func switchProject(t *testing.T, m Model, from, to string) Model {
 // TestDirResult_AppliesProjectMemory is the read side of spec §10: what
 // you last chose in THIS project is what the form opens on.
 func TestDirResult_AppliesProjectMemory(t *testing.T) {
+	// main exists: a remembered base that names no commit is dropped (#194),
+	// which is TestPopup_ABaseThatDoesNotResolveFallsBackAndSaysSo's case.
+	git := newFakeGit()
+	git.commits = map[string]string{"/repo-a main": "0a1b2c3"}
 	m := memoryModel(t, "/repo-a", memoryFor(map[string]config.ProjectDefaults{
 		"/repo-a": {Kind: "codex", Worktree: ptrBool(false), Placement: "tab-here", Base: "main"},
-	}), nil)
+	}), git)
 
 	if got := m.projectKey; got != "/repo-a" {
 		t.Fatalf("projectKey = %q, want the repo root %q", got, "/repo-a")

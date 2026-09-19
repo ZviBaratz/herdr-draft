@@ -2175,7 +2175,7 @@ func pumpAsync(t *testing.T, m Model, cmds []tea.Cmd) Model {
 		}
 		switch msg := cmd().(type) {
 		case dirDebounceMsg, dirResultMsg, baseDebounceMsg, baseResultMsg,
-			browseDebounceMsg, browseResultMsg:
+			baseSettledMsg, browseDebounceMsg, browseResultMsg:
 			next, out := m.Update(msg)
 			m = next.(Model)
 			queue = append(queue, out)

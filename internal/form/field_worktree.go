@@ -39,6 +39,7 @@
 package form
 
 import (
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -184,6 +185,11 @@ type WorktreeField struct {
 	// over a selection the user has since moved.
 	pendingBase     string
 	havePendingBase bool
+
+	// offeredBase is OfferBase's ref: a base the list does not name that the
+	// app layer has confirmed resolves, drawn right after the HEAD row. ""
+	// offers nothing.
+	offeredBase string
 
 	// baseRowsShown is how many candidate rows the last Panel render drew.
 	// widgets.Picker.SelectAt needs the SAME height MarkedView was called
@@ -502,6 +508,11 @@ func (w *WorktreeField) SetBaseItems(version int, refs []string) {
 // the list naming it exists. It is forgotten the moment it lands, so a
 // later refresh cannot re-apply it over a selection the user has since
 // moved.
+//
+// Meanwhile the field reads as the HEAD row, not as whatever it held
+// before: after a project change that would be the previous project's base,
+// or -- once a refresh has taken that row away, since widgets.Picker keeps a
+// vanished row's index -- some branch nobody chose (#194's review).
 func (w *WorktreeField) SetBase(ref string) {
 	id := ref
 	if id == "" {
@@ -511,23 +522,50 @@ func (w *WorktreeField) SetBase(ref string) {
 		w.pendingBase, w.havePendingBase = "", false
 		return
 	}
+	w.base.SelectID(baseHeadID)
 	w.pendingBase, w.havePendingBase = id, true
 }
 
+// OfferBase adds ref to the base picker's candidates whether or not the
+// branch list names it, right after the HEAD row; "" withdraws it. The app
+// layer offers a remembered or configured base only once git has confirmed
+// it names a commit (#194), because the list is only the 50 most recently
+// committed branches: a branch older than that, a tag, or HEAD~1 resolves
+// perfectly well and appears in it nowhere, and SetBase alone would hold it
+// forever and show the HEAD row meanwhile.
+//
+// Right after HEAD, the other row that is not a listed branch, so it is on
+// screen without scrolling however long the list runs. A ref the list does
+// name keeps its own place in it instead, and is not drawn twice. The offer
+// survives every refresh of the list until it is withdrawn -- the project
+// changing is what withdraws it -- and a held SetBase lands on it at once.
+func (w *WorktreeField) OfferBase(ref string) {
+	if ref == w.offeredBase {
+		return
+	}
+	w.offeredBase = ref
+	w.refreshBaseItems(false)
+}
+
 // refreshBaseItems rebuilds the base picker's item list from baseRefs
-// (deduped, "HEAD" sentinel first) and feeds it to the wrapped Picker,
-// bumping basePickerVersion first when bump is true -- the same
-// bump-only-on-a-real-change discipline field_dir.go's refreshItems
-// documents, so a same-context SetBaseItems refresh preserves the current
-// selection by ref name (widgets.Picker.SetItems' own same-version
-// contract) rather than resetting the cursor to HEAD every time.
+// (deduped, "HEAD" sentinel first, then any OfferBase ref the list lacks)
+// and feeds it to the wrapped Picker, bumping basePickerVersion first when
+// bump is true -- the same bump-only-on-a-real-change discipline
+// field_dir.go's refreshItems documents, so a same-context SetBaseItems
+// refresh preserves the current selection by ref name
+// (widgets.Picker.SetItems' own same-version contract) rather than
+// resetting the cursor to HEAD every time.
 func (w *WorktreeField) refreshBaseItems(bump bool) {
 	if bump {
 		w.basePickerVersion++
 	}
-	items := make([]widgets.PickerItem, 0, len(w.baseRefs)+1)
+	items := make([]widgets.PickerItem, 0, len(w.baseRefs)+2)
 	items = append(items, widgets.PickerItem{ID: baseHeadID, Cells: []string{w.headLabel()}})
 	seen := map[string]bool{baseHeadID: true}
+	if o := w.offeredBase; o != "" && !slices.Contains(w.baseRefs, o) {
+		seen[o] = true
+		items = append(items, widgets.PickerItem{ID: o, Cells: []string{o}})
+	}
 	for _, r := range w.baseRefs {
 		if r == "" || seen[r] {
 			continue
@@ -958,10 +996,10 @@ func (w *WorktreeField) PanelRows() int {
 // .SetProvenance for why this takes a plain file name.
 func (w *WorktreeField) SetProvenance(source string) { w.provenance = source }
 
-// SetNotes records the app layer's report about the one key of the user's
-// own config.toml this panel's branch depends on: config.Load's refused
-// branch_prefix, already worded (#123). nil -- the resting state -- reserves
-// no rows.
+// SetNotes records the app layer's reports about this panel's values that
+// were thrown away, already worded: config.Load's refused branch_prefix
+// (#123), and a remembered or configured base that names no commit, dropped
+// for the HEAD row (#194). nil -- the resting state -- reserves no rows.
 //
 // A line of its own rather than a reuse of SetProvenance's, and ahead of it,
 // because the two say different kinds of thing: provenance attributes a

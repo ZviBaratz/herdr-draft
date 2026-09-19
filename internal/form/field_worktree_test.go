@@ -387,6 +387,118 @@ func TestWorktreeField_SetBaseRoundTrip(t *testing.T) {
 	}
 }
 
+// TestWorktreeField_AHeldBaseShowsTheHeadRow: a ref SetBase has to hold,
+// because nothing on offer names it yet, is not selected yet either -- so
+// the field reads as the HEAD row meanwhile, not as whatever it held before
+// (#194's review: a project change left the previous project's base, or the
+// branch at its index, standing in for one nobody had answered for).
+func TestWorktreeField_AHeldBaseShowsTheHeadRow(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetBaseItems(1, []string{"main", "develop"})
+	w.SetBase("develop")
+	w.SetBase("not-listed-yet")
+	if got := w.Base(); got != "" {
+		t.Fatalf("Base() while holding a ref nothing names = %q, want \"\" (the HEAD row)", got)
+	}
+	w.SetBaseItems(2, []string{"main", "not-listed-yet"})
+	if got := w.Base(); got != "not-listed-yet" {
+		t.Fatalf("Base() once the list names it = %q, want the held ref", got)
+	}
+}
+
+// TestWorktreeField_OfferBaseSitsRightAfterHEAD is #194's rule 1 on screen:
+// a base the app has confirmed resolves is kept even though the branch list
+// -- the 50 most recently committed -- does not name it. It is offered right
+// after the HEAD row, the other row that is not a listed branch, so it is
+// on screen without scrolling however long the list is.
+func TestWorktreeField_OfferBaseSitsRightAfterHEAD(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBaseItems(1, []string{"main", "develop"})
+	w.SetBase("old-branch") // the remembered base, which the list does not name
+	if got := w.Base(); got != "" {
+		t.Fatalf("setup: Base() = %q before the offer, want \"\" -- nothing names it yet", got)
+	}
+
+	w.OfferBase("old-branch")
+	if got := w.Base(); got != "old-branch" {
+		t.Fatalf("Base() after the offer = %q, want the held %q to land on it", got, "old-branch")
+	}
+	focusBase(w)
+	w.Update(key(tea.KeyUp, 0)) // old-branch -> HEAD
+	if got := w.Base(); got != "" {
+		t.Fatalf("one row up from the offered base = %q, want the HEAD row", got)
+	}
+	w.Update(key(tea.KeyDown, 0))
+	w.Update(key(tea.KeyDown, 0)) // HEAD -> old-branch -> main
+	if got := w.Base(); got != "main" {
+		t.Fatalf("one row down from the offered base = %q, want the list's first branch %q", got, "main")
+	}
+
+	// It stays offered across a refresh of the list -- the background fetch
+	// re-lists every repository once -- and keeps its place.
+	w.SetBaseItems(2, []string{"main", "develop", "feature"})
+	w.SetBase("old-branch")
+	if got := w.Base(); got != "old-branch" {
+		t.Fatalf("Base() after a re-list = %q, want the offered %q still on offer", got, "old-branch")
+	}
+}
+
+// TestWorktreeField_OfferBaseTheListNamesKeepsItsPlace: a base the list
+// already names is not moved to the top, so a remembered recent branch still
+// sits among its neighbours in commit order.
+func TestWorktreeField_OfferBaseTheListNamesKeepsItsPlace(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBaseItems(1, []string{"main", "develop"})
+	w.OfferBase("develop")
+	focusBase(w)
+
+	w.Update(key(tea.KeyDown, 0)) // HEAD -> main
+	if got := w.Base(); got != "main" {
+		t.Fatalf("the row after HEAD = %q, want %q: a listed base keeps its listed place", got, "main")
+	}
+	w.Update(key(tea.KeyDown, 0))
+	w.Update(key(tea.KeyDown, 0)) // main -> develop -> (nothing further)
+	if got := w.Base(); got != "develop" {
+		t.Fatalf("the last row = %q, want %q once, not twice", got, "develop")
+	}
+}
+
+// TestWorktreeField_OfferBaseBeforeTheList: the check that confirms a base
+// can land before the branch list does, and the list then arriving must
+// leave the offered base selected.
+func TestWorktreeField_OfferBaseBeforeTheList(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetBase("v1.4")
+	w.OfferBase("v1.4")
+	if got := w.Base(); got != "v1.4" {
+		t.Fatalf("Base() = %q, want the offered %q selected with no list yet", got, "v1.4")
+	}
+	w.SetBaseItems(1, []string{"main"})
+	if got := w.Base(); got != "v1.4" {
+		t.Fatalf("Base() after the list landed = %q, want %q kept", got, "v1.4")
+	}
+}
+
+// TestWorktreeField_OfferBaseEmptyWithdrawsIt: a project change withdraws the
+// previous project's offer, whose ref may mean nothing in the next one.
+func TestWorktreeField_OfferBaseEmptyWithdrawsIt(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetBaseItems(1, []string{"main"})
+	w.OfferBase("old-branch")
+	w.OfferBase("")
+	w.SetBase("old-branch")
+	if got := w.Base(); got != "" {
+		t.Fatalf("Base() = %q, want \"\": a withdrawn offer is not on the list any more", got)
+	}
+	if got := w.PanelRows(); got != worktreePanelParts {
+		t.Fatalf("PanelRows() = %d for an off worktree, want the parts alone (%d)", got, worktreePanelParts)
+	}
+}
+
 // TestWorktreeField_BaseSentinelHasNonEmptyID pins review round 1's first
 // Important finding directly: the HEAD row's own widgets.PickerItem.ID
 // must be non-empty (widgets.Picker's own carried fact -- Task 14 --

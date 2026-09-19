@@ -135,6 +135,13 @@ without the popup. It drives herdr exclusively through the public CLI
   never remembered. The project stays the lane, so `--no-worktree` still
   runs there. The popup does the same, from a lane's space or with one
   picked in the `project` row.
+- **`--base HEAD` and `--base @` mean no base**, as the form's `HEAD` row
+  does, and so does any other spelling of HEAD itself (`HEAD^0`). Their
+  provenance stays `flag`. `--json` omits `base`, or from a lane reports
+  the lane's commit, as it does for no base at all. With a worktree, a
+  `--base` that names no commit is refused before anything is created
+  (exit `2`) rather than reaching herdr and failing at the worktree step
+  (#194).
 - Progress goes to stderr one line per step; the result to stdout, or a
   single JSON object under `--json` carrying a `provenance` map naming the
   tier each value came from.
@@ -187,6 +194,19 @@ without the popup. It drives herdr exclusively through the public CLI
 - Per-project memory re-applies when you change the project row, for every
   field you have not touched yourself, and is keyed by the **git repository
   root** so a linked worktree and its origin share one memory.
+- **A remembered or configured base is kept, mapped or reported, the same
+  on both paths** (#194). One that names a commit is kept, and the form's
+  base list offers it right after the `HEAD` row even when it is not among
+  the 50 most recently committed branches the list holds. `HEAD` and `@`
+  are the `HEAD` row, whose value is no base at all, and so is any other
+  spelling that names HEAD's own commit (`HEAD^0`, `@{0}`). One that names no
+  commit — a branch deleted since, or one you have only on a remote under
+  its bare name — falls back to `HEAD`, and the worktree panel, or a
+  `herdr-draft create:` line on stderr, says which base was dropped.
+  Before, the form fell back to `HEAD` silently for any base its list did
+  not name, while `create` passed the same base to herdr as it was, so one
+  project built two different sessions and wrote two different bases back
+  to `projects.json`.
 - The resolver is pure and is the only place the precedence chain exists.
 
 ### Repository-level config (`.herdr-draft.toml`)

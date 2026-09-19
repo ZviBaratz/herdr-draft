@@ -13,6 +13,8 @@
 package defaults
 
 import (
+	"maps"
+
 	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
@@ -181,9 +183,12 @@ type Resolved struct {
 	// which leaves the form on its own first favorite.
 	AgentKind string
 	// BaseRef is the default base ref for a worktree branch. "" means HEAD
-	// (form.WorktreeField.Base()'s own sentinel). The form applies it with
-	// WorktreeField.SetBase, which holds the selection until the ref list
-	// naming it has landed.
+	// (form.WorktreeField.Base()'s own sentinel), and a tier's HEAD or @ is
+	// resolved to it (NormalizeBase). Whether any other ref still names a
+	// commit is a question for git, which this package does not ask: both
+	// callers put the answer through app.SettleBase before using it. The form
+	// applies it with WorktreeField.SetBase, which holds the selection until
+	// a candidate list naming it has landed.
 	BaseRef string
 	// LinearBranchName reports whether a chosen Linear issue's own
 	// branchName owns the branch (spec §11's repo-config key of the same
@@ -301,6 +306,10 @@ func Resolve(s Sources) Resolved {
 		r.setAgentKind(&r.AgentKind, s.Project.Kind, TierProjectMemory, s.KnownAgentKinds)
 		r.setString(FieldBaseRef, &r.BaseRef, s.Project.Base, TierProjectMemory)
 	}
+	// After every tier rather than inside setString, because "" there means
+	// "this tier supplies nothing": a remembered HEAD has to win over a
+	// repository's default_base first, and only then become the HEAD row.
+	r.BaseRef = NormalizeBase(r.BaseRef)
 
 	// --- TierOpenWorkspace: `herdr workspace list` -----------------------
 	// See the Tier's own comment for what yields and what stands.
@@ -476,4 +485,40 @@ func AgentOptions(cfg config.Config, kind string) (agentopts.Values, map[string]
 		}
 	}
 	return vals, from
+}
+
+// NormalizeBase is #194's rule 2: HEAD and @ name the base picker's HEAD
+// row, whose value is "" (form.WorktreeField.Base()), and every other ref
+// passes through for git to answer for. Both paths apply it -- Resolve to a
+// tier's base, internal/create to --base -- so one base cannot be "" in the
+// form and "HEAD" in `create`, which is what each wrote to projects.json
+// before, and what turned off the clean gate's commit check for `create`
+// alone (#193).
+//
+// Only these two spellings, because only these two need no git to
+// recognise. Every other spelling of HEAD itself (HEAD^0, @{0}) is found by
+// app.NamesHead, in the check both callers already make, and HEAD~1 or
+// HEAD@{1} are other commits, which the HEAD row does not stand for.
+func NormalizeBase(ref string) string {
+	if ref == "HEAD" || ref == "@" {
+		return ""
+	}
+	return ref
+}
+
+// WithoutBase is r with its base dropped to the built-in HEAD: what a base
+// that does not resolve falls back to (#194's rule 3, app.SettleBase). It is
+// attributed to the built-in rather than to the tier that named the ref,
+// because that tier no longer supplies what is used, so neither a
+// `from .herdr-draft.toml` line nor `create --json`'s provenance may claim
+// it does.
+//
+// r is not modified: its From map is copied, since the form hands its
+// resolution to a background check and a write to a shared map from there
+// would race with the model.
+func (r Resolved) WithoutBase() Resolved {
+	r.From = maps.Clone(r.From)
+	r.BaseRef = ""
+	r.From[FieldBaseRef] = TierBuiltin
+	return r
 }

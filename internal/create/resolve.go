@@ -161,6 +161,19 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	if w := app.BranchPrefixWarning(cfg, res); w != "" {
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
 	}
+	// A tier's base that no longer names a commit falls back to HEAD, and
+	// says so, through the same app.SettleBase the popup's worktree panel
+	// does (#194). Before buildInput, which turns the resolution's
+	// attribution into --json's provenance: the dropped ref's tier no longer
+	// supplies what is used. Not for --base, which replaces the tier's base
+	// outright -- withBase checks that one, and refuses it rather than
+	// swapping it for another.
+	if !req.set["base"] {
+		var note string
+		if res, note = app.SettleBase(ctx, deps.git(), t.projectDir, res); note != "" {
+			fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", note)
+		}
+	}
 
 	issue, err := findIssue(ctx, req, cfg, env, deps)
 	if err != nil {
@@ -181,7 +194,7 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	if err != nil {
 		return resolution{}, err
 	}
-	in, err = withLinkedCheckout(ctx, in, t, prov, deps.git())
+	in, err = withBase(ctx, in, t, prov, req.set["base"], deps.git())
 	if err != nil {
 		return resolution{}, err
 	}
@@ -465,7 +478,10 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 
 	base := res.BaseRef
 	if req.set["base"] {
-		base = req.base
+		// HEAD and @ are the form's one HEAD row, as they are from a tier
+		// (#194): "" to herdr, to projects.json and to --json alike, with the
+		// provenance still the caller's.
+		base = defaults.NormalizeBase(req.base)
 		prov[defaults.FieldBaseRef] = provenanceFlag
 	}
 
@@ -579,36 +595,66 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	}, prov, nil
 }
 
-// withLinkedCheckout fills in plan.Input.Linked for a worktree session whose
-// project is a linked checkout (#171): the primary checkout herdr will accept
-// as the source, and the commit the base names IN the linked checkout --
-// HEAD's when no base was chosen, which is what spawn skill §3 promises an
-// unset --base means. herdr runs `git worktree add` in the source, so a base
-// left for it to resolve would be resolved in the primary checkout: an unset
-// one, `--base HEAD`, or any other per-checkout ref, as the primary's commit.
-// For a branch the commit is the same either way.
+// withBase checks the base a worktree is cut from against the checkout it
+// will be cut in, which is the project: it fills in plan.Input.Linked for a
+// worktree session from a linked checkout (#171), refuses an explicit --base
+// that names no commit (#194), and maps one that is HEAD itself spelled
+// another way to the HEAD row (app.NamesHead). A tier's base has already
+// been through app.SettleBase, so the only one that can fail here is one the
+// caller named -- or HEAD itself, in a repository with no commit yet.
 //
-// Resolved here rather than in loadTiers because only this case needs it,
-// and after buildInput because only buildInput knows whether there is a
-// worktree and which base. It is the command's half of what the form does at
-// submit (app's ResolveLinkedCommit): a commit, so a detached HEAD works too,
+// --base is asked about only where a worktree will use it: in a repository,
+// with a worktree. Nothing else reads it, a session without a worktree was
+// always created whatever --base said, and a non-git --worktree has a better
+// reason to be refused, which plan.Build gives.
+//
+// From a lane, Linked is the primary checkout herdr will accept as the
+// source, and the commit the base names IN the linked checkout -- HEAD's when
+// no base was chosen, which is what spawn skill §3 promises an unset --base
+// means. herdr runs `git worktree add` in the source, so a base left for it
+// to resolve would be resolved in the primary checkout: an unset one, or any
+// per-checkout ref (HEAD~1, HEAD@{1}), as the primary's commit. For a branch
+// the commit is the same either way. A commit, so a detached HEAD works too,
 // and so --json can say exactly what an unset base turned out to be.
 //
-// It is not remembered. BaseRef stays what was chosen, and projects.json
-// records that, since it is keyed on the origin root and a remembered commit
-// would pin every later session in the repository to it.
-func withLinkedCheckout(ctx context.Context, in plan.Input, t tiers, prov map[string]string, git GitSource) (plan.Input, error) {
-	if !in.UseWorktree || t.primary == "" {
+// Outside a lane only an explicit --base is asked about, one `rev-parse`
+// before anything exists: herdr would otherwise refuse it at the worktree
+// step, after the create had started. The lane's own question is that same
+// check, so it is asked once, in the lane.
+//
+// Resolved here rather than in loadTiers because only these cases need it,
+// and after buildInput because only buildInput knows whether there is a
+// worktree and which base. It is the command's half of what the form does at
+// submit (app's ResolveLinkedCommit).
+//
+// The commit is not remembered. BaseRef stays what was chosen, and
+// projects.json records that, since it is keyed on the origin root and a
+// remembered commit would pin every later session in the repository to it.
+func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]string, explicit bool, git GitSource) (plan.Input, error) {
+	lane := in.UseWorktree && t.primary != ""
+	chosen := explicit && in.BaseRef != "" && in.UseWorktree && t.isGitRepo
+	if !lane && !chosen {
 		return in, nil
 	}
-	in.Linked.RepoRoot = t.primary
 	ref := cmp.Or(in.BaseRef, "HEAD")
 	commit, err := git.ResolveCommit(ctx, in.ProjectDir, ref)
-	if err != nil {
+	switch {
+	case err != nil && lane:
 		return plan.Input{}, fmt.Errorf("%s is a linked worktree checkout, so the base is resolved there, and %s could not be: %v -- pass --base to choose another", in.ProjectDir, ref, err)
+	case err != nil:
+		return plan.Input{}, fmt.Errorf("--base %q names no commit in %s -- pass a branch, tag or commit that exists there, or leave --base off", ref, in.ProjectDir)
 	}
-	in.Linked.Commit = commit
-	if in.BaseRef == "" {
+	if chosen && app.NamesHead(ctx, git, in.ProjectDir, ref, commit) {
+		in.BaseRef = ""
+	}
+	if !lane {
+		return in, nil
+	}
+	in.Linked = plan.LinkedCheckout{RepoRoot: t.primary, Commit: commit}
+	// The checkout supplied the base only when nobody chose one: a --base
+	// HEAD, or a remembered one, is still the caller's or the tier's, and
+	// only reads as "" because HEAD is the HEAD row.
+	if in.BaseRef == "" && prov[defaults.FieldBaseRef] == defaults.TierBuiltin.String() {
 		prov[defaults.FieldBaseRef] = provenanceCheckout
 	}
 	return in, nil

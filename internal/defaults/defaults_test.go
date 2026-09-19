@@ -537,6 +537,61 @@ func TestResolve_LinearBranchNameDefaultsOn(t *testing.T) {
 	}
 }
 
+// TestResolve_HeadBasesAreTheHeadRow is #194's rule 2: HEAD and @ are what
+// the form's HEAD row already means, and that row's value is "". A tier that
+// names either supplies "" -- still attributed to that tier, since it is the
+// one that chose HEAD over whatever sits beneath it.
+func TestResolve_HeadBasesAreTheHeadRow(t *testing.T) {
+	for _, ref := range []string{"HEAD", "@"} {
+		t.Run(ref, func(t *testing.T) {
+			fromRepo := Resolve(Sources{Repo: config.RepoConfig{DefaultBase: ref}})
+			if fromRepo.BaseRef != "" || fromRepo.From[FieldBaseRef] != TierRepoConfig {
+				t.Errorf("default_base %q resolved to %q from %v, want \"\" from %v",
+					ref, fromRepo.BaseRef, fromRepo.From[FieldBaseRef], TierRepoConfig)
+			}
+			// Above a repository default, so a remembered HEAD has to beat it
+			// rather than be read as "this tier supplies nothing".
+			remembered := Resolve(Sources{
+				Repo:        config.RepoConfig{DefaultBase: "trunk"},
+				Project:     config.ProjectDefaults{Base: ref},
+				HaveProject: true,
+			})
+			if remembered.BaseRef != "" || remembered.From[FieldBaseRef] != TierProjectMemory {
+				t.Errorf("remembered %q over default_base trunk resolved to %q from %v, want \"\" from %v",
+					ref, remembered.BaseRef, remembered.From[FieldBaseRef], TierProjectMemory)
+			}
+		})
+	}
+	// Everything else is a ref git has to answer for, and passes through.
+	for _, ref := range []string{"HEAD~1", "HEAD@{1}", "@{u}", "head", "main"} {
+		if got := NormalizeBase(ref); got != ref {
+			t.Errorf("NormalizeBase(%q) = %q, want it unchanged", ref, got)
+		}
+	}
+}
+
+// TestResolved_WithoutBase is what a base that does not resolve falls back
+// to (#194's rule 3): the HEAD row, attributed to the built-in, because the
+// tier that named the ref no longer supplies what is used. The original is
+// left alone -- the form hands its resolution to a background check, and a
+// shared From map written from there would be a data race.
+func TestResolved_WithoutBase(t *testing.T) {
+	res := Resolve(Sources{Repo: config.RepoConfig{DefaultBase: "gone"}})
+
+	got := res.WithoutBase()
+	if got.BaseRef != "" || got.From[FieldBaseRef] != TierBuiltin {
+		t.Errorf("WithoutBase = %q from %v, want \"\" from %v", got.BaseRef, got.From[FieldBaseRef], TierBuiltin)
+	}
+	if res.BaseRef != "gone" || res.From[FieldBaseRef] != TierRepoConfig {
+		t.Errorf("the original became %q from %v, want it left at gone from %v",
+			res.BaseRef, res.From[FieldBaseRef], TierRepoConfig)
+	}
+	if got.From[FieldPlacement] != res.From[FieldPlacement] {
+		t.Errorf("From[placement] = %v, want every other field's attribution kept (%v)",
+			got.From[FieldPlacement], res.From[FieldPlacement])
+	}
+}
+
 // TestTierString pins the user-facing names, since they are what a
 // provenance line ("from .herdr-draft.toml") is built out of.
 func TestTierString(t *testing.T) {

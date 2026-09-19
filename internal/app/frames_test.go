@@ -764,6 +764,40 @@ func TestAssembledForm_ConfigWarnings(t *testing.T) {
 	})
 }
 
+// TestAssembledForm_RememberedBase pins #194's two new states of the
+// worktree panel, reached through the real dir check and the real background
+// check rather than by poking the field: a remembered base that no longer
+// resolves, dropped to the HEAD row with the note saying so, and one the
+// branch list does not name but git resolves, offered right after the HEAD
+// row. The fixture's list is the two branches every other frame shows, so
+// the offered row is visibly not one of them.
+func TestAssembledForm_RememberedBase(t *testing.T) {
+	const cwd = "/home/zvi/Projects/herdr-draft"
+	for _, tc := range []struct{ name, base string }{
+		{"dropped", "gone-branch"},
+		{"offered", "release/1.2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			git := newFakeGit()
+			git.listBranchesResult = []string{"main", "release/1.4"}
+			git.currentBranchResult = "main"
+			git.commits = map[string]string{cwd + " release/1.2": "3d4e5f6"}
+			setup := frameSetup(false)
+			setup.Git = git
+			setup.Projects = memoryFor(map[string]config.ProjectDefaults{
+				cwd: {Worktree: ptrBool(true), Base: tc.base},
+			})
+			m := newTestModel(t, setup)
+			m = pumpAsync(t, m, m.initCmds)
+			m.title.SetTitle("fix login redirect loop", false)
+			m.form.FocusByID("worktree")
+			m.reactToChanges()
+
+			assertAppFrame(t, fmt.Sprintf("assembled-base-%s-%dx%d", tc.name, framePopupW, framePopupH), m, framePopupW, framePopupH)
+		})
+	}
+}
+
 // TestAssembledForm_PickerUnavailable pins a state no frame had: a picker was
 // named in config.toml and failed its probe, so the account row has no auto
 // row and has to say why. The default is pinned because that is the case the

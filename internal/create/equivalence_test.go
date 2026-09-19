@@ -399,6 +399,89 @@ favorites = ["claude"]
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
+		// #194: a base a tier supplies and the form's branch list does not
+		// name. The form's picker held one only if its list named it, so
+		// every row below except the last two used to build two different
+		// plans: `create` passed the ref on as it was, and the form fell
+		// back to its HEAD row without a word. The rule is now the same on
+		// both paths -- keep a base that resolves, map HEAD and @ to the
+		// HEAD row, and fall back to HEAD from one that does not. The rule
+		// is the same, the note that says so differs: stderr for `create`
+		// (TestTierBase*), the worktree panel for the form.
+		{
+			name:       "a remembered HEAD is the HEAD row",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "HEAD"),
+			args:       []string{"--title", title},
+			want:       baseScenarioWant(""),
+		},
+		{
+			name:       "the repository's default_base HEAD is the HEAD row",
+			configTOML: baseScenarioConfig,
+			repo:       config.RepoConfig{DefaultBase: "HEAD"},
+			args:       []string{"--title", title},
+			want:       baseScenarioWant(""),
+		},
+		{
+			name:       "a remembered @ is the HEAD row",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "@"),
+			args:       []string{"--title", title},
+			want:       baseScenarioWant(""),
+		},
+		{
+			name:       "a remembered branch that was deleted falls back to HEAD",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "gone-branch"),
+			args:       []string{"--title", title},
+			want:       baseScenarioWant(""),
+		},
+		{
+			// formGit lists main and dev only, which is what an existing
+			// branch older than the 50 newest looks like to the picker.
+			name:       "a remembered branch the list does not name is kept",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "old-branch"),
+			args:       []string{"--title", title},
+			want:       baseScenarioWant("old-branch"),
+		},
+		{
+			// Another spelling of HEAD itself is the HEAD row too, found by
+			// git: inside the new worktree it would name the worktree, which
+			// is #193's hole, and the form used to drop it to "" -- so keeping
+			// it under rule 1 would have let the popup reach that hole.
+			name:       "a remembered HEAD^0 names HEAD's commit, so it is the HEAD row",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "HEAD^0"),
+			args:       []string{"--title", title},
+			want:       baseScenarioWant(""),
+		},
+		{
+			// A per-checkout ref that is another commit resolves, so rule 1
+			// keeps it as written. At the clean gate it fails closed, and
+			// that is #193's.
+			name:       "a remembered HEAD~1 resolves, so it is kept",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "HEAD~1"),
+			args:       []string{"--title", title},
+			want:       baseScenarioWant("HEAD~1"),
+		},
+		{
+			// The lane gets the same fall-back rather than #171's refusal: the
+			// base is checked in the project, which is the lane, and from HEAD
+			// it is cut from the lane's commit as an unset base always was.
+			name:       "from a lane, a remembered branch that was deleted falls back to the lane's HEAD",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "gone-branch"),
+			lane:       true,
+			args:       []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				Linked:           plan.LinkedCheckout{RepoRoot: projectDir, Commit: laneHead},
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
 		{
 			// #176: the title row holds 32 runes (spec §6 field 3) and
 			// --title used to hold anything, so one long title built two
@@ -604,6 +687,7 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	runner := newFakeRunner()
 	runner.workspaces = c.workspaces
 	git := newFakeGit()
+	git.commits = repoCommitsIn(c.projectDir)
 	if c.lane {
 		git.roots = map[string]string{laneDir: laneRoot}
 		git.primary = map[string]string{laneDir: laneRoot}
@@ -906,9 +990,11 @@ func (g formGit) PrimaryCheckout(_ context.Context, dir string) (string, error) 
 	return "", nil
 }
 
-// ResolveCommit answers only in the lane, as commandCase's fake does, so a
-// commit read in any other checkout -- the primary's HEAD, above all -- is an
-// error rather than an answer that happens to match.
+// ResolveCommit answers in the checkout the project is, as commandCase's
+// fake does: in the lane when there is one, and in the repository only when
+// there is not, so a commit read in any other checkout -- the primary's HEAD
+// from a lane, above all -- is an error rather than an answer that happens
+// to match.
 func (g formGit) ResolveCommit(_ context.Context, dir, ref string) (string, error) {
 	if g.lane && dir == laneDir {
 		switch ref {
@@ -917,6 +1003,9 @@ func (g formGit) ResolveCommit(_ context.Context, dir, ref string) (string, erro
 		case "main":
 			return laneMain, nil
 		}
+	}
+	if c, ok := repoCommits[ref]; ok && !g.lane && dir == laneRoot {
+		return c, nil
 	}
 	return "", fmt.Errorf("formGit: no commit for %q in %s", ref, dir)
 }
@@ -930,6 +1019,57 @@ func (formGit) CurrentBranch(context.Context, string) (string, error)      { ret
 func (formGit) FetchPrune(context.Context, string) error                   { return nil }
 
 func boolp(b bool) *bool { return &b }
+
+// baseScenarioConfig is the configuration #194's rows share: nothing that
+// touches the base, so the tier each row names is the only one that does.
+const baseScenarioConfig = `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+`
+
+// rememberedBase is a projects.json remembering base for projectDir and
+// nothing else.
+func rememberedBase(projectDir, base string) string {
+	return `{"version":1,"entries":{"` + projectDir + `":{"base":"` + base + `","seen":"2026-09-01T00:00:00Z"}}}`
+}
+
+// baseScenarioWant is what baseScenarioConfig resolves to with base as the
+// plan's base.
+func baseScenarioWant(base string) plan.Input {
+	return plan.Input{
+		Branch: "zvi/fix-login-redirect-loop", BaseRef: base, UseWorktree: true,
+		Placement: plan.PlacementNewSpace, AgentKind: "claude",
+		DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+	}
+}
+
+// repoCommits is what ResolveCommit answers in the project's own checkout,
+// laneRoot, for both sides' fakes, keyed by ref: formGit's two listed
+// branches, a branch older than any list the picker is given, and the
+// per-checkout refs a tier can name. gone-branch is deliberately absent.
+//
+// HEAD and @ resolve, as they do in git, so the rows naming them are about
+// the mapping to the HEAD row: were they missing here, those rows would reach
+// HEAD by falling back instead, and pass without it.
+var repoCommits = map[string]string{
+	"HEAD":       "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+	"@":          "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+	"HEAD^0":     "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+	"HEAD~1":     "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
+	"main":       "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+	"dev":        "2c3d4e5f60718293a4b5c6d7e8f9012345678ab1",
+	"old-branch": "3d4e5f60718293a4b5c6d7e8f9012345678ab12c",
+}
+
+// repoCommitsIn is repoCommits keyed as fakeGit.commits is, "<dir> <ref>".
+func repoCommitsIn(dir string) map[string]string {
+	out := make(map[string]string, len(repoCommits))
+	for ref, commit := range repoCommits {
+		out[dir+" "+ref] = commit
+	}
+	return out
+}
 
 // repoSpaceOpen is a `herdr workspace list` in which the project's primary
 // checkout already has a space herdr has marked as the repository's own --
