@@ -352,6 +352,21 @@ The rules:
 > included, and an `sh -c` launcher's loss of the arguments (§5.1) is
 > invisible to it.
 
+> **Amended, #219 (2026-09-19): the whole argument list.** `--json`, real
+> or `--dry-run`, also gains `agent_args`: the argument list both launch
+> paths hand the agent's command, which is §5.1's `agentopts.Launch`
+> (`plan.AgentArgs`). It is a JSON array, not a shell string, because
+> neither path hands it to a shell as one string. So the argument the
+> paragraph above says goes unreported is now reported, and the spawn
+> skill's confirmation shows every element beyond the three option flags
+> before the user approves. An argument that changes how the agent asks for
+> permission is shown, not refused: it is the user's own configuration.
+> The `sh -c` case stays invisible. `agent_args` is what this plugin
+> passes, and the pane's shell resolves the agent's command, so a function
+> of that name, or a launcher, can still change what arrives. Recognising
+> an `sh -c` launcher would take a heuristic that is wrong in both
+> directions, and none is attempted.
+
 ### 8.3 The spawn skill
 
 Section 5 of `spawn_skill.md` names the three flags, which

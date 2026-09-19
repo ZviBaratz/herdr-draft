@@ -362,9 +362,12 @@ and a dry run is the cheapest place to catch it. The report is section 8's
   `[agents.extra_args]` passes. `provenance` names the source under
   `option.model` and its siblings: `config.toml`, `extra_args`, or
   `built-in` for neither, which leaves the option to claude's own
-  settings. These are the defaults your choice replaces. Only the three
-  option flags are read: any other argument in `[agents.extra_args]`
-  reaches the agent as it is, and is not reported here.
+  settings. These are the defaults your choice replaces.
+- `agent_args`: the whole argument list the agent would start with. The
+  three option flags and their values are in it. Anything else in it came
+  from `[agents.extra_args]` and reaches the agent whatever the options
+  say, and one of those arguments can override the permission mode.
+  Absent means the agent starts with no arguments.
 - `account`, `agent_kind`, `mark_ready` (absent means off), and either
   `branch` and `base` or `placement`: the values the command line leaves
   to the defaults.
@@ -374,8 +377,9 @@ and a dry run is the cheapest place to catch it. The report is section 8's
 
 **3. Dry-run the command you would run first again,** now with its option
 flags and any `--reap` or `--no-reap`. Then the line the user approves has
-been checked too, and its `launch_options` should read back what you
-chose.
+been checked too. Its `launch_options` should read back what you chose,
+and its `agent_args` should differ from the first run's only where your
+flags replaced a default.
 
 **Then ask.** Put the command you would run first, and beside it the two
 nearest alternatives. Let them vary the choice you are least sure of. That
@@ -386,10 +390,18 @@ for a session without a worktree, the placement. For each option:
   flags. Section 2's exports are the same in every option, so say that
   once, in the question, instead of repeating them. Under the line, put
   what it resolves to that it does not state: the account, the branch and
-  base (or the placement), and whether the session will reap itself.
+  base (or the placement), whether the session will reap itself, and every
+  argument in `agent_args` other than the three option flags and their
+  values, word for word.
 - in its **description**, one line of reason for the options, such as
   `sonnet` at `medium` because the brief spells out the change, and the
   default each choice replaces where the two differ.
+
+If one of those other arguments changes how the agent asks for
+permission, say so in the question itself, and do not describe the
+session by its `--permission-mode` alone, since that argument can override
+it. Show it rather than refusing to create: it came from the user's own
+configuration, and seeing it before they approve is the point.
 
 A label is not reviewable. A command, and what it resolves to, is.
 
@@ -423,13 +435,15 @@ and exit 3 it prints **nothing** on stdout, so a pipe into `jq` gets empty
 input — read the exit status before you read the JSON. On exit 4 it prints
 the object with `ok: false`, `failed_step` and `error`, and no ids at all.
 
-**Check `launch_options` against what the user approved.** It is what the
-agent was started with for each session option: the flags you passed, and
-whatever `[agents.extra_args]` passed for the ones you did not.
-`provenance` says where each value came from. If it differs from the
-confirmation, tell the user. It covers those three flags only. Other
-arguments in `[agents.extra_args]`, including any that change how the agent
-asks for permission, reach it unreported.
+**Check `launch_options` and `agent_args` against what the user
+approved.** `launch_options` is what the agent was started with for each
+session option: the flags you passed, and whatever `[agents.extra_args]`
+passed for the ones you did not. `provenance` says where each value came
+from. `agent_args` is the whole list, the other arguments included. If
+either differs from the confirmation, tell the user. Both are what this
+command passed after the agent's command: the pane's shell resolves that
+command, so a function standing in for it, or a `[clauth] launcher` for a
+pinned account, can still change what arrives.
 
 **The ids name the agent, not the space.** `workspace_id`, `tab_id` and
 `pane_id` are where the agent actually is, which is what you address next.

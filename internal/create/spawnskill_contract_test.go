@@ -448,6 +448,26 @@ func TestSkillNamesOnlyRealJSONKeys(t *testing.T) {
 	}
 }
 
+// TestSkillShowsTheWholeArgumentList holds the skill to #219's rule: the
+// owner sees every argument the agent will start with before approving.
+// TestSkillNamesOnlyRealJSONKeys proves only that a key the skill names is
+// real; this proves the skill names agent_args at the three points where it
+// matters -- the first dry run's reading list, the preview the user
+// approves, and the check after the create. Without the middle one, an
+// argument that skips permission prompts is read and never shown.
+func TestSkillShowsTheWholeArgumentList(t *testing.T) {
+	lines := strings.Split(renderedSkill(), "\n")
+	for _, where := range []struct{ name, from, to string }{
+		{"the first dry run's reading list", "**1. Dry-run it without the option flags.**", "**2. Choose the three options**"},
+		{"the preview the user approves", "**Then ask.**", "A label is not reviewable."},
+		{"the check after the create", "## 8. Read the result", "**The ids name the agent, not the space.**"},
+	} {
+		if !strings.Contains(strings.Join(linesBetween(t, lines, where.from, where.to), "\n"), "`agent_args`") {
+			t.Errorf("%s never names `agent_args`", where.name)
+		}
+	}
+}
+
 // unquotedBracketModel is a --model value with a `[` in it that no quote
 // protects: the shape #72 was, typed into a shell.
 var unquotedBracketModel = regexp.MustCompile(`--model\s+[^'"\s]\S*\[`)
