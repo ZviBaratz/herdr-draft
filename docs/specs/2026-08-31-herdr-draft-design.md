@@ -604,23 +604,23 @@ integer `1`.
       reproduced, leave it and say so") — the retry path remains
       unconfirmed live, covered only by Task 9's mock-runner unit tests.
       **Closed 2026-09-19 without a live observation (#71)**, on the mock
-      coverage plus a reason the window is now nearly unobservable from
-      here. herdr 0.9.0's own CLI retries this code before herdr-draft
-      sees it: when `agent start` is refused `agent_pane_busy` while the
-      pane's foreground process is still its own shell, the CLI re-sends
-      the request every poll interval for up to 2 s
+      coverage. herdr 0.9.0's own CLI also absorbs the likeliest shape of
+      the race, which is part of why five probes never saw it: when
+      `agent start` is refused `agent_pane_busy` while the pane's foreground
+      process is still its own shell, the CLI re-sends the request every
+      100 ms for up to 2 s
       (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/agent.rs#L356-L404,
-      `PANE_SHELL_READINESS_RETRY_TIMEOUT` at L10). It does so whenever the
-      start's timeout is above 3 s and at most 300 s, and herdr-draft passes
-      no `--timeout`, so herdr's 30 s default always qualifies. The code
-      only reaches herdr-draft once herdr's retry has run out, or on
-      Windows, where herdr cannot observe shell start-up and does not
-      retry (L683-L688). Only `agent start` raises it
-      (src/app/agents.rs L259-L262 at v0.9.0), so Path B's `pane run`
-      never sees it, whatever §9 says. What herdr-draft's retry adds is
-      the time beyond herdr's 2 s. Since #144 it matches herdr's parsed
-      error code rather than the error's text, and it is pinned by
-      `TestExecuteAgentStartBusyRetrySucceeds`,
+      `PANE_SHELL_READINESS_RETRY_TIMEOUT` at L10). Every start timeout
+      herdr accepts qualifies, herdr-draft's default one included. It passes
+      the code straight through otherwise: when something other than the
+      shell holds the foreground, when the pane's terminal changes, and on
+      Windows, where herdr cannot observe shell start-up (L683-L688). herdr-draft's
+      own retry (every 500 ms for up to 5 s) is the only retry in those
+      cases, and the longer wait in the shell case. Only `agent start`
+      raises the code (src/app/agents.rs L259-L262 at v0.9.0), so Path B's
+      `pane run` never sees it, whatever §9 says. Since #144 the retry
+      matches herdr's parsed error code rather than the error's text, and it
+      is pinned by `TestExecuteAgentStartBusyRetrySucceeds`,
       `TestExecuteBusyRetryExhaustsBudget` and
       `TestExecuteClassifiesByCodeNotText`.
 - [x] Pin the minimum supported clauth version in README. **Recorded
