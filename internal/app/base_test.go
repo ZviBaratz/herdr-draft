@@ -10,6 +10,8 @@ import (
 
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
+	"github.com/ZviBaratz/herdr-draft/internal/form"
+	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 )
 
 // This file is #194 on the popup's side: a base a tier supplies -- remembered
@@ -270,5 +272,121 @@ func TestPopup_AnOfferedBaseIsNotTheUsersChoice(t *testing.T) {
 
 	if got := m.worktree.Base(); got != "develop" {
 		t.Errorf("Base() in /repo-b = %q, want its remembered %q: nobody chose /repo-a's", got, "develop")
+	}
+}
+
+// pumpHoldingBaseChecks is pumpAsync, except that every base check's answer
+// is kept back and returned rather than delivered: the state between the dir
+// check landing -- which is what schedules the base check -- and the base
+// check's own answer.
+func pumpHoldingBaseChecks(t *testing.T, m Model, cmds []tea.Cmd) (Model, []tea.Msg) {
+	t.Helper()
+	var held []tea.Msg
+	queue := append([]tea.Cmd(nil), cmds...)
+	for range 64 {
+		if len(queue) == 0 {
+			return m, held
+		}
+		cmd := queue[0]
+		queue = queue[1:]
+		if cmd == nil {
+			continue
+		}
+		switch msg := cmd().(type) {
+		case baseSettledMsg:
+			held = append(held, msg)
+		case dirDebounceMsg, dirResultMsg, baseDebounceMsg, baseResultMsg:
+			next, out := m.Update(msg)
+			m = next.(Model)
+			queue = append(queue, out)
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		}
+	}
+	t.Fatalf("async pipelines did not settle")
+	return m, nil
+}
+
+// TestPopup_ASubmitWaitsForTheBaseCheck: the base check is scheduled by the
+// dir check landing and answers a moment later, and a submit in between
+// would build its plan from a base nobody had answered for yet -- for a base
+// the list does not name, the HEAD row, which is the drift #194 removes. The
+// window is a `git rev-parse` wide, and #195's hold makes it certain rather
+// than rare: that hold releases a submit the instant the dir check lands. So
+// the submit waits for this check too, and goes on by itself when it lands.
+func TestPopup_ASubmitWaitsForTheBaseCheck(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main"}
+	git.commits = map[string]string{"/repo-a old-branch": "3d4e5f6"}
+	m := newSubmitTestModel(t, runner, testSetup{
+		Git: git,
+		Ctx: herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true), Base: "old-branch"},
+		}),
+	})
+	m, held := pumpHoldingBaseChecks(t, m, m.initCmds)
+	if len(held) != 1 {
+		t.Fatalf("base checks held = %d, want the one the dir check scheduled", len(held))
+	}
+	m.title.SetTitle("fix the thing", false)
+	m.reactToChanges()
+
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("the submit started with the base check still out, from base %q", m.submitInput.BaseRef)
+	}
+
+	next, _ = m.Update(held[0])
+	m = next.(Model)
+	if !m.submitting {
+		t.Fatal("the base check landing did not resume the submit")
+	}
+	if got := m.submitInput.BaseRef; got != "old-branch" {
+		t.Errorf("submitted base = %q, want the remembered %q the check confirmed", got, "old-branch")
+	}
+}
+
+// TestPopup_AStaleBaseCheckDoesNotReleaseASubmit: the answer a submit waits
+// for is the one about the project the row holds now. An answer about the
+// project before it is dropped, and must not count as that one having landed
+// -- so a submit pressed after it is still held, whichever order the two
+// arrive in.
+func TestPopup_AStaleBaseCheckDoesNotReleaseASubmit(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main"}
+	git.commits = map[string]string{"/repo-a old-a": "3d4e5f6", "/repo-b old-b": "4e5f607"}
+	m := newSubmitTestModel(t, runner, testSetup{
+		Git: git,
+		Ctx: herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true), Base: "old-a"},
+			"/repo-b": {Worktree: ptrBool(true), Base: "old-b"},
+		}),
+	})
+	m, fromA := pumpHoldingBaseChecks(t, m, m.initCmds)
+	backspaceDir(&m, len("/repo-a"))
+	typeDir(&m, "/repo-b")
+	m, fromB := pumpHoldingBaseChecks(t, m, m.reactToChanges())
+	if len(fromA) != 1 || len(fromB) != 1 {
+		t.Fatalf("base checks held: %d for /repo-a and %d for /repo-b, want one each", len(fromA), len(fromB))
+	}
+	m.title.SetTitle("fix the thing", false)
+	m.reactToChanges()
+
+	next, _ := m.Update(fromA[0])
+	next, _ = next.(Model).Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("a submit after /repo-a's answer went on with /repo-b's still out, from base %q", m.submitInput.BaseRef)
+	}
+
+	next, _ = m.Update(fromB[0])
+	m = next.(Model)
+	if !m.submitting || m.submitInput.BaseRef != "old-b" {
+		t.Errorf("after /repo-b's answer: submitting=%v from %q, want a submit from old-b", m.submitting, m.submitInput.BaseRef)
 	}
 }

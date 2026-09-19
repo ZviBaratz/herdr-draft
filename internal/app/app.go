@@ -581,11 +581,19 @@ type Model struct {
 	linkedCommit string
 
 	// baseSettleVersion is the staleness guard on scheduleBaseSettle's
-	// answers, and baseNote the note the last one carried: why a tier's base
-	// was dropped, shown on the worktree panel while the HEAD row it fell
-	// back to still stands (#194). "" when nothing was dropped.
+	// answers, and baseSettleLanded the version of the last one landed: the
+	// two differ exactly while a base check is out (baseSettlePending).
+	// baseNote is the note the last answer carried: why a tier's base was
+	// dropped, shown on the worktree panel while the HEAD row it fell back to
+	// still stands (#194). "" when nothing was dropped.
 	baseSettleVersion int
+	baseSettleLanded  int
 	baseNote          string
+
+	// submitHeld is a submit waiting for the base check (#194): set by
+	// handleSubmit while one is out, and cleared by the handleBaseSettled
+	// that lands it, which re-enters handleSubmit.
+	submitHeld bool
 
 	// linearIssues is the last Linear issue list this Model has seen --
 	// New's own Setup.LinearCache, refreshed by handleLinearResult
@@ -1301,6 +1309,15 @@ func BranchFor(res defaults.Resolved, issueBranch, title string) string {
 // no plan.Execute, nothing -- and only once every check clears does it
 // build the plan and start the staged execution (startSubmit).
 func (m Model) handleSubmit() (Model, tea.Cmd) {
+	// A base check still out means the base row may be about to change: a
+	// remembered base the list does not name has not been offered yet, and
+	// one that names no commit has not fallen back. It answers in the time a
+	// `git rev-parse` takes, and handleBaseSettled comes back through here.
+	if m.baseSettlePending() {
+		m.submitHeld = true
+		return m, nil
+	}
+	m.submitHeld = false
 	if cmd, blocked := m.checkSubmitValidation(); blocked {
 		return m, cmd
 	}
@@ -1977,7 +1994,6 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	// longer this form's, and a ref offered there may name nothing here.
 	m.worktree.OfferBase("")
 	m.baseNote = ""
-	var settle tea.Cmd
 	if !m.baseTouched {
 		// The remembered base almost always arrives BEFORE the branch list
 		// naming it: this runs off the debounced dir check, and the
@@ -1986,11 +2002,11 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 		// the list lands (see its own doc comment), which is the whole
 		// reason it is not a plain SelectID here.
 		m.worktree.SetBase(m.resolved.BaseRef)
-		// And the list is not the test of whether it can be used: it is the
-		// 50 newest branches. Git is, in the background -- see SettleBase,
-		// which `create` calls with the same resolution (#194).
-		settle = m.scheduleBaseSettle()
 	}
+	// And the list is not the test of whether it can be used: it is the 50
+	// newest branches. Git is, in the background -- see SettleBase, which
+	// `create` calls with the same resolution (#194).
+	settle := m.scheduleBaseSettle()
 
 	// The branch follows the project too, which it did not have to before
 	// spec §11: branch_prefix and linear_branch_name are both per-repo now,

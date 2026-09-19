@@ -531,15 +531,18 @@ type baseSettledMsg struct {
 
 // scheduleBaseSettle asks, off the update loop, whether the base the current
 // resolution supplies names a commit in the project, and returns nil when
-// there is no base to ask about. It is not debounced: applyProjectDefaults
-// schedules it once per dir check, which already was.
+// there is nothing to ask: no base, or one the user has already replaced
+// with their own. It is not debounced: applyProjectDefaults calls it once
+// per dir check, which already was.
 //
 // Bumping the version here is what retires an answer about an earlier
 // resolution, so every call site must come through this rather than build
-// the Cmd itself.
+// the Cmd itself -- and with nothing to ask, the check counts as landed at
+// once, so a submit is never held for an answer that is not coming.
 func (m *Model) scheduleBaseSettle() tea.Cmd {
 	m.baseSettleVersion++
-	if m.resolved.BaseRef == "" {
+	if m.resolved.BaseRef == "" || m.baseTouched {
+		m.baseSettleLanded = m.baseSettleVersion
 		return nil
 	}
 	v := m.baseSettleVersion
@@ -559,20 +562,31 @@ func (m *Model) scheduleBaseSettle() tea.Cmd {
 // A stale answer -- the project has changed since, and with it the
 // resolution -- moves nothing, and neither does any answer once the user has
 // chosen a base of their own: noteUserEdits runs before this, so their
-// choice has already been recorded and stands.
+// choice has already been recorded and stands. Either way a current answer
+// has landed, and a submit held for it goes on (handleSubmit).
 func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
-	if msg.version != m.baseSettleVersion || m.baseTouched {
+	if msg.version != m.baseSettleVersion {
 		return m, nil
 	}
-	m.resolved = msg.resolved
-	m.baseNote = msg.note
-	m.worktree.OfferBase(m.resolved.BaseRef)
-	m.worktree.SetBase(m.resolved.BaseRef)
-	m.showRepoConfig()
-	// The app moved the base, not the user -- see snapshotAppliedDefaults.
-	m.snapshotAppliedDefaults()
+	m.baseSettleLanded = msg.version
+	if !m.baseTouched {
+		m.resolved = msg.resolved
+		m.baseNote = msg.note
+		m.worktree.OfferBase(m.resolved.BaseRef)
+		m.worktree.SetBase(m.resolved.BaseRef)
+		m.showRepoConfig()
+		// The app moved the base, not the user -- see snapshotAppliedDefaults.
+		m.snapshotAppliedDefaults()
+	}
+	if m.submitHeld {
+		return m.handleSubmit()
+	}
 	return m, nil
 }
+
+// baseSettlePending reports whether a base check is out: scheduled for the
+// current resolution and not yet landed.
+func (m Model) baseSettlePending() bool { return m.baseSettleLanded != m.baseSettleVersion }
 
 // --- title duplicate verdict (spec §6 field 3) ---------------------------
 

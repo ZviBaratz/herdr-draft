@@ -1646,6 +1646,37 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### a remembered base the branch list does not name (#194) — 2026-09-19
+
+herdr 0.9.0. `zvi/fix-194-unlisted-base` at `75c9836`, not merged, against
+`main` at `905f328`, both built into `/var/tmp/h194`. Route A0 with its own
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME`, `[worktrees] directory` under the
+same path, and a scratch plugin config and state dir with `[agents]
+favorites = ["nosuchkind"]`, so every create stopped at `starting agent`
+and the pass spent no account quota. The repository had 51 branches, each
+with its own committer date: `b1`…`b49`, then `main` (`8e8f645`), then
+`old-branch` (`492faeb`), so the picker's 50 hold `main` and not
+`old-branch`. `projects.json` in the scratch state dir remembered one base
+per case. The form ran through Route B in a pane of the same session.
+
+| Case | `main` | the fix |
+|---|---|---|
+| `create`, remembered `HEAD` | `base: HEAD` from `projects.json`, cut from `8e8f645` | `base` omitted, still `projects.json`, cut from `8e8f645` |
+| `create`, remembered `gone-branch` | **exit 1 at `creating worktree`**, herdr `worktree_create_failed: fatal: invalid reference: gone-branch` | `herdr-draft create: ignoring base "gone-branch" from projects.json: no such commit here; using HEAD`, `provenance.base` `built-in`, cut from `8e8f645` |
+| `create`, remembered `old-branch` | cut from `492faeb` | cut from `492faeb` |
+| `create --base HEAD` | `base: HEAD` from `flag` | `base` omitted, from `flag`, cut from `8e8f645` |
+| `create --base gone-branch` | exit 1 at `creating worktree`, as above | **exit 2**, `--base "gone-branch" names no commit in /var/tmp/h194/repo`, nothing created |
+| the form, remembered `HEAD` | `on · from main`, the `HEAD (main)` row | the same |
+| the form, remembered `gone-branch` | `on · from main`, **nothing said** | `on · from main`, and the panel's note line: `ignoring base "gone-branch" from projects.json: no such commit here; using HEAD`. A submit cut from `8e8f645`. |
+| the form, remembered `old-branch` | `on · from main`, **nothing said**. A submit read `✓ worktree  smoke/form-main-old from HEAD` and cut from `8e8f645`, where `create` cut from `492faeb`: the issue's drift, measured. | `on · from old-branch`, with `old-branch` listed right after `HEAD (main)` and selected. A submit cut from `492faeb`, as `create` did. |
+| `create` from a lane (`git worktree add`, one commit, `c130cd1`), remembered `gone-branch` | exit 2, #171's refusal: `... gone-branch could not be ... -- pass --base to choose another` | the note on stderr, `base` `c130cd1…` from `checkout`, cut from `c130cd1` |
+
+**Not checked live:** what each path writes back to `projects.json`, because
+a create that fails at `starting agent` writes no memory.
+`TestTierBase_HeadIsTheHeadRowAndIsRememberedAsTheFormRemembersIt` and
+`TestFormAndCommandProduceTheSamePlan` cover it, since both paths remember
+the `plan.Input`'s own `BaseRef`.
+
 ### `create` and the popup from inside a lane (#171) — 2026-09-18
 
 herdr 0.9.0. `zvi/fix-create-from-a-worktree-lane` at `c2240c0`, not
