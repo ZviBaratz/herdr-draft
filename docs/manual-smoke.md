@@ -1674,6 +1674,22 @@ scratch tree, and `<plain>` is a directory that is not a repository.
 | `<nowhere>`, a path that does not exist, `⌃S` | **the defect.** `✗ worktree  herdr worktree create --cwd <nowhere> …`. | **as expected.** No submit: the project row read `<nowhere>  invalid`, the worktree row `not a git repository`, focus on the project row. Nothing was created. |
 | `<pla>`, `⌃S`, then `in` | **the defect**, and a second finding: it submitted `<plai>`, not `<pla>`. `⌃S` reaches the app as a `SubmitMsg` through a command round trip, so a key already queued behind it lands first. | **as expected.** The submit arrived at `<plai>`, was held while `n` came in, and went on once the check of `<plain>` landed: the session's pane cwd was `<plain>`. |
 
+**Second pass, rebased onto #197 (#194) and #190** (`9d9bb8f`, against
+`main` at `ca64e46`, same isolation and a fresh scratch tree). #197 holds a
+submit for its base check too, and the dir check that releases #195's hold
+is what schedules that check. `<repo2>` is a second repository whose
+`projects.json` entry remembers `worktree: true` and `base: "old-branch"`,
+one commit behind its `main`: `old-branch` at `4b176bd`, `main` at
+`f244bae`.
+
+| Case | `main` at `ca64e46` | the fix |
+|---|---|---|
+| `<repo2>`, `⌃S` | **the defect, a quieter shape.** `✓ worktree  zvi/live-check from HEAD`, cut at `f244bae`: the submit was built before `<repo2>`'s memory landed, so its remembered base never applied. | **as expected.** `✓ worktree  zvi/live-check from old-branch`, cut at `4b176bd`: the submit waited for the dir check, then for the base check it started, then went on. One `⌃S`. |
+| `<plain>`, `⌃S` | the first pass's defect, unchanged | the first pass's result, unchanged |
+
+Each create was removed with `c`, which took the worktree's branch too
+(#190). `projects.json` was unchanged afterwards, since no create succeeded.
+
 Teardown: the disposable session stopped and deleted, no process left with
 a cwd under the scratch tree, the scratch tree removed, `pgrep -x
 herdr-draft` 0.
