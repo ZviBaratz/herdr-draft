@@ -326,16 +326,18 @@ func cmdError(verb string, err error, stderr string) error {
 // cliError is a failed herdr CLI invocation.
 //
 // Its message is byte-for-byte what cmdError has always produced --
-// `herdr <verb>: <exit status>: <stderr>` -- and that is a requirement,
-// not an accident: isBusyPaneError, isNameTakenError and
-// isAgentNotReadyError all substring-match this text, so changing a byte
-// of it would retire three classifiers silently.
+// `herdr <verb>: <exit status>: <stderr>` -- because that text is what
+// `create` prints and what a failed step shows. Nothing may classify the
+// error by it (#144): the verb holds the argv, and the argv holds the
+// caller's own text -- the prompt, the title, the branch -- so a prompt
+// that merely mentions agent_pane_busy used to read as a busy pane and get
+// sent again.
 //
 // What it adds is code, herdr's own `error.code`, parsed HERE where the
 // stderr envelope is still a discrete value. That is the whole difference
 // between reading herdr's verdict and grepping a string that also contains
 // the caller's prompt text and the flags this package chose -- see
-// ErrPromptWaitTimeout (#108).
+// ErrPromptWaitTimeout (#108) and Is below.
 type cliError struct {
 	verb   string
 	stderr string
@@ -354,6 +356,24 @@ func (e *cliError) Error() string {
 // against something like exec.ErrNotFound still works through this type
 // exactly as it did through cmdError's old %w chain.
 func (e *cliError) Unwrap() error { return e.err }
+
+// Is matches the sentinel for the code herdr put in its envelope, and only
+// that, so callers classify with errors.Is through any %w wrapping and
+// never by the text. An error that did not come from here carries no code,
+// however it reads.
+func (e *cliError) Is(target error) bool {
+	sentinel, ok := codeSentinels[e.code]
+	return ok && target == sentinel
+}
+
+// codeSentinels is the herdr codes a caller branches on, each to its
+// sentinel. The two prompt codes are not here: AgentPrompt wraps them
+// itself, because only on that call do they mean what their sentinels say.
+var codeSentinels = map[string]error{
+	"agent_pane_busy":  ErrPaneBusy,
+	"agent_name_taken": ErrAgentNameTaken,
+	"agent_not_ready":  ErrAgentNotReady,
+}
 
 // herdrEnvelopeCode returns the `error.code` from a herdr JSON error
 // envelope, or "" when stderr is not one.
@@ -390,6 +410,32 @@ func herdrErrorCode(err error) string {
 	}
 	return ""
 }
+
+// ErrPaneBusy is herdr's `agent_pane_busy`: `agent start` found its target
+// pane not yet an available shell -- in practice the shell still starting
+// right after the topology was created
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/agents.rs#L259-L262).
+// A race, so the one failure internal/plan waits out and tries again.
+var ErrPaneBusy = errors.New("herdr: the target pane is not an available shell yet")
+
+// ErrAgentNameTaken is herdr's `agent_name_taken`: `agent start` was asked
+// for a name a live agent already has
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/agents.rs#L271-L272).
+// Not a race -- the name stays taken -- so the answer is another name.
+var ErrAgentNameTaken = errors.New("herdr: the agent name is already in use")
+
+// ErrAgentNotReady is herdr's `agent_not_ready`. From `agent start` it means
+// the readiness poll found the agent it launched blocked
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/agent.rs#L607-L612),
+// and `agent start`'s contract ("detected and ready for input") has no
+// opt-out, so a healthy agent sitting on a dialog fails the call.
+//
+// The same code means something else from `agent prompt` -- "not an active
+// named agent" (src/app/api/agents.rs at v0.9.0) -- and that call's
+// blocked answer is `agent_blocked` instead. So what this sentinel means
+// depends on the call that failed, which is why internal/plan only asks it
+// of an agent start.
+var ErrAgentNotReady = errors.New("herdr: the agent is not ready for input")
 
 // promptWaitTimeoutCode is herdr's `error.code` for `agent prompt --wait`
 // giving up. Unlike the other codes named in this package it is a word
@@ -884,12 +930,11 @@ func (r *CLIRunner) AgentRead(ctx context.Context, target string) (string, error
 // practice Claude Code's first-run trust prompt in a directory the
 // launching account has not been trusted in yet.
 //
-// A typed sentinel rather than the substring match every OTHER herdr error
-// in this package reaches Go through, and deliberately so: those arrive as
-// the CLI's stderr wrapped into an error string, with no structure to test.
-// This one is decided HERE, by AwaitDetection reading herdr's own JSON, so
-// there is a real value to return and callers should not be reduced to
-// grepping prose for it.
+// A typed sentinel like the ones cliError.Is matches by herdr's error code,
+// but with no code behind it: herdr never refuses anything here. It is
+// decided HERE, by AwaitDetection reading herdr's own agent JSON, so there
+// is a real value to return and callers should not be reduced to grepping
+// prose for it.
 var ErrAgentBlocked = errors.New("agent is blocked and needs interactive input")
 
 // ErrAgentGone reports an agent that WAS observed blocked and has since

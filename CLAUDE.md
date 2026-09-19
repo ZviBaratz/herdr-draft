@@ -319,6 +319,18 @@ Layering, outermost to innermost:
   itself fails. `ExecResult.promptUnconfirmedCause` carries
   which of the five shapes it was, purely so `CleanCheck` names the right
   evidence; the exported flag stays the posture every other package reads.
+- **A herdr error is classified by its code, never by its text (#144).**
+  `cliError`'s message embeds the argv, and the argv carries the user's
+  prompt, title and branch, so text that mentions a code is not that code:
+  a prompt about `agent_pane_busy` once bought itself a resend. `herdrc`
+  parses `error.code` from the stderr envelope and exposes each code a
+  caller branches on as a sentinel (`ErrPaneBusy`, `ErrAgentNameTaken`,
+  `ErrAgentNotReady`) that `cliError.Is` matches, so `errors.Is` finds it
+  through any `%w` wrap and an error that is not herdr's never matches.
+  A new code worth branching on gets a sentinel in `codeSentinels`, not a
+  `strings.Contains`. Test fakes return a small type whose `Is` names the
+  sentinel (`herdrErr` in `plan`, `codedErr` in `app` and `create`) —
+  a fake whose text merely contains the code now proves nothing.
 - **Citations into herdr's source name a pinned ref, never a local
   path.** The pin is the herdr release this plugin's floor names
   (`min_herdr_version` in `herdr-plugin.toml`), tagged `v<version>` — the

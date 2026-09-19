@@ -386,8 +386,7 @@ func TestCLIRunnerCreateCallsMarkWhatChangedNothing(t *testing.T) {
 
 // TestCLIRunnerNothingCreatedKeepsTheMessage pins that the mark adds a fact
 // and not a word: the error's text is what `create` prints and what --json
-// carries as `error`, and cliError's text is also what isBusyPaneError and
-// its siblings substring-match.
+// carries as `error`.
 func TestCLIRunnerNothingCreatedKeepsTheMessage(t *testing.T) {
 	bin := fakeHerdrFailEnvelope(t, "linked_worktree_source", "New and open worktree actions start from the repo parent workspace.")
 	_, err := (&CLIRunner{Bin: bin}).WorktreeCreate(context.Background(), WorktreeCreateReq{Cwd: "/r", Branch: "b"})

@@ -194,11 +194,13 @@ func (m *worktreeAttempts) WorktreeCreate(_ context.Context, req herdrc.Worktree
 	return herdrc.CreatedTopology{}, err
 }
 
-// TestExecute_NothingCreatedNeedsEveryAttemptsEvidence: retryBusy retries
-// any error whose TEXT holds agent_pane_busy, and a worktree create's text
-// holds its argv, the title among it. So an attempt that made a checkout can
-// be retried, and the retry's refusal is evidence only about the retry.
-// Found by the independent review.
+// TestExecute_NothingCreatedNeedsEveryAttemptsEvidence: an attempt that
+// made a checkout and was then retried leaves a retry whose refusal is
+// evidence only about the retry. Found by the independent review, when
+// retryBusy read an error's TEXT and a title in --label could buy the retry.
+// Since #144 it reads herdr's code, and herdr answers no worktree create with
+// agent_pane_busy, so this is unreachable today -- which is why it is pinned
+// rather than left to a reader's trust.
 func TestExecute_NothingCreatedNeedsEveryAttemptsEvidence(t *testing.T) {
 	withBusyRetryOverrides(t, 0, nil)
 	in := validInput()
@@ -208,9 +210,8 @@ func TestExecute_NothingCreatedNeedsEveryAttemptsEvidence(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	m := &worktreeAttempts{errs: []error{
-		// herdr made the checkout and its branch, then failed; the title
-		// in --label is what retryBusy reads as busy.
-		errors.New(`herdr worktree create --label fix agent_pane_busy: exit status 1: {"error":{"code":"worktree_open_failed"}}`),
+		// herdr made the checkout and its branch, then failed busy.
+		herdrErr{msg: `herdr worktree create --label fix: exit status 1`, code: herdrc.ErrPaneBusy},
 		refusedUnchanged("worktree_operation_in_progress"),
 	}}
 

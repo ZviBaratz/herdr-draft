@@ -425,6 +425,14 @@ without the popup. It drives herdr exclusively through the public CLI
   and `--on-failure` applies, and the remove keeps the branch git made. A
   reply with no branch, which is how herdr describes a detached checkout,
   is not held against the request.
+- **herdr's errors are read by their code, never by their text** (#144). A
+  failed herdr call's message carries its command line, and so the prompt,
+  title or branch you typed. The busy-pane retry, the taken-name suffix and
+  the blocked-launch explanation used to find herdr's codes anywhere in that
+  message, so a prompt that merely mentioned `agent_pane_busy` could be sent
+  again into an agent already working on it, and a branch naming it could
+  re-run a worktree step whose checkout then dropped out of the keep-or-remove
+  offer. Each now matches only the code in herdr's own error reply.
 - **Screen detection is evidence-based.** Before sending a queued prompt
   the executor reads the pane and checks it against known blocking-dialog
   signatures rather than trusting an "idle" report, and turns herdr's

@@ -1677,8 +1677,8 @@ func TestSubmit_PopupWaitsThroughTheTrustDialog(t *testing.T) {
 	runner := &submitFakeRunner{
 		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
 		failAt: "AgentStart",
-		failErr: errors.New("herdr agent start fix-pagination --kind claude: exit status 1: " +
-			`{"error":{"code":"agent_not_ready","message":"agent fix-pagination is blocked during startup"},"id":"cli:agent:start"}`),
+		failErr: codedErr{msg: "herdr agent start fix-pagination --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"agent fix-pagination is blocked during startup"},"id":"cli:agent:start"}`, code: herdrc.ErrAgentNotReady},
 		readText:     "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n",
 		dialogClears: true,
 	}
@@ -1723,8 +1723,8 @@ func TestSubmit_TrustWaitComesFromTheConfig(t *testing.T) {
 	runner := &submitFakeRunner{
 		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
 		failAt: "AgentStart",
-		failErr: errors.New("herdr agent start x --kind claude: exit status 1: " +
-			`{"error":{"code":"agent_not_ready","message":"blocked"},"id":"cli:agent:start"}`),
+		failErr: codedErr{msg: "herdr agent start x --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"blocked"},"id":"cli:agent:start"}`, code: herdrc.ErrAgentNotReady},
 		dialogClears: true,
 	}
 	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 90000}}
@@ -1842,3 +1842,14 @@ func TestSubmitProgress_AWorktreeCaveatIsNotATabName(t *testing.T) {
 		t.Errorf("worktree row detail = %q, want the caveat itself, not a tab's \"not named\"", row.Detail)
 	}
 }
+
+// codedErr is a failed herdr call the way herdrc.CLIRunner reports one: the
+// CLI's text, verbatim, and the sentinel for its envelope's code, which is
+// what classifies it -- never the text (#144).
+type codedErr struct {
+	msg  string
+	code error
+}
+
+func (e codedErr) Error() string        { return e.msg }
+func (e codedErr) Is(target error) bool { return target == e.code }
