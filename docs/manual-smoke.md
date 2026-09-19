@@ -1652,6 +1652,32 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### a submit inside the project row's debounce (#195) — 2026-09-19
+
+herdr 0.9.0. `main` at `905f328`, built from `git archive`, and
+`zvi/fix-195-submit-waits-for-dir-check` at `d11cedb`, not merged. Route A0
+with its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME` under `/var/tmp`,
+`onboarding = false`, `[worktrees] directory` under the same path, and a
+scratch plugin config and state dir with `[agents] favorites =
+["nosuchkind"]`. No claude was started, so the pass spent no account quota.
+The form ran by Route B in the host workspace's pane, whose cwd was a
+throwaway repository, so each pass opened on `project  <repo>` and
+`worktree  on · from main`. Each pass typed a title, `⇥ ⇥` to the project
+row, and then sent the second path and `⌃S` in back-to-back `pane
+send-text` / `send-keys` calls, 9–18 ms apart, well inside the 150 ms
+debounce. `<repo>`, `<plain>` and `<nowhere>` sit side by side in the
+scratch tree, and `<plain>` is a directory that is not a repository.
+
+| Case | `main` | the fix |
+|---|---|---|
+| `<plain>`, `⌃S` | **the defect.** `✗ worktree  herdr worktree create --cwd <plain> …`, herdr `not_git_worktree`: the submit used the repository's answers. | **as expected.** `✓ workspace`, `✓ tab`, `✗ nosuchkind`: the submit waited, then went on without a worktree, in a new space whose pane's cwd was `<plain>`. One `⌃S`. `c` removed it. |
+| `<nowhere>`, a path that does not exist, `⌃S` | **the defect.** `✗ worktree  herdr worktree create --cwd <nowhere> …`. | **as expected.** No submit: the project row read `<nowhere>  invalid`, the worktree row `not a git repository`, focus on the project row. Nothing was created. |
+| `<pla>`, `⌃S`, then `in` | **the defect**, and a second finding: it submitted `<plai>`, not `<pla>`. `⌃S` reaches the app as a `SubmitMsg` through a command round trip, so a key already queued behind it lands first. | **as expected.** The submit arrived at `<plai>`, was held while `n` came in, and went on once the check of `<plain>` landed: the session's pane cwd was `<plain>`. |
+
+Teardown: the disposable session stopped and deleted, no process left with
+a cwd under the scratch tree, the scratch tree removed, `pgrep -x
+herdr-draft` 0.
+
 ### a remembered base the branch list does not name (#194) — 2026-09-19
 
 herdr 0.9.0. `zvi/fix-194-unlisted-base` at `75c9836`, not merged, against
