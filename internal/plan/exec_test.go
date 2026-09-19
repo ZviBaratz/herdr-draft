@@ -128,6 +128,16 @@ type mockRunner struct {
 	// WORKTREE's checkout" and "Created holds the SPLIT's checkout" are the
 	// same assertion, so the §9 clobber regression cannot be pinned at all.
 	splitTopo *herdrc.CreatedTopology
+
+	// onWorktreeCreate and onWorktreeRemove, when non-nil, run inside the
+	// matching call, before it answers -- so a test can make the fake do
+	// to a real repository what herdr does (#173): `worktree create` makes
+	// or checks out the branch, and `worktree remove` removes the checkout
+	// and keeps the branch. Without them, "the branch did not exist until
+	// the create" and "the checkout is gone before the branch is deleted"
+	// are orderings no test can see.
+	onWorktreeCreate func(herdrc.WorktreeCreateReq)
+	onWorktreeRemove func(workspaceID string)
 }
 
 var _ herdrc.Runner = (*mockRunner)(nil)
@@ -158,6 +168,9 @@ func (m *mockRunner) WorktreeCreate(ctx context.Context, req herdrc.WorktreeCrea
 	m.record("WorktreeCreate", req.Cwd, req.Branch, req.Base)
 	if m.shouldFail("WorktreeCreate") {
 		return herdrc.CreatedTopology{}, m.failErr
+	}
+	if m.onWorktreeCreate != nil {
+		m.onWorktreeCreate(req)
 	}
 	return m.topo, nil
 }
@@ -312,6 +325,9 @@ func (m *mockRunner) WorktreeRemove(ctx context.Context, workspaceID string) err
 	m.record("WorktreeRemove", workspaceID)
 	if m.shouldFail("WorktreeRemove") {
 		return m.failErr
+	}
+	if m.onWorktreeRemove != nil {
+		m.onWorktreeRemove(workspaceID)
 	}
 	return nil
 }

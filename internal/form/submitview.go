@@ -579,8 +579,7 @@ func (v *SubmitView) failureBody(width int) []string {
 	out = append(out, v.unsentPromptLines(width)...)
 
 	if v.clean.Allowed {
-		out = append(out, indentedLine(dimText(v.palette).Render(
-			"remove undoes everything this create made"), width))
+		out = append(out, indentedLine(dimText(v.palette).Render(removeLine(v.clean.Branch)), width))
 	} else {
 		// `<state>  <reason>`, two spaces and no dash: v2 spec §6's own
 		// form for "unavailable, with a reason" (§6.1's `unavailable  no
@@ -591,6 +590,26 @@ func (v *SubmitView) failureBody(width int) []string {
 			"remove unavailable"+unavailableReasonSep+v.clean.Reason), width))
 	}
 	return out
+}
+
+// removeLine is what an allowed remove does, from plan.CleanCheck's own
+// account of the branch -- the same BranchFate plan.Clean acts on, so the
+// line cannot promise a delete the clean does not make (#173).
+//
+// A worktree's line names what remove deletes rather than saying
+// "everything": herdr's `worktree remove` keeps the branch, which is why
+// the fate exists at all, and the repository workspace herdr opens beside
+// a repository's first worktree stays open (plan.Clean's doc comment). Only
+// the plans without a worktree, which leave neither behind, keep the
+// sweeping line.
+func removeLine(branch plan.BranchFate) string {
+	switch branch {
+	case plan.BranchDeleted:
+		return "remove deletes the worktree, its branch and its workspace"
+	case plan.BranchKept:
+		return "remove deletes the worktree and its workspace, but keeps the branch"
+	}
+	return "remove undoes everything this create made"
 }
 
 // indentedLine renders one explanation line inside the content box: the

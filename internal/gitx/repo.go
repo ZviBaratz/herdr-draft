@@ -18,8 +18,9 @@ import (
 // panics; any failure to invoke git (missing binary, non-repo dir, etc.)
 // is treated as "not a git repo".
 //
-// One of two calls in this package that deliberately do NOT go through
-// runGit (the other is BranchExists), and the rule for both is the same:
+// One of two paths in this package that deliberately do NOT go through
+// runGit (the other is anyRefExists, behind BranchExists and
+// LocalBranchExists), and the rule for both is the same:
 // `rev-parse` and `show-ref` read local refs, so there is no remote to
 // authenticate to and nothing that could prompt. They skip runGit because
 // they are the package's hottest calls -- this one runs on directory
@@ -410,13 +411,28 @@ func ListBranches(ctx context.Context, repoDir string, limit int) ([]string, err
 // BranchExists reports whether name exists as a local branch or as an
 // origin remote-tracking branch in repoDir. Note "remote-tracking": it
 // reads refs git has already fetched and contacts no remote itself.
+func BranchExists(ctx context.Context, repoDir, name string) (bool, error) {
+	return anyRefExists(ctx, repoDir, "refs/heads/"+name, "refs/remotes/origin/"+name)
+}
+
+// LocalBranchExists reports whether name exists as a local branch in
+// repoDir, and nothing else. BranchExists also counts origin's
+// remote-tracking branch, which is the right question before a create --
+// the form refuses a name origin already uses -- and the wrong one for
+// "did this run make the branch?": when only origin has the name, herdr
+// still makes a new local branch from the base (#173).
+func LocalBranchExists(ctx context.Context, repoDir, name string) (bool, error) {
+	return anyRefExists(ctx, repoDir, "refs/heads/"+name)
+}
+
+// anyRefExists reports whether any of refs exists in repoDir.
 //
 // Bypasses runGit for the reason IsGitRepo's doc comment sets out, plus
 // one of its own: it needs show-ref's exit code 1 ("no such ref")
 // separated from a real failure, which is a distinction runGit's single
 // wrapped error does not offer its callers.
-func BranchExists(ctx context.Context, repoDir, name string) (bool, error) {
-	for _, ref := range []string{"refs/heads/" + name, "refs/remotes/origin/" + name} {
+func anyRefExists(ctx context.Context, repoDir string, refs ...string) (bool, error) {
+	for _, ref := range refs {
 		cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", ref)
 		cmd.Dir = repoDir
 		cmd.Env = withoutLocalRepoEnv(os.Environ())
@@ -520,17 +536,56 @@ func Disposable(ctx context.Context, worktreeDir, baseRef string) (ok bool, reas
 		return false, "worktree has uncommitted changes", nil
 	}
 
-	countOut, err := runGit(ctx, worktreeDir, "rev-list", "--count", baseRef+"..HEAD")
+	count, err := CommitsAhead(ctx, worktreeDir, "HEAD", baseRef)
 	if err != nil {
-		return false, "", fmt.Errorf("count commits ahead of %s: %w", baseRef, err)
-	}
-	count, convErr := strconv.Atoi(countOut)
-	if convErr != nil {
-		return false, "", fmt.Errorf("parse rev-list --count output %q: %w", countOut, convErr)
+		return false, "", err
 	}
 	if count != 0 {
 		return false, fmt.Sprintf("worktree has %d commit(s) not on %s", count, baseRef), nil
 	}
 
 	return true, "", nil
+}
+
+// CommitsAhead counts the commits ref has that base does not -- `git
+// rev-list --count base..ref` in repoDir. It is the one statement of
+// "commits beyond the base" for the clean gate: Disposable asks it of a
+// worktree's HEAD, and plan.Clean asks it again of the branch itself
+// before deleting that branch (#173).
+//
+// Neither side may be empty. git reads `base..` and `..ref` as HEAD, so
+// an empty side is an answer about the wrong commit rather than an error --
+// the shape ResolveRef's doc comment describes making the gate unfailable.
+func CommitsAhead(ctx context.Context, repoDir, ref, base string) (int, error) {
+	if strings.TrimSpace(ref) == "" || strings.TrimSpace(base) == "" {
+		return 0, fmt.Errorf("count commits: empty ref %q or base %q in %s", ref, base, repoDir)
+	}
+	out, err := runGit(ctx, repoDir, "rev-list", "--count", base+".."+ref)
+	if err != nil {
+		return 0, fmt.Errorf("count commits on %s not on %s: %w", ref, base, err)
+	}
+	count, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("parse rev-list --count output %q: %w", out, err)
+	}
+	return count, nil
+}
+
+// DeleteBranch deletes the local branch name in repoDir, with `git branch
+// -D`.
+//
+// The force is deliberate, and it is the caller's own check that earns it.
+// `-d` asks whether the branch is merged into its upstream, or, with no
+// upstream, into the HEAD of whichever checkout the command runs in -- so
+// it refuses a branch with no commits of its own whenever that checkout
+// sits somewhere else: a branch cut from main while the primary checkout
+// is on another branch, or one cut from a bare commit (#171). plan.Clean
+// asks the question that matters instead, CommitsAhead against the base
+// the branch was cut from, before it calls this. git's other guard stays:
+// a branch checked out in any worktree is still refused.
+func DeleteBranch(ctx context.Context, repoDir, name string) error {
+	if _, err := runGit(ctx, repoDir, "branch", "-D", "--", name); err != nil {
+		return fmt.Errorf("delete branch %s: %w", name, err)
+	}
+	return nil
 }

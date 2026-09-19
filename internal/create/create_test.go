@@ -84,6 +84,15 @@ type fakeRunner struct {
 	// error codes as plain text and internal/plan matches on them by
 	// substring.
 	failErr error
+
+	// worktreeAdd and worktreeRemove, when non-nil, do on disk what herdr's
+	// `worktree create` and `worktree remove` do, so a clean can act on a
+	// real repository (#173): internal/plan asks git itself whether the
+	// branch was there before and whether the checkout is safe to remove,
+	// and a path this fake invented answers neither. worktreeAdd returns
+	// the checkout it made, which replaces the invented one.
+	worktreeAdd    func(herdrc.WorktreeCreateReq) string
+	worktreeRemove func(workspaceID string)
 }
 
 var _ herdrc.Runner = (*fakeRunner)(nil)
@@ -185,6 +194,9 @@ func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreate
 	}
 	topo := r.nextSpace()
 	topo.CheckoutPath = "/checkouts/" + req.Branch
+	if r.worktreeAdd != nil {
+		topo.CheckoutPath = r.worktreeAdd(req)
+	}
 	return topo, nil
 }
 
@@ -263,7 +275,13 @@ func (r *fakeRunner) TabClose(_ context.Context, tabID string) error {
 }
 
 func (r *fakeRunner) WorktreeRemove(_ context.Context, workspaceID string) error {
-	return r.record("WorktreeRemove", workspaceID)
+	if err := r.record("WorktreeRemove", workspaceID); err != nil {
+		return err
+	}
+	if r.worktreeRemove != nil {
+		r.worktreeRemove(workspaceID)
+	}
+	return nil
 }
 
 func (r *fakeRunner) WorkspaceClose(_ context.Context, workspaceID string) error {

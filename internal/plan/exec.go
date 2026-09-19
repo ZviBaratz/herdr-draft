@@ -143,6 +143,22 @@ type ExecResult struct {
 	SpaceReused bool
 	SpaceLabel  string
 
+	// CreatedBranch is the branch this run's `worktree create` made: the
+	// op's branch, when the local ref was absent immediately before the
+	// create and the create succeeded -- the same before/after evidence
+	// SpaceReused rests on. Empty when the branch was already there, when
+	// that could not be read, and for every plan without a worktree.
+	//
+	// It is the only thing that licenses Clean to delete a branch (#173).
+	// Input.Branch is the name the plan ASKED for, and herdr answers the
+	// same whether it made that branch or checked an existing one out
+	// (herdr:src/worktree.rs at v0.9.0, run_worktree_add_command). The
+	// form and create both refuse an existing branch before submit, but
+	// neither refusal is a guarantee: the form's is a debounced verdict
+	// submit does not wait for, and both treat a failed check as "no such
+	// branch".
+	CreatedBranch string
+
 	// PromptUnconfirmed reports that delivery of the prompt is UNKNOWN
 	// rather than known to be false (#108). It is reached two ways, and
 	// they rest on different evidence:
@@ -1184,6 +1200,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 		var reused bool
 		var reusedLabel string
 		var claimed *herdrc.CreatedTopology
+		var createdBranch string
 
 		// promptTyped is the one piece of per-op state that is deliberately
 		// NOT reset per attempt, unlike everything above it and unlike the
@@ -1206,7 +1223,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			// can return it, which is exactly why it is worth three lines rather
 			// than a reader's trust.
 			gotTopo, reused, claimed = false, false, nil
-			reusedLabel = ""
+			reusedLabel, createdBranch = "", ""
 
 			var err error
 			switch op.Kind {
@@ -1244,12 +1261,21 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 					existed[w.WorkspaceID] = true
 					labelOf[w.WorkspaceID] = w.Label
 				}
+				// The same kind of evidence for the branch, taken at the
+				// same moment (#173): herdr's reply cannot say whether it
+				// made the branch, so "absent a moment before" is the only
+				// proof there is. Not a gate -- an unreadable answer just
+				// leaves the branch unclaimed, which a clean keeps.
+				newBranch := branchIsAbsent(ctx, op.Worktree.Cwd, op.Worktree.Branch)
 
 				topo, err = r.WorktreeCreate(ctx, *op.Worktree)
 				if err != nil {
 					return err
 				}
 				gotTopo = true
+				if newBranch {
+					createdBranch = op.Worktree.Branch
+				}
 
 				if existed[topo.WorkspaceID] {
 					reused = true
@@ -1474,6 +1500,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				result.Created = &c
 				result.SpaceReused = reused
 				result.SpaceLabel = reusedLabel
+				result.CreatedBranch = createdBranch
 			}
 			wrapped := fmt.Errorf("plan: execute: %s: %w", op.Label, runErr)
 			emitProgress(onProgress, i, total, op.Label, StepFailed, wrapped)
@@ -1496,6 +1523,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 					result.SpaceReused = true
 					result.SpaceLabel = reusedLabel
 				}
+				result.CreatedBranch = createdBranch
 			}
 			if i == agentPaneIdx {
 				// The whole topology, not just the pane: a reuse claim
@@ -1524,7 +1552,29 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 type CleanDecision struct {
 	Allowed bool
 	Reason  string
+
+	// Branch is what an allowed clean does with the worktree's branch, for
+	// the popup's line and create's report to say. NoBranch whenever the
+	// clean is refused: a refused clean does nothing to anything.
+	Branch BranchFate
 }
+
+// BranchFate is what Clean does with a worktree's branch (#173). herdr's
+// `worktree remove` keeps the branch by design, so without Clean deleting
+// it a retry with the same title derives the same name and is refused.
+type BranchFate int
+
+const (
+	// NoBranch: there is no worktree branch to speak of -- the space is
+	// not a worktree, or the clean is refused.
+	NoBranch BranchFate = iota
+	// BranchDeleted: Clean deletes the branch once the checkout is gone,
+	// because this run's create made it (ExecResult.CreatedBranch).
+	BranchDeleted
+	// BranchKept: Clean removes the checkout and leaves the branch,
+	// because nothing shows this run made it.
+	BranchKept
+)
 
 // CleanCheck reports whether Clean is safe to run for the space Execute
 // created (spec §9's keep-or-clean gate). A REUSED space (placement spec
@@ -1574,7 +1624,7 @@ func CleanCheck(ctx context.Context, in Input, result ExecResult) CleanDecision 
 		}
 	}
 	if !in.UseWorktree {
-		return CleanDecision{Allowed: true}
+		return CleanDecision{Allowed: true, Branch: branchFate(in, result)}
 	}
 
 	var checkout string
@@ -1600,7 +1650,84 @@ func CleanCheck(ctx context.Context, in Input, result ExecResult) CleanDecision 
 	if !ok {
 		return CleanDecision{Allowed: false, Reason: reason}
 	}
-	return CleanDecision{Allowed: true}
+	return CleanDecision{Allowed: true, Branch: branchFate(in, result)}
+}
+
+// branchFate is what Clean does with in's worktree branch: the one
+// statement of it, read by CleanCheck to say so and by Clean to do it, so
+// the popup line and create's report cannot promise a delete Clean does
+// not make. Only a branch this run made is deleted (ExecResult.
+// CreatedBranch); a worktree whose branch nothing shows it made keeps it.
+func branchFate(in Input, result ExecResult) BranchFate {
+	switch {
+	case !in.UseWorktree:
+		return NoBranch
+	case result.CreatedBranch != "":
+		return BranchDeleted
+	default:
+		return BranchKept
+	}
+}
+
+// branchIsAbsent reports whether branch is positively absent from dir's
+// local branches -- Execute's evidence, taken just before `worktree
+// create`, that the create is about to make it. False whenever that cannot
+// be shown: no branch named (herdr then invents one this cannot know), no
+// directory to ask (git would answer about whichever repository the
+// process is in -- #186's hazard), or git failing.
+//
+// Local refs only (gitx.LocalBranchExists): a name only origin has still
+// gets a new local branch from herdr, and that one is this run's.
+func branchIsAbsent(ctx context.Context, dir, branch string) bool {
+	if dir == "" || branch == "" {
+		return false
+	}
+	exists, err := gitx.LocalBranchExists(ctx, dir, branch)
+	return err == nil && !exists
+}
+
+// branchToDelete is the branch Clean deletes once the checkout is gone, or
+// "" for none. It is judged BEFORE anything is removed, and an error means
+// Clean removes nothing.
+//
+// CleanCheck already refused a worktree carrying commits its base does not
+// have, so this asks again only because that verdict can be stale: the
+// popup computes it when the step fails, and `c` may be pressed minutes
+// later. A commit made in between is safe today only because the branch
+// outlives `worktree remove`; deleting the branch is what would lose it.
+// So the branch itself is counted against the base CleanCheck counted
+// from, and a branch that now holds work stops the whole clean rather than
+// half of it -- a checkout removed with its branch kept is exactly the
+// state #173 is about, reached by a different road.
+//
+// A branch already gone is nothing to delete, not a reason to refuse.
+func branchToDelete(ctx context.Context, in Input, result ExecResult) (string, error) {
+	if branchFate(in, result) != BranchDeleted {
+		return "", nil
+	}
+	branch := result.CreatedBranch
+	if in.ProjectDir == "" {
+		return "", fmt.Errorf("no project directory to find branch %s in", branch)
+	}
+	exists, err := gitx.LocalBranchExists(ctx, in.ProjectDir, branch)
+	if err != nil {
+		return "", fmt.Errorf("could not check branch %s: %w", branch, err)
+	}
+	if !exists {
+		return "", nil
+	}
+	base, err := resolveBaseRef(ctx, in)
+	if err != nil {
+		return "", fmt.Errorf("could not determine what branch %s was cut from: %w", branch, err)
+	}
+	ahead, err := gitx.CommitsAhead(ctx, in.ProjectDir, "refs/heads/"+branch, base)
+	if err != nil {
+		return "", fmt.Errorf("could not count the commits on branch %s: %w", branch, err)
+	}
+	if ahead != 0 {
+		return "", fmt.Errorf("branch %s now has %d commit(s) not on %s", branch, ahead, base)
+	}
+	return branch, nil
 }
 
 // unconfirmedCleanReason is the sentence CleanCheck refuses with, chosen by
@@ -1672,7 +1799,16 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 // with no workspace already open, also opens an implicit origin-repo
 // workspace as a side effect. Clean deliberately does not touch that
 // implicit workspace -- closing it is out of scope for v1 and risks
-// destroying state the user, not herdr-draft, created.
+// destroying state the user, not herdr-draft, created. Which is why the
+// popup's line for a worktree names what remove deletes rather than
+// claiming "everything this create made".
+//
+// A worktree's branch is the other thing a create makes that herdr's
+// `worktree remove` leaves behind, by design. Clean deletes it (#173),
+// because a branch left over is what refuses a retry with the same title --
+// but only a branch this run made (ExecResult.CreatedBranch), only while it
+// holds nothing its base does not (branchToDelete, judged before anything
+// is removed), and only once the checkout is gone.
 //
 // When Execute claimed a pane for the agent that differs from the space's
 // own (a reuse correction, placement spec §5.1/§5.2), that claimed pane is
@@ -1696,7 +1832,8 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 //	!UseWorktree + tab here    -> TabClose(Created.TabID)
 //	!UseWorktree + split here  -> PaneClose(Created.PaneID)
 //	!UseWorktree + new space   -> WorkspaceClose(Created.WorkspaceID)
-//	UseWorktree  (any)         -> WorktreeRemove(Created.WorkspaceID)
+//	UseWorktree  (any)         -> WorktreeRemove(Created.WorkspaceID),
+//	                              then `git branch -D` of CreatedBranch
 //
 // CleanCheck still allows every non-worktree plan, because with this
 // dispatch the clean really does remove only what the create made.
@@ -1705,6 +1842,11 @@ func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) er
 		return fmt.Errorf("plan: clean: nothing was created")
 	}
 	created := *result.Created
+
+	branch, err := branchToDelete(ctx, in, result)
+	if err != nil {
+		return fmt.Errorf("plan: clean: %w -- nothing was removed", err)
+	}
 
 	if result.AgentAt != nil && result.AgentAt.PaneID != "" && result.AgentAt.PaneID != created.PaneID {
 		if err := r.PaneClose(ctx, result.AgentAt.PaneID); err != nil {
@@ -1715,6 +1857,14 @@ func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) er
 	if in.UseWorktree {
 		if err := r.WorktreeRemove(ctx, created.WorkspaceID); err != nil {
 			return fmt.Errorf("plan: clean: remove worktree: %w", err)
+		}
+		// After the removal, never before: git refuses to delete a branch
+		// that is still checked out, and that refusal is worth keeping.
+		if branch != "" {
+			if err := gitx.DeleteBranch(ctx, in.ProjectDir, branch); err != nil {
+				return fmt.Errorf("plan: clean: removed the worktree, but not its branch: %w -- "+
+					"delete it yourself with `git branch -D %s`", err, branch)
+			}
 		}
 		return nil
 	}

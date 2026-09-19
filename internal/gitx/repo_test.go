@@ -232,6 +232,110 @@ func TestBranchExistsRemoteOnly(t *testing.T) {
 	}
 }
 
+// TestLocalBranchExists pins the one way it differs from BranchExists: a
+// branch that only origin has is NOT a local branch. herdr makes a new
+// local branch in that case, so a caller asking "did this run make the
+// branch?" must not be told it was already there.
+func TestLocalBranchExists(t *testing.T) {
+	repo := mkRepo(t)
+	ctx := context.Background()
+
+	remoteDir := t.TempDir()
+	gitRun(t, remoteDir, "init", "-q", "--bare")
+	gitRun(t, repo, "remote", "add", "origin", remoteDir)
+	gitRun(t, repo, "checkout", "-qb", "remote-only")
+	gitRun(t, repo, "push", "-q", "origin", "remote-only")
+	gitRun(t, repo, "checkout", "-q", "main")
+	gitRun(t, repo, "branch", "-qD", "remote-only")
+
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{"main", true},
+		{"remote-only", false},
+		{"does-not-exist", false},
+	} {
+		got, err := LocalBranchExists(ctx, repo, tc.name)
+		if err != nil {
+			t.Fatalf("LocalBranchExists(%s): %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("LocalBranchExists(%s) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	if _, err := LocalBranchExists(ctx, t.TempDir(), "main"); err == nil {
+		t.Error("LocalBranchExists in a non-repository returned no error; that is not the same answer as \"no such branch\"")
+	}
+}
+
+func TestCommitsAhead(t *testing.T) {
+	repo := mkRepo(t)
+	ctx := context.Background()
+
+	gitRun(t, repo, "branch", "feature")
+	if n, err := CommitsAhead(ctx, repo, "refs/heads/feature", "main"); err != nil || n != 0 {
+		t.Fatalf("CommitsAhead(feature at main) = %d, %v, want 0", n, err)
+	}
+
+	gitRun(t, repo, "checkout", "-q", "feature")
+	gitRun(t, repo, "commit", "-qm", "work", "--allow-empty")
+	gitRun(t, repo, "checkout", "-q", "main")
+	if n, err := CommitsAhead(ctx, repo, "refs/heads/feature", "main"); err != nil || n != 1 {
+		t.Fatalf("CommitsAhead(feature one commit past main) = %d, %v, want 1", n, err)
+	}
+
+	// Either side empty is `git rev-list --count ..X` or `X..`, which git
+	// reads as HEAD: an answer about the wrong commit, never an error.
+	if _, err := CommitsAhead(ctx, repo, "refs/heads/feature", ""); err == nil {
+		t.Error("CommitsAhead with an empty base returned no error")
+	}
+	if _, err := CommitsAhead(ctx, repo, "", "main"); err == nil {
+		t.Error("CommitsAhead with an empty ref returned no error")
+	}
+	if _, err := CommitsAhead(ctx, repo, "refs/heads/no-such-branch", "main"); err == nil {
+		t.Error("CommitsAhead of a missing ref returned no error")
+	}
+}
+
+func TestDeleteBranch(t *testing.T) {
+	repo := mkRepo(t)
+	ctx := context.Background()
+
+	gitRun(t, repo, "branch", "gone")
+	if err := DeleteBranch(ctx, repo, "gone"); err != nil {
+		t.Fatalf("DeleteBranch: %v", err)
+	}
+	if ok, err := LocalBranchExists(ctx, repo, "gone"); err != nil || ok {
+		t.Fatalf("after DeleteBranch, LocalBranchExists(gone) = %v, %v, want false", ok, err)
+	}
+
+	// Why -D and not -d: a branch cut from main's tip, with no commits of
+	// its own, while this checkout sits on an older branch. `git branch -d`
+	// calls that "not fully merged" -- it asks about this checkout's HEAD,
+	// not about the base the branch came from.
+	gitRun(t, repo, "branch", "older")
+	gitRun(t, repo, "commit", "-qm", "newer", "--allow-empty")
+	gitRun(t, repo, "branch", "cut-from-main")
+	gitRun(t, repo, "checkout", "-q", "older")
+	if err := DeleteBranch(ctx, repo, "cut-from-main"); err != nil {
+		t.Fatalf("DeleteBranch refused a branch with no commits beyond main: %v", err)
+	}
+	gitRun(t, repo, "checkout", "-q", "main")
+
+	// git's own guard is kept on purpose: a branch some checkout still has
+	// out is refused, whatever the caller believed.
+	linked := filepath.Join(t.TempDir(), "lane")
+	gitRun(t, repo, "worktree", "add", "-q", "-b", "lane", linked)
+	if err := DeleteBranch(ctx, repo, "lane"); err == nil {
+		t.Fatal("DeleteBranch deleted a branch checked out in a linked worktree")
+	}
+	if ok, err := LocalBranchExists(ctx, repo, "lane"); err != nil || !ok {
+		t.Fatalf("after a refused DeleteBranch, LocalBranchExists(lane) = %v, %v, want true", ok, err)
+	}
+}
+
 func TestCurrentBranch(t *testing.T) {
 	repo := mkRepo(t)
 	ctx := context.Background()

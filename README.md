@@ -455,6 +455,28 @@ the agent is where the space's own pane is. `--on-failure clean` removes
 only what the run actually created: the tab for `tab-here` or `tab-in`, the
 pane for `split-here`, and the workspace or the worktree otherwise.
 
+**A cleaned worktree takes its branch with it**, so a retry with the same
+title is not refused over a branch the failed run left behind. herdr's
+`worktree remove` keeps the branch by design, so herdr-draft deletes it
+itself, with `git branch -D` once the checkout is gone, and only when both
+of these hold:
+
+- **the run made it.** herdr checks an existing branch out rather than
+  refusing it, and answers the same either way, so herdr-draft looks just
+  before the create. A branch that was already there, or that it could not
+  check for, is kept.
+- **it holds nothing its base does not.** The clean is already refused for
+  a checkout with commits of its own. The branch is counted again just
+  before anything is removed, and one that has gained a commit since stops
+  the whole clean, with the reason in `clean_refused`.
+
+`deleted_branch` names the branch when it went; absent beside
+`cleaned: true`, the branch is still there and a retry needs a new
+`--branch`. The popup's remove does the same, and its line above the
+buttons says which. Neither closes the repository's own workspace, which
+herdr opens alongside a repository's first worktree; close that yourself if
+you do not want it.
+
 **A worktree session runs in the worktree's own space**, which herdr's
 sidebar groups under the repository's. `--placement` therefore applies only
 with `--no-worktree`. With a worktree, `--placement` other than `new-space`,

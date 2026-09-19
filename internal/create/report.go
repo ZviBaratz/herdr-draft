@@ -31,6 +31,10 @@ type report struct {
 	onFailure    string
 	cleaned      bool
 	cleanRefused string
+	// branch is what the clean did with the worktree's branch, from the
+	// CleanCheck decision the clean was allowed by (#173). Meaningful only
+	// when cleaned.
+	branch plan.BranchFate
 
 	json bool
 }
@@ -104,6 +108,12 @@ func (r report) failureLine() string {
 		b.WriteString("\nnothing was created")
 	case r.cleaned:
 		b.WriteString("\nthe session it had created was removed (--on-failure clean)")
+		switch r.branch {
+		case plan.BranchDeleted:
+			b.WriteString(", with its branch " + r.result.CreatedBranch)
+		case plan.BranchKept:
+			b.WriteString(", but not its branch " + r.input.Branch + ": nothing shows this run made it")
+		}
 	case r.cleanRefused != "":
 		b.WriteString("\nkept the session it had created: " + r.cleanRefused)
 	default:
@@ -224,6 +234,12 @@ type jsonReport struct {
 	Cleaned      bool   `json:"cleaned,omitempty"`
 	CleanRefused string `json:"clean_refused,omitempty"`
 
+	// DeletedBranch is the worktree branch the clean deleted -- the one
+	// this run made (#173). Absent with `cleaned` true means the branch is
+	// still there, because nothing showed this run made it, and a retry
+	// with the same title will be refused for it.
+	DeletedBranch string `json:"deleted_branch,omitempty"`
+
 	// Provenance is spec §10's tier attribution, one entry per resolved
 	// value: which file supplied it, or "flag" when the caller did,
 	// "worktree" for the placement a worktree decides, and "checkout" for
@@ -282,6 +298,9 @@ func (r report) writeJSON(w io.Writer) {
 		out.OnFailure = r.onFailure
 		out.Cleaned = r.cleaned
 		out.CleanRefused = r.cleanRefused
+		if r.cleaned && r.branch == plan.BranchDeleted {
+			out.DeletedBranch = r.result.CreatedBranch
+		}
 	}
 
 	enc := json.NewEncoder(w)

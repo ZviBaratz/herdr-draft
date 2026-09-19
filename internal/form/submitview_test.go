@@ -102,10 +102,13 @@ func TestFrames_Progress(t *testing.T) {
 // TestFrames_FailureCleanOffered is v2 spec §12's failure screen with
 // both buttons live: the stack stays, the failed row carries the reason,
 // and the choice is a button row on the footer.
+//
+// The stack is a worktree plan's, so the decision says what CleanCheck says
+// for one this run made the branch of: remove deletes that branch too (#173).
 func TestFrames_FailureCleanOffered(t *testing.T) {
 	v := newSubmitTestView()
 	v.SetSteps(sampleStepsFailed())
-	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true})
+	v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true, Branch: plan.BranchDeleted})
 	assertSubmitFrame(t, "failure-keep-clean-80x24", v, 80, 24)
 }
 
@@ -521,6 +524,36 @@ func TestSubmitView_CleanDisabledShowsItsReason(t *testing.T) {
 		}
 		if !strings.Contains(frame, "k keep it") {
 			t.Errorf("ViewAt(80,24) = %q, want keep still live", frame)
+		}
+	}
+}
+
+// TestSubmitView_RemoveLineSaysWhatHappensToTheBranch pins the line above
+// the buttons to what plan.Clean will actually do (#173). It used to say
+// "remove undoes everything this create made" for every plan, which was
+// false twice over for a worktree: herdr's `worktree remove` keeps the
+// branch, and the repository workspace herdr opens beside a first worktree
+// stays open. A worktree's line therefore names what remove deletes, and
+// says so when the branch is kept.
+func TestSubmitView_RemoveLineSaysWhatHappensToTheBranch(t *testing.T) {
+	for _, tc := range []struct {
+		fate plan.BranchFate
+		want string
+	}{
+		{plan.BranchDeleted, "remove deletes the worktree, its branch and its workspace"},
+		{plan.BranchKept, "remove deletes the worktree and its workspace, but keeps the branch"},
+		{plan.NoBranch, "remove undoes everything this create made"},
+	} {
+		v := newSubmitTestView()
+		v.SetSteps(sampleStepsFailed())
+		v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true, Branch: tc.fate})
+
+		frame := strippedFrame(v, 80, 24)
+		if !strings.Contains(frame, tc.want) {
+			t.Errorf("fate %v: frame does not say %q:\n%s", tc.fate, tc.want, frame)
+		}
+		if tc.fate != plan.NoBranch && strings.Contains(frame, "everything") {
+			t.Errorf("fate %v: a worktree's remove line claims everything, and the parent workspace stays:\n%s", tc.fate, frame)
 		}
 	}
 }

@@ -333,6 +333,12 @@ machine. Passing `--on-failure clean` does not override that for an
 `unconfirmed` prompt — the clean is refused at failure time and the session
 kept, with the reason under `clean_refused`.
 
+If you do clean a worktree session and mean to retry, read
+`deleted_branch`. Present, it names the branch the clean deleted, and the
+same title can be run again. Absent beside `cleaned: true`, the branch is
+still there — nothing showed this run made it — and the same title is
+refused with exit 2 until you pass `--branch` with a new name.
+
 **Finish by looking at the pane**, not by trusting the exit status:
 
 ```bash

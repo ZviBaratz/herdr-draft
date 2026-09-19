@@ -439,11 +439,17 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 // way to override that refusal from the command line, which is the
 // point: a non-interactive caller is the one least able to notice what it
 // would be destroying.
+//
+// A worktree's clean also deletes the branch the run made (#173), and the
+// decision it was allowed by says whether it will; that is recorded so the
+// report can say which, because a caller about to retry with the same
+// title needs to know whether the name is free again.
 func applyOnFailure(ctx context.Context, deps Deps, rep *report) {
 	if rep.onFailure != onFailureClean {
 		return
 	}
-	if decision := plan.CleanCheck(ctx, rep.input, rep.result); !decision.Allowed {
+	decision := plan.CleanCheck(ctx, rep.input, rep.result)
+	if !decision.Allowed {
 		rep.cleanRefused = decision.Reason
 		return
 	}
@@ -452,6 +458,7 @@ func applyOnFailure(ctx context.Context, deps Deps, rep *report) {
 		return
 	}
 	rep.cleaned = true
+	rep.branch = decision.Branch
 }
 
 // remember writes the choices this create was made with back to the plugin

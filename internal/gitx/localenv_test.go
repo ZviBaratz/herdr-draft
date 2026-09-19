@@ -117,6 +117,23 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 	if err != nil || !ok {
 		t.Errorf("Disposable(%s) = %v, %q, %v: it judged the inherited repository", repo, ok, reason, err)
 	}
+
+	// The branch half of the same clean (#173): whether this run made the
+	// branch, whether it holds work, and the delete itself. Asked about
+	// the decoy, a branch this repository has would be "not there" and
+	// the delete would fail -- or, worse, succeed over there.
+	if ok, err := LocalBranchExists(ctx, repo, "decoy-only"); err != nil || ok {
+		t.Errorf("LocalBranchExists(decoy-only) = %v, %v: it found the inherited repository's branch", ok, err)
+	}
+	if n, err := CommitsAhead(ctx, repo, "refs/heads/feature", "main"); err != nil || n != 0 {
+		t.Errorf("CommitsAhead(feature, main) = %d, %v: it counted in the inherited repository", n, err)
+	}
+	if err := DeleteBranch(ctx, repo, "feature"); err != nil {
+		t.Errorf("DeleteBranch(feature): %v -- it looked for the branch in the inherited repository", err)
+	}
+	if ok, err := LocalBranchExists(ctx, repo, "feature"); err != nil || ok {
+		t.Errorf("after DeleteBranch, LocalBranchExists(feature) = %v, %v, want false", ok, err)
+	}
 }
 
 // revParse is `git rev-parse <rev>` in dir, run with the test environment
