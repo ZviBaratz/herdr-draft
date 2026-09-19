@@ -113,6 +113,15 @@ without the popup. It drives herdr exclusively through the public CLI
   the form is frozen until it has: a second `⌃S` used to spend a second
   pick, a `⌃R ⌃R` had the pick submit the rebuilt form, and an edit reached
   the session unchecked. `esc` and the Cancel button still cancel.
+- **A branch git cannot hold is refused where the branch is shown** (#199).
+  The `worktree` panel names what is wrong with it under the three parts,
+  and a submit lands the cursor in the branch input to fix it. The
+  duplicate check could not see these names, because git calls a branch it
+  could never hold "absent". So `zvi/old ` got past it, and herdr, which
+  trims the name, started the session on your existing `zvi/old`. The same
+  goes for whitespace git would take but herdr trims, such as a trailing
+  no-break space. Other invalid names failed inside herdr, at the create's
+  first step. A branch derived from the title is always one git can hold.
 - Mouse: click a row to focus it, click a panel line to select it, wheel to
   scroll the panel.
 - The popup is a fixed **104×32 cells**, a manifest value rather than a
@@ -200,7 +209,9 @@ without the popup. It drives herdr exclusively through the public CLI
   an existing branch out rather than refusing it, and ignores `--base` when
   it does. `--account auto`'s real pick runs after every other check, so a
   refused request spends no pick (#145), and `--account active` means no
-  pin, as it does in `config.toml` (#146).
+  pin, as it does in `config.toml` (#146). A branch git cannot hold, from
+  `--branch` or the Linear issue, is refused the same way and names where it
+  came from (#199). That check runs before herdr is asked anything.
 - **Cleaning a failed worktree session deletes the branch it made** (#173),
   so a retry with the same title is no longer refused over a branch the
   failure left behind; herdr's `worktree remove` keeps branches by design.
