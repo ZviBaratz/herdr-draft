@@ -1382,14 +1382,18 @@ const execErrorPrefix = "plan: execute: "
 // plugin's whole job was creating and launching the session, which is now
 // done -- so it quits, mirroring form.CancelMsg's own tea.Quit posture. A
 // failure before step 1 (topology creation) ever succeeded (Created ==
-// nil) has nothing to keep or clean either: spec §9's keep-or-clean gate
-// is explicitly scoped to "after step 1 succeeded," so the failed
+// nil) has no space for keep or clean to act on: spec §9's keep-or-clean
+// gate is explicitly scoped to "after step 1 succeeded," so the failed
 // progress line (already streamed) is simply left showing, with
 // updateSubmitting's own Esc/Ctrl+C handling as this state's only way out
 // (SubmitView's own k/c grammar never activates -- SetFailure is never
-// called). Otherwise, plan.CleanCheck needs to run first -- real git I/O
-// for a worktree space, via gitx.Disposable -- before SubmitView's
-// failure prompt can be shown at all, so that's deferred to its own Cmd
+// called). No space is not the same as nothing made, though (#208): herdr
+// can fail a worktree create after git has made the branch, so the view
+// says "nothing was created" only on ExecResult.NothingCreated, and
+// without it says what may be left, naming the branch when the plan had
+// one. Otherwise, plan.CleanCheck needs to run first -- real git I/O for
+// a worktree space, via gitx.Disposable -- before SubmitView's failure
+// prompt can be shown at all, so that's deferred to its own Cmd
 // (runCleanCheckCmd) rather than called synchronously here.
 func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 	if msg.result.FailedIndex == -1 {
@@ -1410,8 +1414,14 @@ func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 		if m.submitView != nil {
 			// The view needs to be told too, so its footer offers the one
 			// key this state actually honors ("esc close") and says so
-			// nowhere else -- see SubmitView.footerParts.
-			m.submitView.SetDeadEnd(msg.result)
+			// nowhere else -- see SubmitView.footerParts. It gets the
+			// worktree and its branch because, without evidence that
+			// nothing was made, they are what may be left (#208).
+			branch := ""
+			if m.submitInput.UseWorktree {
+				branch = m.submitInput.Branch
+			}
+			m.submitView.SetDeadEnd(msg.result, m.submitInput.UseWorktree, branch)
 		}
 		// A dead end still owes the user their prompt back. This branch
 		// used to return nil because plan.Execute only ever set PromptText

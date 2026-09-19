@@ -761,8 +761,11 @@ func TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd(t *testing.T) {
 			},
 		},
 		{
-			name:     "step-one dead end",
-			setup:    func(m *Model) { m.submitDeadEnd = true; m.submitView.SetDeadEnd(plan.ExecResult{FailedIndex: 0}) },
+			name: "step-one dead end",
+			setup: func(m *Model) {
+				m.submitDeadEnd = true
+				m.submitView.SetDeadEnd(plan.ExecResult{FailedIndex: 0}, false, "")
+			},
 			wantQuit: true,
 		},
 	}
@@ -1510,7 +1513,7 @@ func TestSubmit_DeadEndStillSavesTheUnsentPrompt(t *testing.T) {
 	prompt := "Work on ENG-2: Fix the redirect\n\nhttps://linear.app/x/ENG-2\n\nLong description here."
 	m.submitInput = plan.Input{ProjectDir: "/repo", Prompt: prompt}
 
-	// Created == nil: step 1 itself failed, so there is nothing to keep.
+	// Created == nil: step 1 itself failed, so there is no space to keep.
 	m2, cmd := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{
 		FailedIndex: 0,
 		PromptText:  prompt,
@@ -1540,13 +1543,93 @@ func TestSubmit_DeadEndStillSavesTheUnsentPrompt(t *testing.T) {
 	if !strings.Contains(frame, "prompt not sent") {
 		t.Errorf("the dead-end view does not mention the unsent prompt:\n%s", frame)
 	}
-	// The line that explains the single `esc close` button must survive too:
-	// the recovery path is added ABOVE it, not in place of it.
-	if !strings.Contains(frame, "nothing was created") {
+	// The lines that explain the single `esc close` button must survive too:
+	// the recovery path is added ABOVE them, not in place of them. With no
+	// evidence that the first step made nothing, they say what may be left
+	// rather than "nothing was created" (#208).
+	if !strings.Contains(frame, "look before retrying") {
 		t.Errorf("the dead-end view lost its own explanation:\n%s", frame)
 	}
 	if strings.Contains(frame, "Long description here.") {
 		t.Errorf("the dead-end view pasted the prompt body into the frame:\n%s", frame)
+	}
+}
+
+// TestSubmit_DeadEndSaysNothingWasCreatedOnlyWithEvidence is #208. A first
+// step that failed with no space reported is a dead end either way, because
+// there is no space for keep-or-clean to act on. "nothing was created" is a
+// claim, though, and Created == nil is not evidence for it: herdr can fail a
+// worktree create after git has made the branch (#192). NothingCreated is
+// the evidence, and without it the screen says what may be left, as
+// `create` does.
+func TestSubmit_DeadEndSaysNothingWasCreatedOnlyWithEvidence(t *testing.T) {
+	cases := []struct {
+		name           string
+		worktree       bool
+		branch         string
+		nothingCreated bool
+		want, wantNot  []string
+	}{
+		{
+			name:           "evidence",
+			worktree:       true,
+			branch:         "zvi/collide",
+			nothingCreated: true,
+			want:           []string{"nothing was created"},
+			wantNot:        []string{"may have made", "zvi/collide"},
+		},
+		{
+			name:     "no evidence, worktree",
+			worktree: true,
+			branch:   "zvi/collide",
+			want:     []string{"herdr may have made part of it before failing", "zvi/collide", "look before retrying"},
+			wantNot:  []string{"nothing was created"},
+		},
+		{
+			// The branch row cleared by hand: nothing refuses that, and
+			// herdr then names the branch itself
+			// (herdr:src/app/api/worktrees/deferred.rs at v0.9.0), so a
+			// branch, its checkout and a workspace may all still exist.
+			name:     "no evidence, worktree, no branch named",
+			worktree: true,
+			want:     []string{"herdr may have made part of it before failing — any of a branch, its checkout and a workspace for it; look before retrying"},
+			wantNot:  []string{"nothing was created"},
+		},
+		{
+			name:    "no evidence, no worktree",
+			branch:  "zvi/collide",
+			want:    []string{"herdr may have made part of it before failing; look before retrying"},
+			wantNot: []string{"nothing was created", "branch"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newSubmitTestModel(t, &submitFakeRunner{}, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+			m.submitView = form.NewSubmitView(m.palette)
+			m.submitting = true
+			m.submitInput = plan.Input{ProjectDir: "/repo", UseWorktree: tc.worktree, Branch: tc.branch}
+
+			m2, _ := m.handleSubmitDone(submitDoneMsg{result: plan.ExecResult{
+				FailedIndex:    0,
+				NothingCreated: tc.nothingCreated,
+			}})
+			if !m2.submitDeadEnd {
+				t.Fatal("handleSubmitDone did not enter the dead end for a Created == nil failure")
+			}
+			// The region's lines joined, so a sentence the view wraps is
+			// still one string to look in.
+			frame := strings.Join(strings.Fields(ansi.Strip(m2.submitView.ViewAt(80, 24))), " ")
+			for _, s := range tc.want {
+				if !strings.Contains(frame, s) {
+					t.Errorf("the dead end does not say %q:\n%s", s, frame)
+				}
+			}
+			for _, s := range tc.wantNot {
+				if strings.Contains(frame, s) {
+					t.Errorf("the dead end says %q:\n%s", s, frame)
+				}
+			}
+		})
 	}
 }
 

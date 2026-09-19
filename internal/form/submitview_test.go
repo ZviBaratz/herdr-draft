@@ -136,8 +136,8 @@ func TestFrames_CleanedKeepingABranch(t *testing.T) {
 }
 
 // TestFrames_DeadEndWithUnsentPrompt is the failure with nothing to decide
-// about: step 1 itself failed, so there is no session to keep or remove and
-// the footer offers only `esc close`.
+// about: step 1 itself failed and reported no space, so there is nothing
+// for keep or remove to act on and the footer offers only `esc close`.
 //
 // It carries an unsent prompt, which is new. While
 // plan.ExecResult.PromptText meant "the prompt op failed", this state could
@@ -147,18 +147,71 @@ func TestFrames_CleanedKeepingABranch(t *testing.T) {
 // land", and this is the state where losing it hurts most: `esc` is the
 // only way out and it closes the popup.
 //
+// It is #208's case too: git made the branch and then refused the checkout
+// path, and herdr's error is all the plan has, which is no evidence that
+// nothing was made. So the dead-end line is the longer one naming what may
+// be left, wrapped rather than clipped, since the branch is what the user
+// goes to look for.
+//
 // The frame pins the ORDER. regionLines clips this stack from the top, so
-// the line explaining the one available button has to be last.
+// the lines explaining the one available button have to be last.
 func TestFrames_DeadEndWithUnsentPrompt(t *testing.T) {
 	v := newSubmitTestView()
 	v.SetSteps([]Step{
-		{Label: "worktree", Detail: "branch zvi/fix-login-redirect-loop already exists", State: plan.StepFailed},
+		{Label: "worktree", Detail: "fatal: '/wt/herdr-draft/zvi-fix-login-redirect-loop' already exists", State: plan.StepFailed},
 		{Label: "claude", State: plan.StepPending},
 		{Label: "prompt", State: plan.StepPending},
 	})
-	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0, PromptText: "Work on ENG-101: Fix login redirect loop"})
+	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0, PromptText: "Work on ENG-101: Fix login redirect loop"}, true, "zvi/fix-login-redirect-loop")
 	v.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
 	assertSubmitFrame(t, "failure-dead-end-prompt-80x24", v, 80, 24)
+}
+
+// TestFrames_DeadEndNothingCreated is the dead end with evidence
+// (ExecResult.NothingCreated): herdr refused the worktree before running
+// git, so "nothing was created" is a fact and the only dead end that may
+// say it (#208). No frame pinned the line on its own before; the frame
+// above carried it only beside an unsent prompt.
+func TestFrames_DeadEndNothingCreated(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps([]Step{
+		{Label: "worktree", Detail: "linked_worktree_source: New and open worktree actions start from the repo parent workspace.", State: plan.StepFailed},
+		{Label: "tab", State: plan.StepPending},
+		{Label: "claude", State: plan.StepPending},
+	})
+	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0, NothingCreated: true}, true, "zvi/fix-login-redirect-loop")
+	assertSubmitFrame(t, "failure-dead-end-nothing-created-80x24", v, 80, 24)
+}
+
+// TestFrames_DeadEndWithoutEvidence is #208's line at the width the popup
+// ships at, with no unsent prompt above it: the wrap falls somewhere else
+// at 101 cells, and the branch must still come out whole on one line.
+func TestFrames_DeadEndWithoutEvidence(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps([]Step{
+		{Label: "worktree", Detail: "fatal: '/wt/herdr-draft/zvi-fix-login-redirect-loop' already exists", State: plan.StepFailed},
+		{Label: "tab", State: plan.StepPending},
+		{Label: "claude", State: plan.StepPending},
+	})
+	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0}, true, "zvi/fix-login-redirect-loop")
+	assertSubmitFrame(t, "failure-dead-end-101x30", v, 101, 30)
+}
+
+// TestFrames_DeadEndAtTheSmallestPopup is the tallest dead-end body -- an
+// unsent prompt over #208's wrapped line -- at 57x18, the popup herdr
+// leaves on a 60x20 terminal. It is the size where regionLines' clipping
+// from the top would start to matter, so the frame pins what survives.
+func TestFrames_DeadEndAtTheSmallestPopup(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps([]Step{
+		{Label: "worktree", Detail: "fatal: '/wt/herdr-draft/zvi-fix-login-redirect-loop' already exists", State: plan.StepFailed},
+		{Label: "tab", State: plan.StepPending},
+		{Label: "claude", State: plan.StepPending},
+		{Label: "prompt", State: plan.StepPending},
+	})
+	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0, PromptText: "Work on ENG-101: Fix login redirect loop"}, true, "zvi/fix-login-redirect-loop")
+	v.SetUnsentPrompt("/state/herdr/zvibaratz.draft/unsent-prompt.txt", nil)
+	assertSubmitFrame(t, "failure-dead-end-prompt-57x18", v, 57, 18)
 }
 
 // TestFrames_FailureUnconfirmedPrompt is #108's state, and it exists
@@ -469,8 +522,11 @@ func TestSubmitView_KeyBeforeFailureIsNoOp(t *testing.T) {
 // SubmitView that answered them would be a second, unscoped way out.
 func TestSubmitView_EscIsNeverAViewLevelExit(t *testing.T) {
 	states := map[string]func(*SubmitView){
-		"running":  func(v *SubmitView) { v.SetSteps(sampleStepsRunning()) },
-		"dead end": func(v *SubmitView) { v.SetSteps(sampleStepsFailed()); v.SetDeadEnd(plan.ExecResult{FailedIndex: 0}) },
+		"running": func(v *SubmitView) { v.SetSteps(sampleStepsRunning()) },
+		"dead end": func(v *SubmitView) {
+			v.SetSteps(sampleStepsFailed())
+			v.SetDeadEnd(plan.ExecResult{FailedIndex: 0}, false, "")
+		},
 		"keep-or-clean": func(v *SubmitView) {
 			v.SetSteps(sampleStepsFailed())
 			v.SetFailure(plan.ExecResult{FailedIndex: 2}, plan.CleanDecision{Allowed: true})
@@ -488,12 +544,14 @@ func TestSubmitView_EscIsNeverAViewLevelExit(t *testing.T) {
 }
 
 // TestSubmitView_DeadEndOffersOnlyClose pins the one state Esc DOES quit
-// from (the app layer's own scoping): nothing was created, so there is
-// nothing to keep or remove and the footer says so.
+// from (the app layer's own scoping): no space was reported, so there is
+// nothing for keep or remove to act on and the footer says so. This is the
+// dead end with evidence that the first step made nothing
+// (ExecResult.NothingCreated), which is the only one that may say so (#208).
 func TestSubmitView_DeadEndOffersOnlyClose(t *testing.T) {
 	v := newSubmitTestView()
 	v.SetSteps([]Step{{Label: "workspace", Detail: "herdr: boom", State: plan.StepFailed}})
-	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0})
+	v.SetDeadEnd(plan.ExecResult{FailedIndex: 0, NothingCreated: true}, false, "")
 
 	frame := strippedFrame(v, 80, 24)
 	if !strings.Contains(frame, "esc close") {
@@ -504,6 +562,105 @@ func TestSubmitView_DeadEndOffersOnlyClose(t *testing.T) {
 	}
 	if !strings.Contains(frame, "nothing was created") {
 		t.Errorf("ViewAt(80,24) in the dead end = %q, want it to say nothing was created", frame)
+	}
+}
+
+// TestSubmitView_DeadEndWithoutEvidenceSaysWhatMayBeLeft is #208's view
+// half. A first step that failed with no space reported and no evidence
+// that it made nothing is still a dead end, with only `esc close`, because
+// there is no space for keep or remove to act on. But herdr can fail a
+// worktree create after git has made the branch, so the line names what
+// may be left instead of claiming nothing is -- `create`'s own wording
+// (internal/create/report.go, failureLine), with the popup's dash.
+func TestSubmitView_DeadEndWithoutEvidenceSaysWhatMayBeLeft(t *testing.T) {
+	const branch = "zvi/fix-login-redirect-loop"
+	cases := []struct {
+		name     string
+		worktree bool
+		branch   string
+		want     []string
+	}{
+		{
+			name:     "worktree",
+			worktree: true,
+			branch:   branch,
+			want: []string{
+				"herdr may have made part of it before failing — any of the branch " + branch +
+					", its checkout and a workspace for it; look before retrying",
+			},
+		},
+		{
+			// A branch row cleared by hand: herdr names the branch itself.
+			name:     "worktree, no branch named",
+			worktree: true,
+			want: []string{
+				"herdr may have made part of it before failing — any of a branch, its checkout and a workspace for it; look before retrying",
+			},
+		},
+		{
+			name: "no worktree",
+			want: []string{"herdr may have made part of it before failing; look before retrying"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newSubmitTestView()
+			v.SetSteps([]Step{{Label: "worktree", Detail: "worktree_create_failed", State: plan.StepFailed}})
+			v.SetDeadEnd(plan.ExecResult{FailedIndex: 0}, tc.worktree, tc.branch)
+
+			frame := strippedFrame(v, 80, 24)
+			// The region's lines joined, so a sentence the view wraps is
+			// still one string to look in.
+			joined := strings.Join(strings.Fields(frame), " ")
+			for _, s := range tc.want {
+				if !strings.Contains(joined, s) {
+					t.Errorf("ViewAt(80,24) in the dead end = %q, want it to say %q", frame, s)
+				}
+			}
+			if strings.Contains(frame, "nothing was created") {
+				t.Errorf("ViewAt(80,24) in the dead end = %q, claims nothing was created with no evidence of it", frame)
+			}
+			if !strings.Contains(frame, "esc close") {
+				t.Errorf("ViewAt(80,24) in the dead end = %q, want an `esc close` button", frame)
+			}
+			if strings.Contains(frame, "keep it") || strings.Contains(frame, "remove it") {
+				t.Errorf("ViewAt(80,24) in the dead end = %q, want no keep/remove choice", frame)
+			}
+		})
+	}
+}
+
+// TestSubmitView_DeadEndLinesWrapAtTheSmallestPopup holds both dead-end
+// lines whole at 57x18, the popup herdr leaves on a 60x20 terminal. The
+// evidence line is 56 cells, so a clipped line lost the end of "remove":
+// the word that says why `esc close` is the only button.
+func TestSubmitView_DeadEndLinesWrapAtTheSmallestPopup(t *testing.T) {
+	cases := []struct {
+		name string
+		res  plan.ExecResult
+		want string
+	}{
+		{
+			name: "evidence",
+			res:  plan.ExecResult{FailedIndex: 0, NothingCreated: true},
+			want: "nothing was created — there is nothing to keep or remove",
+		},
+		{
+			name: "no evidence",
+			res:  plan.ExecResult{FailedIndex: 0},
+			want: "herdr may have made part of it before failing — any of the branch zvi/fix-login-redirect-loop, its checkout and a workspace for it; look before retrying",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newSubmitTestView()
+			v.SetSteps([]Step{{Label: "worktree", Detail: "herdr: boom", State: plan.StepFailed}})
+			v.SetDeadEnd(tc.res, true, "zvi/fix-login-redirect-loop")
+			frame := strippedFrame(v, 57, 18)
+			if joined := strings.Join(strings.Fields(frame), " "); !strings.Contains(joined, tc.want) {
+				t.Errorf("ViewAt(57,18) in the dead end = %q, want it to say %q whole", frame, tc.want)
+			}
+		})
 	}
 }
 

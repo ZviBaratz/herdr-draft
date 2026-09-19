@@ -1652,6 +1652,33 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### the popup's dead end, with and without evidence (#208) — 2026-09-19
+
+herdr 0.9.0, git 2.53.0. `main` at `930f9ad`, built from `git archive`, and
+`zvi/fix-208-popup-dead-end` at `4af9d4a`, not merged. That was before the
+branch was rebased onto #203 and #210, which change when a submit starts
+and not what its failure screen says, and before the review's fixes, which
+change neither case below. Route A0 with its own `XDG_CONFIG_HOME` and
+`XDG_STATE_HOME` under `/var/tmp`, `onboarding = false`, `[worktrees]
+directory` under the same path, and a scratch plugin config and state dir
+with `[agents] favorites = ["nosuchkind"]`. No create got past its first
+step, so the pass spent no account quota. The form ran by Route B in each
+case's own workspace pane, about 118 cells wide. Each run typed a title,
+sent `⌃S`, read the screen and left by `esc`.
+
+| Case | `main` | the fix |
+|---|---|---|
+| worktree on, branch `zvi/collide`, where herdr's checkout path `<worktrees>/plain/zvi-collide` already held a file | **the defect.** `✗ worktree`, herdr `worktree_create_failed`: `Preparing worktree (new branch 'zvi/collide')`, `fatal: ... already exists`. The screen said `nothing was created — there is nothing to keep or remove`, but `git branch` listed `zvi/collide`. | **as expected.** The same failure. The screen said `herdr may have made part of it before failing — any of the branch zvi/collide, its checkout and a workspace for it; look before retrying`, wrapped at a space onto two lines. `git branch` listed `zvi/collide`. |
+| worktree on, from a lane of a `--separate-git-dir` repository | `nothing was created — there is nothing to keep or remove`. That is correct here: herdr `linked_worktree_source`, and afterwards there was no branch, checkout or workspace. | **as expected.** The same line. |
+
+In all four runs the footer offered only `esc close`, and `esc` closed the
+form. The step row truncates herdr's error, so the code in each case was
+read by running the same `worktree create` by hand. In the first case that
+probe made the branch again, and it was deleted before the next run.
+
+Teardown: the disposable session stopped and deleted, no process with a cwd
+under the scratch tree, the tree removed, `pgrep -x herdr-draft` 0.
+
 ### the form frozen during the `auto` pick (#136) — 2026-09-19
 
 herdr 0.9.0. Before: `zvi/fix-137-submit-waits-for-title-check` at
