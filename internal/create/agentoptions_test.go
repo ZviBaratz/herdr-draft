@@ -226,26 +226,34 @@ func TestAgentOptions_LaunchOptionsAbsentWhenNothingIsPassed(t *testing.T) {
 // types the list after the launcher's own words, so it is the tail there.
 func TestAgentArgs_ReportTheWholeArgumentList(t *testing.T) {
 	const extra = "[agents.extra_args]\nclaude = [\"--verbose\", \"--model\", \"claude-opus-5[1m]\", \"--effort=xhigh\"]\n"
+	chosen := []string{"--effort", "high", "--permission-mode", "plan"}
 	// extra_args less the effort a flag displaced, then the chosen options
 	// in declaration order (agent-options spec §5).
-	want := []string{"--verbose", "--model", "claude-opus-5[1m]", "--effort", "high", "--permission-mode", "plan"}
+	withChosen := []string{"--verbose", "--model", "claude-opus-5[1m]", "--effort", "high", "--permission-mode", "plan"}
+	// With nothing chosen, extra_args as it stands. launch_options still
+	// reports the model and the effort here; agent_args is the only key that
+	// shows --verbose, which is why this case is not the same as the others.
+	asConfigured := []string{"--verbose", "--model", "claude-opus-5[1m]", "--effort=xhigh"}
+	agentStart := func(_ *testing.T, r *fakeRunner) []string { return r.startArgs }
 
 	for _, tc := range []struct {
 		name   string
 		config string
+		flags  []string
 		dryRun bool
+		want   []string
 		// launched is what the runner was handed, nil for a dry run.
 		launched func(t *testing.T, r *fakeRunner) []string
 	}{
-		{name: "a dry run", config: extra, dryRun: true},
-		{
-			name:     "herdr agent start",
-			config:   extra,
-			launched: func(_ *testing.T, r *fakeRunner) []string { return r.startArgs },
-		},
+		{name: "a dry run", config: extra, flags: chosen, dryRun: true, want: withChosen},
+		{name: "herdr agent start", config: extra, flags: chosen, want: withChosen, launched: agentStart},
+		{name: "a dry run with no option chosen", config: extra, dryRun: true, want: asConfigured},
+		{name: "herdr agent start with no option chosen", config: extra, want: asConfigured, launched: agentStart},
 		{
 			name:   "a pinned account's launcher",
 			config: extra + "[clauth]\ndefault = \"alpha-1\"\n",
+			flags:  chosen,
+			want:   withChosen,
 			launched: func(t *testing.T, r *fakeRunner) []string {
 				launcher := []string{"clauth", "start", "alpha-1", "--"}
 				if !slices.Equal(r.runArgv[:min(len(launcher), len(r.runArgv))], launcher) {
@@ -258,7 +266,7 @@ func TestAgentArgs_ReportTheWholeArgumentList(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			writeConfig(t, h.env.ConfigDir, tc.config)
-			args := []string{"--title", "t", "--no-worktree", "--json", "--effort", "high", "--permission-mode", "plan"}
+			args := append([]string{"--title", "t", "--no-worktree", "--json"}, tc.flags...)
 			if tc.dryRun {
 				args = append(args, "--dry-run")
 			}
@@ -266,8 +274,8 @@ func TestAgentArgs_ReportTheWholeArgumentList(t *testing.T) {
 				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
 			}
 			out := decodeReport(t, h.stdout.String())
-			if !slices.Equal(out.AgentArgs, want) {
-				t.Errorf("agent_args = %q, want %q", out.AgentArgs, want)
+			if !slices.Equal(out.AgentArgs, tc.want) {
+				t.Errorf("agent_args = %q, want %q", out.AgentArgs, tc.want)
 			}
 			if tc.launched == nil {
 				return

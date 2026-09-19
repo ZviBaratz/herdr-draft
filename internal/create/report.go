@@ -305,16 +305,18 @@ type jsonReport struct {
 	// one that skips the agent's permission prompts, say -- reached the
 	// agent unreported, and launch_options could say plan mode for a
 	// session that asked nobody anything. An array, not a shell string:
-	// neither path hands this to a shell as one string, and its elements
-	// are what a consumer compares. Absent when the agent starts with no
-	// arguments.
+	// both paths do end up typed into the pane's shell, but each is quoted
+	// there by the layer that types it -- herdr for `agent start`, PaneRun
+	// for a launcher -- and quoting depends on the shell, so a string here
+	// would be one shell's spelling of the list. Its elements are what a
+	// consumer compares. Absent when the agent starts with no arguments.
 	//
-	// It is what this command passes, up to the agent's own command. The
+	// It is what this command passes, after the agent's own command. The
 	// pane's shell resolves that command, so an alias or function named
 	// after the agent stands in between, and a pinned account's
-	// `[clauth] launcher` does too: one of the form `sh -c "..."` drops
-	// every argument after it (agent-options spec §5.1), which nothing in
-	// this report can see.
+	// `[clauth] launcher` does too. A launcher can add arguments of its own,
+	// and one of the form `sh -c "..."` drops every argument after it
+	// (agent-options spec §5.1). Nothing in this report can see either.
 	AgentArgs []string `json:"agent_args,omitempty"`
 
 	OnFailure    string `json:"on_failure,omitempty"`
@@ -406,7 +408,8 @@ func (r report) writeJSON(w io.Writer) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	// The only way this fails is an unencodable value, and every field
-	// above is a string, bool or map[string]string.
+	// above is a string, a bool, a slice or map of strings, or a pointer to
+	// a bool.
 	_ = enc.Encode(out)
 }
 

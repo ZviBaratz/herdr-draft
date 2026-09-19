@@ -335,7 +335,14 @@ observed failure modes.
    `create --dry-run --json`, and each option shows the exact command with
    all three option flags, what it resolves to that it does not state
    (the account, the branch and base or the placement, the reap), and a
-   reason for each option chosen.)
+   reason for each option chosen.) (Amended, #219: the preview also lists
+   every element of `create --json`'s `agent_args` beyond the three option
+   flags, word for word, and an element that changes how the agent asks for
+   permission, or widens where it may act without asking, is named in the
+   question itself. The user's own configuration is shown, not refused: the
+   spawner's ceiling binds the flags it passes. When the user named every
+   choice and there is no question to ask, the agent still dry-runs the
+   command and asks before creating if `agent_args` holds anything else.)
 
 8. **Read the result; the exit code is not the whole story.** Exit codes
    0/1/2/3; that under `--json`, exits 2 and 3 print nothing on stdout, so
@@ -348,7 +355,8 @@ observed failure modes.
    reading the pane (`herdr agent read <pane> --source detection`) rather
    than trusting the exit status. (Amended, #192: exit 4 came later, for a
    plan whose first step failed before anything existed. Under `--json` it
-   still prints the object.)
+   still prints the object.) (Amended, #219: the agent checks
+   `launch_options` and `agent_args` against what the user approved.)
 
 Plus a short **precedence** note: when the ask is *hand this work to
 another agent*, this supersedes herdr's skill's sibling-pane default

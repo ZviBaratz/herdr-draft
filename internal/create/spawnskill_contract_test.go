@@ -451,19 +451,29 @@ func TestSkillNamesOnlyRealJSONKeys(t *testing.T) {
 // TestSkillShowsTheWholeArgumentList holds the skill to #219's rule: the
 // owner sees every argument the agent will start with before approving.
 // TestSkillNamesOnlyRealJSONKeys proves only that a key the skill names is
-// real; this proves the skill names agent_args at the three points where it
-// matters -- the first dry run's reading list, the preview the user
-// approves, and the check after the create. Without the middle one, an
-// argument that skips permission prompts is read and never shown.
+// real. This proves the skill says to read agent_args and show it at each
+// point where it matters: the first dry run's reading list, the preview
+// itself, the question when an argument changes permissions, the path where
+// the user named everything and no question is asked, and the check after
+// the create. Without any one of them, an argument that skips permission
+// prompts can be read and never shown, or never read at all.
 func TestSkillShowsTheWholeArgumentList(t *testing.T) {
 	lines := strings.Split(renderedSkill(), "\n")
-	for _, where := range []struct{ name, from, to string }{
-		{"the first dry run's reading list", "**1. Dry-run it without the option flags.**", "**2. Choose the three options**"},
-		{"the preview the user approves", "**Then ask.**", "A label is not reviewable."},
-		{"the check after the create", "## 8. Read the result", "**The ids name the agent, not the space.**"},
+	for _, where := range []struct {
+		name, from, to string
+		want           []string
+	}{
+		{"the first dry run's reading list", "**1. Dry-run it without the option flags.**", "**2. Choose the three options**", []string{"`agent_args`"}},
+		{"the preview", "- in its **preview**", "- in its **description**", []string{"`agent_args`"}},
+		{"the rule for an argument that changes permissions", "**Then ask.**", "A label is not reviewable.", []string{"permission", "in the question itself"}},
+		{"the path where the user already answered", "Then honour whichever they pick.", "## 8. Read the result", []string{"dry run", "`agent_args`"}},
+		{"the check after the create", "## 8. Read the result", "**The ids name the agent, not the space.**", []string{"`agent_args`"}},
 	} {
-		if !strings.Contains(strings.Join(linesBetween(t, lines, where.from, where.to), "\n"), "`agent_args`") {
-			t.Errorf("%s never names `agent_args`", where.name)
+		text := strings.Join(linesBetween(t, lines, where.from, where.to), "\n")
+		for _, w := range where.want {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s never says %q", where.name, w)
+			}
 		}
 	}
 }

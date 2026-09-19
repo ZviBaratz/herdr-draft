@@ -1444,6 +1444,11 @@ under test, so answer it with "Other: don't create" once you have read it.
 - Each option's preview names the account, the branch and base (or the
   placement), and whether the session reaps itself. Its description gives
   a reason for the options, and the default each one replaces.
+- With an argument besides the three option flags in `[agents.extra_args]`
+  (#219), every preview lists it word for word. If it changes how the
+  agent asks for permission, the question itself says so. The owner's
+  `extra_args` passes only `--model` and `--effort`, so this needs a
+  scratch config to see.
 - The wording fix gets a small configuration: `sonnet` at `low` or
   `medium`.
 - The second gets `--permission-mode plan`, and `--no-reap` when

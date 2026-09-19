@@ -363,11 +363,14 @@ and a dry run is the cheapest place to catch it. The report is section 8's
   `option.model` and its siblings: `config.toml`, `extra_args`, or
   `built-in` for neither, which leaves the option to claude's own
   settings. These are the defaults your choice replaces.
-- `agent_args`: the whole argument list the agent would start with. The
-  three option flags and their values are in it. Anything else in it came
-  from `[agents.extra_args]` and reaches the agent whatever the options
-  say, and one of those arguments can override the permission mode.
-  Absent means the agent starts with no arguments.
+- `agent_args`: the whole argument list this command would pass after the
+  agent's command. Any of the three option flags that will be passed is in
+  it with its value, whether you chose it or a default did. Anything else
+  came from `[agents.extra_args]` and reaches the agent whatever the
+  options say, and one of those arguments can override the permission
+  mode. Absent means no arguments. A pinned account's `[clauth] launcher`,
+  or a shell function standing in for the agent's command, can still add
+  arguments of its own or drop these, and nothing here shows that.
 - `account`, `agent_kind`, `mark_ready` (absent means off), and either
   `branch` and `base` or `placement`: the values the command line leaves
   to the defaults.
@@ -377,9 +380,10 @@ and a dry run is the cheapest place to catch it. The report is section 8's
 
 **3. Dry-run the command you would run first again,** now with its option
 flags and any `--reap` or `--no-reap`. Then the line the user approves has
-been checked too. Its `launch_options` should read back what you chose,
-and its `agent_args` should differ from the first run's only where your
-flags replaced a default.
+been checked too. Its `launch_options` should read back what you chose.
+Apart from the three option flags and their values, its `agent_args`
+should hold what the first run's held. The option flags move to the end of
+the list, and that is not a change.
 
 **Then ask.** Put the command you would run first, and beside it the two
 nearest alternatives. Let them vary the choice you are least sure of. That
@@ -398,10 +402,14 @@ for a session without a worktree, the placement. For each option:
   default each choice replaces where the two differ.
 
 If one of those other arguments changes how the agent asks for
-permission, say so in the question itself, and do not describe the
-session by its `--permission-mode` alone, since that argument can override
-it. Show it rather than refusing to create: it came from the user's own
-configuration, and seeing it before they approve is the point.
+permission, or widens where it may act without asking (a directory outside
+its worktree, say), say so in the question itself. Do not describe the
+session by its `--permission-mode` alone, since such an argument can
+override it. Show it rather than refusing to create: section 5's ceiling
+binds the flags you pass, not the user's own configuration, and seeing it
+before they approve is the point. No flag drops one of those arguments for
+a single session, so the user's choices are to create the session as it
+stands, or to create nothing while they change `[agents.extra_args]`.
 
 A label is not reviewable. A command, and what it resolves to, is.
 
@@ -415,7 +423,12 @@ write.
 Then honour whichever they pick. Do not ask again, and do not ask a second
 question about a flag they did not raise. If they already gave you all of
 it ("split it beside me, no worktree, sonnet in plan mode"), they have
-answered; run it.
+answered, and there is no question to ask. The dry run is still yours to
+make, with `--dry-run --json`. Once is enough: they chose every option, so
+there is no default of theirs to show. If its `agent_args` holds anything
+besides the three option flags and their values, they have not seen it,
+and it can override what they asked for. Tell them what it is and ask
+before you create, with the two choices above.
 
 ## 8. Read the result
 

@@ -163,11 +163,12 @@ without the popup. It drives herdr exclusively through the public CLI
   `launch_options` what the agent's command line actually carried for
   each, including what `[agents.extra_args]` passed for an option left on
   `inherit`. For those, provenance says `extra_args`, not `built-in`
-  (#209). `agent_args` is the whole argument list the agent was started
-  with, so any other argument `[agents.extra_args]` passes, one that skips
-  its permission prompts included, is reported rather than reaching the
-  agent unseen. The spawn skill shows those arguments in its confirmation
-  and checks the list afterwards (#219).
+  (#209). `agent_args` is the whole argument list `create` passes after
+  the agent's command, so any other argument `[agents.extra_args]` passes,
+  one that skips its permission prompts included, is reported rather than
+  reaching the agent unseen. The spawn skill shows those arguments before
+  the user approves, even when no question would otherwise be asked, and
+  checks the list afterwards (#219).
 - **`--dry-run` shows what a create would make, and makes nothing.** It
   runs the whole pre-flight, with the real run's exit 2 and 3, then
   reports and stops. It creates nothing and remembers nothing, and an
