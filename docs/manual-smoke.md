@@ -1677,6 +1677,27 @@ a create that fails at `starting agent` writes no memory.
 `TestFormAndCommandProduceTheSamePlan` cover it, since both paths remember
 the `plan.Input`'s own `BaseRef`.
 
+**Second pass, after the independent review** (`10558fc`, the same session
+and repository). The review found that the popup would now keep a
+remembered `HEAD^0`, a spelling of HEAD itself that #193's clean gate
+treats as a base with no commits beyond it.
+
+| Case | Result |
+|---|---|
+| `create`, remembered `HEAD^0` | `base` omitted, still `projects.json`, cut from `8e8f645` |
+| `create --base HEAD^0` | `base` omitted, from `flag`, cut from `8e8f645` |
+| `create`, remembered `HEAD~1` | kept: `base: HEAD~1`, cut from `3b6fa8b` |
+| `create --no-worktree --base gone-branch` | not refused: on to `starting agent`, as before this branch |
+| the form, remembered `HEAD^0` | `on · from main`, the `HEAD (main)` row, no note, which is what `main`'s binary shows too |
+
+Not checked live: a base the user chose surviving a project change (the
+review's first finding), which needs the project row driven by keystroke.
+`TestPopup_AChosenBaseSurvivesAProjectChange` reproduces it through
+`Update`.
+
+Teardown: the disposable session stopped and deleted, no process with a
+cwd under `/var/tmp/h194`, the tree removed, `pgrep -x herdr-draft` 0.
+
 ### `create` and the popup from inside a lane (#171) — 2026-09-18
 
 herdr 0.9.0. `zvi/fix-create-from-a-worktree-lane` at `c2240c0`, not
