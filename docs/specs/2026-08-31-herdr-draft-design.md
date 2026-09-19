@@ -591,7 +591,7 @@ integer `1`.
       Herdr's own SGR-decode-and-forward path end to end, not a physical
       terminal's mouse reporting, so a from-hardware click is still worth a
       spot-check at Task 19, but the code path itself is confirmed working.
-- [ ] `agent_pane_busy` retry: start an agent immediately after
+- [x] `agent_pane_busy` retry: start an agent immediately after
       `worktree create` and confirm the bounded retry rides it out.
       **Probed 2026-08-31 (task 2b):** busy state did not reproduce at
       ~90 ms creation-to-start gap; retry path itself remains unconfirmed
@@ -603,6 +603,26 @@ integer `1`.
       environment; still leaving this unticked per the task brief ("if not,
       reproduced, leave it and say so") — the retry path remains
       unconfirmed live, covered only by Task 9's mock-runner unit tests.
+      **Closed 2026-09-19 without a live observation (#71)**, on the mock
+      coverage plus a reason the window is now nearly unobservable from
+      here. herdr 0.9.0's own CLI retries this code before herdr-draft
+      sees it: when `agent start` is refused `agent_pane_busy` while the
+      pane's foreground process is still its own shell, the CLI re-sends
+      the request every poll interval for up to 2 s
+      (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/agent.rs#L356-L404,
+      `PANE_SHELL_READINESS_RETRY_TIMEOUT` at L10). It does so whenever the
+      start's timeout is above 3 s and at most 300 s, and herdr-draft passes
+      no `--timeout`, so herdr's 30 s default always qualifies. The code
+      only reaches herdr-draft once herdr's retry has run out, or on
+      Windows, where herdr cannot observe shell start-up and does not
+      retry (L683-L688). Only `agent start` raises it
+      (src/app/agents.rs L259-L262 at v0.9.0), so Path B's `pane run`
+      never sees it, whatever §9 says. What herdr-draft's retry adds is
+      the time beyond herdr's 2 s. Since #144 it matches herdr's parsed
+      error code rather than the error's text, and it is pinned by
+      `TestExecuteAgentStartBusyRetrySucceeds`,
+      `TestExecuteBusyRetryExhaustsBudget` and
+      `TestExecuteClassifiesByCodeNotText`.
 - [x] Pin the minimum supported clauth version in README. **Recorded
       2026-09-01 (task 19) for Task 22:** clauth 0.14.1 (`clauth --version`)
       is the version installed and exercised throughout this live
