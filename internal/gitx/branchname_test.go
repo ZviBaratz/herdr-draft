@@ -131,6 +131,23 @@ func TestValidateBranchName_Rejects(t *testing.T) {
 	}
 }
 
+// TestValidateBranchName_ComponentReasonsLeadWithTheRule: the form draws the
+// reason on one panel line and elides it at the tail, and a component can be
+// most of a long branch name. Named after the component, the rule was the
+// part cut off (#199's review). So the rule comes first.
+func TestValidateBranchName_ComponentReasonsLeadWithTheRule(t *testing.T) {
+	const long = "eng-1234-fix-the-login-redirect-loop-on-expiry"
+	for _, c := range []struct{ branch, lead string }{
+		{"zvi/" + long + ".lock", `a path component ends with ".lock"`},
+		{"zvi/." + long, `a path component begins with "."`},
+	} {
+		err := ValidateBranchName(c.branch)
+		if err == nil || !strings.HasPrefix(err.Error(), c.lead) {
+			t.Errorf("ValidateBranchName(%q) = %v, want a reason beginning %q", c.branch, err, c.lead)
+		}
+	}
+}
+
 // refusedThoughGitAccepts are the names ValidateBranchName refuses on
 // purpose although git would make the branch. Each is refused for a reason
 // of its own, recorded here so the agreement test below cannot be passed by

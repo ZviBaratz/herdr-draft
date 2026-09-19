@@ -109,6 +109,30 @@ func TestSubmitValidation_ARefusedBranchSaysWhy(t *testing.T) {
 	}
 }
 
+// TestSubmit_ARefusedBranchSaysWhyInAShortWindow: the popup is 32 rows, but
+// herdr clamps it to the terminal and Route B runs in any pane. However short
+// the window, a submit refused over the branch leaves the reason on screen --
+// found by the #199 review, where below 16 rows the panel's floor dropped the
+// verdict and kept the refusal.
+func TestSubmit_ARefusedBranchSaysWhyInAShortWindow(t *testing.T) {
+	for _, h := range []int{32, 24, 18, 16, 15, 14, 12} {
+		m := settledBranchForm(t, newFakeGit())
+		next, _ := m.Update(tea.WindowSizeMsg{Width: 104, Height: h})
+		m = next.(Model)
+		m = landTitle(t, m, retypeBranch(&m, "zvi/old "))
+		m.form.FocusByID("agent")
+
+		next, _ = m.Update(form.SubmitMsg{})
+		m = next.(Model)
+		if m.submitting {
+			t.Fatalf("height %d: the submit went ahead", h)
+		}
+		if view := ansi.Strip(m.View().Content); !strings.Contains(view, "invalid branch name  ends with a space") {
+			t.Errorf("height %d: the submit was refused (focus %q) with no reason on screen:\n%s", h, m.form.FocusedID(), view)
+		}
+	}
+}
+
 // TestBranchVerdict_LandsWithTheDebouncedCheck: the verdict is shown when the
 // title/branch check lands, not on each keystroke -- every branch typed with
 // a prefix passes through "zvi/", which is not a branch name, and a verdict

@@ -507,8 +507,12 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	// A branch git cannot hold, refused as the form's submit refuses it
 	// (#199) -- here, with the request's other faults, so it needs no herdr
 	// and is decided before run()'s duplicate check asks git about a name
-	// `show-ref` would only call absent.
-	if err := app.BranchRefusal(useWorktree, branch); err != nil {
+	// `show-ref` would only call absent. Only where a worktree can be made,
+	// which is the form's condition too (its row is inert elsewhere): an
+	// explicit --worktree outside a repository is plan.Build's to refuse, by
+	// the directory, and fixing the branch first would only earn the caller
+	// that refusal next.
+	if err := app.BranchRefusal(useWorktree && t.isGitRepo, branch); err != nil {
 		remedy := ""
 		if branchFrom != "--branch" {
 			remedy = "; pass --branch to name one yourself"

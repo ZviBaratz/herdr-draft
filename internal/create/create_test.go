@@ -1429,24 +1429,13 @@ func TestFailureLineNamesTheSpaceNotTheAgent(t *testing.T) {
 
 // --- the argv boundary (issue #14) ----------------------------------------
 
-// TestBranchLeadingDash pins that internal/herdrc's argv refusal -- a flag
-// value git would end up reading as an option once herdr passes it on (see
-// appendFlag for the route) -- surfaces here as a readable reason, not as a
-// panic, a confusing wrap, or an attempt to run herdr with a mangled command
-// line. The exit is 4, not 1 (#192): herdr was never run, so nothing exists.
-//
-// It runs against a REAL herdrc.CLIRunner precisely because a fake could
-// only re-state the rule rather than exercise it: the refusal happens
-// while the argv is being assembled, before any process is started, so the
-// runner's Bin never has to exist. If the refusal were ever lost, this
-// would try to execute that path and the assertion below would fail with a
-// different message rather than passing.
 // TestBranchLeadingDash: a --branch git would read as an option is a usage
 // error, refused with the other names git cannot hold (#199) before herdr
-// is asked anything. internal/herdrc refuses the same value one layer down
-// (appendFlag), and the real CLIRunner stays wired in here so that a
-// regression in the first refusal is caught by the second's exit 4 instead
-// of passing silently.
+// is asked anything. It used to reach internal/herdrc's argv refusal
+// (appendFlag), which still stands one layer down and is pinned there
+// (TestCLIRunnerCreateCallRefusedHereChangedNothing). The real CLIRunner
+// stays wired in here so that a regression in the first refusal is caught
+// by the second's exit 4 instead of passing silently.
 func TestBranchLeadingDash(t *testing.T) {
 	h := newHarness(t)
 	h.deps.Runner = &refusingRunner{
@@ -2463,6 +2452,25 @@ func TestCreateRefusesABranchGitCannotHoldWithHerdrDown(t *testing.T) {
 
 	if code := h.run("--title", "fix login", "--branch", "zvi/old ", "--worktree"); code != ExitUsage {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+}
+
+// Outside a repository no worktree can be made, so its branch is not what is
+// wrong: the refusal is plan.Build's, which names the directory. Refusing the
+// branch first sent the caller to fix a name and then refused them again for
+// the directory (#199's review). It is also the form's condition, whose
+// worktree row is inert outside a repository.
+func TestCreateOutsideARepositoryRefusesTheWorktreeNotTheBranch(t *testing.T) {
+	h := newHarness(t)
+	h.git.isRepo = false
+
+	code := h.run("--title", "fix login", "--branch", "zvi/a b", "--worktree")
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+	}
+	stderr := h.stderr.String()
+	if !strings.Contains(stderr, "requires a git repository") || strings.Contains(stderr, "cannot be used as a branch name") {
+		t.Errorf("stderr should refuse the worktree for want of a repository, not the branch:\n%s", stderr)
 	}
 }
 

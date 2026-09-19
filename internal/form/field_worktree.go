@@ -781,31 +781,36 @@ func (w *WorktreeField) Panel(width, h int) string {
 	inner := panelInner(width)
 	labelW, valueW := labelCol(inner)
 
-	// Under the three parts come the branch verdict (SetBranchVerdict), the
-	// notes (SetNotes), then the provenance line, then the base list, and a
-	// short panel gives them up in the reverse of that order. At v2 spec §9's three-row floor the three parts
-	// are the whole panel: neither a report about a config file nor a note
-	// about where a value came from may cost the control that changes it. A
-	// note outlasts the provenance line because it says something the user
-	// wrote was thrown away, where provenance only attributes a value that
-	// stands.
+	// The branch verdict (SetBranchVerdict), when there is one, sits
+	// directly under the branch part: it is about the value on the line
+	// above it, and it is the one thing in this panel that stops a submit.
+	// It is also the last thing a short panel gives up. At v2 spec §9's
+	// three-row floor it takes the base part's line, the one control the
+	// refusal is not about, because a submit refused with nothing on screen
+	// saying why is the worst thing this panel can do -- the rule
+	// TitleField's verdict follows over its list.
+	//
+	// Under the parts come the notes (SetNotes), then the provenance line,
+	// then the base list, and a short panel gives them up in the reverse of
+	// that order. With no verdict, the three parts are the whole panel at
+	// the floor: neither a report about a config file nor a note about where
+	// a value came from may cost the control that changes it. A note
+	// outlasts the provenance line because it says something the user wrote
+	// was thrown away, where provenance only attributes a value that stands.
 	//
 	// Both sit directly under the parts rather than after the base list,
 	// because they speak about them -- and because a fixed line placed after
 	// a list whose length follows the window would move every time the popup
 	// is resized.
-	extra := h - worktreePanelParts
+	verdict := w.branchVerdictShown()
+	if h < worktreePanelParts {
+		// No line under the branch part to put it on.
+		verdict = ""
+	}
+	extra := h - worktreePanelParts - verdictRows(verdict)
 	if extra < 0 {
 		extra = 0
 	}
-	// The branch verdict goes first of the three: it is about the value on
-	// the line above it, and of everything under the parts it is the only
-	// thing that stops a submit.
-	verdict := w.branchVerdictShown()
-	if extra == 0 {
-		verdict = ""
-	}
-	extra -= verdictRows(verdict)
 	notes := w.notes
 	if len(notes) > extra {
 		notes = notes[:extra]
@@ -843,11 +848,12 @@ func (w *WorktreeField) Panel(width, h int) string {
 	if h > 1 {
 		lines = append(lines, w.panelPart(partBranch, worktreeBranchLabel, w.panelBranch(valueW), labelW))
 	}
-	if h > 2 {
-		lines = append(lines, w.panelPart(partBase, worktreeBaseLabel, w.panelBase(valueW, w.baseListNamesSelection(rows)), labelW))
-	}
 	if verdict != "" {
 		lines = append(lines, noteLine(verdict, width, w.palette))
+	}
+	// At the floor with a verdict this line is the one panelBlock cuts.
+	if h > 2 {
+		lines = append(lines, w.panelPart(partBase, worktreeBaseLabel, w.panelBase(valueW, w.baseListNamesSelection(rows)), labelW))
 	}
 	for _, n := range notes {
 		lines = append(lines, noteLine(n, width, w.palette))
@@ -1023,9 +1029,11 @@ func (w *WorktreeField) SetProvenance(source string) { w.provenance = source }
 // than leaving a verdict about the previous text on screen until the app's
 // next answer lands. "" clears it.
 //
-// A line of its own rather than text on the branch part: v2 spec §6 puts
-// verdicts in the panel so a recomputing verdict cannot shift text under the
-// cursor, and the branch part IS the cursor while the name is being typed.
+// A line of its own, directly under the branch part, rather than text on
+// it: v2 spec §6 puts verdicts in the panel so a recomputing verdict cannot
+// shift text under the cursor, and the branch part IS the cursor while the
+// name is being typed. The line under it moves instead, and so does
+// everything below.
 func (w *WorktreeField) SetBranchVerdict(key, text string) {
 	w.branchVerdictKey, w.branchVerdict = key, text
 }

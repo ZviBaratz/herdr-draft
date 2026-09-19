@@ -87,10 +87,12 @@ func ValidateBranchName(name string) error {
 		switch {
 		case c == "":
 			return errors.New(`contains an empty path component (a leading or trailing "/", or a "//")`)
+		// The rule before the component: the form elides a reason at its
+		// tail, and a component can be most of a long name.
 		case strings.HasPrefix(c, "."):
-			return fmt.Errorf(`path component %q begins with "."`, c)
+			return fmt.Errorf(`a path component begins with "." (%q)`, c)
 		case strings.HasSuffix(c, ".lock"):
-			return fmt.Errorf(`path component %q ends with ".lock"`, c)
+			return fmt.Errorf(`a path component ends with ".lock" (%q)`, c)
 		}
 	}
 	if strings.HasSuffix(name, ".") {
