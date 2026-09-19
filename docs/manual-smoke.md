@@ -1652,6 +1652,40 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### the clean gate's base, on the recorded path (#193) — 2026-09-19
+
+herdr 0.9.0, git 2.53.0. `main` at `7399894`, built from `git archive`, and
+`zvi/fix-193-clean-gate-head-base` at `931a1ff`, not merged. Route A0 with
+its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME` under `/var/tmp`,
+`onboarding = false`, `[worktrees] directory` under the same path, and a
+scratch plugin config and state dir with `[agents] favorites =
+["nosuchkind"]`, so every create stopped at `starting agent` and the pass
+spent no account quota. Each case had its own repository of three commits,
+`HEAD~1` at `78803a0`, and ran `create --worktree --base HEAD~1
+--on-failure clean --json`.
+
+**What this pass cannot show is the fix itself.** #193's remaining defect
+is in the clean's fallback, which runs only when the create could not
+record the commit it cut from: a `rev-parse` that fails just before a
+`worktree create` that succeeds. A live run cannot arrange that, so
+`TestCleanGateCountsFromTheCommitTheBaseNamed` carries it. The pass is here
+because the same change makes `gitx.Disposable` refuse anything but a full
+commit id, and the ordinary path goes through `Disposable` too.
+
+"One commit" is a worktree that a `post-checkout` hook committed into as
+`git worktree add` made it, standing in for an agent that committed before
+the failure. The repository's own `core.hooksPath` has to name the hook by
+absolute path: a global `core.hooksPath` beats `.git/hooks`, and a
+relative one resolves against the linked checkout.
+
+| Case | `main` | the fix |
+|---|---|---|
+| pristine | `cleaned`, `deleted_branch` at tip `78803a0` | the same |
+| one commit in the worktree | `clean_refused: worktree has 1 commit(s) not on 78803a0…`, the checkout and branch kept | the same |
+
+Teardown: the disposable session stopped and deleted, no process with a
+cwd under the scratch tree, the tree removed, `pgrep -x herdr-draft` 0.
+
 ### a submit inside the project row's debounce (#195) — 2026-09-19
 
 herdr 0.9.0. `main` at `905f328`, built from `git archive`, and

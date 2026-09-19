@@ -3,6 +3,7 @@ package plan
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -407,6 +408,87 @@ func TestCleanCountsFromTheBaseRecordedAtCreate(t *testing.T) {
 	}
 	if branchExists(t, repo, "zvi/new") {
 		t.Fatal("the branch survived the clean")
+	}
+}
+
+// The clean gate counts a worktree's commits from its base inside the
+// worktree, and there a base that means something per checkout names the
+// worktree itself (#193). Counted from its own HEAD, a worktree carrying work
+// read as having none and was removed; counted from its own HEAD~1, a
+// pristine one read as one commit ahead and was kept. #190 fixed the ordinary
+// path by recording the commit at create time. The fallback column is a
+// create that could not record it, which is what BaseCommit cleared stands
+// for, and the gate then resolves the base itself.
+//
+// Clean's own look before it removes anything shares the fallback. It
+// counts in the source checkout, where HEAD already names the source's own,
+// so it read these bases right before #193 too; it is here so the two
+// cannot come apart.
+func TestCleanGateCountsFromTheCommitTheBaseNamed(t *testing.T) {
+	for _, base := range []string{"", "HEAD", "@", "HEAD~1", "main"} {
+		for _, recorded := range []bool{true, false} {
+			for _, work := range []bool{false, true} {
+				name := fmt.Sprintf("base %q, %s, %s", base,
+					map[bool]string{true: "recorded", false: "fallback"}[recorded],
+					map[bool]string{true: "one commit", false: "pristine"}[work])
+				t.Run(name, func(t *testing.T) {
+					repo := mkRepo(t)
+					gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "second")
+					gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "third")
+					path := filepath.Join(t.TempDir(), "wt")
+					m := &mockRunner{topo: createdTopo(path, "zvi/new"), onWorktreeCreate: herdrWorktreeAdd(t, repo, path)}
+					in := worktreeInput(repo, "zvi/new")
+					in.BaseRef = base
+					result := executeWorktree(t, in, m)
+					if result.FailedIndex != -1 || result.BaseCommit == "" {
+						t.Fatalf("fixture: FailedIndex = %d, BaseCommit = %q", result.FailedIndex, result.BaseCommit)
+					}
+					if !recorded {
+						result.BaseCommit = ""
+					}
+					if work {
+						gitIn(t, path, "commit", "-q", "--allow-empty", "-m", "the agent's")
+					}
+
+					decision := CleanCheck(context.Background(), in, result)
+					if decision.Allowed == work {
+						t.Errorf("CleanCheck allowed = %v (%s), want %v", decision.Allowed, decision.Reason, !work)
+					}
+
+					rm := &mockRunner{onWorktreeRemove: func(string) { gitIn(t, repo, "worktree", "remove", path) }}
+					_, err := Clean(context.Background(), rm, in, result)
+					var refusal *CleanRefusal
+					switch {
+					case work && !errors.As(err, &refusal):
+						t.Errorf("Clean error = %v, want a *CleanRefusal for a branch holding a commit", err)
+					case !work && err != nil:
+						t.Errorf("Clean: %v, want the pristine worktree and its branch removed", err)
+					case !work && branchExists(t, repo, "zvi/new"):
+						t.Error("Clean kept the branch of a pristine worktree")
+					}
+				})
+			}
+		}
+	}
+}
+
+// herdr's reply to a create does not have to name the checkout
+// (CreatedTopology.CheckoutPath is read only when its workspace carries a
+// worktree), and git given no directory answers about whichever repository
+// the process is in -- #186's hazard. A `create` run from inside the
+// repository is in the pristine primary checkout, which is what the gate
+// then judged in place of a worktree holding work.
+func TestCleanCheckRefusesWithNoCheckoutToJudge(t *testing.T) {
+	repo := mkRepo(t)
+	base := revOf(t, repo, "HEAD")
+	wt := mkWorktree(t, repo, "zvi/new")
+	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "the agent's")
+	t.Chdir(repo)
+	created := createdTopo("", "zvi/new")
+	result := ExecResult{Created: &created, AgentAt: &created, CreatedBranch: "zvi/new", BaseCommit: base}
+
+	if decision := CleanCheck(context.Background(), worktreeInput(repo, "zvi/new"), result); decision.Allowed {
+		t.Fatal("CleanCheck allowed a clean with no checkout to judge -- it judged the process's own repository")
 	}
 }
 

@@ -72,10 +72,10 @@ func TestSettleBase(t *testing.T) {
 // asking git (defaults.NormalizeBase), and every other spelling of HEAD
 // itself -- HEAD^0, @~0, HEAD@{0}, anything spelled from HEAD or @ that names
 // HEAD's own commit -- is found here, where git is already being asked.
-// These are the refs that open #193's hole: inside the new worktree they
-// name the worktree itself, and the clean gate then counts no commits in it.
-// The popup used to drop them to "" silently; rule 1 alone would have kept
-// them, and let the popup reach that hole for the first time.
+// These are the refs that opened #193's hole while the clean gate still
+// counted a base inside the new worktree, where they name the worktree
+// itself. The popup used to drop them to "" silently; rule 1 alone would
+// have kept them as spelled rather than as the HEAD row they mean.
 //
 // Only HEAD-relative spellings: a branch that happens to be at HEAD's commit
 // is a branch, and HEAD~1 is another commit.

@@ -460,9 +460,10 @@ func TestCurrentBranch(t *testing.T) {
 func TestDisposable(t *testing.T) {
 	repo := mkRepo(t)
 	ctx := context.Background()
+	base := revParse(t, repo, "main")
 
-	// Pristine worktree at base ref: disposable.
-	ok, reason, err := Disposable(ctx, repo, "main")
+	// Pristine worktree at its base: disposable.
+	ok, reason, err := Disposable(ctx, repo, base)
 	if err != nil {
 		t.Fatalf("Disposable: %v", err)
 	}
@@ -477,7 +478,7 @@ func TestDisposable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "f"), []byte("changed"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	ok, reason, err = Disposable(ctx, repo, "main")
+	ok, reason, err = Disposable(ctx, repo, base)
 	if err != nil {
 		t.Fatalf("Disposable: %v", err)
 	}
@@ -493,7 +494,7 @@ func TestDisposable(t *testing.T) {
 	// HEAD has diverged from the base ref.
 	gitRun(t, repo, "checkout", "-qb", "feature")
 	gitRun(t, repo, "commit", "-qm", "extra", "--allow-empty")
-	ok, reason, err = Disposable(ctx, repo, "main")
+	ok, reason, err = Disposable(ctx, repo, base)
 	if err != nil {
 		t.Fatalf("Disposable: %v", err)
 	}
@@ -502,6 +503,48 @@ func TestDisposable(t *testing.T) {
 	}
 	if reason == "" {
 		t.Errorf("expected a reason when not disposable")
+	}
+}
+
+// Disposable counts inside the worktree, where a ref that means something
+// per checkout names the worktree itself: from its own HEAD, a worktree
+// carrying work counts none (#193). No list of the spellings that mean
+// something per checkout stays complete (HEAD~1, @{-1}, @{upstream},
+// ORIG_HEAD, :/text, refs/worktree/...), so anything but a full commit id is
+// refused rather than counted -- a branch name too, though it would count
+// right. Every caller resolves its base where the worktree was created from
+// first, so a ref arriving here is the caller's bug.
+//
+// A full id is 64 digits in a SHA-256 repository, and refusing one there
+// would refuse every clean in it.
+func TestDisposableCountsOnlyFromACommit(t *testing.T) {
+	repo := mkRepo(t)
+	ctx := context.Background()
+	base := revParse(t, repo, "HEAD")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "real work")
+
+	for _, ref := range []string{"", "HEAD", "@", "HEAD~1", "HEAD@{0}", "main", base[:12]} {
+		if ok, reason, err := Disposable(ctx, repo, ref); err == nil || ok {
+			t.Errorf("Disposable(%q) = %v, %q, %v, want an error -- it counted from something other than a commit", ref, ok, reason, err)
+		}
+	}
+
+	ok, reason, err := Disposable(ctx, repo, base)
+	if err != nil || ok || !strings.Contains(reason, "1 commit") {
+		t.Errorf("Disposable(<base commit>) = %v, %q, %v, want the one commit beyond it counted", ok, reason, err)
+	}
+
+	sha256 := t.TempDir()
+	gitRun(t, sha256, "init", "-q", "--object-format=sha256", "-b", "main")
+	gitRun(t, sha256, "commit", "-q", "--allow-empty", "-m", "init")
+	base = revParse(t, sha256, "HEAD")
+	if len(base) != 64 {
+		t.Fatalf("fixture: HEAD = %q, want a SHA-256 id", base)
+	}
+	gitRun(t, sha256, "commit", "-q", "--allow-empty", "-m", "real work")
+	ok, reason, err = Disposable(ctx, sha256, base)
+	if err != nil || ok || !strings.Contains(reason, "1 commit") {
+		t.Errorf("Disposable(<SHA-256 base commit>) = %v, %q, %v, want the one commit beyond it counted", ok, reason, err)
 	}
 }
 

@@ -113,7 +113,7 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 	// failed session's worktree is removed. Judging the wrong repository
 	// is how a worktree with work in it gets called safe to delete -- or,
 	// as here, a clean one gets refused.
-	ok, reason, err := Disposable(ctx, repo, "main")
+	ok, reason, err := Disposable(ctx, repo, revParse(t, repo, "main"))
 	if err != nil || !ok {
 		t.Errorf("Disposable(%s) = %v, %q, %v: it judged the inherited repository", repo, ok, reason, err)
 	}

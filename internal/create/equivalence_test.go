@@ -447,9 +447,10 @@ favorites = ["claude"]
 		},
 		{
 			// Another spelling of HEAD itself is the HEAD row too, found by
-			// git: inside the new worktree it would name the worktree, which
-			// is #193's hole, and the form used to drop it to "" -- so keeping
-			// it under rule 1 would have let the popup reach that hole.
+			// git. The form used to drop it to "", and while #193's hole was
+			// open -- the clean gate counting from it inside the new worktree,
+			// where it names the worktree -- keeping it under rule 1 would
+			// have let the popup reach that hole.
 			name:       "a remembered HEAD^0 names HEAD's commit, so it is the HEAD row",
 			configTOML: baseScenarioConfig,
 			projects:   rememberedBase(projectDir, "HEAD^0"),
@@ -458,8 +459,8 @@ favorites = ["claude"]
 		},
 		{
 			// A per-checkout ref that is another commit resolves, so rule 1
-			// keeps it as written. At the clean gate it fails closed, and
-			// that is #193's.
+			// keeps it as written, and the clean gate counts from the commit
+			// it names (#193).
 			name:       "a remembered HEAD~1 resolves, so it is kept",
 			configTOML: baseScenarioConfig,
 			projects:   rememberedBase(projectDir, "HEAD~1"),
