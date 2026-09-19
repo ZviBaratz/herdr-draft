@@ -1465,7 +1465,7 @@ read that paste as text the user had pasted rather than asked for, and
 asked whether to act on it. Answer the question if you see it. A prompt
 the session only asks about has not tested the trigger.
 
-The confirmation cannot be read in full from a pane that short, and asking
+The confirmation cannot be read in full from a short pane, and asking
 the session to write out what it did can trip the model's safeguards. The
 session's own transcript is the reliable record. It holds every Bash call
 and the exact `AskUserQuestion` input. It lives at
@@ -1704,7 +1704,7 @@ arg or merely followed it.
 
 ## Recorded runs
 
-### Cell 13 again: the numbered section 7, and the negative trigger (#226) — 2026-09-19
+### `/spawn` again: the numbered section 7, and the negative trigger (Cell 13, #226) — 2026-09-19
 
 herdr 0.9.0, Claude Code 2.1.278 on Opus 5 at `high` in auto mode, with
 the owner's account and config. herdr-draft `main` at `5d4d1dc`, installed,
@@ -1714,8 +1714,8 @@ session's transcript, not its screen.
 
 | Case | Result |
 |---|---|
-| The first pass's miss case again: "…get another agent started on that in a fresh session of its own" (a one-line wording fix) | **Passed.** Two dry runs, each in one call with the exports: plain first, then with `--model sonnet --effort medium --permission-mode auto`. The recommended option's description read "This replaces your extra_args default of claude-opus-5[1m] at xhigh", which the first pass got wrong. The third option carried the owner's own id, quoted. No reap flag was passed, which is right with `mark_ready` off. The question was dismissed with Esc, and no session was created. |
-| Step 2's negative half: "Spawn a subagent to read the files in internal/form and summarise what each one is for." | **Passed, on the second prompt.** The first was read as pasted text, and the session asked whether it was a request at all. Answered "yes, use a subagent, as it says", its first and only tool call was the Agent tool (`general-purpose`), and it never loaded the skill. It was interrupted at that call, before the subagent had read much. |
+| The first pass's miss case again: "…get another agent started on that in a fresh session of its own" (a one-line wording fix) | **Passed.** Its own brief could not overwrite the first pass's, which was still in `~/Projects/handoffs/`, so it offered that one and said so. Two dry runs, each in one call with the exports: plain first, then with `--model sonnet --effort medium --permission-mode auto`. The recommended option's description read "This replaces your extra_args default of claude-opus-5[1m] at xhigh", which the first pass got wrong. The third option carried the owner's own id, quoted. No reap flag was passed, which is right with `mark_ready` off. The question was dismissed with Esc, and no session was created. |
+| Step 2's negative half: "Spawn a subagent to read the files in internal/form and summarise what each one is for." | **Passed, on the second prompt.** The first was read as pasted text, and the session asked whether it was a request at all. Answered "Yes, that was my own request. Use a subagent, as it says.", its first and only tool call was the Agent tool (`general-purpose`), and it never loaded the skill. It was interrupted about a second after that call, before the subagent had read anything. |
 
 The session that ran this pass then used the skill for real, handing
 #219 and #215 to a new session. The steps held there too: a plain dry run
@@ -1808,7 +1808,7 @@ and says why the first dry run cannot be folded into the second. Of the
 two sessions that read the two-run text, one skipped the plain run. The
 #209 tabletop read an earlier text that asked for the plain run alone, so
 it does not count. The numbered text held in a real session in the
-second pass, below.
+second pass, above.
 
 Teardown: both sessions exited and their pane closed. The two briefs they
 wrote are still in `~/Projects/handoffs/`.
