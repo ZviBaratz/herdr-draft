@@ -114,6 +114,9 @@ func TestSubmit_WaitsForTheProjectCheckThenRefusesAMissingDirectory(t *testing.T
 			m.submitInput.ProjectDir, m.submitInput.IsGitRepo, m.submitInput.UseWorktree)
 	}
 
+	// The title check the edit scheduled too lands first: a submit waits for
+	// it as well (#137), and it is one git call to the dir check's four.
+	m = landTitle(t, m, cmds)
 	m, _ = landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
 	if m.submitting {
 		t.Fatal("the submit went ahead for a directory that is not there")
@@ -141,6 +144,7 @@ func TestSubmit_WaitsForTheProjectCheckThenGoesOnWithItsAnswers(t *testing.T) {
 			m.submitInput.IsGitRepo, m.submitInput.UseWorktree)
 	}
 
+	m = landTitle(t, m, cmds) // the title check the edit scheduled, first
 	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
 	if !m.submitting {
 		t.Fatal("the check landed and the held submit did not go on")
@@ -179,6 +183,7 @@ func TestSubmit_OnlyTheCheckOfTheCurrentValueReleasesIt(t *testing.T) {
 		t.Fatal("the check for /scratch released a submit of /scratch-two")
 	}
 
+	m = landTitle(t, m, cmds) // the title check the edit scheduled, first
 	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
 	if !m.submitting {
 		t.Fatal("the check for the current value landed and the held submit did not go on")
@@ -205,8 +210,12 @@ func TestSubmit_AFreshFormWaitsForItsOpeningCheck(t *testing.T) {
 	}
 
 	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, m.initCmds))
+	// The opening check derives the branch from the title the reaction above
+	// never saw, and so schedules the title check itself -- which the submit
+	// waits for too (#137).
+	m, out = landTitleCheck(t, m, fireTitleDebounce(t, &m, []tea.Cmd{out}))
 	if !m.submitting {
-		t.Fatal("the opening check landed and the held submit did not go on")
+		t.Fatal("the opening checks landed and the held submit did not go on")
 	}
 	if in := m.submitInput; in.ProjectDir != "/repo" || !in.IsGitRepo {
 		t.Errorf("submitted project %q, git repo %v; want /repo, the repository its check found", in.ProjectDir, in.IsGitRepo)
@@ -289,19 +298,35 @@ func TestSubmit_AReleasedSubmitWaitsForTheBaseCheckItsProjectStarts(t *testing.T
 
 	next, _ := m.Update(form.SubmitMsg{})
 	m = next.(Model)
+	m = landTitle(t, m, cmds) // the title check the edit scheduled, first
 	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
 	if m.submitting {
 		t.Fatalf("the submit went on with /repo-b's base check still out, from base %q", m.submitInput.BaseRef)
 	}
 
+	// What the landing check handed back: /repo-b's base check, and the title
+	// check its remembered worktree scheduled by turning the worktree on.
 	var settled []baseSettledMsg
+	var titleCheck tea.Cmd
 	for _, msg := range flatten(out) {
-		if b, ok := msg.(baseSettledMsg); ok {
-			settled = append(settled, b)
+		switch msg := msg.(type) {
+		case baseSettledMsg:
+			settled = append(settled, msg)
+		case titleDebounceMsg:
+			next, run := m.Update(msg)
+			m = next.(Model)
+			titleCheck = run
 		}
 	}
 	if len(settled) != 1 {
 		t.Fatalf("base checks handed back = %d, want /repo-b's one: without it the held submit waits for good", len(settled))
+	}
+	if titleCheck == nil {
+		t.Fatal("test setup: turning the worktree on for /repo-b scheduled no title check")
+	}
+	m, _ = landTitleCheck(t, m, titleCheck)
+	if m.submitting {
+		t.Fatal("the submit went on after the title check, with /repo-b's base check still out")
 	}
 	next, _ = m.Update(settled[0])
 	m = next.(Model)

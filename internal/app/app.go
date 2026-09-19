@@ -256,13 +256,15 @@ type Setup struct {
 	// pin no account there, so no picker could have been used.
 	PickerUnavailable string
 
-	// dirReqVersion is where the project row's request counter resumes. Only
-	// a ⌃R⌃R rebuild sets it (handleClearRequested), to the discarded form's
-	// own counter: a check that form still has in flight lands after the
+	// dirReqVersion and titleReqVersion are where the project row's and the
+	// title-duplicate check's request counters resume. Only a ⌃R⌃R rebuild
+	// sets them (handleClearRequested), to the discarded form's own
+	// counters: a check that form still has in flight lands after the
 	// rebuild, and starting again from zero would let its version meet one
-	// the fresh form issues -- passing another path's answer off as the
-	// fresh form's own, and releasing a submit held for it (#195).
-	dirReqVersion int
+	// the fresh form issues -- passing another value's answer off as the
+	// fresh form's own, and releasing a submit held for it (#195, #201).
+	dirReqVersion   int
+	titleReqVersion int
 }
 
 // Bootstrap performs spec §9's pre-open refusal plus every other piece of
@@ -598,11 +600,12 @@ type Model struct {
 	baseSettleLanded  int
 	baseNote          string
 
-	// submitHeld is a submit waiting for the project row's check (#195) or
-	// the base check (#194): set by handleSubmit while either is out. The
-	// handler that lands one -- handleDirResult or handleBaseSettled --
-	// re-enters handleSubmit, which re-checks both and holds again if the
-	// other is still out.
+	// submitHeld is a submit waiting for the project row's check (#195), the
+	// base check (#194) or the title-duplicate check (#137): set by
+	// handleSubmit while any of them is out. The handler that lands one --
+	// handleDirResult, handleBaseSettled or handleTitleResult -- re-enters
+	// handleSubmit, which re-checks all three and holds again if another is
+	// still out.
 	submitHeld bool
 
 	// linearIssues is the last Linear issue list this Model has seen --
@@ -691,7 +694,12 @@ type Model struct {
 	dirLandedVersion int
 	baseReqVersion   int
 	titleReqVersion  int
-	browseReqVersion int
+	// titleLandedVersion is dirLandedVersion for the title-duplicate check:
+	// the version of the last one whose verdict was applied
+	// (handleTitleResult), trailing titleReqVersion exactly while a check is
+	// in flight (titleCheckPending, #137).
+	titleLandedVersion int
+	browseReqVersion   int
 	// clauthReqVersion is the clauth-reload source's own version counter --
 	// bumped directly by reloadClauthCmd (there is no separate debounce
 	// phase for this source, unlike the three above), and compared against
@@ -916,7 +924,8 @@ func New(s Setup) Model {
 
 		fetchedRepos: map[string]bool{},
 
-		dirReqVersion: s.dirReqVersion,
+		dirReqVersion:   s.dirReqVersion,
+		titleReqVersion: s.titleReqVersion,
 	}
 
 	m.dir = form.NewDirField(palette)
@@ -1341,8 +1350,15 @@ func BranchFor(res defaults.Resolved, issueBranch, title string) string {
 // change: a remembered base the list does not name has not been offered yet,
 // and one that names no commit has not fallen back. It answers in the time a
 // `git rev-parse` takes, and handleBaseSettled comes back through here.
+//
+// And for the title-duplicate check (#137), whose verdict checkSubmitValidation
+// reads as titleDupBlocked. An edit to the title, the branch or the project
+// schedules one 150 ms out, and until it lands the flag is the verdict on
+// what the form held before: a duplicate typed and submitted at once went
+// past it, and a duplicate fixed at once was refused with no warning left on
+// screen. handleTitleResult comes back through here.
 func (m Model) handleSubmit() (Model, tea.Cmd) {
-	if m.dirCheckPending() || m.baseSettlePending() {
+	if m.dirCheckPending() || m.baseSettlePending() || m.titleCheckPending() {
 		m.submitHeld = true
 		return m, nil
 	}
@@ -1365,6 +1381,11 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 // landed (handleDirResult), so the versions agree only once the answer for
 // the value the row now holds is the one applied.
 func (m Model) dirCheckPending() bool { return m.dirLandedVersion != m.dirReqVersion }
+
+// titleCheckPending is dirCheckPending for the title-duplicate check: one
+// scheduled for what the title, branch and project now hold, and not yet
+// landed.
+func (m Model) titleCheckPending() bool { return m.titleLandedVersion != m.titleReqVersion }
 
 // continueSubmit is handleSubmit's second step, and where a lane's commit
 // resumes it (handleLinkedCommit).
@@ -1794,7 +1815,8 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		ClauthUnavailable: m.clauthUnavailable,
 		PickerUnavailable: m.pickerUnavailable,
 
-		dirReqVersion: m.dirReqVersion,
+		dirReqVersion:   m.dirReqVersion,
+		titleReqVersion: m.titleReqVersion,
 	})
 	// Spec §10: "⌃R⌃R clears back to the repository default" -- explicitly
 	// NOT back to what you last did in this project. New has already

@@ -703,12 +703,18 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 	if msg.req.version != m.titleReqVersion {
 		return m, nil
 	}
+	m.titleLandedVersion = msg.req.version
 	m.title.SetVerdict(msg.req.key, m.titleNote(titleVerdictText(msg.branchExists, msg.labelTaken)))
 	// titleDupBlocked mirrors the SAME verdict just pushed above --
 	// checkSubmitValidation (app.go, spec §9) reads this directly rather
 	// than re-deriving it from TitleField's own (unexported) verdict
 	// state.
 	m.titleDupBlocked = msg.branchExists || msg.labelTaken
+	if m.submitHeld {
+		// The submit this check was holding goes on from the top, so the
+		// duplicate refusal it waited for reads this verdict (#137).
+		return m.handleSubmit()
+	}
 	return m, nil
 }
 
