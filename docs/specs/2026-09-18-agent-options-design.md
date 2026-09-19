@@ -338,12 +338,41 @@ The rules:
 - **`--json`:** gains `"agent_options": {"model": "opus", ...}`, omitted when
   nothing is set.
 
+> **Amended, #209 (2026-09-19): what the agent actually runs with.**
+> `agent_options` stays the chosen values, as above. `--json` also gains
+> `launch_options`: the value the agent's command line carries for each
+> declared option, which is `agentopts.Launch` read back through
+> `agentopts.Pinned`. So an option left on `inherit` that
+> `[agents.extra_args]` passes is listed too, and its provenance is
+> `extra_args`, not `built-in`. That holds after an explicit `inherit`,
+> which sends no flag of its own and cannot take `extra_args`'s away. The
+> #208 session's report said `built-in` for a model and an effort that
+> `extra_args` had set.
+
 ### 8.3 The spawn skill
 
 Section 5 of `spawn_skill.md` names the three flags, which
 `TestSkillNamesEveryCreateFlag` requires. It also tells an agent to leave
 them unset unless the task asks, and never to pass a more permissive
 `--permission-mode` than the one it runs under.
+
+> **Amended, #209 (2026-09-19): reversed.** Under "leave them unset", every
+> spawned session ran on a configuration chosen for no task, and nobody saw
+> it before the session started. The #208 session, a wording fix, ran on
+> Opus 5 at `xhigh` in auto mode, from `[agents.extra_args]` and claude's
+> own settings, and nobody had chosen that. The skill now tells an agent to
+> choose all three for the task, unless the user named them, and to pass
+> them. It gives:
+>
+> - a task-shape table for the model and the effort;
+> - a rule for the mode: `plan` when the first decisions are the user's;
+> - the ceiling as an order: `plan` and `manual` always; `acceptEdits`
+>   only under `acceptEdits` or `auto`; `auto` only under `auto`; and
+>   `manual` assumed when the spawner cannot tell its own.
+>
+> Its section 7 confirmation shows each choice with its reason, and what
+> the command resolves to, read from `create --dry-run` (v2 spec §13). The
+> ceiling and the two refused modes are unchanged.
 
 ## 9. Drift
 

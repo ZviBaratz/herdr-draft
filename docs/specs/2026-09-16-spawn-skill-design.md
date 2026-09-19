@@ -316,7 +316,11 @@ observed failure modes.
    than its own.
 
 5. **Agent and account.** `--agent`; `--account` (claude only); `auto`,
-   what it asks, and that a pick is spent when it runs.
+   what it asks, and that a pick is spent when it runs. (Amended, #209:
+   and the session options. The section tells the agent to choose
+   `--model`, `--effort` and `--permission-mode` for the task and pass
+   them, with a task-shape table and the permission ceiling stated as an
+   order. Agent-options spec §8.3 records the reversal.)
 
 6. **The prompt.** `--prompt -` reads stdin. A heredoc for a line or two;
    for a real brief, write it to a durable file and pipe it — reviewable
@@ -327,7 +331,11 @@ observed failure modes.
 7. **Confirm once, with `AskUserQuestion`.** The chosen command first, two
    nearest alternatives beside it, each shown as the exact command it would
    run so the choice is reviewable rather than a label. Then honour the
-   answer.
+   answer. (Amended, #209: the agent dry-runs the command first, with
+   `create --dry-run --json`, and each option shows the exact command with
+   all three option flags, what it resolves to that it does not state
+   (the account, the branch and base or the placement, the reap), and a
+   reason for each option chosen.)
 
 8. **Read the result; the exit code is not the whole story.** Exit codes
    0/1/2/3; that under `--json`, exits 2 and 3 print nothing on stdout, so
@@ -446,6 +454,10 @@ already has (`readme_test.go` executes the README's example picker).
 - The version stamp in the rendered output equals `herdrc.Version`.
 - The rendered output's frontmatter parses, and `description` is non-empty
   — it is the only thing that makes the skill trigger at all.
+- (Added, #209.) The line that introduces each session option's flag names
+  every value `internal/agentopts` declares for it, and every backticked
+  snake_case word in the document is a key `--json` prints, an option
+  name, or a provenance value.
 
 ### 8.2 Held to the verb
 

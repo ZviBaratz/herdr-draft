@@ -1425,6 +1425,28 @@ the next resolves from built-in defaults while looking like it did
 everything right. The tell is on `create`'s first stderr line. That window
 is the whole reason the skill's second section says "in the same command".
 
+**Step 4 — the session's options (#209).** In the same kind of fresh
+session, ask for two handoffs. First, one whose shape is obvious: a
+one-line wording fix with the change spelled out. Then one whose first
+decisions are yours, such as "the issue lists decisions for me; have
+someone plan it". Neither needs to be created. The confirmation is what is
+under test, so answer it with "Other: don't create" once you have read it.
+
+**Pass:**
+
+- Before it asks, the session runs the command with `--dry-run --json`,
+  with the exports in the same call.
+- Every command it offers carries `--model`, `--effort` and
+  `--permission-mode`.
+- Each option's preview names the account, the branch and base (or the
+  placement), and whether the session reaps itself. Its description gives
+  a reason for the options, and the default each one replaces.
+- The wording fix gets a small configuration: `sonnet` at `low` or
+  `medium`.
+- The second gets `--permission-mode plan`, and `--no-reap` when
+  `[reaper] mark_ready` is on.
+- No mode offered is more permissive than the session's own.
+
 **Unrun.** Nothing here has been observed; do not write a result you did
 not see.
 

@@ -324,12 +324,14 @@ Flags mirror the form's fields: `--project`, `--title`, `--prompt` (`-`
 reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
 `--reap` / `--no-reap`, `--placement`, `--workspace`, `--agent`, `--model`,
 `--effort`, `--permission-mode`, `--account`, `--issue`, `--json`,
-`--on-failure keep|clean`. `herdr-draft create --help` lists them.
+`--dry-run`, `--on-failure keep|clean`. `herdr-draft create --help` lists
+them.
 
 `--model`, `--effort` and `--permission-mode` are the `options` row's flags.
 They apply only to an agent kind that declares them — `claude`, today — and
-are refused with exit 2 for one that does not. `inherit` sends no flag even
-when `config.toml` sets a default:
+are refused with exit 2 for one that does not. `inherit` sends no flag of
+its own even when `config.toml` sets a default, though
+`[agents.extra_args]` can still pass one:
 
 ```bash
 herdr-draft create --title "design the cache" --effort max --permission-mode plan
@@ -374,8 +376,11 @@ guard withheld, since a headless caller has no pane to recover it from, and
 a `provenance` map naming the tier each value came from — `flag` for the
 ones you passed, and `checkout` for a `base` that is the commit a linked
 worktree is on). A `mark_ready: true` means the prompt carried
-pane-reaper's instruction, and `agent_options` is what the agent was
-launched with. It never prompts. Exit codes:
+pane-reaper's instruction. `agent_options` holds the session options chosen
+for the agent, and `launch_options` what its command line actually carried
+for each: the chosen ones, plus whatever `[agents.extra_args]` passes for
+the rest, which `provenance` names `extra_args`. It never prompts. Exit
+codes:
 
 | Code | Meaning |
 |---|---|
@@ -393,6 +398,17 @@ workspace on it, and that is exit 1, with no space reported for
 exit 4 still prints the object — `ok: false`, `failed_step` and `error` —
 with no `workspace_id`/`space_*` ids, since there is nothing for them to
 name.
+
+**`--dry-run` shows what a create would make, and makes nothing.** It
+runs every check a create runs before it starts, with the same exit 2 and
+exit 3 and the same reasons, then prints what it would create and stops.
+There is no workspace, no branch and nothing remembered. With `--json` it
+prints the object a create would, with `dry_run: true` and without the ids
+or `prompt_status`, which only a run can know. `--account auto` asks your
+picker with the picker's own `--dry-run`, so a preview spends no account,
+though the real pick can come out differently. The `/spawn` skill runs one
+before it shows you a command to approve, so the confirmation can say what
+the session will run with.
 
 **A prompt has three fates, not two.** `prompt_status` names which:
 `sent`, `unsent`, or `unconfirmed`. The third means delivery is unknown,
@@ -579,8 +595,10 @@ lookup.
 It covers what the sections above cover, aimed at an agent rather than at
 you: the `HERDR_PLUGIN_*` exports and what resolving without them costs,
 whether the session gets a worktree and what does not travel into one,
-which placement to pick, how to write and pipe in a prompt, confirming the
-command with the user once before running it, and reading `prompt_status`
+which placement to pick, choosing the model, effort and permission mode for
+the task rather than inheriting them, how to write and pipe in a prompt,
+dry-running the command and confirming it with the user once, showing each
+choice with its reason and what it resolves to, and reading `prompt_status`
 and the pane afterwards rather than trusting the exit code.
 
 **The emitted file is machine-specific and is not meant to be committed.**
@@ -838,8 +856,9 @@ inside it only when `picker` is set and its probe succeeded.
 
 The default session options for one agent kind: what the `options` row
 opens on, and what `create` uses for a flag you leave off. Every key is
-optional; an unset one sends no flag, so the agent's own settings decide.
-Only `claude` declares options today.
+optional. An unset one sends no flag of its own, so whatever
+`[agents.extra_args]` passes decides, and failing that the agent's own
+settings. Only `claude` declares options today.
 
 ```toml
 [agents.options.claude]
