@@ -659,18 +659,25 @@ command and the form produce the same session from the same inputs.
 > `--json` object also carries `account_usage`: the account the session
 > would bill, as `profile`, and its usage `windows` as clauth reports them,
 > each with `label`, `utilization_pct` and, when one is scheduled,
-> `resets_at`. It is the one key a real create's object lacks. It is there
-> to be weighed before approval, and a real create neither needs it nor
-> reads clauth to get it. The profile is the pinned one, the dry pick's for
+> `resets_at`. A real create's object does not carry it: it is there to
+> be weighed before approval, and a real create neither needs it nor reads
+> clauth to get it. The profile is the pinned one, the dry pick's for
 > `auto`, or clauth's active one when nothing is pinned, which is what the
 > form's account row reads. `account` cannot carry that last one, because
-> an absent `account` means nothing is pinned. The key is absent whenever
-> the usage cannot be said: clauth not configured or switched off, an
-> agent other than claude, a degraded status, a profile clauth does not
-> report, or a status that could not be read. The last is said on stderr
+> an absent `account` means nothing is pinned. For `auto` the windows come
+> from clauth too, not from the picker's own `usage` (which the form's
+> `auto` row draws): one source keeps one shape, where the picker's is two
+> unlabelled figures with reset times in no fixed format. So with
+> `[clauth] enabled = false` an `auto` dry run names the pick and carries
+> no usage. The key is absent whenever the usage cannot be said: clauth
+> switched off, an agent other than claude, a degraded status, a profile
+> clauth does not report or one with no windows, or a status that could
+> not be read. The last is said on stderr
 > unless clauth is simply not installed. The report gives numbers, not a
 > verdict. The spawn skill applies the form's threshold,
-> `clauth.WarnThreshold`, which a test holds its prose to.
+> `clauth.WarnThreshold`, which a test holds its prose to. It never picks
+> another account itself: the issue's "or another account" is left to the
+> user's answer, since the skill keeps accounts the user's call.
 
 > **Amended, #171 (2026-09-18): from inside a linked worktree.** Both paths
 > take the linked checkout as the project: `create` because it is the

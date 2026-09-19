@@ -178,11 +178,12 @@ type Deps struct {
 	// every test in this package hands in a fake, so no test here ever runs a
 	// subprocess.
 	Picker picker.Source
-	// Clauth is where a pinned profile's auth status is read from, the same
-	// feed the form's account row shows. nil means there is no clauth to ask,
-	// and the check is skipped: unlike Git, the production loader needs the
-	// status-file path and binary name main.go owns, so it cannot be built
-	// here, and main.go passes it.
+	// Clauth is clauth's status feed, the one the form's account row shows:
+	// where a pinned profile's auth status is read from, and a dry run's
+	// account_usage (#215). nil means there is no clauth to ask, so the
+	// check is skipped and the key absent: unlike Git, the production loader
+	// needs the status-file path and binary name main.go owns, so it cannot
+	// be built here, and main.go passes it.
 	Clauth ClauthSource
 
 	Stdin  io.Reader

@@ -1449,10 +1449,11 @@ under test, so answer it with "Other: don't create" once you have read it.
   agent asks for permission, the question itself says so. The owner's
   `extra_args` passes only `--model` and `--effort`, so this needs a
   scratch config to see.
-- With a window of the session's account at or above 95% (#215), the
-  question names the window, how full it is and when it resets, and one
-  option is a cheaper configuration. Without one, nothing about usage is
-  asked.
+- With a window of the session's account at or above 95% that limits the
+  model it picks (#215), the question names the window, how full it is and
+  when it resets. It offers the cheaper configuration beside what it would
+  have picked otherwise. With no such window it says nothing about usage.
+  With `account_usage` absent it says usage is unknown.
 - The wording fix gets a small configuration: `sonnet` at `low` or
   `medium`.
 - The second gets `--permission-mode plan`, and `--no-reap` when
@@ -1462,7 +1463,10 @@ under test, so answer it with "Other: don't create" once you have read it.
 **Run on 2026-09-19** (Recorded runs), twice. The first pass covered step
 2's positive half and steps 3 and 4. The second, on the numbered section 7
 (#226), repeated step 4's miss case and ran step 2's negative half. Step 1
-was the owner's own install.
+was the owner's own install. Step 4's two newest items came later than
+both passes and have not been run live: the extra argument in
+`[agents.extra_args]` (#219) and the usage window (#215). Tabletop runs of
+the skill covered them.
 
 **`herdr agent prompt` sends its text as a bracketed paste.** One session
 read that paste as text the user had pasted rather than asked for, and

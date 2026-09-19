@@ -26,7 +26,7 @@ import (
 //
 // 95, not v2's 100 (v3 spec §10.2): it is clauth's own default auto-switch
 // trip point, and at 100 a profile sitting at 98% -- a real, observed live
-// value -- warned nowhere, in either surface.
+// value -- warned nowhere, in the popup's row or its panel.
 const WarnThreshold = 95.0
 
 // Window is one rate-limit window reported for a profile (e.g. "5h", "7d"),

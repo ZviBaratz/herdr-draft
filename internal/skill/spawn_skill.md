@@ -228,8 +228,9 @@ attempt. So step down only for work that is plainly mechanical, and
 between two neighbouring rows of real engineering, take the higher. If the
 user has said quota is tight, take the lower, and say what you would have
 picked otherwise. The first dry run's `account_usage` says how full the
-session's account is (section 7), and a window there at or above 95% counts
-as tight too. `haiku` is the smallest model, and a session that has to
+session's account is (section 7). A window there at or above 95% counts as
+tight too, when it limits the model you would pick. `haiku` is the smallest
+model, and a session that has to
 learn a repository's conventions before it can start is rarely small
 enough for it.
 
@@ -383,8 +384,10 @@ and a dry run is the cheapest place to catch it. The report is section 8's
   has active now, which clauth can switch before the session starts, so
   call it the active account rather than promising the name. For
   `--account auto` it is the dry pick's, and the real pick can differ.
-  Absent means the usage could not be read: say it is unknown, not that
-  there is room.
+  Absent means herdr-draft could not say: the usage is unknown, not known
+  to have room, and with nothing pinned so is the account's name. When
+  that is because clauth failed, stderr has a `herdr-draft create:` line
+  naming clauth, which is not section 2's warning.
 
 **2. Choose the three options** (section 5). If the first dry run's
 `agent_kind` is not `claude`, pass none of them.
@@ -422,13 +425,18 @@ before they approve is the point. No flag drops one of those arguments for
 a single session, so the user's choices are to create the session as it
 stands, or to create nothing while they change `[agents.extra_args]`.
 
-**If a window in `account_usage` is at or above 95%**, say so in the
-question: which window, how full, and when it resets. That is where the
-popup marks an account rate limited, and where clauth moves off it on its
-own. Make one of the alternatives the next cheaper configuration: a row
-down section 5's table, or a step down in effort. The user may answer with
-another account instead. Do not pick one yourself (section 5). A window
-whose label names a model, such as `7d fable`, limits that model only.
+**If a window in `account_usage` is at or above 95%** and limits the model
+you would pick, say so in the question: which window, how full, and when
+it resets. A window whose label names a model, such as `7d fable`, limits
+that model only. One without a model in its label, such as `7d`, limits
+every model. 95% is where the popup marks an account rate limited. With
+nothing pinned it is also where clauth's auto-switch can move the active
+account elsewhere before the session starts, so say that the session may
+bill another account. Section 5 has already taken the lower for you: put
+that cheaper configuration first (a row up section 5's table, or a step
+down in effort), and beside it what you would have picked otherwise, so
+the user sees what the quota costs. The user may answer with another
+account instead. Do not pick one yourself (section 5).
 
 A label is not reviewable. A command, and what it resolves to, is.
 

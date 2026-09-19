@@ -391,8 +391,10 @@ standing in for that command, can still change what arrives. A dry run's
 object also carries `account_usage`: the account the session would bill
 (`profile`, clauth's active one when nothing is pinned) and each of its
 usage `windows` as clauth reports them, with
-`label`, `utilization_pct` and `resets_at`. It is absent when clauth cannot
-be read. It never prompts. Exit codes:
+`label`, `utilization_pct` and `resets_at`. It is absent whenever that
+cannot be said: another agent kind, clauth switched off, not installed or
+failing, a status whose schema it does not know, or a profile it does not
+report. It never prompts. Exit codes:
 
 | Code | Meaning |
 |---|---|

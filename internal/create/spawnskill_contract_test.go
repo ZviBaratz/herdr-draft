@@ -495,24 +495,26 @@ func TestSkillShowsTheWholeArgumentList(t *testing.T) {
 	}
 }
 
-// percentPattern is a whole-number percentage in prose.
-var percentPattern = regexp.MustCompile(`\b\d+(\.\d+)?%`)
+// thresholdPattern is the skill stating a usage threshold: "at or above
+// 95%", or a bare "above 95%" that has lost its "at or".
+var thresholdPattern = regexp.MustCompile(`(at or )?above (\d+(?:\.\d+)?%)`)
 
 // TestSkillStatesTheUsageThreshold holds the skill's "nearly out" to the
 // popup's (#215): clauth.WarnThreshold, the one constant the account row
-// warns at. Every percentage the skill writes must be that one, so a skill
-// that tells a spawning agent to worry at 90% while the popup still says
-// nothing until 95% -- or the reverse -- fails here instead of in front of
-// a user.
+// warns at, and warns AT -- the row's comparison is >=. So every threshold
+// the skill states is "at or above" that number: a skill that tells a
+// spawning agent to worry at 90% while the popup says nothing until 95%,
+// or that lets a window sitting at exactly 95% pass, fails here instead
+// of in front of a user.
 func TestSkillStatesTheUsageThreshold(t *testing.T) {
 	want := fmt.Sprintf("%g%%", clauth.WarnThreshold)
-	found := percentPattern.FindAllString(renderedSkill(), -1)
+	found := thresholdPattern.FindAllStringSubmatch(renderedSkill(), -1)
 	if len(found) == 0 {
-		t.Fatalf("the skill never states the usage threshold (%s)", want)
+		t.Fatalf("the skill never states the usage threshold (at or above %s)", want)
 	}
-	for _, p := range found {
-		if p != want {
-			t.Errorf("the skill writes %s; the popup warns at %s", p, want)
+	for _, m := range found {
+		if m[1] == "" || m[2] != want {
+			t.Errorf("the skill says %q; the popup warns at or above %s", m[0], want)
 		}
 	}
 }
@@ -527,10 +529,15 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 		want           []string
 	}{
 		{"the first dry run's reading list", "**1. Dry-run it without the option flags.**", "**2. Choose the three options**", []string{"`account_usage`"}},
-		{"section 5's cost judgement", "**Model and effort follow the shape of the task:**", "**Keep the user's own model id.**", []string{"`account_usage`"}},
+		{"section 5's cost judgement", "**Model and effort follow the shape of the task:**", "**Keep the user's own model id.**", []string{"`account_usage`", "limits the model"}},
 		// Its own paragraph, not the whole of "Then ask": that section also
 		// says "once, in the question" about the exports.
-		{"the rule for a window at the threshold", "**If a window in `account_usage`", "A label is not reviewable.", []string{"say so in the question", "when it resets", "cheaper configuration"}},
+		// "a row up": section 5's table gets dearer going down, and this
+		// paragraph once sent the agent down it for the cheaper option.
+		{"the rule for a window at the threshold", "**If a window in `account_usage`", "A label is not reviewable.", []string{
+			"say so in the question", "when it resets", "cheaper configuration", "a row up",
+			"what you would have picked otherwise", "limits that model only", "every model",
+		}},
 	} {
 		// One line, so a phrase the prose wraps still matches.
 		text := strings.Join(strings.Fields(strings.Join(linesBetween(t, lines, where.from, where.to), " ")), " ")

@@ -124,6 +124,23 @@ func TestAccountUsage_WhoseWindows(t *testing.T) {
 	}
 }
 
+// A degraded status leaves the key out and says nothing: the popup's panel
+// already says the status is degraded, and a status clauth answered is not
+// a failure worth a line on every dry run.
+func TestAccountUsage_DegradedIsQuiet(t *testing.T) {
+	h, _, code := usageRun(t, func(h *harness) {
+		st := usageStatus()
+		st.Degraded = true
+		h.deps.Clauth = &fakeClauth{status: st}
+	}, "--dry-run")
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if h.stderr.Len() != 0 {
+		t.Errorf("stderr for a degraded status, want nothing:\n%s", h.stderr)
+	}
+}
+
 // A window clauth reports with no reset time says nothing about one, rather
 // than "resets_at": null: absent means absent throughout the report.
 func TestAccountUsage_NullResetIsOmitted(t *testing.T) {
