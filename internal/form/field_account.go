@@ -465,7 +465,15 @@ func (f *AccountField) Blur() { f.focused = false }
 // and a CLICK on a row commit. A click is treated as a commit and a wheel
 // tick is not, deliberately: a click names one row the way Enter does,
 // where the wheel is the mouse's own spelling of Up/Down.
+//
+// While inert it ignores everything (#182). The row can still be focused
+// by a click (form.go's FocusByID ignores Enabled), and a keypress there
+// must not quietly move a choice that does not apply -- the same rule
+// PlacementField and OptionsField follow.
 func (f *AccountField) Update(msg tea.Msg) tea.Cmd {
+	if !f.Enabled() {
+		return nil
+	}
 	if click, ok := msg.(tea.MouseClickMsg); ok {
 		if f.pickerRowsShown > 0 {
 			if _, ok := f.picker.SelectAt(click, f.pickerRowsShown, "row:"+f.ID()+":"); ok {
@@ -510,7 +518,15 @@ func (f *AccountField) Update(msg tea.Msg) tea.Cmd {
 // row, and a Tab that pinned whatever the cursor was resting on would
 // reintroduce the exact defect §10.3 exists to remove. ZoneAccount is
 // still not a `isPicker()` zone for that reason.
-func (f *AccountField) Complete() bool { return f.commitPin() }
+//
+// While inert it reports false, so Enter advances instead of pinning a
+// profile the agent kind cannot use (#182, and Update's own doc comment).
+func (f *AccountField) Complete() bool {
+	if !f.Enabled() {
+		return false
+	}
+	return f.commitPin()
+}
 
 // commitPin makes the row under the cursor the field's pin, reporting
 // whether that actually changed anything. The "active" sentinel commits as

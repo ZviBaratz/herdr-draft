@@ -214,6 +214,37 @@ func TestMouseZones_ChipClickSelectsPlacement(t *testing.T) {
 	}
 }
 
+// TestMouseZones_ClickOnAnInertAccountRowDoesNotPin is #182 by mouse, the
+// way the issue reached it: the inert row is focused, its panel still draws
+// the profile list with a zone per row, and a click on one committed a pin
+// for an agent kind that cannot use it.
+func TestMouseZones_ClickOnAnInertAccountRowDoesNotPin(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetProfiles(sampleStatus(), sampleNow())
+	f.SetAgentIsClaude(false)
+
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{f}})
+	m.Init()
+	if cmd := m.FocusByID("account"); cmd != nil {
+		cmd()
+	}
+	_ = m.ViewAt(80, 24)
+	syncZones()
+
+	const zoneID = "row:account:1"
+	zi := widgets.Zones.Get(zoneID)
+	if zi.IsZero() {
+		t.Fatalf("zone %q never resolved after ViewAt(80, 24)'s own Scan", zoneID)
+	}
+
+	next, _ := m.Update(clickAt(zi.StartX, zi.StartY))
+	m = next.(Model)
+
+	if got := f.Pin(); got != "" {
+		t.Fatalf("Pin() after clicking %s on an inert row = %q, want \"\" -- the agent is not claude", zoneID, got)
+	}
+}
+
 // TestMouseZones_WheelMovesBasePickerCursor is the brief's own third
 // scenario: a wheel over the base picker moves its cursor. Task 21's own
 // wheel grammar (form.go's handleMouseWheel doc comment: "scroll the

@@ -96,6 +96,45 @@ func TestAccountField_InertFlipsWithAgentKind(t *testing.T) {
 	}
 }
 
+// TestAccountField_InertIgnoresInputEvenWhenFocused is #182. The row is
+// inert while the agent is not claude, but a click still focuses it
+// (form.go's FocusByID ignores Enabled), and from there the arrows browsed
+// and Enter pinned -- a pin app.accountPin then drops for the non-claude
+// kind, so the row let you do something that did nothing. PlacementField
+// and OptionsField already ignore input while inert; this is the same rule.
+func TestAccountField_InertIgnoresInputEvenWhenFocused(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetProfiles(sampleStatus(), sampleNow())
+	f.SetAgentIsClaude(false)
+	f.Focus()
+
+	before, _ := f.picker.Selected()
+	f.Update(key(tea.KeyDown, 0))
+	f.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if after, _ := f.picker.Selected(); after.ID != before.ID {
+		t.Errorf("cursor moved from %q to %q on an inert row -- browsing a list that does not apply", before.ID, after.ID)
+	}
+	if got := f.Pin(); got != "" {
+		t.Errorf("Pin() = %q after input on an inert row, want \"\"", got)
+	}
+
+	// Enter needs its own guard, because the cursor can already be off the
+	// pin when the row goes inert: browse while the agent is claude, then
+	// switch the agent away. SetAgentIsClaude leaves the cursor where it is.
+	g := NewAccountField(theme.Default())
+	g.SetProfiles(sampleStatus(), sampleNow())
+	g.SetAgentIsClaude(true)
+	browseTo(g, 1)
+	g.SetAgentIsClaude(false)
+	g.Focus()
+	if g.Complete() {
+		t.Error("Complete() = true on an inert row, want false so Enter advances instead of pinning")
+	}
+	if got := g.Pin(); got != "" {
+		t.Errorf("Pin() = %q after Enter on an inert row, want \"\"", got)
+	}
+}
+
 // browseTo walks the account cursor down n rows WITHOUT committing --
 // the gesture that used to pin an account by accident (v3 spec §10.3) and
 // now does not.
