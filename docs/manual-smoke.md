@@ -1699,6 +1699,28 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### the account row on clauth's schema 2 (#238) — 2026-09-19
+
+herdr 0.9.0, clauth 0.15.2, whose status feed is `schema: 2`. Before:
+`main` at `5d4d1dc`, built from `git archive`. After:
+`zvi/238-clauth-schema-2` at `56cba11`, not merged. Route A0 with its own
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME` under `/var/tmp`, a throwaway
+repository, and a scratch plugin config (`[agents] favorites =
+["claude"]`, nothing else) and state dir. Route B's five variables opened
+the real form in the session's one pane. It read the owner's real
+`~/.clauth/status.json`, which it only reads. Six profiles, none pinned, no
+picker configured. Each pass pressed `⇥` until the account row had focus,
+read the screen, and left by `esc`.
+
+| Read | before | after |
+|---|---|---|
+| the account row | `account    active` | `account    active · Max 20x · 5h 5% · 7d 62%` |
+| the account panel | the six names, and `clauth status degraded — showing names only` | each profile's plan, its `5h` and `7d` gauges and reset time, `●` on the live one, and `! … rate limited` on the two at `7d 100%` |
+
+Nothing was submitted. The scratch state dir gained only the Linear cache.
+Teardown: I stopped and deleted the disposable session and removed the
+tree. No process from the pass was left.
+
 ### `agent_args`, the whole argument list (#219) — 2026-09-19
 
 herdr 0.9.0. `zvi/219-agent-args` at `33e418f`, not merged, built with
