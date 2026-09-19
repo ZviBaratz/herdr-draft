@@ -1436,11 +1436,11 @@ func titleSessions(workspaces []herdrc.WorkspaceInfo, invokingID string) []form.
 // accountPin returns the Input.AccountPin plan.Build should receive:
 // AccountField's own Pin() only when the currently selected agent kind is
 // claude (spec §6 field 7 -- pinning is meaningless, and plan.Build itself
-// rejects, any other kind) -- "" (unpinned) otherwise, even if the
-// picker's own cursor still sits on a stale pin from before the agent
-// kind changed (AccountField's present-but-inert state, driven by
-// SetAgentIsClaude, does not reset the underlying picker selection, only
-// its own visibility).
+// rejects, any other kind) -- "" (unpinned) otherwise, even if a pin
+// committed before the agent kind changed is still recorded
+// (AccountField's inert state, driven by SetAgentIsClaude, keeps the pin
+// so it applies again once the agent is claude, and refuses changes to it
+// meanwhile, #182).
 // The picker's commit-time answer wins when there is one: `auto` is a promise
 // to resolve at submit, and WithAccount is what fulfils it. With no answer
 // recorded, this is the field's own pin exactly as before.

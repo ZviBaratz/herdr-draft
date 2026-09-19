@@ -214,14 +214,17 @@ func TestMouseZones_ChipClickSelectsPlacement(t *testing.T) {
 	}
 }
 
-// TestMouseZones_ClickOnAnInertAccountRowDoesNotPin is #182 by mouse, the
-// way the issue reached it: the inert row is focused, its panel still draws
-// the profile list with a zone per row, and a click on one committed a pin
-// for an agent kind that cannot use it.
+// TestMouseZones_ClickOnAnInertAccountRowDoesNotPin is #182 by mouse. When
+// the issue was found the inert row's panel still drew the profile list, a
+// zone per row, and a click on one committed a pin for an agent kind that
+// cannot use it. The inert panel no longer draws that list, so the zones
+// here are the ones rendered while the agent was still claude, and the click
+// lands after the switch: Update's own guard is what must refuse it, not the
+// panel's having stopped drawing the target.
 func TestMouseZones_ClickOnAnInertAccountRowDoesNotPin(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	f.SetProfiles(sampleStatus(), sampleNow())
-	f.SetAgentIsClaude(false)
+	f.SetAgentIsClaude(true)
 
 	m := New(Setup{Palette: theme.Default(), Sections: []Section{f}})
 	m.Init()
@@ -230,6 +233,7 @@ func TestMouseZones_ClickOnAnInertAccountRowDoesNotPin(t *testing.T) {
 	}
 	_ = m.ViewAt(80, 24)
 	syncZones()
+	f.SetAgentIsClaude(false)
 
 	const zoneID = "row:account:1"
 	zi := widgets.Zones.Get(zoneID)
