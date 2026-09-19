@@ -277,8 +277,10 @@ without the popup. It drives herdr exclusively through the public CLI
   and how to read `prompt_status` and the pane afterwards. Unless the user
   names them, the agent chooses the model, effort and permission mode for
   the task and passes them, never a mode more permissive than its own. It
-  dry-runs the command, and the confirmation it asks for shows each choice
-  with its reason and what the session will run with (#209). It also carries
+  dry-runs the command twice: once plain, to read the user's defaults, and
+  once as it will run. The confirmation it asks for shows each choice with
+  its reason, the default it replaces, and what the session will run with
+  (#209). It also carries
   the absolute path of the binary that printed it, which is why the emitted
   file is machine-specific and is regenerated after an upgrade.
 

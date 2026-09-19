@@ -330,8 +330,15 @@ off). When that is
 Building the command is your job. Choosing among plausible ones is the
 user's. Before running anything, ask **once**, with `AskUserQuestion`.
 
-**First, dry-run it.** Add `--dry-run --json` to the command you mean to
-offer, leave the three option flags off, and keep the same `--prompt`:
+Before you ask, dry-run the command twice. **Both runs are needed, and the
+first cannot be folded into the second.** A flag you pass displaces the
+default it would have shown, so a dry run that already carries your
+choices cannot tell you what those choices replace. The confirmation then
+says something about the user's defaults that nobody read.
+
+**1. Dry-run it without the option flags.** Add `--dry-run --json` to the
+command you mean to offer, leave `--model`, `--effort` and
+`--permission-mode` off, and keep the same `--prompt`:
 
 ```bash
 # with section 2's three exports above it, in the same command
@@ -359,12 +366,13 @@ and a dry run is the cheapest place to catch it. The report is section 8's
   `branch` and `base` or `placement`: the values the command line leaves
   to the defaults.
 
-Then choose the three options (section 5), and **dry-run the command you
-would run first once more**, now with its option flags and any `--reap` or
-`--no-reap`. Then the line the user approves has been checked too, and
-its `launch_options` should read back what you chose. If the first dry
-run's `agent_kind` is not `claude`, pass no option flags at all
-(section 5).
+**2. Choose the three options** (section 5). If the first dry run's
+`agent_kind` is not `claude`, pass none of them.
+
+**3. Dry-run the command you would run first again,** now with its option
+flags and any `--reap` or `--no-reap`. Then the line the user approves has
+been checked too, and its `launch_options` should read back what you
+chose.
 
 **Then ask.** Put the command you would run first, and beside it the two
 nearest alternatives. Let them vary the choice you are least sure of. That
