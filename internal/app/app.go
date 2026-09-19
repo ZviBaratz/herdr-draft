@@ -864,6 +864,11 @@ type Model struct {
 	// reviewer-measured: a permanently elevated goroutine count), or let
 	// the user bypass an intentional keep/clean choice silently.
 	submitDeadEnd bool
+	// submitWarned is a create that succeeded, persisted its state, and
+	// finished a step with a warning to read (#230): the popup stays up
+	// until esc, enter or ctrl+c closes it, rather than quitting with the
+	// warning unread. The plan has finished, so nothing is stranded.
+	submitWarned bool
 	// submitInput/submitResult/submitCleanDecision are the running
 	// submit attempt's own state, threaded across the several async Cmds
 	// spec §9's staged pipeline needs (plan.Execute's own streamed

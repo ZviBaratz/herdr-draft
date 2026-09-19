@@ -134,6 +134,11 @@ type SubmitView struct {
 	// deadEnd, a state with nothing left to decide.
 	keptBranch, keptReason string
 
+	// doneWithWarnings is SetDoneWithWarnings's: the create succeeded and a
+	// step finished with a warning to read (#230). Like deadEnd, a state
+	// with nothing left to decide, so it offers `esc close`.
+	doneWithWarnings bool
+
 	// waitingHint is SetWaitingHint's own footer instruction for a step
 	// waiting on the user, or "" for defaultWaitingHint.
 	waitingHint string
@@ -245,6 +250,16 @@ func (v *SubmitView) SetCleanFailed(err error) {
 // is a branch to mention, so the view says so and offers `esc close`.
 func (v *SubmitView) SetCleanedKeepingBranch(branch, reason string) {
 	v.keptBranch, v.keptReason = branch, reason
+}
+
+// SetDoneWithWarnings records a create that succeeded with a step that
+// finished StepFailedNonFatal (#230). The popup used to close the moment
+// such a create was done, so the step's reason was on screen for a frame;
+// one of them (#221's branch still tracking its base) ends in the command
+// that fixes it. The view now holds, repeats each warning in full below the
+// rows -- a row's value column truncates it -- and offers `esc close`.
+func (v *SubmitView) SetDoneWithWarnings() {
+	v.doneWithWarnings = true
 }
 
 // SetUnsentPrompt records where the app layer saved a prompt that never
@@ -603,6 +618,9 @@ func (v *SubmitView) failureBody(width int) []string {
 		// create` still had one composed.
 		return append(v.unsentPromptLines(width), v.deadEndLines(width)...)
 	}
+	if v.doneWithWarnings {
+		return v.warningLines(width)
+	}
 	if !v.haveFailure {
 		return nil
 	}
@@ -702,6 +720,28 @@ func (v *SubmitView) keptBranchLines(width int) []string {
 	}
 	for _, l := range wrapAtSpaces(v.keptReason, inner) {
 		out = append(out, indentedLine(dimText(v.palette).Render(l), width))
+	}
+	return out
+}
+
+// warningLines says the create is done and then, for each step that
+// finished with a warning, its label and its reason in full, wrapped the
+// way keptBranchLines wraps, so a command to copy arrives whole.
+func (v *SubmitView) warningLines(width int) []string {
+	inner := width - gutterWidth
+	warn := lipgloss.NewStyle().Foreground(v.palette.Warning)
+	out := []string{indentedLine(warn.Render("created, with a warning to read before closing"), width)}
+	for _, s := range v.steps {
+		if s.State != plan.StepFailedNonFatal {
+			continue
+		}
+		reason := s.Detail
+		if reason == "" {
+			reason = "failed, continuing"
+		}
+		for _, l := range wrapAtSpaces(s.Label+": "+reason, inner) {
+			out = append(out, indentedLine(dimText(v.palette).Render(l), width))
+		}
 	}
 	return out
 }
@@ -884,7 +924,7 @@ func (v *SubmitView) footerLine(width int) string {
 // instead.
 func (v *SubmitView) footerParts() (hint string, buttons []string) {
 	switch {
-	case v.deadEnd, v.keptBranch != "":
+	case v.deadEnd, v.keptBranch != "", v.doneWithWarnings:
 		return "", []string{submitButton("esc", "close", buttonPrimary, v.palette)}
 	case v.haveFailure:
 		keep := submitButton("k", "keep it", buttonPrimary, v.palette)

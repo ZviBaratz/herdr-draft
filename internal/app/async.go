@@ -1746,6 +1746,9 @@ func (m Model) updateSubmitting(msg tea.Msg) (Model, tea.Cmd) {
 		if s := msg.String(); m.submitDeadEnd && (s == "esc" || s == "ctrl+c") {
 			return m, tea.Quit
 		}
+		if s := msg.String(); m.submitWarned && (s == "esc" || s == "enter" || s == "ctrl+c") {
+			return m, tea.Quit
+		}
 		if m.submitView != nil {
 			return m, m.submitView.Update(msg)
 		}
@@ -1761,7 +1764,14 @@ func (m Model) updateSubmitting(msg tea.Msg) (Model, tea.Cmd) {
 	case statePersistedMsg:
 		// A successful submit ends here, once spec §12's state is on disk
 		// (handleSubmitDone/persistStateCmd) -- the plugin's whole job was
-		// creating and launching the session, which is done.
+		// creating and launching the session, which is done. Unless a step
+		// finished with a warning (#230): its row's reason is the only
+		// place it is said, and quitting would take it off screen at once.
+		if m.submitView != nil && hasWarning(m.submitSteps) {
+			m.submitWarned = true
+			m.submitView.SetDoneWithWarnings()
+			return m, nil
+		}
 		return m, tea.Quit
 	case form.KeepMsg:
 		return m, tea.Quit
@@ -1772,6 +1782,16 @@ func (m Model) updateSubmitting(msg tea.Msg) (Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+// hasWarning reports whether any step finished StepFailedNonFatal.
+func hasWarning(steps []form.Step) bool {
+	for _, s := range steps {
+		if s.State == plan.StepFailedNonFatal {
+			return true
+		}
+	}
+	return false
 }
 
 // --- production gitSource: internal/gitx + os.Stat ------------------------

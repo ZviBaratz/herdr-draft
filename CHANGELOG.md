@@ -53,9 +53,9 @@ without the popup. It drives herdr exclusively through the public CLI
   only the space, which left its first tab called `1`, so a `new space` or
   worktree session now renames that tab. The rename is cosmetic, and a
   failed one never fails the create. `create` reports the step on stderr as
-  `failed, continuing` and the run goes on. The popup marks the row `!`,
-  but a successful submit still closes the popup at once, so the row stays
-  on screen only when a later step fails. `split here` renames nothing,
+  `failed, continuing` and the run goes on. The popup marks the row `!`
+  and, once the session is created, stays open to show the reason until
+  `esc` or `enter` closes it (#230). `split here` renames nothing,
   because the tab it lands in is yours.
 - **The `options` row chooses the agent's model, effort and permission
   mode** for this session, which `[agents.extra_args]` could only fix for
@@ -105,8 +105,8 @@ without the popup. It drives herdr exclusively through the public CLI
   `branch.autoSetupMerge` is `always`. The branch then tracks nothing until
   its first `git push -u` (or `push.autoSetupRemote`). A removal that fails
   does not fail the create: `create`'s worktree line reports it, with the
-  command that finishes it; the popup's row shows it only until a
-  successful submit closes the popup.
+  command that finishes it, and the popup stays open with the whole reason
+  until you close it (#230).
 - **Create is a real focus stop**, the ring's last, on the footer rather
   than in the row stack. `⌃S` submits from anywhere; `⌃R ⌃R` clears back to
   the resolved defaults.

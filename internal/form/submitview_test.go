@@ -1299,3 +1299,47 @@ func TestSubmitView_StepCounterReturnsOnceTheDialogIsAnswered(t *testing.T) {
 		t.Errorf("ViewAt(80,24) = %q, want the step counter back", frame)
 	}
 }
+
+// sampleStepsDoneWithWarning is a session that was created, whose worktree
+// step could not stop its branch tracking the base it was cut from (#221):
+// the row's value column truncates the reason, and the reason ends in the
+// command that fixes it.
+func sampleStepsDoneWithWarning() []Step {
+	return []Step{
+		{Label: "worktree", State: plan.StepFailedNonFatal, Detail: "branch zvi/fix-login-redirect-loop still tracks origin/develop, the branch it was cut from (could not lock config file .git/config: File exists); `git branch --unset-upstream zvi/fix-login-redirect-loop` finishes the job"},
+		{Label: "tab", Detail: "Fix login redirect loop", State: plan.StepDone},
+		{Label: "claude", Detail: "starting under clauth alpha-2", State: plan.StepDone},
+		{Label: "prompt", State: plan.StepDone},
+	}
+}
+
+// TestFrames_DoneWithWarnings is a create that succeeded with a step's
+// warning to read (#230): the popup stays up, says so, and offers only
+// `esc close`.
+func TestFrames_DoneWithWarnings(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsDoneWithWarning())
+	v.SetDoneWithWarnings()
+	assertSubmitFrame(t, "done-with-warnings-80x24", v, 80, 24)
+}
+
+// TestSubmitView_DoneWithWarningsSaysTheWholeReason: the row truncates the
+// reason, so the held screen repeats it in full below the rows, wrapped,
+// with the command to copy on one line (#230).
+func TestSubmitView_DoneWithWarningsSaysTheWholeReason(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsDoneWithWarning())
+	v.SetDoneWithWarnings()
+
+	frame := strippedFrame(v, 80, 24)
+	for _, want := range []string{"created", "`git branch --unset-upstream zvi/fix-login-redirect-loop`", "esc close"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("frame does not say %q:\n%s", want, frame)
+		}
+	}
+	for _, gone := range []string{"step 4 of 4", "keep it", "remove it"} {
+		if strings.Contains(frame, gone) {
+			t.Errorf("frame still says %q once the create is done:\n%s", gone, frame)
+		}
+	}
+}
