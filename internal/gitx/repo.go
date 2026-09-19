@@ -491,12 +491,14 @@ func FetchPrune(ctx context.Context, repoDir string) error {
 // --verify <ref>^{commit}`). An unknown ref, or a ref naming something
 // that is not a commit, is an error rather than an empty result.
 //
-// The clean gate is why it exists. Disposable counts inside the worktree,
-// where a base that means something per checkout -- "", HEAD, @, HEAD~1 --
-// names the worktree itself, and HEAD..HEAD counts 0 for every worktree
-// however many commits it carries. So plan resolves every base here first,
-// in the repository the worktree was created from, and hands Disposable a
-// commit the worktree can actually be ahead of.
+// The clean gate is its first caller, and the reason it is exact about
+// where it asks. Disposable counts inside the worktree, where a base that
+// means something per checkout names the worktree itself: an empty one made
+// `git rev-list --count ..HEAD`, which git reads as HEAD..HEAD, and HEAD or
+// @ is HEAD..HEAD outright -- 0 for every worktree, however many commits it
+// carries. So plan resolves every base here first, in the repository the
+// worktree was created from, and hands Disposable a commit the worktree can
+// actually be ahead of.
 func ResolveRef(ctx context.Context, repoDir, ref string) (string, error) {
 	if strings.TrimSpace(ref) == "" {
 		return "", fmt.Errorf("resolve ref: empty ref in %s", repoDir)
@@ -526,7 +528,14 @@ func ResolveRef(ctx context.Context, repoDir, ref string) (string, error) {
 // name is refused too, though it would count right. Callers resolve their
 // base where the worktree was created from, which makes a ref arriving here
 // their bug.
+//
+// worktreeDir must be named too: git given no directory answers about
+// whichever repository the process is in (#186), which judged a pristine
+// primary checkout in place of a worktree holding work.
 func Disposable(ctx context.Context, worktreeDir, base string) (ok bool, reason string, err error) {
+	if worktreeDir == "" {
+		return false, "", errors.New("disposable: no worktree directory to judge")
+	}
 	if !isCommitID(base) {
 		return false, "", fmt.Errorf("disposable: base %q for worktree %s is not a commit id -- resolve it where the worktree was created from", base, worktreeDir)
 	}

@@ -472,6 +472,26 @@ func TestCleanGateCountsFromTheCommitTheBaseNamed(t *testing.T) {
 	}
 }
 
+// herdr's reply to a create does not have to name the checkout
+// (CreatedTopology.CheckoutPath is read only when its workspace carries a
+// worktree), and git given no directory answers about whichever repository
+// the process is in -- #186's hazard. A `create` run from inside the
+// repository is in the pristine primary checkout, which is what the gate
+// then judged in place of a worktree holding work.
+func TestCleanCheckRefusesWithNoCheckoutToJudge(t *testing.T) {
+	repo := mkRepo(t)
+	base := revOf(t, repo, "HEAD")
+	wt := mkWorktree(t, repo, "zvi/new")
+	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "the agent's")
+	t.Chdir(repo)
+	created := createdTopo("", "zvi/new")
+	result := ExecResult{Created: &created, AgentAt: &created, CreatedBranch: "zvi/new", BaseCommit: base}
+
+	if decision := CleanCheck(context.Background(), worktreeInput(repo, "zvi/new"), result); decision.Allowed {
+		t.Fatal("CleanCheck allowed a clean with no checkout to judge -- it judged the process's own repository")
+	}
+}
+
 // From a linked checkout (#171) the worktree is created from the primary
 // checkout, and that is where its branch is looked for and deleted: the
 // lane itself may be gone by the time the clean runs.

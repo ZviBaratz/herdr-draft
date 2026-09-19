@@ -345,7 +345,9 @@ without the popup. It drives herdr exclusively through the public CLI
   worktree was cut from, and never inside the checkout: there `HEAD` or `@`
   names the worktree's own tip, so a checkout holding commits read as
   holding none and was removed, and `HEAD~1` names its own parent, so a
-  pristine one read as a commit ahead and was kept (#193).
+  pristine one read as a commit ahead and was kept (#193). A create whose
+  reply named no checkout is kept too, rather than judged by whichever
+  repository `create` was run from.
 - **Screen detection is evidence-based.** Before sending a queued prompt
   the executor reads the pane and checks it against known blocking-dialog
   signatures rather than trusting an "idle" report, and turns herdr's

@@ -128,11 +128,11 @@ func TestWorktreeBase(t *testing.T) {
 
 // TestResolveBaseRef_ALinkedCheckoutCountsFromTheCommitItWasCutFrom: the
 // clean gate counts the worktree's own commits from its base. From a lane
-// that is the commit the plan named, which needs no git call to know --
-// the empty ProjectDir here would fail one.
+// that is the commit the plan named, which needs no git call to know -- and
+// with no directory left to ask here, one would fail.
 func TestResolveBaseRef_ALinkedCheckoutCountsFromTheCommitItWasCutFrom(t *testing.T) {
 	in := laneInput()
-	in.ProjectDir = ""
+	in.ProjectDir, in.Linked.RepoRoot = "", ""
 
 	got, err := resolveBaseRef(context.Background(), in)
 	if err != nil {

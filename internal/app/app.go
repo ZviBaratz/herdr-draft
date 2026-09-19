@@ -2200,13 +2200,14 @@ func SettleBase(ctx context.Context, git commitResolver, dir string, res default
 // HEAD row, "", as HEAD and @ do (defaults.NormalizeBase). `create` asks it
 // of --base too.
 //
-// It matters beyond tidiness: each of these names the worktree itself once
-// inside it, which is where the clean gate evaluates a base, so a worktree
-// holding work would count as having none (#193). The popup used to drop
-// them all to "" without asking; keeping them under rule 1 would have
-// opened that hole on the popup's path for the first time. Git decides
-// rather than a list of spellings, because no list is complete
-// (HEAD@{now} is one more).
+// It used to matter beyond tidiness. The clean gate counted a base inside
+// the worktree, where each of these names the worktree itself, so a worktree
+// holding work counted as having none; the popup used to drop them all to ""
+// without asking, and keeping them under rule 1 would have opened that hole
+// on the popup's path for the first time. The gate now counts from a commit
+// resolved where the worktree was cut from (#193), so what is left is that
+// these mean the HEAD row and both paths say so. Git decides rather than a
+// list of spellings, because no list is complete (HEAD@{now} is one more).
 //
 // Only a ref spelled from HEAD or @: a branch that happens to be at HEAD's
 // commit is still a branch, and HEAD~1 is another commit.
