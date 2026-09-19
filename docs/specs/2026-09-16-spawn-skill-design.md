@@ -343,6 +343,10 @@ observed failure modes.
    spawner's ceiling binds the flags it passes. When the user named every
    choice and there is no question to ask, the agent still dry-runs the
    command and asks before creating if `agent_args` holds anything else.)
+   (Amended, #215: the first dry run's
+   `account_usage` feeds item 5's cost judgement, and a window at or above
+   `clauth.WarnThreshold`, 95%, goes in the question with how full it is
+   and when it resets, beside an alternative one configuration cheaper.)
 
 8. **Read the result; the exit code is not the whole story.** Exit codes
    0/1/2/3; that under `--json`, exits 2 and 3 print nothing on stdout, so

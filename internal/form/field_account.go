@@ -121,11 +121,10 @@ const (
 	accountWarnRateLimited = "rate limited"
 
 	// accountWarnThreshold is the utilization percentage at or past which
-	// a window counts as rate-limited. 95, not v2's 100 (v3 spec §10.2):
-	// it is clauth's own default auto-switch trip point, and at 100 a
-	// profile sitting at 98% -- a real, observed live value -- warned
-	// nowhere, in either surface.
-	accountWarnThreshold = 95.0
+	// a window counts as rate-limited: clauth.WarnThreshold, which says
+	// why it is 95. The spawn skill states the same number (#215), and it
+	// lives in internal/clauth so a test can hold the skill's prose to it.
+	accountWarnThreshold = clauth.WarnThreshold
 
 	// accountResetPrefix and accountResetDue open the panel's reset cell:
 	// `in 2h11m` while the window still has time on it, `due` once it does

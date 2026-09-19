@@ -227,7 +227,9 @@ session that fails and has to be redone costs more than a stronger first
 attempt. So step down only for work that is plainly mechanical, and
 between two neighbouring rows of real engineering, take the higher. If the
 user has said quota is tight, take the lower, and say what you would have
-picked otherwise. `haiku` is the smallest model, and a session that has to
+picked otherwise. The first dry run's `account_usage` says how full the
+session's account is (section 7), and a window there at or above 95% counts
+as tight too. `haiku` is the smallest model, and a session that has to
 learn a repository's conventions before it can start is rarely small
 enough for it.
 
@@ -374,6 +376,14 @@ and a dry run is the cheapest place to catch it. The report is section 8's
 - `account`, `agent_kind`, `mark_ready` (absent means off), and either
   `branch` and `base` or `placement`: the values the command line leaves
   to the defaults.
+- `account_usage`: how full the account the session would bill is. The
+  account is under `profile`, and each of its usage `windows` has a
+  `label`, a `utilization_pct` and, when one is scheduled, a `resets_at`.
+  With nothing pinned, `profile` is the account clauth has active now,
+  which clauth can switch before the session starts, so call it the active
+  account rather than promising the name. For `--account auto` it is the
+  dry pick's, and the real pick can differ. Absent means the usage could
+  not be read: say it is unknown, not that there is room.
 
 **2. Choose the three options** (section 5). If the first dry run's
 `agent_kind` is not `claude`, pass none of them.
@@ -410,6 +420,14 @@ binds the flags you pass, not the user's own configuration, and seeing it
 before they approve is the point. No flag drops one of those arguments for
 a single session, so the user's choices are to create the session as it
 stands, or to create nothing while they change `[agents.extra_args]`.
+
+**If a window in `account_usage` is at or above 95%**, say so in the
+question: which window, how full, and when it resets. That is where the
+popup marks an account rate limited, and where clauth moves off it on its
+own. Make one of the alternatives the next cheaper configuration: a row
+down section 5's table, or a step down in effort. The user may answer with
+another account instead. Do not pick one yourself (section 5). A window
+whose label names a model, such as `7d fable`, limits that model only.
 
 A label is not reviewable. A command, and what it resolves to, is.
 

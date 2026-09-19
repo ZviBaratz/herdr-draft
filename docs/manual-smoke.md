@@ -1449,6 +1449,10 @@ under test, so answer it with "Other: don't create" once you have read it.
   agent asks for permission, the question itself says so. The owner's
   `extra_args` passes only `--model` and `--effort`, so this needs a
   scratch config to see.
+- With a window of the session's account at or above 95% (#215), the
+  question names the window, how full it is and when it resets, and one
+  option is a cheaper configuration. Without one, nothing about usage is
+  asked.
 - The wording fix gets a small configuration: `sonnet` at `low` or
   `medium`.
 - The second gets `--permission-mode plan`, and `--no-reap` when

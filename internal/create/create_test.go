@@ -2526,13 +2526,17 @@ func TestCreate_SaysNothingAboutAnAbsentLaunchMode(t *testing.T) {
 
 // --- the form's submit-time refusals (#145, #146, #147) --------------------
 
-// fakeClauth implements ClauthSource.
+// fakeClauth implements ClauthSource. calls counts the reads, because
+// when create reads clauth is part of the contract (#215): once at most,
+// and never for a real create that pins nothing.
 type fakeClauth struct {
 	status clauth.Status
 	err    error
+	calls  int
 }
 
 func (c *fakeClauth) Status(context.Context) (clauth.Status, error) {
+	c.calls++
 	return c.status, c.err
 }
 

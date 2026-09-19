@@ -45,14 +45,17 @@ func decodeReport(t *testing.T, stdout string) jsonReport {
 	return out
 }
 
-// resolvedOnly keeps the part of a report a dry run can know: everything
+// resolvedOnly keeps the part of a report both runs can know: everything
 // the request resolved to. The ids, the checkout and the prompt's fate
-// exist only once something ran, and dry_run is the one field that is
-// SUPPOSED to differ.
+// exist only once something ran, and account_usage only in a dry run
+// (#215): it is there to be weighed before approval, and a real create
+// does not read clauth for it. dry_run is the other field that is SUPPOSED
+// to differ.
 func resolvedOnly(r jsonReport) jsonReport {
 	r.WorkspaceID, r.TabID, r.PaneID, r.CheckoutPath = "", "", "", ""
 	r.SpaceWorkspaceID, r.SpaceTabID, r.SpacePaneID = "", "", ""
 	r.PromptSent, r.PromptStatus, r.UnsentPrompt, r.UnconfirmedPrompt = nil, "", "", ""
+	r.AccountUsage = nil
 	r.DryRun = false
 	return r
 }
@@ -125,10 +128,11 @@ func TestDryRun_ReportsWhatTheRunWould(t *testing.T) {
 			setup: openRepoSpace,
 		},
 		{
-			name: "an account the picker chooses",
+			name: "an account the picker chooses, with clauth to read",
 			args: []string{"--title", "fix login", "--worktree", "--account", "auto"},
 			setup: func(h *harness) {
 				h.deps.Picker = &fakePicker{res: picker.Result{Profile: "alpha-2"}}
+				h.deps.Clauth = &fakeClauth{status: usageStatus()}
 			},
 		},
 		{

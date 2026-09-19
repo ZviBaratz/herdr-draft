@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -292,7 +293,8 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 		return ExitUnreachable
 	}
 
-	if err := refuseWhatTheFormRefuses(ctx, resolved, deps); err != nil {
+	cl := &clauthOnce{src: deps.Clauth}
+	if err := refuseWhatTheFormRefuses(ctx, resolved, deps, cl); err != nil {
 		return usageError(deps.stderr(), err)
 	}
 
@@ -321,8 +323,12 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 		// a request it passes is one the real run would not refuse before
 		// starting. Nothing past this point runs -- no plan, no memory
 		// write, and the pick above was the picker's own dry run.
-		report{input: resolved.input, provenance: resolved.provenance, json: req.json, dryRun: true}.
-			write(deps.stdout(), deps.stderr())
+		rep := report{input: resolved.input, provenance: resolved.provenance, json: req.json, dryRun: true}
+		if req.json {
+			// Only --json has somewhere to put it, so only --json reads it.
+			rep.usage = dryRunUsage(ctx, resolved, deps, cl)
+		}
+		rep.write(deps.stdout(), deps.stderr())
 		return ExitOK
 	}
 	return execute(ctx, resolved, req, deps, ops)
@@ -339,7 +345,7 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 // refuse the same requests: the branch only when a worktree would create
 // it, the label against the workspace snapshot the resolver already read,
 // and the auth status as non-blocking whenever it is unknown.
-func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Deps) error {
+func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Deps, cl *clauthOnce) error {
 	in := resolved.input
 
 	// Not a formality: herdr v0.9.0 does not refuse a branch that exists
@@ -359,7 +365,7 @@ func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Dep
 		return fmt.Errorf("workspace %s is already labelled %q; pass a different --title", w.WorkspaceID, in.Title)
 	}
 
-	return refuseSignedOutProfile(ctx, resolved, deps)
+	return refuseSignedOutProfile(ctx, resolved, deps, cl)
 }
 
 // refuseSignedOutProfile is the form's accountAuthBlocked: a pinned profile
@@ -370,17 +376,18 @@ func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Dep
 // clauth could not be read, a status that could not be loaded is said on
 // stderr: there is no row here, and a check skipped in silence reads as a
 // check passed.
-func refuseSignedOutProfile(ctx context.Context, resolved resolution, deps Deps) error {
+func refuseSignedOutProfile(ctx context.Context, resolved resolution, deps Deps, cl *clauthOnce) error {
 	pin := resolved.input.AccountPin
 	if pin == "" || pin == clauthAuto || deps.Clauth == nil {
 		return nil
 	}
-	if enabled := resolved.tiers.cfg.Clauth.Enabled; enabled != nil && !*enabled {
+	if !clauthEnabled(resolved) {
 		return nil
 	}
-	status, err := deps.Clauth.Status(ctx)
+	status, err := cl.get(ctx)
 	if err != nil {
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: could not check whether %s is signed in: %v\n", pin, err)
+		cl.said = true
 		return nil
 	}
 	for _, p := range status.Profiles {
@@ -389,6 +396,64 @@ func refuseSignedOutProfile(ctx context.Context, resolved resolution, deps Deps)
 		}
 	}
 	return nil
+}
+
+// clauthEnabled is `[clauth] enabled`, which defaults to on.
+func clauthEnabled(resolved resolution) bool {
+	enabled := resolved.tiers.cfg.Clauth.Enabled
+	return enabled == nil || *enabled
+}
+
+// clauthOnce is clauth's status, read at most once per create and only when
+// something asks for it: the signed-out check for a pinned profile, and a
+// dry run's account_usage (#215). The read can be a subprocess -- a stale
+// status file falls back to `clauth status --json` -- so a real create that
+// pins nothing never makes it, and the two askers share the one read rather
+// than risk two answers.
+type clauthOnce struct {
+	src    ClauthSource
+	read   bool
+	status clauth.Status
+	err    error
+	// said records that the read's error is already on stderr, so the second
+	// asker does not print it again.
+	said bool
+}
+
+func (c *clauthOnce) get(ctx context.Context) (clauth.Status, error) {
+	if !c.read {
+		c.status, c.err = c.src.Status(ctx)
+		c.read = true
+	}
+	return c.status, c.err
+}
+
+// dryRunUsage is a dry run's account_usage (#215): the windows of the
+// account the session would bill, from the status the form's account row
+// reads. It is called after the pick, so an `auto` pin is already the dry
+// pick's profile. nil -- the key absent -- whenever it cannot be said: no
+// clauth to ask, clauth switched off, an agent other than claude (the
+// account applies to claude only), or a status that could not be read.
+//
+// A status that could not be read is said on stderr, as the signed-out check
+// says it, unless the check already did, or clauth is simply not installed:
+// most people never installed it, and the popup does not mention it either
+// (#88). A report whose key is absent because clauth broke, with nothing to
+// say so, would read as an account nobody could see into for no reason.
+func dryRunUsage(ctx context.Context, resolved resolution, deps Deps, cl *clauthOnce) *accountUsage {
+	in := resolved.input
+	if deps.Clauth == nil || in.AgentKind != claudeKind || !clauthEnabled(resolved) {
+		return nil
+	}
+	status, err := cl.get(ctx)
+	if err != nil {
+		if !cl.said && !errors.Is(err, exec.ErrNotFound) {
+			fmt.Fprintf(deps.stderr(), "herdr-draft create: could not read clauth's usage windows: %v\n", err)
+			cl.said = true
+		}
+		return nil
+	}
+	return usageFor(status, in.AccountPin)
 }
 
 // execute runs the plan and reports it. It is the only part of this
