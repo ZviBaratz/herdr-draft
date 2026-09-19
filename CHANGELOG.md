@@ -94,7 +94,8 @@ without the popup. It drives herdr exclusively through the public CLI
   project's answers, so a worktree could be sent to a repository the form
   had already left. It now waits for the answer about the path the row
   holds — the one you end on, if you keep typing in the row meanwhile —
-  then validates and goes on by itself.
+  and for the check of the base that project remembers, when it remembers
+  one (#194), then validates and goes on by itself.
 - Mouse: click a row to focus it, click a panel line to select it, wheel to
   scroll the panel.
 - The popup is a fixed **104×32 cells**, a manifest value rather than a

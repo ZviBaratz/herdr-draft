@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 )
@@ -263,5 +264,51 @@ func TestSubmit_ACheckFromBeforeAClearDoesNotReleaseIt(t *testing.T) {
 	if m.submitting {
 		t.Fatalf("the check for %s, from before the clear, released a submit of %q: git repo %v",
 			before.req.key, m.submitInput.ProjectDir, m.submitInput.IsGitRepo)
+	}
+}
+
+// TestSubmit_AReleasedSubmitWaitsForTheBaseCheckItsProjectStarts: the dir
+// check that releases a held submit also starts the new project's base check
+// (#194), when its memory names a base. The submit holds again for that one,
+// and goes on when it lands -- which it can only do if the landing dir check
+// handed the base check back to run.
+func TestSubmit_AReleasedSubmitWaitsForTheBaseCheckItsProjectStarts(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main"}
+	git.commits = map[string]string{"/repo-b old-branch": "3d4e5f6"}
+	m := settle(t, newSubmitTestModel(t, runner, testSetup{
+		Git: git,
+		Ctx: herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-b": {Worktree: ptrBool(true), Base: "old-branch"},
+		}),
+	}))
+	m.title.SetTitle("Fix pagination", false)
+	cmds := retypeProject(&m, "/repo-b")
+
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
+	if m.submitting {
+		t.Fatalf("the submit went on with /repo-b's base check still out, from base %q", m.submitInput.BaseRef)
+	}
+
+	var settled []baseSettledMsg
+	for _, msg := range flatten(out) {
+		if b, ok := msg.(baseSettledMsg); ok {
+			settled = append(settled, b)
+		}
+	}
+	if len(settled) != 1 {
+		t.Fatalf("base checks handed back = %d, want /repo-b's one: without it the held submit waits for good", len(settled))
+	}
+	next, _ = m.Update(settled[0])
+	m = next.(Model)
+	if !m.submitting {
+		t.Fatal("the base check landed and the held submit did not go on")
+	}
+	if in := m.submitInput; in.ProjectDir != "/repo-b" || in.BaseRef != "old-branch" {
+		t.Errorf("submitted project %q from base %q, want /repo-b from its remembered old-branch", in.ProjectDir, in.BaseRef)
 	}
 }
