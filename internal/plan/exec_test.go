@@ -1517,6 +1517,7 @@ func TestCleanCheckAllowsCleanWorktree(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	in.BaseRef = "main"
+	in.ProjectDir = repo
 	created := herdrc.CreatedTopology{CheckoutPath: repo}
 	result := ExecResult{Created: &created, AgentAt: &created}
 
@@ -1535,6 +1536,7 @@ func TestCleanCheckDeniesDirtyWorktree(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
 	in.BaseRef = "main"
+	in.ProjectDir = repo
 	created := herdrc.CreatedTopology{CheckoutPath: repo}
 	result := ExecResult{Created: &created, AgentAt: &created}
 
@@ -1542,29 +1544,40 @@ func TestCleanCheckDeniesDirtyWorktree(t *testing.T) {
 	if decision.Allowed {
 		t.Fatal("expected a dirty worktree to be denied")
 	}
-	if strings.TrimSpace(decision.Reason) == "" {
-		t.Fatal("expected a human-readable Reason when denied")
+	if !strings.Contains(decision.Reason, "uncommitted") {
+		t.Fatalf("Reason = %q, want the dirty checkout named -- any other refusal is this test passing for someone else's reason", decision.Reason)
 	}
 }
 
 func TestCleanCheckDeniesOnDisposableError(t *testing.T) {
-	// An invalid BaseRef makes gitx.Disposable itself fail (not just
-	// return ok=false) -- that must surface as denied with the error's
-	// context in Reason, never as a silent "allowed".
+	// A question the gate cannot answer -- what the worktree was cut from,
+	// or whether it is safe to remove (gitx.Disposable failing rather than
+	// returning ok=false) -- must surface as denied with the error's context
+	// in Reason, never as a silent "allowed".
 	repo := mkRepo(t)
 
-	in := validInput()
-	in.UseWorktree = true
-	in.BaseRef = "this-ref-does-not-exist"
-	created := herdrc.CreatedTopology{CheckoutPath: repo}
-	result := ExecResult{Created: &created, AgentAt: &created}
+	for _, tc := range []struct {
+		name, base, checkout, want string
+	}{
+		{"the base names no commit", "this-ref-does-not-exist", repo, "what this worktree branched from"},
+		{"the checkout is not a repository", "main", t.TempDir(), "whether the worktree is safe to remove"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := validInput()
+			in.UseWorktree = true
+			in.BaseRef = tc.base
+			in.ProjectDir = repo
+			created := herdrc.CreatedTopology{CheckoutPath: tc.checkout}
+			result := ExecResult{Created: &created, AgentAt: &created}
 
-	decision := CleanCheck(context.Background(), in, result)
-	if decision.Allowed {
-		t.Fatal("expected a Disposable error (invalid base ref) to deny cleanup, not silently allow it")
-	}
-	if strings.TrimSpace(decision.Reason) == "" {
-		t.Fatal("expected a human-readable Reason describing the error")
+			decision := CleanCheck(context.Background(), in, result)
+			if decision.Allowed {
+				t.Fatal("expected an unanswerable clean gate to deny cleanup, not silently allow it")
+			}
+			if !strings.Contains(decision.Reason, tc.want) {
+				t.Fatalf("Reason = %q, want it to say it could not determine %s", decision.Reason, tc.want)
+			}
+		})
 	}
 }
 

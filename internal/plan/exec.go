@@ -1283,7 +1283,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// proof there is. Not a gate -- an unreadable answer just
 				// leaves the branch unclaimed, which a clean keeps.
 				newBranch := branchIsAbsent(ctx, op.Worktree.Cwd, op.Worktree.Branch)
-				baseCommit = commitAt(ctx, op.Worktree.Cwd, op.Worktree.Base)
+				// Unreadable leaves the base unrecorded, which the clean
+				// then resolves for itself (cleanBase).
+				baseCommit, _ = commitAt(ctx, op.Worktree.Cwd, op.Worktree.Base)
 
 				topo, err = r.WorktreeCreate(ctx, *op.Worktree)
 				if err != nil {
@@ -1739,20 +1741,16 @@ func branchIsAbsent(ctx context.Context, dir, branch string) bool {
 // commitAt resolves base to a commit in dir, the directory herdr cuts the
 // worktree in -- "HEAD" when base is empty, which is the default herdr
 // applies itself (start_api_worktree_create,
-// herdr:src/app/api/worktrees/deferred.rs at v0.9.0). "" when it cannot be
-// read, and with no directory at all, for branchIsAbsent's reason.
-func commitAt(ctx context.Context, dir, base string) string {
+// herdr:src/app/api/worktrees/deferred.rs at v0.9.0). With no directory it
+// is an error rather than a git call, for branchIsAbsent's reason.
+func commitAt(ctx context.Context, dir, base string) (string, error) {
 	if dir == "" {
-		return ""
+		return "", errors.New("no directory to resolve the base in")
 	}
 	if base == "" {
 		base = "HEAD"
 	}
-	commit, err := gitx.ResolveRef(ctx, dir, base)
-	if err != nil {
-		return ""
-	}
-	return commit
+	return gitx.ResolveRef(ctx, dir, base)
 }
 
 // cleanBase is the commit the clean gate counts "commits beyond the base"
@@ -1900,39 +1898,32 @@ func unconfirmedCleanReason(cause unconfirmedCause) string {
 		"working in it right now. Read the pane and remove it yourself if it really is idle."
 }
 
-// resolveBaseRef turns Input.BaseRef into something gitx.Disposable can
-// actually count against.
+// resolveBaseRef is the commit the clean gate counts from when Execute could
+// not record one (cleanBase): commitAt's own resolution, of the same base in
+// the same directory (WorktreeSource), made at clean time instead of just
+// before the create.
 //
-// The form's base picker reports "" for its row-0 HEAD entry
-// (WorktreeField.Base()'s own documented "" == HEAD contract), and
-// `herdr worktree create` is likewise called with no --base in that case,
-// branching the new worktree from the ORIGIN repo's HEAD. Handing that ""
-// to gitx.Disposable produced `git rev-list --count ..HEAD`, which git
-// reads as HEAD..HEAD: zero, always, for every worktree -- so the
-// "no commits beyond base" half of spec §9's clean gate never once
-// refused a worktree carrying real work. That was the default case: HEAD
-// is row 0 of the picker, so a user who never touched the base field hit
-// it every time.
+// Every base becomes a commit here, because the gate counts inside the
+// worktree (gitx.Disposable), and there a base that means something per
+// checkout names the worktree itself. The empty one, herdr's HEAD, became
+// `git rev-list --count ..HEAD`: HEAD..HEAD, zero for every worktree, so the
+// gate never refused one carrying work, and that was the default case (I4).
+// A literal HEAD or @ did the same, and HEAD~1 counted from the worktree's
+// own parent, refusing a pristine worktree as a commit ahead (#193). A branch
+// name was never wrong, since every checkout shares the branches, but only a
+// commit is safe for every base.
 //
-// The sentinel is resolved against Input.ProjectDir -- the repo the
-// worktree was created from -- to the commit its HEAD names now.
-// "Now" is a disclosed approximation, and since #173 a fallback:
-// ExecResult.BaseCommit records the commit at creation, and cleanBase uses
-// this only when that could not be read. The approximation stopped being
-// harmless once a clean re-checked the branch when `c` is pressed, which can
-// be minutes after the failure screen appeared. A non-empty BaseRef (any other picker row) is used as-is:
-// git resolves it in the worktree, which shares the origin repo's object
-// store. So is a linked checkout's commit (WorktreeBase): the plan already
-// named the exact commit the worktree was cut from, so neither the
-// approximation nor the git call applies (#171).
+// Made at clean time, it is an approximation: the popup's failure screen can
+// stay up for minutes, and a source checkout that moved in between is counted
+// from where it is now. That is why it is only the fallback (#173). A linked
+// checkout's commit (WorktreeBase) is used as it is, with no git call and
+// nothing to approximate: the plan already named the exact commit the
+// worktree was cut from (#171).
 func resolveBaseRef(ctx context.Context, in Input) (string, error) {
-	if base := WorktreeBase(in); base != "" {
-		return base, nil
+	if in.Linked.Commit != "" {
+		return in.Linked.Commit, nil
 	}
-	if in.ProjectDir == "" {
-		return "", fmt.Errorf("no project directory to resolve HEAD in")
-	}
-	return gitx.ResolveRef(ctx, in.ProjectDir, "HEAD")
+	return commitAt(ctx, WorktreeSource(in), WorktreeBase(in))
 }
 
 // Clean removes the space Execute created for in, once CleanCheck has
