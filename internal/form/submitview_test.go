@@ -1299,3 +1299,80 @@ func TestSubmitView_StepCounterReturnsOnceTheDialogIsAnswered(t *testing.T) {
 		t.Errorf("ViewAt(80,24) = %q, want the step counter back", frame)
 	}
 }
+
+// sampleStepsDoneWithWarning is a session that was created, whose worktree
+// step could not stop its branch tracking the base it was cut from (#221):
+// the row's value column truncates the reason, and the reason ends in the
+// command that fixes it.
+func sampleStepsDoneWithWarning() []Step {
+	return []Step{
+		{Label: "worktree", State: plan.StepFailedNonFatal, Detail: "branch zvi/fix-login-redirect-loop still tracks origin/develop, the branch it was cut from (could not lock config file .git/config: File exists); `git branch --unset-upstream zvi/fix-login-redirect-loop` finishes the job"},
+		{Label: "tab", Detail: "Fix login redirect loop", State: plan.StepDone},
+		{Label: "claude", Detail: "starting under clauth alpha-2", State: plan.StepDone},
+		{Label: "prompt", State: plan.StepDone},
+	}
+}
+
+// TestFrames_DoneWithWarnings is a create that succeeded with a step's
+// warning to read (#230): the popup stays up, says so, and offers only
+// `esc close`.
+func TestFrames_DoneWithWarnings(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsDoneWithWarning())
+	v.SetDoneWithWarnings()
+	assertSubmitFrame(t, "done-with-warnings-80x24", v, 80, 24)
+}
+
+// TestSubmitView_DoneWithWarningsSaysTheWholeReason: the row truncates the
+// reason, so the held screen repeats it in full below the rows, wrapped,
+// with the command to copy on one line (#230).
+func TestSubmitView_DoneWithWarningsSaysTheWholeReason(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsDoneWithWarning())
+	v.SetDoneWithWarnings()
+
+	frame := strippedFrame(v, 80, 24)
+	for _, want := range []string{"created", "`git branch --unset-upstream zvi/fix-login-redirect-loop`", "esc close"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("frame does not say %q:\n%s", want, frame)
+		}
+	}
+	for _, gone := range []string{"step 4 of 4", "keep it", "remove it"} {
+		if strings.Contains(frame, gone) {
+			t.Errorf("frame still says %q once the create is done:\n%s", gone, frame)
+		}
+	}
+}
+
+// TestSubmitView_DoneWithWarningsHighlightsTheWarning: the highlighted row
+// is "the step the user should be looking at", which once the create is done
+// with a warning is the warning's row, not the last step that ran -- as a
+// failure highlights the failed row (#230's review).
+func TestSubmitView_DoneWithWarningsHighlightsTheWarning(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsDoneWithWarning())
+	v.SetDoneWithWarnings()
+	if got := v.activeStep(); got != 0 {
+		t.Errorf("activeStep() = %d, want 0, the worktree row with the warning", got)
+	}
+}
+
+// TestSubmitView_TwoWarningsKeepTheWorktreeCommandWhenClipped: the body is
+// clipped from the top, so the warning with the command to run goes last.
+// The worktree step comes first in the plan, and the tab's cosmetic warning
+// after it, so step order put the command first in line to be cut.
+func TestSubmitView_TwoWarningsKeepTheWorktreeCommandWhenClipped(t *testing.T) {
+	steps := sampleStepsDoneWithWarning()
+	steps[1] = Step{Label: "tab", Detail: "not named: herdr tab rename w3:t1 Fix login redirect loop: exit status 1", State: plan.StepFailedNonFatal}
+	v := newSubmitTestView()
+	v.SetSteps(steps)
+	v.SetDoneWithWarnings()
+
+	frame := strippedFrame(v, 80, 10)
+	if !strings.Contains(frame, "`git branch --unset-upstream zvi/fix-login-redirect-loop`") {
+		t.Errorf("at 80x10 the worktree's command was clipped:\n%s", frame)
+	}
+	if full := strippedFrame(v, 80, 24); !strings.Contains(full, "warnings to read") {
+		t.Errorf("two warnings are introduced as one:\n%s", full)
+	}
+}

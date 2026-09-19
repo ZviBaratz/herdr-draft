@@ -554,9 +554,10 @@ upstream, and under `inherit` the branch takes `main`'s own. The branch gets
 its own upstream on its first `git push -u`, or on a plain `git push` under
 `push.autoSetupRemote`. If the removal fails, the create still succeeds and
 `create`'s worktree line says so, with the command that finishes it (`git
-branch --unset-upstream <branch>`). The popup marks its worktree row the same
-way, but a successful submit closes the popup at once, so check with `git
-branch -vv` if you saw the row flash.
+branch --unset-upstream <branch>`). The popup marks its worktree row `!` and,
+once the session is created, stays open with the whole reason until you close
+it with `esc` or `enter`. It does that for any step that finished with a
+warning (#230); with none, it closes by itself as before.
 
 **A worktree session runs in the worktree's own space**, which herdr's
 sidebar groups under the repository's. `--placement` therefore applies only

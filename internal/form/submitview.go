@@ -134,6 +134,11 @@ type SubmitView struct {
 	// deadEnd, a state with nothing left to decide.
 	keptBranch, keptReason string
 
+	// doneWithWarnings is SetDoneWithWarnings's: the create succeeded and a
+	// step finished with a warning to read (#230). Like deadEnd, a state
+	// with nothing left to decide, so it offers `esc close`.
+	doneWithWarnings bool
+
 	// waitingHint is SetWaitingHint's own footer instruction for a step
 	// waiting on the user, or "" for defaultWaitingHint.
 	waitingHint string
@@ -247,6 +252,16 @@ func (v *SubmitView) SetCleanedKeepingBranch(branch, reason string) {
 	v.keptBranch, v.keptReason = branch, reason
 }
 
+// SetDoneWithWarnings records a create that succeeded with a step that
+// finished StepFailedNonFatal (#230). The popup used to close the moment
+// such a create was done, so the step's reason was on screen for a frame;
+// one of them (#221's branch still tracking its base) ends in the command
+// that fixes it. The view now holds, repeats each warning in full below the
+// rows -- a row's value column truncates it -- and offers `esc close`.
+func (v *SubmitView) SetDoneWithWarnings() {
+	v.doneWithWarnings = true
+}
+
 // SetUnsentPrompt records where the app layer saved a prompt that never
 // reached the agent (spec §9 step 3: "prompt text surfaced back to the
 // user for manual paste"), or the error that stopped it from saving.
@@ -273,7 +288,8 @@ func (v *SubmitView) SetUnsentPrompt(path string, err error) {
 // Whether they quit is the app layer's decision and only the app layer's
 // (updateSubmitting): quitting mid-pipeline strands plan.Execute's own
 // background goroutine on an unbuffered channel send nobody is left to
-// drain, so the app scopes that exit to the step-1 dead end alone. A
+// drain, so the app scopes that exit to the resting states with nothing
+// left running: the step-1 dead end and a create done with warnings. A
 // key grammar in this file that also quit would be a second, unscoped
 // way out of exactly the state that must not have one.
 func (v *SubmitView) Update(msg tea.KeyPressMsg) tea.Cmd {
@@ -413,10 +429,18 @@ func (v *SubmitView) compose(w, h int) string {
 
 // activeStep is the index of the row the user should be looking at: the
 // last step that has started (running, done or failed), or 0 when none
-// has. It is both the row compose fills with ActiveRowBG and the row
+// has -- except on a create done with warnings, where it is the first
+// warning's row, as a failure's is its failed row (#230). It is both the row compose fills with ActiveRowBG and the row
 // stackWindow keeps visible once the stack is taller than the window --
 // the same job m.ring.index does for the form.
 func (v *SubmitView) activeStep() int {
+	if v.doneWithWarnings {
+		for i, s := range v.steps {
+			if s.State == plan.StepFailedNonFatal {
+				return i
+			}
+		}
+	}
 	active := 0
 	for i, s := range v.steps {
 		if s.State != plan.StepPending {
@@ -603,6 +627,9 @@ func (v *SubmitView) failureBody(width int) []string {
 		// create` still had one composed.
 		return append(v.unsentPromptLines(width), v.deadEndLines(width)...)
 	}
+	if v.doneWithWarnings {
+		return v.warningLines(width)
+	}
 	if !v.haveFailure {
 		return nil
 	}
@@ -702,6 +729,39 @@ func (v *SubmitView) keptBranchLines(width int) []string {
 	}
 	for _, l := range wrapAtSpaces(v.keptReason, inner) {
 		out = append(out, indentedLine(dimText(v.palette).Render(l), width))
+	}
+	return out
+}
+
+// warningLines says the create is done and then, for each step that
+// finished with a warning, its label and its reason in full, wrapped the
+// way keptBranchLines wraps, so a command to copy arrives whole.
+//
+// Latest step first. The body is clipped from the top (regionLines), and
+// the earlier a step, the more the session rests on it: the worktree step's
+// warning carries a command to run, where a later tab rename's is cosmetic.
+func (v *SubmitView) warningLines(width int) []string {
+	inner := width - gutterWidth
+	warn := lipgloss.NewStyle().Foreground(v.palette.Warning)
+	heading := "created, with a warning to read before closing"
+	var warned []Step
+	for i := len(v.steps) - 1; i >= 0; i-- {
+		if v.steps[i].State == plan.StepFailedNonFatal {
+			warned = append(warned, v.steps[i])
+		}
+	}
+	if len(warned) > 1 {
+		heading = "created, with warnings to read before closing"
+	}
+	out := []string{indentedLine(warn.Render(heading), width)}
+	for _, s := range warned {
+		reason := s.Detail
+		if reason == "" {
+			reason = "failed, continuing"
+		}
+		for _, l := range wrapAtSpaces(s.Label+": "+reason, inner) {
+			out = append(out, indentedLine(dimText(v.palette).Render(l), width))
+		}
 	}
 	return out
 }
@@ -872,7 +932,7 @@ func (v *SubmitView) footerLine(width int) string {
 	return spreadLine(hint, right, width)
 }
 
-// footerParts is the footer's contents for each of the pipeline's three
+// footerParts is the footer's contents for each of the pipeline's four
 // resting states.
 //
 // While the pipeline runs there are NO buttons and no key hints, because
@@ -884,7 +944,7 @@ func (v *SubmitView) footerLine(width int) string {
 // instead.
 func (v *SubmitView) footerParts() (hint string, buttons []string) {
 	switch {
-	case v.deadEnd, v.keptBranch != "":
+	case v.deadEnd, v.keptBranch != "", v.doneWithWarnings:
 		return "", []string{submitButton("esc", "close", buttonPrimary, v.palette)}
 	case v.haveFailure:
 		keep := submitButton("k", "keep it", buttonPrimary, v.palette)

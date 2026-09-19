@@ -1853,3 +1853,74 @@ type codedErr struct {
 
 func (e codedErr) Error() string        { return e.msg }
 func (e codedErr) Is(target error) bool { return target == e.code }
+
+// TestSubmit_ASuccessWithAWarningWaitsToBeRead is #230. A create whose tab
+// kept herdr's name still succeeds and still persists state, but the popup
+// no longer closes the moment it has: the warning is on screen until the
+// user closes it with esc, enter or ctrl+c, and with no other key.
+func TestSubmit_ASuccessWithAWarningWaitsToBeRead(t *testing.T) {
+	for _, closeKey := range []tea.KeyPressMsg{{Code: tea.KeyEscape}, key(tea.KeyEnter, 0), key('c', tea.ModCtrl)} {
+		runner := &submitFakeRunner{
+			topo:    herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"},
+			failAt:  "TabRename",
+			failErr: errors.New("tab rename refused"),
+		}
+		m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+		m = settle(t, m)
+		m.title.SetTitle("Fix pagination", false)
+		next, cmd := m.Update(form.SubmitMsg{})
+		m = next.(Model)
+		m, _, done := drainSubmitProgress(t, m, cmd)
+
+		m, persist := m.handleSubmitDone(done)
+		if _, ok := persist().(statePersistedMsg); !ok {
+			t.Fatal("handleSubmitDone did not persist state first")
+		}
+		next, cmd = m.Update(statePersistedMsg{})
+		m = next.(Model)
+		if cmd != nil {
+			if _, quit := cmd().(tea.QuitMsg); quit {
+				t.Fatal("the popup quit with a warning nobody has read")
+			}
+		}
+		if frame := ansi.Strip(m.submitView.ViewAt(80, 24)); !containsAll(frame, "tab rename refused", "esc close") {
+			t.Fatalf("held frame does not show the warning and the way out:\n%s", frame)
+		}
+
+		if _, cmd := m.Update(key('x', 0)); cmd != nil {
+			if _, quit := cmd().(tea.QuitMsg); quit {
+				t.Fatal("any key closed the held screen, want only esc, enter or ctrl+c")
+			}
+		}
+		_, cmd = m.Update(closeKey)
+		if cmd == nil {
+			t.Fatalf("%v on the held screen did nothing, want it to close the popup", closeKey)
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Fatalf("%v on the held screen did not quit", closeKey)
+		}
+	}
+}
+
+// TestSubmit_ACleanSuccessStillClosesByItself: with nothing to read, the
+// popup ends where it always did, once state is persisted (#230).
+func TestSubmit_ACleanSuccessStillClosesByItself(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
+	m.title.SetTitle("Fix pagination", false)
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	if done.result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want a clean success", done.result.FailedIndex)
+	}
+	m, _ = m.handleSubmitDone(done)
+	_, cmd = m.Update(statePersistedMsg{})
+	if cmd == nil {
+		t.Fatal("a clean success did not quit once state was persisted")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("a clean success did not quit once state was persisted")
+	}
+}
