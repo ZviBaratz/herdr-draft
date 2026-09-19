@@ -1883,8 +1883,10 @@ func wrongBranch(asked, got string) error {
 // silently -- a local base, which sets no upstream; a lane's commit, which
 // names no ref; an upstream that is anything else. So is a user who set
 // branch.autoSetupMerge to always, since that is a request for tracking
-// everywhere; `simple` never tracks a branch whose name differs from its
-// base's, so there is nothing to undo.
+// everywhere. `simple` tracks only a branch named like the remote branch it
+// was cut from, and that upstream is removed like any other: both paths
+// refuse a branch name origin already has, so only another remote's branch
+// reaches this, where a push to it would be the harmless one.
 //
 // A failure is not the create's: the checkout exists by now. It names the
 // command that finishes the job, which works from the session's checkout as

@@ -179,7 +179,7 @@ with no user action — so the worktree row's base picker offers remote
 branches that arrived since you last fetched. A branch only the remote has
 is offered as `origin/<name>`, the name git resolves; one you also have
 locally is listed once, under its local name. A session cut from one
-tracks nothing (see [Headless `create`](#headless-create)). **That contacts the
+does not track it (see [Headless `create`](#headless-create)). **That contacts the
 repository's default remote** — the current branch's upstream, otherwise
 `origin` — with whatever credentials git would normally use, including a
 `core.sshCommand` or `GIT_SSH` of your own. It runs with terminal prompts
@@ -534,8 +534,8 @@ herdr has made the checkout, so `--on-failure` and the popup's keep or
 remove apply as they do to any later failure, and the remove keeps the
 branch git made: nothing shows this run asked for it.
 
-**A session's branch tracks
-nothing, whatever it was cut from.** herdr cuts the worktree without
+**A session's branch does not
+track the remote branch it was cut from.** herdr cuts the worktree without
 `--no-track`, so under git's default `branch.autoSetupMerge` a base such as
 `origin/develop` becomes the new branch's upstream, and a plain `git push`
 from the session would be refused (`push.default=simple`) or would push onto
@@ -543,11 +543,14 @@ from the session would be refused (`push.default=simple`) or would push onto
 once the worktree exists. It does so only on a branch this create made, only
 when the upstream is the remote-tracking branch the base names, and not when
 you set `branch.autoSetupMerge = always`, which asks for tracking everywhere.
-A local base such as `main` sets no upstream to begin with. The branch gets
+A local base such as `main` is left alone: under the default it sets no
+upstream, and under `inherit` the branch takes `main`'s own. The branch gets
 its own upstream on its first `git push -u`, or on a plain `git push` under
 `push.autoSetupRemote`. If the removal fails, the create still succeeds and
-the worktree step says so, with the command that finishes it (`git branch
---unset-upstream <branch>`). The popup does the same.
+`create`'s worktree line says so, with the command that finishes it (`git
+branch --unset-upstream <branch>`). The popup marks its worktree row the same
+way, but a successful submit closes the popup at once, so check with `git
+branch -vv` if you saw the row flash.
 
 **A worktree session runs in the worktree's own space**, which herdr's
 sidebar groups under the repository's. `--placement` therefore applies only

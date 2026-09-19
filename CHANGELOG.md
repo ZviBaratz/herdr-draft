@@ -102,10 +102,11 @@ without the popup. It drives herdr exclusively through the public CLI
   session's commits onto the shared branch. The upstream is now removed
   once the worktree exists — only on a branch the create made, only when
   it is the remote-tracking branch the base names, and not when
-  `branch.autoSetupMerge` is `always`. The branch tracks nothing until its
-  first `git push -u` (or `push.autoSetupRemote`). A removal that fails
-  does not fail the create: the worktree step reports it, with the command
-  that finishes it.
+  `branch.autoSetupMerge` is `always`. The branch then tracks nothing until
+  its first `git push -u` (or `push.autoSetupRemote`). A removal that fails
+  does not fail the create: `create`'s worktree line reports it, with the
+  command that finishes it; the popup's row shows it only until a
+  successful submit closes the popup.
 - **Create is a real focus stop**, the ring's last, on the footer rather
   than in the row stack. `⌃S` submits from anywhere; `⌃R ⌃R` clears back to
   the resolved defaults.

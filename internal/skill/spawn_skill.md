@@ -112,8 +112,9 @@ you are doing right now.
   refused with exit 2 and nothing created. A remembered or configured one
   that names no commit is dropped for `HEAD`, with a `herdr-draft create:`
   line on stderr saying so. A branch cut from a remote's (`origin/main`)
-  is left tracking nothing, so the new agent's first push needs `-u`
-  unless its git sets `push.autoSetupRemote`.
+  does not track it, so unless `branch.autoSetupMerge` is `always` it
+  tracks nothing and the new agent's first push needs `-u` (or
+  `push.autoSetupRemote`).
 - `--project DIR` is the repository. Left off, it resolves to the working
   directory. That is right inside another session's worktree too. herdr
   requires the new worktree to be created from the repository's primary
