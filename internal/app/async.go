@@ -1198,11 +1198,15 @@ func (m Model) handleSubmitProgress(msg submitProgressMsg) (Model, tea.Cmd) {
 		case plan.StepFailed:
 			step.Detail = submitStepError(msg.progress.Err, msg.progress.Label)
 		case plan.StepFailedNonFatal:
-			// The row's seeded detail was the tab's intended name, which
-			// is now exactly what it did not get. The prefix is what
-			// makes the error read as a consequence rather than a stop:
-			// the rows below this one go on running.
-			step.Detail = "not named: " + submitStepError(msg.progress.Err, msg.progress.Label)
+			step.Detail = submitStepError(msg.progress.Err, msg.progress.Label)
+			if msg.progress.Kind == plan.OpTabRename {
+				// The row's seeded detail was the tab's intended name,
+				// which is now exactly what it did not get. The prefix is
+				// what makes the error read as a consequence rather than a
+				// stop: the rows below this one go on running. A worktree
+				// step's caveat (#221) already opens with what is wrong.
+				step.Detail = "not named: " + step.Detail
+			}
 		}
 		m.submitSteps[i] = step
 	}

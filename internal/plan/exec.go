@@ -38,7 +38,9 @@ const (
 	// StepFailedNonFatal is a step that failed WITHOUT stopping the plan:
 	// its op only decorates what the plan had already made, so the session
 	// was created anyway and the row says what it is missing. OpTabRename
-	// is the only such op (isCosmeticKind).
+	// is the only op that can fail this way (isCosmeticKind). The worktree
+	// step is the only other step to report it, having succeeded: its branch
+	// was left tracking the base it was cut from (untrackBase, #221).
 	//
 	// Its own state rather than StepFailed carrying a flag, because every
 	// caller reads StepFailed as "the plan stopped here" -- internal/create
@@ -98,8 +100,12 @@ type ExecOpts struct {
 type Progress struct {
 	Index, Total int
 	Label        string
-	State        StepState
-	Err          error
+	// Kind is the op's kind, so a caller can word a row for what the op
+	// does rather than for its label: a StepFailedNonFatal tab rename left
+	// a tab unnamed, and a worktree step left a branch tracking its base.
+	Kind  OpKind
+	State StepState
+	Err   error
 }
 
 // ExecResult is Execute's outcome. Created is the SPACE -- the step-1
@@ -1291,6 +1297,16 @@ func topologyIndices(ops []Op) (space, agentPane int) {
 func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onProgress func(Progress)) ExecResult {
 	result := ExecResult{FailedIndex: -1}
 	spaceIdx, agentPaneIdx := topologyIndices(ops)
+	if report := onProgress; report != nil {
+		// Kind is stamped here, once, rather than threaded through every
+		// helper that reports a step on the op's behalf.
+		onProgress = func(p Progress) {
+			if p.Index >= 0 && p.Index < len(ops) {
+				p.Kind = ops[p.Index].Kind
+			}
+			report(p)
+		}
+	}
 
 	var agentPane string
 	haveAgentPane := false
@@ -1305,6 +1321,10 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 		var reusedLabel string
 		var claimed *herdrc.CreatedTopology
 		var createdBranch, baseCommit string
+		// caveat is what a step that succeeded left undone, reported as
+		// StepFailedNonFatal in place of StepDone: a branch still tracking
+		// the base it was cut from (#221).
+		var caveat error
 		// neverAsked is a worktree op that failed before `worktree create`
 		// was called, which is evidence of its own that nothing was made.
 		var neverAsked bool
@@ -1331,6 +1351,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			// than a reader's trust.
 			gotTopo, reused, claimed, neverAsked = false, false, nil, false
 			reusedLabel, createdBranch, baseCommit = "", "", ""
+			caveat = nil
 
 			var err error
 			switch op.Kind {
@@ -1397,6 +1418,11 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// be started.
 				if err := wrongBranch(op.Worktree.Branch, topo.Branch); err != nil {
 					return err
+				}
+				// Only for a branch this run made: one the user already had
+				// keeps whatever it tracks.
+				if createdBranch != "" {
+					caveat = untrackBase(ctx, op.Worktree.Cwd, createdBranch, op.Worktree.Base)
 				}
 
 				if reused {
@@ -1681,6 +1707,11 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				result.AgentAt = &at
 			}
 		}
+		if caveat != nil {
+			emitProgress(onProgress, i, total, op.Label, StepFailedNonFatal,
+				fmt.Errorf("plan: execute: %s: %w", op.Label, caveat))
+			continue
+		}
 		emitProgress(onProgress, i, total, op.Label, StepDone, nil)
 	}
 
@@ -1906,6 +1937,72 @@ func wrongBranch(asked, got string) error {
 		}
 	}
 	return fmt.Errorf("herdr checked out %q, not %q", got, asked)
+}
+
+// untrackBase removes the upstream a new worktree branch was given by its
+// base (#221), and returns what it could not do as an error for the step to
+// report. herdr cuts the worktree with `git worktree add -b <branch> <path>
+// <base>` and no --no-track (build_worktree_add_new_branch_command,
+// herdr:src/worktree.rs at v0.9.0), so under git's default
+// branch.autoSetupMerge a base that is a remote-tracking branch --
+// origin/develop, or the spawn skill's origin/main -- becomes the branch's
+// upstream: the shared branch, under another name. A plain `git push` from
+// the session then fails under push.default=simple, and under
+// push.default=upstream puts the session's commits on the shared branch.
+// With no upstream, the first push makes the session's own
+// (push.autoSetupRemote, or `git push -u`).
+//
+// The caller asks only for a branch this run made. Of those, only one whose
+// upstream is the remote-tracking ref the base resolves to is touched, and
+// that is read from git rather than inferred from the base's spelling: a
+// remote's name can hold a slash. Everything else is left as it is, and
+// silently -- a local base, which sets no upstream; a lane's commit, which
+// names no ref; an upstream that is anything else. So is a user who set
+// branch.autoSetupMerge to always, since that is a request for tracking
+// everywhere. `simple` tracks only a branch named like the remote branch it
+// was cut from, and that upstream is removed like any other: both paths
+// refuse a branch name origin already has, so only another remote's branch
+// reaches this, where a push to it would be the harmless one.
+//
+// A failure is not the create's: the checkout exists by now. It names the
+// command that finishes the job, which works from the session's checkout as
+// well as from dir, since the two share their branches.
+func untrackBase(ctx context.Context, dir, branch, base string) error {
+	if base == "" {
+		base = "HEAD" // herdr's own default, as in commitAt
+	}
+	upstream, err := gitx.Upstream(ctx, dir, branch)
+	if err != nil {
+		return fmt.Errorf("could not check whether branch %s tracks %s, the base it was cut from (%s); "+
+			"if `git branch -vv` shows it does, `git branch --unset-upstream %s` stops it", branch, base, gitMessage(err), branch)
+	}
+	if !strings.HasPrefix(upstream, "refs/remotes/") {
+		return nil
+	}
+	short := strings.TrimPrefix(upstream, "refs/remotes/")
+	unchecked := func(why error) error {
+		return fmt.Errorf("branch %s tracks %s, which may be the branch it was cut from (could not check: %s); "+
+			"if it is, `git branch --unset-upstream %s` stops it", branch, short, gitMessage(why), branch)
+	}
+	cutFrom, err := gitx.FullRefName(ctx, dir, base)
+	if err != nil {
+		return unchecked(err)
+	}
+	if cutFrom != upstream {
+		return nil
+	}
+	setting, err := gitx.AutoSetupMerge(ctx, dir)
+	if err != nil {
+		return unchecked(err)
+	}
+	if setting == "always" {
+		return nil
+	}
+	if err := gitx.UnsetUpstream(ctx, dir, branch); err != nil {
+		return fmt.Errorf("branch %s still tracks %s, the branch it was cut from (%s); "+
+			"`git branch --unset-upstream %s` finishes the job", branch, short, gitMessage(err), branch)
+	}
+	return nil
 }
 
 // commitAt resolves base to a commit in dir, the directory herdr cuts the
