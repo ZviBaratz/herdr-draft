@@ -379,11 +379,12 @@ and a dry run is the cheapest place to catch it. The report is section 8's
 - `account_usage`: how full the account the session would bill is. The
   account is under `profile`, and each of its usage `windows` has a
   `label`, a `utilization_pct` and, when one is scheduled, a `resets_at`.
-  With nothing pinned, `profile` is the account clauth has active now,
-  which clauth can switch before the session starts, so call it the active
-  account rather than promising the name. For `--account auto` it is the
-  dry pick's, and the real pick can differ. Absent means the usage could
-  not be read: say it is unknown, not that there is room.
+  With nothing pinned (`account` absent), `profile` is the account clauth
+  has active now, which clauth can switch before the session starts, so
+  call it the active account rather than promising the name. For
+  `--account auto` it is the dry pick's, and the real pick can differ.
+  Absent means the usage could not be read: say it is unknown, not that
+  there is room.
 
 **2. Choose the three options** (section 5). If the first dry run's
 `agent_kind` is not `claude`, pass none of them.
