@@ -2,10 +2,16 @@ package app
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
@@ -236,5 +242,182 @@ func TestSubmit_KeystrokesDuringTheLaneCommitDoNotReachThePlan(t *testing.T) {
 	}
 	if got := m.submitInput.ProjectDir; got != laneDir {
 		t.Errorf("submitted project %q, want the lane %s that validation passed", got, laneDir)
+	}
+}
+
+// TestSubmit_TheCancelButtonDuringThePickStillCancels: the on-screen Cancel
+// button cancels "exactly like Esc" (form.IsCancelClick), so it is a way out
+// of the freeze too -- the pick can take the picker's whole 30 s budget.
+func TestSubmit_TheCancelButtonDuringThePickStillCancels(t *testing.T) {
+	m, _ := autoPickForm(t, &fakePicker{res: pickedAlpha})
+	_ = m.View()
+	syncZones()
+	zi := widgets.Zones.Get("button:cancel")
+	if zi.IsZero() {
+		t.Fatal("test setup: the Cancel button's zone never resolved")
+	}
+
+	next, cmd := m.Update(tea.MouseClickMsg{X: zi.StartX, Y: zi.StartY, Button: tea.MouseLeft})
+	m = next.(Model)
+	quit := false
+	for _, msg := range flatten(cmd) {
+		if msg == (form.CancelMsg{}) {
+			_, cmd = m.Update(msg)
+			msg = cmd()
+		}
+		if _, ok := msg.(tea.QuitMsg); ok {
+			quit = true
+		}
+	}
+	if !quit {
+		t.Error("a click on Cancel during the pick did not quit")
+	}
+}
+
+// TestSubmit_ARefusedLaneCommitUnfreezesTheForm is ARefusedPickUnfreezesTheForm
+// for the other round trip: a lane commit that cannot be read sends the user
+// to the worktree row, and the form is theirs again.
+func TestSubmit_ARefusedLaneCommitUnfreezesTheForm(t *testing.T) {
+	git := laneGit()
+	git.resolveErr = errors.New("ambiguous argument 'HEAD'")
+	m := laneModel(t, &submitFakeRunner{}, git, true)
+
+	next, readCommit := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	next, _ = m.Update(readCommit())
+	m = next.(Model)
+	if m.submitting {
+		t.Fatal("test setup: the submit went ahead without the lane's commit")
+	}
+	m.form.FocusByID("title")
+	next, _ = m.Update(rn('!'))
+	m = next.(Model)
+	if got := m.title.Value(); got != "Fix pagination!" {
+		t.Errorf("title after typing = %q: the form stayed frozen after the lane's commit could not be read", got)
+	}
+}
+
+// TestSubmit_APreviewDuringThePickLeavesItsPendingNote: the account row's
+// `asking the picker…` is the one thing on screen that says why the form is
+// not taking input. A dry-run preview still out at ⌃S -- a submit does not
+// wait for one -- used to land during the pick and overwrite it with a
+// profile the commit pick may not choose.
+func TestSubmit_APreviewDuringThePickLeavesItsPendingNote(t *testing.T) {
+	m, _ := autoPickForm(t, &fakePicker{res: pickedAlpha})
+	if row := ansi.Strip(m.account.Row(80)); !strings.Contains(row, "asking the picker") {
+		t.Fatalf("test setup: the account row reads %q at ⌃S", row)
+	}
+
+	next, _ := m.Update(pickerPreviewMsg{
+		req: request{version: m.pickerReqVersion, key: m.dir.Value()},
+		res: picker.Result{Profile: "alpha-2"},
+	})
+	m = next.(Model)
+	if row := ansi.Strip(m.account.Row(80)); !strings.Contains(row, "asking the picker") {
+		t.Errorf("the account row reads %q during the pick: a preview overwrote the pending note", row)
+	}
+}
+
+// TestSubmit_AResizeDuringThePickStillReachesTheForm: the one thing the form
+// hears while frozen. A popup the terminal resized during the pick must not
+// be left drawn at the old size.
+func TestSubmit_AResizeDuringThePickStillReachesTheForm(t *testing.T) {
+	m, _ := autoPickForm(t, &fakePicker{res: pickedAlpha})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	for i, line := range strings.Split(m.View().Content, "\n") {
+		if w := ansi.StringWidth(line); w > 80 {
+			t.Fatalf("line %d is %d cells wide after a resize to 80 during the pick: the form never heard it", i, w)
+		}
+	}
+}
+
+// fakeClipboardEnv carries the text a fake clipboard tool prints, and marks
+// the re-executed test binary that runs under one (runWithFakeClipboard).
+const fakeClipboardEnv = "HERDR_DRAFT_TEST_CLIPBOARD"
+
+// runWithFakeClipboard runs the calling test again in a fresh test binary,
+// with a fake `xclip` and `pbpaste` first on PATH that print text. It has to
+// be a fresh process: the clipboard package bubbles reads through picks its
+// tool once, at init (github.com/atotto/clipboard's clipboard_unix.go), so a
+// PATH set inside a running test comes too late.
+func runWithFakeClipboard(t *testing.T, text string) {
+	t.Helper()
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skipf("no fake clipboard for %s", runtime.GOOS)
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\nprintf '%s' \"$" + fakeClipboardEnv + "\"\n"
+	for _, tool := range []string{"xclip", "pbpaste"} {
+		if err := os.WriteFile(filepath.Join(bin, tool), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "WAYLAND_DISPLAY=") && !strings.HasPrefix(kv, "PATH=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), fakeClipboardEnv+"="+text)
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.v")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "--- PASS: "+t.Name()) {
+		t.Fatalf("under a fake clipboard reading %q:\n%s", text, out)
+	}
+}
+
+// TestSubmit_AClipboardPasteDuringThePickDoesNotReachThePlan: ⌃V in a text
+// field is bubbles' own paste. It reads the system clipboard in a Cmd and
+// comes back as bubbles' unexported paste message -- not a tea.PasteMsg, and
+// not a key -- so a ⌃V pressed just before ⌃S could land during the freeze
+// and edit the field: the project row took /nowhere after validation had
+// passed /repo (the independent review of this freeze, finding 1). The freeze
+// therefore names what may reach the form, not what may not.
+func TestSubmit_AClipboardPasteDuringThePickDoesNotReachThePlan(t *testing.T) {
+	if os.Getenv(fakeClipboardEnv) == "" {
+		runWithFakeClipboard(t, "/nowhere")
+		return
+	}
+	for _, row := range []string{"dir", "title"} {
+		p := &fakePicker{res: pickedAlpha}
+		cfg := config.Config{}
+		cfg.Clauth.Picker = "stub"
+		m := settle(t, newTestModel(t, testSetup{
+			Ctx:          herdrc.Context{WorkspaceCwd: "/repo"},
+			Clauth:       &fakeClauth{status: twoProfileStatus()},
+			ClauthStatus: twoProfileStatus(),
+			Picker:       p,
+			Config:       cfg,
+		}))
+		m.title.SetTitle("Fix pagination", false)
+		next, sized := m.Update(tea.WindowSizeMsg{Width: 104, Height: 32})
+		m = landTitle(t, next.(Model), []tea.Cmd{sized})
+		m.form.FocusByID(row)
+		validated := m.buildPlanInput()
+
+		// ⌃V, whose clipboard read is still out when ⌃S passes validation.
+		next, paste := m.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
+		m = next.(Model)
+		next, pick := m.Update(form.SubmitMsg{})
+		m = next.(Model)
+		if !m.submitResolving || pick == nil {
+			t.Fatalf("%s: test setup: the submit did not freeze for the pick", row)
+		}
+		for _, msg := range flatten(paste) {
+			next, _ = m.Update(msg)
+			m = next.(Model)
+		}
+
+		next, _ = m.Update(pick())
+		m = next.(Model)
+		if !m.submitting {
+			t.Fatalf("%s: the pick landed and the submit did not go on", row)
+		}
+		if in := m.submitInput; in.ProjectDir != validated.ProjectDir || in.Title != validated.Title {
+			t.Errorf("%s: submitted project %q, title %q; want %q, %q, what validation passed",
+				row, in.ProjectDir, in.Title, validated.ProjectDir, validated.Title)
+		}
 	}
 }

@@ -900,6 +900,13 @@ func (m Model) handlePickerPreview(msg pickerPreviewMsg) (Model, tea.Cmd) {
 	if msg.req.version != m.pickerReqVersion || m.account == nil {
 		return m, nil
 	}
+	if m.submitResolving {
+		// A submit is out on its round trip, and the account row says so --
+		// `asking the picker…` is the one thing on screen that explains why
+		// the form takes no input (#136). A dry-run answer is about the
+		// preview, not the pick under way, and must not overwrite it.
+		return m, nil
+	}
 	m.account.SetPickerPreview(previewFrom(msg.res, msg.err))
 	return m, nil
 }

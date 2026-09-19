@@ -212,15 +212,13 @@ func TestSubmit_AnUnreadableLaneCommitStopsTheSubmit(t *testing.T) {
 // while the project row still holds that directory.
 //
 // Neither window a user had into that still exists. A submit waits for the
-// check of the current value before it validates (#195), and the form is
-// frozen while the submit reads the lane's commit (#136), so no keystroke
-// reaches the project row in between. What can still move the row then is
-// not a keystroke: a directory listing that lands late swaps the candidates
-// under the selection, and widgets.Picker may re-anchor it
-// (TestSelectionStaysValidatedAcrossPoolChanges). retypeProject edits the
-// field directly, past Update and so past the freeze, which is how this test
-// stands in for that. What is pinned is that the lane's repository does not
-// receive another project's worktree.
+// check of the current value before it validates (#195), and the form hears
+// nothing but a resize while the submit reads the lane's commit (#136). No
+// path is known that moves the project row between the two. The guard stays
+// because nothing shows there is none, and this test drives it the only way
+// left: retypeProject edits the field directly, past Update and so past the
+// freeze. What is pinned is that the lane's repository does not receive
+// another project's worktree.
 func TestSubmit_ALaneAnswerForAnotherDirectoryIsNotUsed(t *testing.T) {
 	git := laneGit()
 	m := laneModel(t, &submitFakeRunner{}, git, true)
