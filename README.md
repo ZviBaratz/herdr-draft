@@ -416,7 +416,7 @@ the session will run with.
 
 **A prompt has three fates, not two.** `prompt_status` names which:
 `sent`, `unsent`, or `unconfirmed`. The third means delivery is unknown,
-and it is reached four ways:
+and it is reached five ways:
 
 - **the wait gave up.** `herdr agent prompt --wait` returned before the
   agent's status changed, which is *not* proof the prompt failed to
@@ -443,6 +443,15 @@ and it is reached four ways:
   agent no longer running, the agent most likely exited. Either way the
   text and Enter went into the pane, which is the rule above applied to a
   first send.
+- **herdr failed the send itself.** herdr answers `agent_prompt_failed`
+  both when it refused the send before typing anything and when the pane's
+  terminal failed partway through, and it says nothing that tells the two
+  apart — so the pane may hold none, some or all of the prompt. It is the
+  one shape that is not evidence the text went out; it is here because
+  "never arrived" is not something this command knows either. It comes
+  from the pane's input failing under the send, which in practice means the
+  pane or herdr itself was going away, so there may be no pane left to
+  read. If there is none, the text is yours to reuse.
 
 Read `prompt_status` rather than inferring from the other fields:
 
@@ -477,11 +486,12 @@ of it. Resending that one is how an agent that is working gets its
 instructions twice.
 
 `--on-failure clean` is **refused** for an `unconfirmed` prompt, with the
-reason in `clean_refused` — which names whichever of the four shapes it
+reason in `clean_refused` — which names whichever of the five shapes it
 was. After a wait that gave up, the session may have an agent working in
 it right now and cleaning up would kill it mid-turn. After two stalls, a
-send that was not seen to land, or any failure that followed a send, what
-the pane holds is unknown and worth reading before anything is removed.
+send that was not seen to land, a send herdr failed partway, or any
+failure that followed a send, what the pane holds is unknown and worth
+reading before anything is removed.
 The ids are still reported in every case, so nothing is stranded without
 a way back to it.
 
@@ -1475,11 +1485,13 @@ paste it into the agent by hand once the pane is clear. The session itself
 is fine: press `k` (keep it).
 
 **"delivery unconfirmed" after a submit.** The prompt *was* typed into the
-pane, but nothing confirmed it landed: the wait for the agent timed out, a
-send stalled twice, or the pane afterwards showed a dialog with none of the
-prompt on it or stopped answering. Read the pane before anything else. The
-agent may be working on the prompt already, so pasting the saved copy
-without looking can send it twice. `remove` is unavailable here for the
+pane, or may have been, but nothing confirmed it landed: the wait for the
+agent timed out, a send stalled twice, the pane afterwards showed a dialog
+with none of the prompt on it or stopped answering, or herdr failed the
+send partway (`agent_prompt_failed`) without saying how much of it it had
+typed. Read the pane before anything else. The agent may be working on the
+prompt already, or its input box may hold part of it, so pasting the saved
+copy without looking can send it twice. `remove` is unavailable here for the
 same reason; press `k`, and remove the session yourself once the pane shows
 it is safe to.
 

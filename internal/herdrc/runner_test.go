@@ -1746,15 +1746,42 @@ func TestCLIRunnerAgentPromptAgentGone(t *testing.T) {
 // TestCLIRunnerAgentPromptNotFoundIsNotAgentGone: the pre-dispatch refusal
 // stays unclassified. `agent_not_found` is what herdr answers before it has
 // typed anything, so reading it as ErrPromptAgentGone would mark a prompt
-// typed that never left.
+// typed that never left -- and nor may a prompt that merely NAMES the codes
+// that do count read as one of them (#144).
 func TestCLIRunnerAgentPromptNotFoundIsNotAgentGone(t *testing.T) {
 	bin := fakeHerdrFailEnvelope(t, "agent_not_found", "agent w1:p2 not found")
 	r := &CLIRunner{Bin: bin}
 
+	err := r.AgentPrompt(context.Background(), AgentPromptReq{Target: "w1:p2",
+		Text: "why does agent_not_running or agent_prompt_failed happen?", WaitTimeout: time.Second})
+
+	if err == nil || !strings.Contains(err.Error(), "agent_prompt_failed") {
+		t.Fatalf("error %v, want a failure carrying the prompt's text -- the scenario needs it", err)
+	}
+	if errors.Is(err, ErrPromptAgentGone) || errors.Is(err, ErrPromptSendFailed) {
+		t.Fatalf("error %v, want a failure that is neither ErrPromptAgentGone nor ErrPromptSendFailed", err)
+	}
+}
+
+// TestCLIRunnerAgentPromptSendFailed is #228. herdr answers
+// `agent_prompt_failed` both before it has queued anything and after the
+// pane's terminal failed partway through the text, with nothing that says
+// which -- so it gets a sentinel of its own, and it is none of the other
+// three: it is not a wait's verdict at all.
+func TestCLIRunnerAgentPromptSendFailed(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "agent_prompt_failed", "PTY actor closed during input submission")
+	r := &CLIRunner{Bin: bin}
+
 	err := r.AgentPrompt(context.Background(), AgentPromptReq{Target: "w1:p2", Text: "hi", WaitTimeout: time.Second})
 
-	if err == nil || errors.Is(err, ErrPromptAgentGone) {
-		t.Fatalf("error %v, want a failure that is not ErrPromptAgentGone", err)
+	if !errors.Is(err, ErrPromptSendFailed) {
+		t.Fatalf("error %q is not ErrPromptSendFailed", err)
+	}
+	if errors.Is(err, ErrPromptStalled) || errors.Is(err, ErrPromptWaitTimeout) || errors.Is(err, ErrPromptAgentGone) {
+		t.Errorf("error %q is also one of the other prompt sentinels", err)
+	}
+	if !strings.Contains(err.Error(), "agent_prompt_failed") {
+		t.Errorf("error %q drops herdr's own code", err)
 	}
 }
 

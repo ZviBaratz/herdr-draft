@@ -367,8 +367,8 @@ func (e *cliError) Is(target error) bool {
 }
 
 // codeSentinels is the herdr codes a caller branches on, each to its
-// sentinel. The two prompt codes are not here: AgentPrompt wraps them
-// itself, because only on that call do they mean what their sentinels say.
+// sentinel. The prompt codes are not here: AgentPrompt wraps them itself,
+// because only on that call do they mean what their sentinels say.
 var codeSentinels = map[string]error{
 	"agent_pane_busy":  ErrPaneBusy,
 	"agent_name_taken": ErrAgentNameTaken,
@@ -519,6 +519,56 @@ const promptAgentGoneCode = "agent_not_running"
 // rest of the timeout, so an agent that exits mid-turn, or a pane closed
 // under it, is reported with this code too.
 var ErrPromptAgentGone = errors.New("the agent stopped running after the prompt was sent")
+
+// promptSendFailedCode is herdr's `error.code` for `agent prompt` failing to
+// hand the text to the pane's terminal.
+const promptSendFailedCode = "agent_prompt_failed"
+
+// ErrPromptSendFailed reports that herdr failed the send itself, at a point
+// it does not say (#228).
+//
+// Unlike the three sentinels above it, this one proves nothing in either
+// direction, and that is why it is one. Every path at herdr v0.9.0 (on
+// Unix, the only platform this plugin runs on):
+//
+//   - BEFORE anything is queued
+//     (https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/api/agents.rs#L175-L199):
+//     the pane's input is closed or a live handoff is under way ("pty actor
+//     closed"), or its command queue is full ("pty input queue is full")
+//     (https://github.com/herdrdev/herdr/blob/v0.9.0/src/pty/actor/unix.rs#L143-L177).
+//     Nothing typed.
+//   - Queued, for any error the submission's completion reports
+//     (https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/api/agents.rs#L84-L92):
+//     the actor quiescing for a handoff before it starts ("pty actor is not
+//     accepting input",
+//     https://github.com/herdrdev/herdr/blob/v0.9.0/src/pty/actor/unix.rs#L663-L668),
+//     nothing typed; a PTY write failing, which can be a terminal response
+//     queued ahead of the text, a chunk in the middle of it, or the Enter
+//     after it (https://github.com/herdrdev/herdr/blob/v0.9.0/src/pty/actor/unix.rs#L931-L964);
+//     and the pane's input closing with the submission active in any phase,
+//     or still waiting behind another one ("PTY actor closed during input
+//     submission",
+//     https://github.com/herdrdev/herdr/blob/v0.9.0/src/pty/actor/unix.rs#L921-L929).
+//     The completion channel dropping without an answer reads "pty actor
+//     closed" again.
+//
+// With --wait, prompt_agent hands the dispatch's answer back verbatim
+// (herdr:src/api/wait.rs at v0.9.0), so all of them reach the CLI as one
+// code. Nor does the message separate them, which is the other place one
+// might look: the two that cover every path that may have typed -- a write
+// error and "PTY actor closed during input submission" -- each cover a path
+// that typed nothing as well. So "nothing was typed" is a claim no evidence
+// available here supports, and it is the claim that invites a resend and
+// permits the clean.
+//
+// What those paths share is that every one that may have typed ends with
+// herdr's PTY actor for the pane gone (a failed write breaks out of its
+// loop, and the close is on the way out), so on v0.9.0 a resend cannot land
+// in that pane. That makes the injury "unsent" does a permitted clean
+// destroying the pane's record rather than a double paste -- and it is a
+// fact about herdr's internals, not a contract, which is why the posture
+// does not rest on it.
+var ErrPromptSendFailed = errors.New("herdr failed the send and does not say how much of the prompt it had typed")
 
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement
 // focus as two explicit mutually exclusive flags rather than a single
@@ -907,6 +957,8 @@ func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 			return fmt.Errorf("%w: %w", ErrPromptStalled, err)
 		case promptAgentGoneCode:
 			return fmt.Errorf("%w: %w", ErrPromptAgentGone, err)
+		case promptSendFailedCode:
+			return fmt.Errorf("%w: %w", ErrPromptSendFailed, err)
 		}
 		return err
 	}

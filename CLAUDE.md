@@ -311,13 +311,19 @@ Layering, outermost to innermost:
   (`promptIfReady`'s `typed` result), not inferred afterwards from which
   error came back: #154 was a first send that the post-send check found
   swallowed, reported `unsent` because the list of errors meaning "the text
-  went out" did not include it. When `agent prompt` itself fails, only an
-  error herdr raises after typing counts (`promptTextWasTyped`: the stall,
-  the timeout, and `agent_not_running`, which herdr's wait raises only after
-  its dispatch succeeded). `agent_prompt_failed` is deliberately not one of
-  them: herdr raises it both before anything is queued and when the write
-  itself fails. `ExecResult.promptUnconfirmedCause` carries
-  which of the five shapes it was, purely so `CleanCheck` names the right
+  went out" did not include it. When `agent prompt` itself fails, an error
+  counts if herdr *may* have raised it after typing began
+  (`promptTextMayBeTyped`): the stall, the timeout and `agent_not_running`,
+  which herdr's wait raises only after its dispatch succeeded, and
+  `agent_prompt_failed` (#228), which proves nothing either way. herdr
+  raises that one before anything is queued and when a write fails partway
+  through the text alike, and neither the code nor the message separates
+  them — "PTY actor closed during input submission" covers a submission
+  that had typed nothing as well as one halfway through — so it counts
+  because "unsent" is the claim that costs, not because typing is likely.
+  Don't try to split it by herdr's message: `herdrc.ErrPromptSendFailed`'s
+  doc cites every path at v0.9.0. `ExecResult.promptUnconfirmedCause` carries
+  which of the six shapes it was, purely so `CleanCheck` names the right
   evidence; the exported flag stays the posture every other package reads.
 - **A herdr error is classified by its code, never by its text (#144).**
   `cliError`'s message embeds the argv, and the argv carries the user's
