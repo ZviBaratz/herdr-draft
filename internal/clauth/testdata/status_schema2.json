@@ -1,0 +1,82 @@
+{
+  "schema": 2,
+  "generated_at": "2026-09-19T18:10:53+00:00",
+  "active_profile": "beta",
+  "pending_switch": null,
+  "wrap_off": false,
+  "refresh_interval_ms": 90000,
+  "profiles": [
+    {
+      "name": "alpha",
+      "active": false,
+      "rolling_token": false,
+      "provider": "anthropic",
+      "base_url": null,
+      "tier": "Team",
+      "has_live_session": false,
+      "auth_status": "ok",
+      "fetch_status": "Fresh",
+      "stale": false,
+      "fetched_at": "2026-09-19T18:10:22+00:00",
+      "next_refresh_at": "2026-09-19T18:12:14+00:00",
+      "auto_start": true,
+      "auto_start_queue": null,
+      "bell_threshold": null,
+      "fallback": null,
+      "windows": [
+        {
+          "label": "5h",
+          "utilization_pct": 0.0,
+          "resets_at": null
+        },
+        {
+          "label": "7d",
+          "utilization_pct": 100.0,
+          "resets_at": "2026-09-21T03:00:00.669669+00:00"
+        },
+        {
+          "label": "7d fable",
+          "utilization_pct": 63.0,
+          "resets_at": "2026-09-21T02:59:59.669854+00:00"
+        }
+      ],
+      "third_party": null
+    },
+    {
+      "name": "beta",
+      "active": true,
+      "rolling_token": false,
+      "provider": "anthropic",
+      "base_url": null,
+      "tier": "Max 20x",
+      "has_live_session": false,
+      "auth_status": "ok",
+      "fetch_status": "RateLimited",
+      "stale": false,
+      "fetched_at": "2026-09-19T18:10:22+00:00",
+      "next_refresh_at": "2026-09-19T18:12:14+00:00",
+      "auto_start": false,
+      "auto_start_queue": null,
+      "bell_threshold": null,
+      "fallback": null,
+      "windows": [
+        {
+          "label": "5h",
+          "utilization_pct": 5.0,
+          "resets_at": "2026-09-19T21:20:00.400861+00:00"
+        },
+        {
+          "label": "7d",
+          "utilization_pct": 62.0,
+          "resets_at": "2026-09-20T02:00:00.400883+00:00"
+        },
+        {
+          "label": "7d fable",
+          "utilization_pct": 21.0,
+          "resets_at": "2026-09-20T02:00:00.401069+00:00"
+        }
+      ],
+      "third_party": null
+    }
+  ]
+}

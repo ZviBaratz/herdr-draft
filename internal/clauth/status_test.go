@@ -169,6 +169,45 @@ func TestParseStatusNullResetsAtDoesNotFailParse(t *testing.T) {
 	}
 }
 
+// TestParseStatusSchema2 is #238: clauth 0.15.2 writes schema 2, and every
+// field this package reads is still there with the same JSON type. Only
+// fields it does not read were added (pending_switch and wrap_off at the
+// top, rolling_token and auto_start_queue per profile). Read as degraded,
+// the account row lost every profile's plan, windows and auth state on a
+// machine running the current clauth. The fixture is a live schema-2 file
+// with its profiles renamed.
+func TestParseStatusSchema2(t *testing.T) {
+	st, err := ParseStatus(readFixture(t, filepath.Join("testdata", "status_schema2.json")))
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+	if st.Schema != 2 {
+		t.Fatalf("Schema = %d, want 2 -- the fixture is not the schema this test is about", st.Schema)
+	}
+	if st.Degraded {
+		t.Error("Degraded = true, want false for schema 2")
+	}
+	if st.ActiveProfile != "beta" {
+		t.Errorf("ActiveProfile = %q, want beta", st.ActiveProfile)
+	}
+	if len(st.Profiles) != 2 {
+		t.Fatalf("len(Profiles) = %d, want 2", len(st.Profiles))
+	}
+	beta := st.Profiles[1]
+	if beta.Name != "beta" || !beta.Active || beta.Tier != "Max 20x" || beta.AuthStatus != "ok" {
+		t.Errorf("beta = %+v, want name beta, active, tier Max 20x, auth ok", beta)
+	}
+	if len(beta.Windows) != 3 {
+		t.Fatalf("len(beta.Windows) = %d, want 3", len(beta.Windows))
+	}
+	if w := beta.Windows[1]; w.Label != "7d" || w.UtilizationPct != 62 || w.ResetsAt == nil {
+		t.Errorf("beta's 7d window = %+v, want 62%% with a reset time", w)
+	}
+	if w := st.Profiles[0].Windows[0]; w.Label != "5h" || w.ResetsAt != nil {
+		t.Errorf("alpha's 5h window = %+v, want a null reset time kept as nil", w)
+	}
+}
+
 func TestParseStatusUnknownSchemaDegrades(t *testing.T) {
 	raw := fixtureBytes(t)
 	mutated := bytes.Replace(raw, []byte(`"schema": 1,`), []byte(`"schema": 99,`), 1)

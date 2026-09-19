@@ -49,15 +49,15 @@ type Profile struct {
 // Status is clauth's status feed, as reported by `clauth status --json` or
 // mirrored to its on-disk status file.
 type Status struct {
-	Schema            int       `json:"schema"` // JSON number; verified live: "schema": 1
+	Schema            int       `json:"schema"` // JSON number; verified live: "schema": 1, and 2 from clauth 0.15.2
 	ActiveProfile     string    `json:"active_profile"`
 	GeneratedAt       time.Time `json:"generated_at"`
 	RefreshIntervalMS int       `json:"refresh_interval_ms"`
 	Profiles          []Profile `json:"profiles"`
 
-	// Degraded is set when Schema is not the schema this package was built
-	// against (1) -- including a payload that omits the schema field
-	// entirely, which decodes Schema to its zero value (0), also != 1. A
+	// Degraded is set when Schema is not one this package was built
+	// against (knownSchemas) -- including a payload that omits the schema
+	// field entirely, which decodes Schema to its zero value (0). A
 	// degraded Status still carries whatever the full parse recovered
 	// (which, since clauth versions its schema for backward compatibility
 	// with additive changes, is typically the complete Profiles set) --
@@ -65,6 +65,18 @@ type Status struct {
 	// and render name-only entries.
 	Degraded bool `json:"-"`
 }
+
+// knownSchemas are the status schemas whose every field this package reads
+// has been checked against a live payload: 1, and 2, which clauth 0.15.2
+// writes (#238). Schema 2 added fields and changed none this package
+// reads -- pending_switch and wrap_off at the top level, rolling_token and
+// auto_start_queue per profile -- so a full parse of it is as trustworthy
+// as one of schema 1. Reading it as degraded cost the account row every
+// profile's plan, usage windows and auth state.
+//
+// A new schema goes here only after the same check: every field Status
+// models, present with the same JSON type, in a live payload.
+var knownSchemas = map[int]bool{1: true, 2: true}
 
 // minimalStatus is the required subset ParseStatus falls back to when the
 // full Status shape fails to parse -- i.e. a future schema changed a field's
@@ -80,7 +92,7 @@ type minimalStatus struct {
 //
 // clauth's schema field lets it evolve the payload: ParseStatus first
 // attempts a full parse into Status. If that succeeds, Degraded is set
-// whenever Schema != 1 (the schema this package was built against), but no
+// whenever Schema is not in knownSchemas, but no
 // error is returned -- the full parse already recovered everything Status
 // models. If the full parse fails outright (a structurally incompatible
 // future schema), ParseStatus falls back to decoding only the required
@@ -89,7 +101,7 @@ type minimalStatus struct {
 func ParseStatus(b []byte) (Status, error) {
 	var st Status
 	if err := json.Unmarshal(b, &st); err == nil {
-		if st.Schema != 1 {
+		if !knownSchemas[st.Schema] {
 			st.Degraded = true
 		}
 		return st, nil

@@ -393,6 +393,15 @@ it.)
   Prefer reading the daemon's `~/.clauth/status.json` when fresh (clauth
   documents it as a feed for other apps); fall back to invoking the CLI.
   `schema != 1` → degrade to name-only entries, never crash.
+
+  > **Amended, #238 (2026-09-19): schema 2 is known too.** clauth 0.15.2
+  > writes `schema: 2`. It adds `pending_switch` and `wrap_off` at the top
+  > level, and `rolling_token` and `auto_start_queue` per profile, and it
+  > changes none of the fields read here, so it is parsed in full like 1.
+  > Read as degraded, it cost the account row every profile's plan, usage
+  > windows and auth state. Any other schema still degrades. A schema joins
+  > the known set only after its every field read here is checked against a
+  > live payload.
 - **Launch**: `clauth start <profile> -- <claude args>` via `pane run`
   (§9 Path B). clauth owns the per-profile `CLAUDE_CONFIG_DIR` mirror; herdr-draft
   never touches `~/.clauth` internals beyond the documented status feed.

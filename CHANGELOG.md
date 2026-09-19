@@ -410,7 +410,9 @@ without the popup. It drives herdr exclusively through the public CLI
 - **Degradation over refusal.** Only an unparseable plugin context, an
   unreachable herdr or a broken `config.toml` refuse to open. A broken
   Linear key or an unloadable clauth degrades that one row to "unavailable,
-  with a reason".
+  with a reason". A clauth status of a schema this plugin has not checked
+  shows profile names only. Schemas 1 and 2 are checked; 2 is what clauth
+  0.15.2 writes, and it read as unchecked until #238.
 - **A report is not evidence; the pane is.** Neither direction of the
   prompt-delivery question is answered by what herdr reports: a wait that
   times out has not proved a failure, and an agent's `idle` status has not
