@@ -312,7 +312,7 @@ const (
 // retry spec §9 describes for both launch paths, generalized here to any
 // op Execute runs: an op failing with an agent_pane_busy error (the
 // target pane's shell still starting right after topology creation --
-// herdr:src/app/agents.rs:255, upstream #3375's race) is retried every
+// herdrc.ErrPaneBusy, upstream #3375's race) is retried every
 // busyRetryInterval until busyRetryBudget has elapsed since the first
 // attempt, judged by busyRetryNow. These are package vars rather than
 // Execute parameters -- Execute's signature is fixed by contract -- so
@@ -425,9 +425,9 @@ func emitProgress(onProgress func(Progress), index, total int, label string, sta
 // WAITING on rather than failing: the pane is showing a dialog somebody can
 // answer.
 //
-// A typed sentinel for the reason CLAUDE.md's "a generic error code cannot
-// be substring-matched" records: this error's own text embeds the matched
-// signature, and the caller must be able to tell it apart from the OTHER
+// A typed sentinel for the reason CLAUDE.md's #144 convention records for
+// herdr's codes -- an error's text is not its classification: this error's
+// own text embeds the matched signature, and the caller must be able to tell it apart from the OTHER
 // refusal in promptIfReady -- a pane that cannot be read at all -- which is
 // equally a refusal and not waitable, because waiting cannot make a screen
 // legible.
