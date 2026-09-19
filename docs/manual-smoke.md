@@ -1652,6 +1652,37 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### the form frozen during the `auto` pick (#136) — 2026-09-19
+
+herdr 0.9.0. Before: `zvi/fix-137-submit-waits-for-title-check` at
+`ee14d8c`, which has no freeze. After: `b9faba0`, the freeze on top of it,
+since rebased as `7839db0` with the freeze unchanged. Route A0 with the
+isolation of the #195 run below, and a throwaway repository. To stretch
+the `auto` pick into something a person can press keys during, the plugin
+config named a stub picker that answers a `--dry-run` at once and makes a
+real pick sleep 3 s and then refuse (exit 2). It logs every call. It also
+set `[agents] favorites = ["claude"]`, `[clauth] default = "auto"`, and
+`[clauth] launcher = ["echo", "LAUNCHED", "{account}"]` as a guard. A
+refused pick creates nothing, and a pick that somehow went through would
+have launched `echo` rather than claude. No session was created, and no
+account was spent. The account row read `auto → personal-0` from the
+stub's dry run.
+
+Each pass typed the title `freeze check`, waited 1 s for its checks, and
+pressed `⌃S`. During the pick it then typed ` typed` and pressed `⌃S`
+again, read the screen, then pressed `⌃R ⌃R`, and read it once more after
+the refusal.
+
+| Read | before | after |
+|---|---|---|
+| during the pick | `title  freeze check typed`, `account  auto · asking the picker…` | `title  freeze check`, `account  auto · asking the picker…` |
+| real picks in the stub's log | 2: the second `⌃S` started another | 1 |
+| after the refusal | the form `⌃R ⌃R` had rebuilt under the pick: `title  untitled`, `worktree  off`, and the refusal on the account row | the form as validated: `title  freeze check`, `worktree  on · zvi/freeze-check ← main`, and the refusal on the account row |
+
+`esc` then closed the form in both. Teardown: the disposable session
+stopped and deleted, no process left with a cwd under the scratch tree, the
+scratch tree removed, `pgrep -x herdr-draft` 0.
+
 ### a submit inside the title check's debounce (#137) — 2026-09-19
 
 herdr 0.9.0. `main` at `7399894`, built from `git archive`, and
