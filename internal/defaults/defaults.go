@@ -254,21 +254,24 @@ func Resolve(s Sources) Resolved {
 	}
 
 	// --- TierUserConfig: the user's own config.toml ----------------------
-	r.setString(FieldBranchPrefix, &r.BranchPrefix, s.Config.BranchPrefix, TierUserConfig)
-	// DefaultWorktree is a plain bool, so config.toml always supplies one:
-	// config.Load's defaults() fills in `true` for a file that omits the
-	// key, and the zero value is the answer for a Config built in code.
-	r.setBool(FieldWorktree, &r.UseWorktree, &s.Config.DefaultWorktree, TierUserConfig)
-	r.setPlacement(&r.Placement, s.Config.DefaultPlacement, TierUserConfig)
+	// These three always arrive with a value, because config.Load fills in
+	// its own default for a key the file omits: "$USER/", true, new-space.
+	// The value applies either way. Only the attribution depends on whether
+	// the file set it (#220): a default Load filled in is the built-in's,
+	// or `create --json` prints config.toml for a value no config.toml
+	// contains -- the outcome trust_repository's comment below exists to
+	// avoid, and which this block used to produce for all three. A Config
+	// built in code has nothing defaulted, so its values stay config.toml's.
+	cfg := s.Config
+	r.setString(FieldBranchPrefix, &r.BranchPrefix, cfg.BranchPrefix, userConfigTier(cfg.Defaulted.BranchPrefix))
+	r.setBool(FieldWorktree, &r.UseWorktree, &cfg.DefaultWorktree, userConfigTier(cfg.Defaulted.DefaultWorktree))
+	r.setPlacement(&r.Placement, cfg.DefaultPlacement, userConfigTier(cfg.Defaulted.DefaultPlacement))
 	r.setAgentKind(&r.AgentKind, s.Config.Agents.Default, TierUserConfig, s.KnownAgentKinds)
-	// Deliberately NOT attributed the way DefaultWorktree above is.
-	// config.Load's defaults() gives DefaultWorktree a real `true`, so
-	// config.toml supplies one for every file and the attribution is
-	// earned; nothing supplies this key, so it arrives as a *bool and a
-	// nil means the file never mentioned [worktree] -- which leaves the
-	// built-in false attributed to TierBuiltin, where it belongs. Getting
-	// this wrong would make `create --json` print `from config.toml` for a
-	// value no config.toml has ever contained.
+	// A *bool rather than a Defaulted flag: nothing supplies a default for
+	// this key, so a nil means the file never mentioned [worktree], which
+	// leaves the built-in false attributed to TierBuiltin, where it
+	// belongs. Getting this wrong would make `create --json` print `from
+	// config.toml` for a value no config.toml has ever contained.
 	r.setBool(FieldTrustRepository, &r.TrustRepository, s.Config.Worktree.TrustRepository, TierUserConfig)
 	// Pointer-attributed like trust_repository above, and for the same
 	// reason: nothing supplies a default, so nil must stay built-in.
@@ -330,6 +333,16 @@ func Resolve(s Sources) Resolved {
 // setString applies a string tier value, treating "" as "this tier does
 // not supply one" -- both string fields here read the empty string as
 // unset (no prefix; HEAD).
+// userConfigTier is the tier a config.Config value is credited to: the
+// user's config.toml when the file set it, the built-in when config.Load
+// filled in its own default (#220).
+func userConfigTier(defaulted bool) Tier {
+	if defaulted {
+		return TierBuiltin
+	}
+	return TierUserConfig
+}
+
 func (r *Resolved) setString(field string, dst *string, v string, t Tier) {
 	if v == "" {
 		return

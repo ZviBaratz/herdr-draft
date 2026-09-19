@@ -791,3 +791,34 @@ func TestRememberedPlacement_AWorktreeSubmitKeepsWhatWasRecorded(t *testing.T) {
 		t.Errorf("submit without a worktree records %q, want its own tab-in", got)
 	}
 }
+
+// #220: a value config.Load filled in from its own defaults is the
+// built-in's, not config.toml's -- the value applies, and the attribution
+// says where it really came from. The same Config with nothing defaulted
+// (every Config built in code, as TestResolve_Precedence's are) keeps the
+// config.toml attribution.
+func TestResolve_CreditsLoadsOwnDefaultsToTheBuiltin(t *testing.T) {
+	cfg := config.Config{BranchPrefix: "me/", DefaultWorktree: true, DefaultPlacement: "new-space"}
+	for _, tc := range []struct {
+		name      string
+		defaulted config.DefaultedKeys
+		want      Tier
+	}{
+		{"Load filled all three in", config.DefaultedKeys{BranchPrefix: true, DefaultWorktree: true, DefaultPlacement: true}, TierBuiltin},
+		{"the file set all three", config.DefaultedKeys{}, TierUserConfig},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := cfg
+			c.Defaulted = tc.defaulted
+			res := Resolve(Sources{Config: c, KnownAgentKinds: knownKinds})
+			if res.BranchPrefix != "me/" || !res.UseWorktree || res.Placement != plan.PlacementNewSpace {
+				t.Errorf("the values changed: prefix %q, worktree %v, placement %v", res.BranchPrefix, res.UseWorktree, res.Placement)
+			}
+			for _, f := range []string{FieldBranchPrefix, FieldWorktree, FieldPlacement} {
+				if got := res.From[f]; got != tc.want {
+					t.Errorf("From[%s] = %v, want %v", f, got, tc.want)
+				}
+			}
+		})
+	}
+}

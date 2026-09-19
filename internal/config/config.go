@@ -326,6 +326,12 @@ type Config struct {
 	// A bad branch_prefix is a typo, not a reason to refuse startup.
 	BranchPrefixWarning string `toml:"-"`
 
+	// Defaulted says which of three keys Load filled in from defaults()
+	// rather than read from the file (#220), so the resolver can credit
+	// those to the built-in tier and not to config.toml. Never decoded from
+	// the file -- Load's own output, like BranchPrefixWarning.
+	Defaulted DefaultedKeys `toml:"-"`
+
 	// ClauthLaunchWarning is non-empty when `[clauth] launch` named a mode
 	// this binary does not know and ClauthLaunchStart was used instead: the
 	// short reason, naming both. Never decoded from the file -- Load's own
@@ -371,6 +377,16 @@ func (c Config) ClauthWarnings() []string {
 	return out
 }
 
+// DefaultedKeys is Config.Defaulted: true for each key whose value is
+// Load's built-in default. The zero value -- nothing defaulted -- is what a
+// Config built in code carries, which keeps its values credited to
+// config.toml, as they always were.
+type DefaultedKeys struct {
+	BranchPrefix     bool
+	DefaultWorktree  bool
+	DefaultPlacement bool
+}
+
 // defaults returns Config's built-in defaults (spec §12), used for any key
 // a config.toml omits -- including the case where the file itself is
 // missing entirely.
@@ -380,6 +396,8 @@ func defaults() Config {
 		BranchPrefix:     defaultBranchPrefix(),
 		DefaultWorktree:  true,
 		DefaultPlacement: "new-space",
+		// Every one of them, until Load sees the file set it.
+		Defaulted: DefaultedKeys{BranchPrefix: true, DefaultWorktree: true, DefaultPlacement: true},
 		Agents: AgentsConfig{
 			Favorites: []string{"claude"},
 		},
@@ -458,8 +476,17 @@ func Load(configDir string) (Config, error) {
 		return Config{}, fmt.Errorf("load config: read %s: %w", path, err)
 	}
 
-	if _, err := toml.Decode(string(b), &cfg); err != nil {
+	md, err := toml.Decode(string(b), &cfg)
+	if err != nil {
 		return Config{}, fmt.Errorf("load config: parse %s: %w", path, err)
+	}
+	// Which of them the file set, from the decoder's own record rather than
+	// by comparing values: a file that sets default_worktree = true set it,
+	// even though that is also the default (#220).
+	cfg.Defaulted = DefaultedKeys{
+		BranchPrefix:     !md.IsDefined("branch_prefix"),
+		DefaultWorktree:  !md.IsDefined("default_worktree"),
+		DefaultPlacement: !md.IsDefined("default_placement"),
 	}
 	// The second pass cannot fail where the first succeeded -- same bytes,
 	// and a target that accepts any value -- but an error is still an
@@ -495,6 +522,8 @@ func Load(configDir string) (Config, error) {
 		cfg.BranchPrefixWarning = fmt.Sprintf("ignoring branch_prefix %q: %v; using %q",
 			cfg.BranchPrefix, verr, defaultPrefix)
 		cfg.BranchPrefix = defaultPrefix
+		// The default is what is used, so the default is what supplied it.
+		cfg.Defaulted.BranchPrefix = true
 	}
 
 	// `[clauth] launch` is validated here, at the point it is first trusted,

@@ -996,7 +996,11 @@ func requireContext(hctx herdrc.Context, in plan.Input) error {
 func refuseWorktreePlacement(req request, placement plan.Placement, worktreeFrom string) error {
 	why := "a worktree session runs in the worktree's own space, which herdr groups under the repository's"
 	if worktreeFrom != provenanceFlag {
-		why += " -- and the worktree is on here from " + worktreeFrom
+		from := worktreeFrom
+		if from == defaults.TierBuiltin.String() {
+			from = "the built-in default"
+		}
+		why += " -- and the worktree is on here from " + from
 	}
 	switch {
 	case req.set["workspace"]:

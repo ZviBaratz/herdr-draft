@@ -894,3 +894,46 @@ func TestLauncherWarningsLeadWithTheReason(t *testing.T) {
 		}
 	}
 }
+
+// #220: Load says which of the three keys it filled in from defaults()
+// rather than read from the file, so the resolver can credit them to the
+// built-in tier instead of to config.toml. A key the file sets -- even to
+// "" for branch_prefix, which means "no prefix" -- is the file's; one it
+// sets and Load rejects is the default's again, since the default is what
+// is used.
+func TestLoad_RecordsWhichKeysItDefaulted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body *string // nil: no config.toml at all
+		dir  bool    // false: no config directory either
+		want DefaultedKeys
+	}{
+		{name: "no config directory", want: DefaultedKeys{true, true, true}},
+		{name: "no config.toml", dir: true, want: DefaultedKeys{true, true, true}},
+		{name: "a file that sets none of them", dir: true, body: strp("[agents]\nfavorites = [\"claude\"]\n"), want: DefaultedKeys{true, true, true}},
+		{name: "a file that sets all three", dir: true, body: strp("branch_prefix = \"me/\"\ndefault_worktree = true\ndefault_placement = \"new-space\"\n"), want: DefaultedKeys{}},
+		{name: "an empty prefix is the file's", dir: true, body: strp("branch_prefix = \"\"\n"), want: DefaultedKeys{false, true, true}},
+		{name: "a rejected prefix is the default again", dir: true, body: strp("branch_prefix = \"-x\"\n"), want: DefaultedKeys{true, true, true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := ""
+			if tc.dir {
+				dir = t.TempDir()
+			}
+			if tc.body != nil {
+				if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(*tc.body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err := Load(dir)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.Defaulted != tc.want {
+				t.Errorf("Defaulted = %+v, want %+v", cfg.Defaulted, tc.want)
+			}
+		})
+	}
+}
+
+func strp(s string) *string { return &s }

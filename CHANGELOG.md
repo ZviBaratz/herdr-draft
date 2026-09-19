@@ -179,7 +179,10 @@ without the popup. It drives herdr exclusively through the public CLI
   (#194).
 - Progress goes to stderr one line per step; the result to stdout, or a
   single JSON object under `--json` carrying a `provenance` map naming the
-  tier each value came from.
+  tier each value came from. A value `config.toml` leaves out is `built-in`
+  there, even though the plugin fills in its own default for it: the
+  `$USER/` branch prefix, a worktree, a new space. Those three used to read
+  `config.toml` with no `config.toml` at all (#220).
 - Exit codes: `0` created, `1` the plan started and failed, and part of
   the session may exist (`--on-failure` applied), `2` bad usage or an
   unresolvable request, `3` herdr unreachable, `4` the plan started and its
