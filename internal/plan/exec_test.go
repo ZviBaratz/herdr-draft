@@ -1067,7 +1067,7 @@ func TestExecuteAgentStartBusyRetrySucceeds(t *testing.T) {
 
 	m := &mockRunner{
 		failAt:    "AgentStart",
-		failErr:   errors.New("agent_pane_busy: pane still starting"),
+		failErr:   busyErr,
 		failCount: 2,
 		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
 	}
@@ -1125,7 +1125,7 @@ func TestExecuteBusyRetryExhaustsBudget(t *testing.T) {
 
 	m := &mockRunner{
 		failAt:    "AgentStart",
-		failErr:   errors.New("agent_pane_busy: pane still starting"),
+		failErr:   busyErr,
 		failCount: 1000, // never succeeds
 		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
 	}
@@ -1680,10 +1680,12 @@ type nameTakenRunner struct {
 func (m *nameTakenRunner) AgentStart(_ context.Context, req herdrc.AgentStartReq) error {
 	m.namesSeen = append(m.namesSeen, req.Name)
 	if m.taken[req.Name] {
-		// The exact shape herdrc.CLIRunner surfaces: herdr's stderr error
-		// envelope wrapped into a plain Go error (there is no typed code).
-		return fmt.Errorf("herdr agent start: exit status 1: {\"error\":{\"code\":\"%s\",\"message\":\"agent name %s is already used\"}}",
-			nameTakenErrorCode, req.Name)
+		// The shape herdrc.CLIRunner surfaces: the CLI's text, and the
+		// sentinel for the envelope's code.
+		return herdrErr{
+			msg:  fmt.Sprintf(`herdr agent start %s --kind claude: exit status 1: {"error":{"code":"agent_name_taken","message":"agent name %s is already used"}}`, req.Name, req.Name),
+			code: herdrc.ErrAgentNameTaken,
+		}
 	}
 	return nil
 }
@@ -1959,17 +1961,19 @@ func TestExecuteDetectionTimeoutSurvivesAnUnreadablePane(t *testing.T) {
 // print_response (herdr:src/cli.rs:738) writes to stderr before exiting 1
 // and cmdError folds into the message (`herdr %s: %w: %s`).
 //
-// Verbatim, character for character, from a live 0.9.0 run against a fresh
-// worktree on 2026-09-08 -- including the `"id"` member that trails the
-// error object, which #90's own transcript had trimmed. The exactness is
-// the point: isAgentNotReadyError matches this by SUBSTRING, because herdr
-// error codes reach Go inside an error string rather than as a typed value,
-// so a convenient `errors.New("agent_not_ready")` would satisfy the match
-// while proving nothing about the shape the real CLI hands over.
+// The text is verbatim, character for character, from a live 0.9.0 run
+// against a fresh worktree on 2026-09-08 -- including the `"id"` member
+// that trails the error object, which #90's own transcript had trimmed --
+// because it is what the explained error still carries and a user reads.
+// The classification is the code's sentinel, as herdrc.CLIRunner attaches
+// it, and never the text (#144).
 func notReadyErr(agentName string) error {
-	return fmt.Errorf("herdr agent start %s --kind claude --pane w2:p1: exit status 1: "+
-		`{"error":{"code":"agent_not_ready","message":"agent %s is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`,
-		agentName, agentName)
+	return herdrErr{
+		msg: fmt.Sprintf("herdr agent start %s --kind claude --pane w2:p1: exit status 1: "+
+			`{"error":{"code":"agent_not_ready","message":"agent %s is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`,
+			agentName, agentName),
+		code: herdrc.ErrAgentNotReady,
+	}
 }
 
 // trustDialogScreen is Claude Code's first-run trust prompt as `agent read

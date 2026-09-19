@@ -312,7 +312,7 @@ const (
 // retry spec §9 describes for both launch paths, generalized here to any
 // op Execute runs: an op failing with an agent_pane_busy error (the
 // target pane's shell still starting right after topology creation --
-// herdr:src/app/agents.rs:255, upstream #3375's race) is retried every
+// herdrc.ErrPaneBusy, upstream #3375's race) is retried every
 // busyRetryInterval until busyRetryBudget has elapsed since the first
 // attempt, judged by busyRetryNow. These are package vars rather than
 // Execute parameters -- Execute's signature is fixed by contract -- so
@@ -324,37 +324,6 @@ var (
 	busyRetryBudget   = 5 * time.Second
 	busyRetryNow      = time.Now
 )
-
-// busyPaneErrorCode is the herdr error code (herdr:src/app/agents.rs:255)
-// that marks an op rejected only because its target pane's shell is still
-// starting right after topology creation -- worth retrying, unlike any
-// other failure.
-const busyPaneErrorCode = "agent_pane_busy"
-
-// nameTakenErrorCode is the herdr error code for
-// AgentStartError::DuplicateName (herdr:src/app/agents.rs:165 raises it,
-// :266 encodes it): the requested agent name is already in use by a live
-// agent. Unlike busyPaneErrorCode this is not a timing race -- the name is
-// taken and stays taken -- so the fix is a different NAME, not a later
-// attempt with the same one. See startAgentWithDedupe.
-const nameTakenErrorCode = "agent_name_taken"
-
-// agentNotReadyErrorCode is the herdr error code `agent start` raises when
-// its readiness poll finds the agent it just launched sitting at
-// `agent_status: "blocked"`
-// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/cli/agent.rs#L607).
-// `agent start`'s contract is "the expected agent was detected in the same
-// terminal and is ready for input", and there is no opt-out flag --
-// `--timeout` only changes how long it waits -- so a blocked agent fails
-// the step however healthy the process itself is.
-//
-// This is NOT the code `agent prompt` uses for the same condition: that one
-// answers `agent_blocked`
-// (https://github.com/herdrdev/herdr/blob/b1ff4582/src/app/api/agents.rs#L85).
-// Two codes for one situation, on the two calls herdr-draft makes, is why
-// this constant is named for the call that raises it rather than for the
-// state it describes.
-const agentNotReadyErrorCode = "agent_not_ready"
 
 // maxAgentNameAttempts bounds startAgentWithDedupe: the caller's own name
 // plus eight suffixed alternatives ("-2" through "-9", the two-rune
@@ -373,42 +342,19 @@ func malformedOpError(kind OpKind) error {
 	return fmt.Errorf("malformed op: %s missing its request", kind)
 }
 
-// isBusyPaneError reports whether err's text contains busyPaneErrorCode.
-// herdrc.CLIRunner surfaces herdr CLI failures as plain text (the
-// subcommand's stderr wrapped into the error message), not as a typed
-// error code, so a substring match is the only signal available here.
-func isBusyPaneError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), busyPaneErrorCode)
-}
-
-// isNameTakenError reports whether err's text contains nameTakenErrorCode,
-// by the same substring match (and for the same reason) isBusyPaneError
-// uses: herdrc.CLIRunner surfaces herdr CLI failures as plain text, not as
-// a typed error code.
-func isNameTakenError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), nameTakenErrorCode)
-}
-
-// isAgentNotReadyError reports whether err's text contains
-// agentNotReadyErrorCode, by the same substring match (and for the same
-// reason) isBusyPaneError uses.
-func isAgentNotReadyError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), agentNotReadyErrorCode)
-}
-
 // isBlockedAgentError reports an agent that is running but waiting on
 // something interactive, however that fact reached us. The two launch paths
 // learn it differently and neither spelling is available on the other:
 //
-//   - Path A: `herdr agent start` refuses with the agent_not_ready CODE, in
-//     stderr text (isAgentNotReadyError).
+//   - Path A: `herdr agent start` refuses with the agent_not_ready code
+//     (herdrc.ErrAgentNotReady).
 //   - Path B: there is no server-side wait to refuse at all, so
 //     herdrc.AwaitDetection decides it here, from herdr's own agent JSON,
 //     and says so with a typed sentinel (#94).
 //
 // Both mean the same thing to a user, so both get the same explanation.
 func isBlockedAgentError(err error) bool {
-	return isAgentNotReadyError(err) || errors.Is(err, herdrc.ErrAgentBlocked)
+	return errors.Is(err, herdrc.ErrAgentNotReady) || errors.Is(err, herdrc.ErrAgentBlocked)
 }
 
 // startAgentWithDedupe runs `herdr agent start` for req and, when herdr
@@ -433,7 +379,7 @@ func startAgentWithDedupe(ctx context.Context, r herdrc.Runner, req herdrc.Agent
 			req.Name = AgentNameWithSuffix(base, attempt)
 		}
 		err = r.AgentStart(ctx, req)
-		if err == nil || !isNameTakenError(err) {
+		if err == nil || !errors.Is(err, herdrc.ErrAgentNameTaken) {
 			return err
 		}
 		if ctx.Err() != nil {
@@ -452,7 +398,7 @@ func retryBusy(ctx context.Context, op func() error) error {
 	deadline := busyRetryNow().Add(busyRetryBudget)
 	for {
 		err := op()
-		if err == nil || !isBusyPaneError(err) {
+		if err == nil || !errors.Is(err, herdrc.ErrPaneBusy) {
 			return err
 		}
 		if ctx.Err() != nil || !busyRetryNow().Before(deadline) {
@@ -479,9 +425,9 @@ func emitProgress(onProgress func(Progress), index, total int, label string, sta
 // WAITING on rather than failing: the pane is showing a dialog somebody can
 // answer.
 //
-// A typed sentinel for the reason CLAUDE.md's "a generic error code cannot
-// be substring-matched" records: this error's own text embeds the matched
-// signature, and the caller must be able to tell it apart from the OTHER
+// A typed sentinel for the reason CLAUDE.md's #144 convention records for
+// herdr's codes -- an error's text is not its classification: this error's
+// own text embeds the matched signature, and the caller must be able to tell it apart from the OTHER
 // refusal in promptIfReady -- a pane that cannot be read at all -- which is
 // equally a refusal and not waitable, because waiting cannot make a screen
 // legible.
@@ -1623,11 +1569,13 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			return err
 		}
 
-		// unproven is sticky across attempts, as promptTyped is. retryBusy
-		// reads an error's TEXT, which holds the argv and so the title, so
-		// an attempt that made a checkout can be retried into a refusal
-		// that is evidence only about the retry. NothingCreated needs every
-		// attempt to show it made nothing (#192).
+		// unproven is sticky across attempts, as promptTyped is: an attempt
+		// that made a checkout and was then retried leaves a refusal that is
+		// evidence only about the retry. NothingCreated needs every attempt
+		// to show it made nothing (#192). Unreachable since retryBusy reads
+		// herdr's code rather than the text (#144), because no create call
+		// answers agent_pane_busy; kept for the same reason as the reset in
+		// attempt above.
 		var unproven bool
 		runErr := retryBusy(ctx, func() error {
 			err := attempt()

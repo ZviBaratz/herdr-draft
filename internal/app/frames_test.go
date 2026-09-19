@@ -840,8 +840,8 @@ func TestAssembledSubmit_BlockedStartFrame(t *testing.T) {
 	runner := &submitFakeRunner{
 		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
 		failAt: "AgentStart",
-		failErr: errors.New("herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
-			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`),
+		failErr: codedErr{msg: "herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`, code: herdrc.ErrAgentNotReady},
 		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
 	}
@@ -948,8 +948,8 @@ func TestAssembledSubmit_WaitingOnTheDialogFrame(t *testing.T) {
 	runner := &submitFakeRunner{
 		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
 		failAt: "AgentStart",
-		failErr: errors.New("herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
-			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`),
+		failErr: codedErr{msg: "herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`, code: herdrc.ErrAgentNotReady},
 		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
 		dialogClears: true,
@@ -998,8 +998,8 @@ func TestAssembledSubmit_UnansweredDialogFrame(t *testing.T) {
 	runner := &submitFakeRunner{
 		topo:   herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
 		failAt: "AgentStart",
-		failErr: errors.New("herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
-			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`),
+		failErr: codedErr{msg: "herdr agent start fix-login-redirect-loop --kind claude: exit status 1: " +
+			`{"error":{"code":"agent_not_ready","message":"agent fix-login-redirect-loop is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}`, code: herdrc.ErrAgentNotReady},
 		awaitErr: fmt.Errorf("await detection for pane pane-1: timed out after 5m0s: %w", herdrc.ErrAgentBlocked),
 		readText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
