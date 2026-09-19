@@ -29,8 +29,9 @@ import (
 type Tier int
 
 const (
-	// TierBuiltin is this package's own fallback -- the value used when no
-	// configured or remembered tier supplies one.
+	// TierBuiltin is the value used when no configured or remembered tier
+	// supplies one: this package's own fallback, or a default config.Load
+	// filled in for a key config.toml left out (#220).
 	TierBuiltin Tier = iota
 	// TierUserConfig is $HERDR_PLUGIN_CONFIG_DIR/config.toml.
 	TierUserConfig
@@ -49,7 +50,8 @@ const (
 	// TierOpenWorkspace is `herdr workspace list`: the one tier that is a
 	// fact about the machine right now rather than a file. It decides ONE
 	// field, placement, and only in two shapes (Resolve's last block):
-	// `new-space` from config.toml, last-used.json or projects.json yields
+	// `new-space` from the built-in, config.toml, last-used.json or
+	// projects.json yields
 	// to `tab in <space>` when the project already has a space open, and a
 	// remembered `tab-in` falls back to `new-space` when it no longer does.
 	// A `here` placement, and a `.herdr-draft.toml` that says new-space,
@@ -104,7 +106,8 @@ func FieldAgentOption(name string) string { return "option." + name }
 // caller -- this package performs no I/O of its own.
 type Sources struct {
 	// Config is the user's own config.toml (TierUserConfig), already
-	// through config.Load's own defaults.
+	// through config.Load's own defaults -- which are credited to
+	// TierBuiltin instead, for each key Config.Defaulted names (#220).
 	Config config.Config
 	// Global is last-used.json (TierGlobalMemory).
 	Global config.State
@@ -234,9 +237,10 @@ type Resolved struct {
 // built-in.
 func Resolve(s Sources) Resolved {
 	r := Resolved{
-		// Built-ins. There is deliberately no built-in branch prefix:
-		// config.Load already substitutes "$USER/" for an absent one, so a
-		// "" arriving here means the caller genuinely has no prefix (as
+		// Built-ins. There is deliberately no built-in branch prefix here:
+		// config.Load already substitutes "$USER/" for an absent one (which
+		// the user-config block below credits to TierBuiltin), so a ""
+		// arriving here means the caller genuinely has no prefix (as
 		// internal/app's own tests, which build config.Config directly, do)
 		// and inventing one would change every branch they derive.
 		Placement:        plan.PlacementNewSpace,
@@ -263,7 +267,16 @@ func Resolve(s Sources) Resolved {
 	// avoid, and which this block used to produce for all three. A Config
 	// built in code has nothing defaulted, so its values stay config.toml's.
 	cfg := s.Config
-	r.setString(FieldBranchPrefix, &r.BranchPrefix, cfg.BranchPrefix, userConfigTier(cfg.Defaulted.BranchPrefix))
+	if cfg.Defaulted.BranchPrefix {
+		r.setString(FieldBranchPrefix, &r.BranchPrefix, cfg.BranchPrefix, TierBuiltin)
+	} else {
+		// Not setString, which reads "" as "this tier supplies nothing":
+		// here "" is config.toml asking for no prefix at all
+		// (TestLoad_EmptyBranchPrefix_MeansNoPrefix), so config.toml is what
+		// supplied it. A Config built in code with no prefix is credited
+		// the same way, as its plain-bool DefaultWorktree already is.
+		r.BranchPrefix, r.From[FieldBranchPrefix] = cfg.BranchPrefix, TierUserConfig
+	}
 	r.setBool(FieldWorktree, &r.UseWorktree, &cfg.DefaultWorktree, userConfigTier(cfg.Defaulted.DefaultWorktree))
 	r.setPlacement(&r.Placement, cfg.DefaultPlacement, userConfigTier(cfg.Defaulted.DefaultPlacement))
 	r.setAgentKind(&r.AgentKind, s.Config.Agents.Default, TierUserConfig, s.KnownAgentKinds)
@@ -330,9 +343,6 @@ func Resolve(s Sources) Resolved {
 	return r
 }
 
-// setString applies a string tier value, treating "" as "this tier does
-// not supply one" -- both string fields here read the empty string as
-// unset (no prefix; HEAD).
 // userConfigTier is the tier a config.Config value is credited to: the
 // user's config.toml when the file set it, the built-in when config.Load
 // filled in its own default (#220).
@@ -343,6 +353,9 @@ func userConfigTier(defaulted bool) Tier {
 	return TierUserConfig
 }
 
+// setString applies a string tier value, treating "" as "this tier does
+// not supply one" -- both string fields here read the empty string as
+// unset (no prefix; HEAD).
 func (r *Resolved) setString(field string, dst *string, v string, t Tier) {
 	if v == "" {
 		return

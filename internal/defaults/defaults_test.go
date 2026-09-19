@@ -43,10 +43,12 @@ func TestResolve_Precedence(t *testing.T) {
 			wantPlacement:    plan.PlacementNewSpace,
 			wantAgentKind:    "",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix: TierBuiltin,
 				// config.Config.DefaultWorktree is a plain bool, so a
 				// zero-value Config still SUPPLIES a value (false) rather
-				// than falling through -- see Resolve's own comment.
+				// than falling through -- see Resolve's own comment. Its
+				// empty BranchPrefix is supplied the same way: nothing is
+				// Defaulted, so "" is config.toml asking for no prefix (#220).
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierBuiltin,
@@ -126,7 +128,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantPlacement: plan.PlacementNewSpace,
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierGlobalMemory,
 				FieldAgentKind:        TierBuiltin,
@@ -146,7 +148,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantPlacement: plan.PlacementTabHere,
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierUserConfig,
 				FieldAgentKind:        TierBuiltin,
@@ -170,7 +172,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantAgentKind: "codex",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierUserConfig,
@@ -188,7 +190,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantAgentKind: "anything-at-all",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierGlobalMemory,
@@ -207,7 +209,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantWorktree: false,
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierGlobalMemory,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierBuiltin,
@@ -292,7 +294,7 @@ func TestResolve_Precedence(t *testing.T) {
 			wantFrom: map[string]Tier{
 				// branch_prefix and linear_branch_name have no per-project
 				// tier at all, so the repo config keeps them.
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierProjectMemory,
 				FieldPlacement:        TierProjectMemory,
 				FieldAgentKind:        TierBuiltin,
@@ -364,7 +366,7 @@ func TestResolve_Precedence(t *testing.T) {
 			},
 
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierBuiltin,
@@ -439,7 +441,7 @@ func TestResolve_Precedence(t *testing.T) {
 			wantAgentKind: "codex",
 			wantBaseRef:   "release",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierGlobalMemory,
 				FieldAgentKind:        TierUserConfig,
@@ -463,7 +465,7 @@ func TestResolve_Precedence(t *testing.T) {
 			wantWorktree:  false,
 			wantAgentKind: "codex",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierUserConfig,
@@ -484,7 +486,7 @@ func TestResolve_Precedence(t *testing.T) {
 
 			wantAgentKind: "codex",
 			wantFrom: map[string]Tier{
-				FieldBranchPrefix:     TierBuiltin,
+				FieldBranchPrefix:     TierUserConfig,
 				FieldWorktree:         TierUserConfig,
 				FieldPlacement:        TierBuiltin,
 				FieldAgentKind:        TierUserConfig,

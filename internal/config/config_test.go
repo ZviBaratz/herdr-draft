@@ -914,6 +914,9 @@ func TestLoad_RecordsWhichKeysItDefaulted(t *testing.T) {
 		{name: "a file that sets all three", dir: true, body: strp("branch_prefix = \"me/\"\ndefault_worktree = true\ndefault_placement = \"new-space\"\n"), want: DefaultedKeys{}},
 		{name: "an empty prefix is the file's", dir: true, body: strp("branch_prefix = \"\"\n"), want: DefaultedKeys{false, true, true}},
 		{name: "a rejected prefix is the default again", dir: true, body: strp("branch_prefix = \"-x\"\n"), want: DefaultedKeys{true, true, true}},
+		// The decoder fills a field from its key in any case, so the record
+		// of what the file set has to match the same way (#220's review).
+		{name: "keys in another case are still the file's", dir: true, body: strp("DEFAULT_WORKTREE = false\nBranch_Prefix = \"me/\"\n"), want: DefaultedKeys{false, false, true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := ""

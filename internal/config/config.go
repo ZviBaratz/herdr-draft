@@ -476,17 +476,28 @@ func Load(configDir string) (Config, error) {
 		return Config{}, fmt.Errorf("load config: read %s: %w", path, err)
 	}
 
-	md, err := toml.Decode(string(b), &cfg)
-	if err != nil {
+	if _, err := toml.Decode(string(b), &cfg); err != nil {
 		return Config{}, fmt.Errorf("load config: parse %s: %w", path, err)
 	}
-	// Which of them the file set, from the decoder's own record rather than
-	// by comparing values: a file that sets default_worktree = true set it,
-	// even though that is also the default (#220).
+	// Which of the three the file set (#220), from a second decode into
+	// pointers. Not by comparing values: default_worktree = true set it,
+	// though that is also the default. And not by the metadata's
+	// IsDefined, which matches a key's case exactly while the decode above
+	// fills a field from its key in any case (DEFAULT_WORKTREE), so a value
+	// the file set would read as a default (#220's review). The same
+	// decoder, matching the same way, cannot disagree with the pass above.
+	var set struct {
+		BranchPrefix     *string `toml:"branch_prefix"`
+		DefaultWorktree  *bool   `toml:"default_worktree"`
+		DefaultPlacement *string `toml:"default_placement"`
+	}
+	if _, err := toml.Decode(string(b), &set); err != nil {
+		return Config{}, fmt.Errorf("load config: parse %s: %w", path, err)
+	}
 	cfg.Defaulted = DefaultedKeys{
-		BranchPrefix:     !md.IsDefined("branch_prefix"),
-		DefaultWorktree:  !md.IsDefined("default_worktree"),
-		DefaultPlacement: !md.IsDefined("default_placement"),
+		BranchPrefix:     set.BranchPrefix == nil,
+		DefaultWorktree:  set.DefaultWorktree == nil,
+		DefaultPlacement: set.DefaultPlacement == nil,
 	}
 	// The second pass cannot fail where the first succeeded -- same bytes,
 	// and a target that accepts any value -- but an error is still an

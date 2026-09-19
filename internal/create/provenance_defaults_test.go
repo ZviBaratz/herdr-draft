@@ -34,6 +34,23 @@ func TestProvenance_LoadsDefaultsAreBuiltIn(t *testing.T) {
 			want:   map[string]string{"branch_prefix": "config.toml", "worktree": "config.toml", "placement": "config.toml"},
 		},
 		{
+			name: "no config.toml, and no worktree",
+			args: []string{"--title", "fix login", "--no-worktree"},
+			want: map[string]string{"placement": "built-in"},
+		},
+		{
+			name:   "a config.toml key in another case",
+			config: "DEFAULT_WORKTREE = false\n",
+			args:   []string{"--title", "fix login"},
+			want:   map[string]string{"worktree": "config.toml"},
+		},
+		{
+			name:   "an empty branch_prefix is config.toml's: it asks for no prefix",
+			config: "branch_prefix = \"\"\n",
+			args:   []string{"--title", "fix login", "--worktree"},
+			want:   map[string]string{"branch_prefix": "config.toml"},
+		},
+		{
 			name:   "a branch_prefix config.toml sets and Load refuses",
 			config: "branch_prefix = \"-x\"\n",
 			args:   []string{"--title", "fix login"},
