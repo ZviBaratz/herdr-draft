@@ -1343,3 +1343,36 @@ func TestSubmitView_DoneWithWarningsSaysTheWholeReason(t *testing.T) {
 		}
 	}
 }
+
+// TestSubmitView_DoneWithWarningsHighlightsTheWarning: the highlighted row
+// is "the step the user should be looking at", which once the create is done
+// with a warning is the warning's row, not the last step that ran -- as a
+// failure highlights the failed row (#230's review).
+func TestSubmitView_DoneWithWarningsHighlightsTheWarning(t *testing.T) {
+	v := newSubmitTestView()
+	v.SetSteps(sampleStepsDoneWithWarning())
+	v.SetDoneWithWarnings()
+	if got := v.activeStep(); got != 0 {
+		t.Errorf("activeStep() = %d, want 0, the worktree row with the warning", got)
+	}
+}
+
+// TestSubmitView_TwoWarningsKeepTheWorktreeCommandWhenClipped: the body is
+// clipped from the top, so the warning with the command to run goes last.
+// The worktree step comes first in the plan, and the tab's cosmetic warning
+// after it, so step order put the command first in line to be cut.
+func TestSubmitView_TwoWarningsKeepTheWorktreeCommandWhenClipped(t *testing.T) {
+	steps := sampleStepsDoneWithWarning()
+	steps[1] = Step{Label: "tab", Detail: "not named: herdr tab rename w3:t1 Fix login redirect loop: exit status 1", State: plan.StepFailedNonFatal}
+	v := newSubmitTestView()
+	v.SetSteps(steps)
+	v.SetDoneWithWarnings()
+
+	frame := strippedFrame(v, 80, 10)
+	if !strings.Contains(frame, "`git branch --unset-upstream zvi/fix-login-redirect-loop`") {
+		t.Errorf("at 80x10 the worktree's command was clipped:\n%s", frame)
+	}
+	if full := strippedFrame(v, 80, 24); !strings.Contains(full, "warnings to read") {
+		t.Errorf("two warnings are introduced as one:\n%s", full)
+	}
+}

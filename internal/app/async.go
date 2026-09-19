@@ -1430,7 +1430,8 @@ const execErrorPrefix = "plan: execute: "
 func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 	if msg.result.FailedIndex == -1 {
 		// Persist spec §12's state BEFORE quitting -- the quit is deferred
-		// to statePersistedMsg's own handler (updateSubmitting) rather than
+		// to statePersistedMsg's own handler (updateSubmitting), which holds
+		// the popup instead when a step finished with a warning (#230), rather than
 		// batched alongside the write, since tea.Batch runs its commands
 		// concurrently and tea.Quit would race the write to a finish. This
 		// is the hook the whole state layer was missing (finding I2):
@@ -1477,7 +1478,8 @@ func (m Model) handleSubmitDone(msg submitDoneMsg) (Model, tea.Cmd) {
 
 // statePersistedMsg reports that persistStateCmd has finished (whether or
 // not the write itself succeeded) -- the signal updateSubmitting turns
-// into the tea.Quit that ends a successful submit.
+// into the tea.Quit that ends a successful submit, or, when a step finished
+// with a warning, into the held screen that shows it (#230).
 type statePersistedMsg struct{}
 
 // persistStateCmd writes the choices this submit was made with back to the
@@ -1507,8 +1509,8 @@ type statePersistedMsg struct{}
 // call time" discipline scheduleTitleCheck documents.
 //
 // It always returns a non-nil Cmd, even with no state dir to write to:
-// statePersistedMsg is what quits the program, so a nil Cmd here would
-// leave a successful submit hanging on screen forever.
+// statePersistedMsg is what ends a successful submit, so a nil Cmd here
+// would leave it hanging on screen forever.
 func (m Model) persistStateCmd() tea.Cmd {
 	stateDir := m.stateDir
 
@@ -1710,9 +1712,11 @@ func (m Model) handleCleanDone(msg cleanDoneMsg) (Model, tea.Cmd) {
 // -- SubmitView is not a form.Section and takes no part in its focus
 // ring, per submitview.go's own file doc comment). Esc/Ctrl+C only quit
 // when m.submitDeadEnd is true (form.Model's ActionCancel equivalent,
-// since MapKey never runs here) -- the ONE submitting state that has no
+// since MapKey never runs here) -- the one failed state that has no
 // other way out at all (step 1 itself failed; see handleSubmitDone/
-// Model.submitDeadEnd's own doc comments).
+// Model.submitDeadEnd's own doc comments) -- and Esc, Enter or Ctrl+C
+// when m.submitWarned is, a finished create held on screen for its
+// warnings (#230), where nothing is left running to strand.
 //
 // Fix round 1 (reviewer finding): an earlier version of this method quit
 // on Esc/Ctrl+C unconditionally, for the WHOLE m.submitting lifetime, not

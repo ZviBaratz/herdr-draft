@@ -855,8 +855,9 @@ type Model struct {
 	// even when the failure left a branch behind (#208) -- or a remove ran
 	// and kept a branch it had said it would delete, which leaves nothing
 	// to keep or remove either (handleCleanDone, #173). updateSubmitting's
-	// Esc/Ctrl+C escape hatch is scoped to exactly this state (see its own
-	// doc comment): at every OTHER point in the submitting lifecycle --
+	// Esc/Ctrl+C escape hatch is scoped to this state and to submitWarned,
+	// a finished create held on screen for its warnings (#230), which has
+	// nothing running either (see its own doc comment): at every OTHER point in the submitting lifecycle --
 	// actively streaming, waiting on plan.CleanCheck, or showing a real
 	// keep-or-clean prompt -- Esc/Ctrl+C must NOT quit, or it would either
 	// strand plan.Execute's own background goroutine forever blocked on

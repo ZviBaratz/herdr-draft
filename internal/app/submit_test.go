@@ -1857,9 +1857,9 @@ func (e codedErr) Is(target error) bool { return target == e.code }
 // TestSubmit_ASuccessWithAWarningWaitsToBeRead is #230. A create whose tab
 // kept herdr's name still succeeds and still persists state, but the popup
 // no longer closes the moment it has: the warning is on screen until the
-// user closes it with esc or enter.
+// user closes it with esc, enter or ctrl+c, and with no other key.
 func TestSubmit_ASuccessWithAWarningWaitsToBeRead(t *testing.T) {
-	for _, closeKey := range []tea.KeyPressMsg{{Code: tea.KeyEscape}, key(tea.KeyEnter, 0)} {
+	for _, closeKey := range []tea.KeyPressMsg{{Code: tea.KeyEscape}, key(tea.KeyEnter, 0), key('c', tea.ModCtrl)} {
 		runner := &submitFakeRunner{
 			topo:    herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"},
 			failAt:  "TabRename",
@@ -1887,6 +1887,11 @@ func TestSubmit_ASuccessWithAWarningWaitsToBeRead(t *testing.T) {
 			t.Fatalf("held frame does not show the warning and the way out:\n%s", frame)
 		}
 
+		if _, cmd := m.Update(key('x', 0)); cmd != nil {
+			if _, quit := cmd().(tea.QuitMsg); quit {
+				t.Fatal("any key closed the held screen, want only esc, enter or ctrl+c")
+			}
+		}
 		_, cmd = m.Update(closeKey)
 		if cmd == nil {
 			t.Fatalf("%v on the held screen did nothing, want it to close the popup", closeKey)
