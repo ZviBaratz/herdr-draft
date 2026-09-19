@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -185,7 +186,14 @@ func TestWrongBranch(t *testing.T) {
 		{name: "herdr's trim", asked: "zvi/x ", got: "zvi/x"},
 		{name: "none asked for", asked: "", got: "brave-river-1234"},
 		{name: "none in the reply", asked: "zvi/x", got: ""},
+		// In a reftable repository herdr reads the branch with `git
+		// symbolic-ref --short HEAD`, which spells it the shortest way that
+		// is unambiguous: heads/zvi/x beside a tag called zvi/x, and in the
+		// end refs/heads/zvi/x. Every one is the branch asked for.
+		{name: "git's short name beside a tag", asked: "zvi/x", got: "heads/zvi/x"},
+		{name: "git's full name", asked: "zvi/x", got: "refs/heads/zvi/x"},
 		{name: "another branch", asked: "zvi/x", got: "develop", fails: true},
+		{name: "another branch, spelled short", asked: "zvi/x", got: "heads/develop", fails: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := wrongBranch(tc.asked, tc.got)
@@ -198,7 +206,7 @@ func TestWrongBranch(t *testing.T) {
 			if err == nil {
 				t.Fatal("wrongBranch = nil, want an error")
 			}
-			for _, name := range []string{`"develop"`, `"zvi/x"`} {
+			for _, name := range []string{strconv.Quote(tc.got), strconv.Quote(tc.asked)} {
 				if !strings.Contains(err.Error(), name) {
 					t.Errorf("wrongBranch = %q, want it to name %s", err, name)
 				}

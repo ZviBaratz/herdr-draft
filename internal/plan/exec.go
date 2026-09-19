@@ -1797,20 +1797,37 @@ func branchIsAbsent(ctx context.Context, dir, branch string) bool {
 //
 // The request is compared as herdr reads it, trimmed
 // (start_api_worktree_create, herdr:src/app/api/worktrees/deferred.rs at
-// v0.9.0). A request that names no branch gets one herdr invented, and a
-// reply that names none is a detached checkout, for which herdr omits the
-// field. Neither contradicts the request, and a create is not failed over a
-// field herdr did not send.
+// v0.9.0). The reply is compared as herdr spells it. herdr reads the
+// checkout's branch with workspace::git_branch
+// (herdr:src/workspace/git/discovery.rs at v0.9.0): from the HEAD file,
+// exactly, in the usual files-backed repository, and with `git symbolic-ref
+// --short HEAD` in a reftable one, whose HEAD file names no branch. --short
+// spells refs/heads/<b> the shortest way that is unambiguous, so a branch
+// beside a tag of the same name comes back as heads/<b>, and in the end as
+// refs/heads/<b>. Each of the three is the branch asked for.
+//
+// A request that names no branch gets one herdr invented, and a reply that
+// names none is a detached checkout, for which herdr omits the field.
+// Neither contradicts the request, and a create is not failed over a field
+// herdr did not send.
 //
 // It fails a step herdr has already made a checkout for, so Execute records
 // the space as it does for any failure after `worktree create` returned,
 // and the keep-or-clean gate is offered. The clean keeps the branch git
 // made, because CreatedBranch is only claimed when the reply names the
-// branch that was asked for.
+// branch that was asked for, as written. That claim stays exact on purpose:
+// a reply of heads/<b> only costs it, which a clean survives by keeping the
+// branch, while matching a trimmed request is what once claimed the user's
+// own branch (#190).
 func wrongBranch(asked, got string) error {
 	asked = strings.TrimSpace(asked)
-	if asked == "" || got == "" || got == asked {
+	if asked == "" || got == "" {
 		return nil
+	}
+	for _, spelling := range []string{asked, "heads/" + asked, "refs/heads/" + asked} {
+		if got == spelling {
+			return nil
+		}
 	}
 	return fmt.Errorf("herdr checked out %q, not %q", got, asked)
 }

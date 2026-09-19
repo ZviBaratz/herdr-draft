@@ -27,8 +27,11 @@ type CreatedTopology struct {
 	// differ when herdr trims the name, or invents one for a request that
 	// named none -- and when git checks out another branch than the one
 	// asked for, which a base naming a remote-only branch by its bare name
-	// makes it do (#198; plan's worktree step refuses that reply). Empty for
-	// every other creation, and for a detached checkout.
+	// makes it do (#198; plan's worktree step refuses that reply). In a
+	// reftable repository herdr reads it with `git symbolic-ref --short
+	// HEAD`, which may spell the branch asked for as heads/<b> (see plan's
+	// wrongBranch). Empty for every other creation, and for a detached
+	// checkout.
 	Branch string
 }
 
