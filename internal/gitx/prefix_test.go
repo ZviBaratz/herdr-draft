@@ -47,6 +47,13 @@ func TestValidateBranchPrefix_Rejects(t *testing.T) {
 		{"leading dash", "-zvi/", `starts with "-"`},
 		{"leading dash that is a real flag", "--focus/", `starts with "-"`},
 
+		// Ours, not git's: herdr trims the branch it is handed, so a prefix
+		// that begins with whitespace makes a branch other than the one
+		// asked for (#199). git itself takes a leading no-break space.
+		{"leading space", " zvi/", "begins with a space"},
+		{"leading no-break space", string(rune(0xa0)) + "zvi/", "begins with whitespace (U+00A0)"},
+		{"leading ideographic space", string(rune(0x3000)), "begins with whitespace (U+3000)"},
+
 		// Rule 4: control characters, space, ~ ^ :
 		{"NUL", "zvi\x00/", "control character"},
 		{"tab", "zvi\t/", "control character"},
