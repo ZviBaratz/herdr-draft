@@ -534,6 +534,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // from resolving.
 //
 // A zero-value Model (nil ring; see Model's own doc comment) is a no-op.
+// IsCancelClick reports whether msg is a left click on the Cancel button,
+// which cancels exactly as esc does. Exported for the app layer, which keeps
+// that way out open while it has the form frozen (#136) and so has to know a
+// cancel click without handing the click to the form.
+func IsCancelClick(msg tea.MouseClickMsg) bool {
+	return msg.Button == tea.MouseLeft && widgets.Zones.Get(zoneCancelButton).InBounds(msg)
+}
+
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if m.ring == nil {
 		return m, nil
@@ -544,7 +552,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if widgets.Zones.Get(zoneCreateButton).InBounds(msg) {
 		return m, submitCmd
 	}
-	if widgets.Zones.Get(zoneCancelButton).InBounds(msg) {
+	if IsCancelClick(msg) {
 		return m, cancelCmd
 	}
 

@@ -211,14 +211,14 @@ func TestSubmit_AnUnreadableLaneCommitStopsTheSubmit(t *testing.T) {
 // belongs to the directory it was asked about, and linkedCheckout uses it only
 // while the project row still holds that directory.
 //
-// A submit no longer starts before the check of the current value lands
-// (#195), so the window this used to be driven through -- typing away from
-// the lane and submitting at once -- now waits for the new answer. The guard
-// is still reachable after that wait: the form stays live while the submit
-// reads the lane's commit, and a project typed then is not checked before the
-// plan is built. That window is #195's own shape and is not closed here;
-// what is pinned is that the lane's repository does not receive the new
-// project's worktree.
+// Neither window a user had into that still exists. A submit waits for the
+// check of the current value before it validates (#195), and the form hears
+// nothing but a resize while the submit reads the lane's commit (#136). No
+// path is known that moves the project row between the two. The guard stays
+// because nothing shows there is none, and this test drives it the only way
+// left: retypeProject edits the field directly, past Update and so past the
+// freeze. What is pinned is that the lane's repository does not receive
+// another project's worktree.
 func TestSubmit_ALaneAnswerForAnotherDirectoryIsNotUsed(t *testing.T) {
 	git := laneGit()
 	m := laneModel(t, &submitFakeRunner{}, git, true)

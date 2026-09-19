@@ -608,6 +608,14 @@ type Model struct {
 	// still out.
 	submitHeld bool
 
+	// submitResolving is a submit that has passed validation and is out on a
+	// round trip before it builds the plan: the lane's commit (#171) or the
+	// `auto` account pick. The form is frozen for it (updateResolving, #136).
+	// Set where either round trip starts, and cleared where its answer lands
+	// (handleLinkedCommit, handlePickerCommit), which is on every path into
+	// beginSubmit that set it.
+	submitResolving bool
+
 	// linearIssues is the last Linear issue list this Model has seen --
 	// New's own Setup.LinearCache, refreshed by handleLinearResult
 	// alongside its m.issue.SetIssues call. Kept for the same reason as
@@ -1199,6 +1207,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.submitting {
 		return m.updateSubmitting(msg)
 	}
+	if m.submitResolving {
+		if next, cmd, frozen := m.updateResolving(msg); frozen {
+			return next, cmd
+		}
+	}
 	switch msg := msg.(type) {
 	case form.IssueChosenMsg:
 		return m.handleIssueChosen(msg)
@@ -1247,8 +1260,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // routeToForm forwards msg to form.Model's own Update, then runs
 // reactToChanges (which may itself schedule further async work) before
-// returning both Cmds batched together.
+// returning both Cmds batched together. While a submit is frozen for its
+// round trip, only what reachesAFrozenForm names gets that far.
 func (m Model) routeToForm(msg tea.Msg) (Model, tea.Cmd) {
+	if m.submitResolving && !reachesAFrozenForm(msg) {
+		return m, nil
+	}
 	next, cmd := m.form.Update(msg)
 	m.form = next.(form.Model)
 	cmds := append(m.reactToChanges(), cmd)
@@ -1370,9 +1387,56 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 	// of the account pick: it has no side effect, and a lane whose base
 	// cannot be resolved should not have spent a pick first.
 	if m.needsLinkedCommit() {
+		m.submitResolving = true
 		return m, m.linkedCommitCmd()
 	}
 	return m.continueSubmit()
+}
+
+// updateResolving is Update while a submit is out on a round trip after
+// validation (submitResolving, #136), and reports whether it took msg.
+//
+// The submit builds the plan the form held when validation passed, so
+// nothing the user does may change the form until it has. That takes two
+// rules, and this is the first. The form's own submit, clear and issue
+// messages already on their way from a key pressed just before are dropped
+// here: a second ⌃S would spend a second `auto` pick, a ⌃R⌃R would have the
+// pick submit a rebuilt form validation never saw, and an issue would seed
+// the title. The ways out stay open: esc and ⌃C, as the form's key grammar
+// always has them, and the Cancel button, which cancels exactly as esc does.
+//
+// The second rule is routeToForm's: while frozen, the form hears nothing but
+// a resize (reachesAFrozenForm). Every key, click and paste goes that way,
+// and so does anything else an edit could ride in on.
+// The round trip's own answer and the async results are the app's, and go
+// through as usual.
+func (m Model) updateResolving(msg tea.Msg) (Model, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if s := msg.String(); s == "esc" || s == "ctrl+c" {
+			return m, tea.Quit, true
+		}
+	case tea.MouseClickMsg:
+		if form.IsCancelClick(msg) {
+			return m, tea.Quit, true
+		}
+	case form.SubmitMsg, form.ClearRequestedMsg, form.IssueChosenMsg:
+		return m, nil, true
+	}
+	return m, nil, false
+}
+
+// reachesAFrozenForm names the whole of what the form hears while a submit
+// is out on its round trip (#136): a resize, which changes no value. It
+// names what may pass, not what may not, because an edit does not only
+// arrive as a key: ⌃V in a text field is bubbles' own paste, which reads the
+// clipboard in a Cmd and comes back as bubbles' unexported paste message --
+// so a ⌃V pressed just before ⌃S could land during the freeze and edit the
+// field. The cursor's blink stops with the rest, which leaves the cursor
+// steady while the form is frozen; focus starts it again.
+func reachesAFrozenForm(msg tea.Msg) bool {
+	_, resize := msg.(tea.WindowSizeMsg)
+	return resize
 }
 
 // dirCheckPending reports whether the project row has a check in flight:
@@ -1396,6 +1460,7 @@ func (m Model) continueSubmit() (Model, tea.Cmd) {
 	// out an account to a session that never exists.
 	if m.deps.Picker != nil && m.account != nil && m.account.IsAuto() && m.autoPick.Profile == "" {
 		m.account.SetPickerPreview(form.AccountPickerPreview{Pending: true})
+		m.submitResolving = true
 		return m, m.pickerCommitCmd()
 	}
 	return m.beginSubmit()
