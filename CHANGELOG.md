@@ -93,6 +93,19 @@ without the popup. It drives herdr exclusively through the public CLI
   the create reported success. The list also no longer offers `origin`,
   which is the remote's `HEAD` rather than a branch (#148), or a detached
   `HEAD`'s `(HEAD detached at …)` line.
+- **A session's branch no longer tracks the remote branch it was cut
+  from** (#221), from the popup or from `create --base origin/<name>`.
+  herdr cuts the worktree without `--no-track`, so under git's default
+  `branch.autoSetupMerge` the new branch took its base as its upstream: a
+  plain `git push` from the session was refused under
+  `push.default=simple`, and under `push.default=upstream` it pushed the
+  session's commits onto the shared branch. The upstream is now removed
+  once the worktree exists — only on a branch the create made, only when
+  it is the remote-tracking branch the base names, and not when
+  `branch.autoSetupMerge` is `always`. The branch tracks nothing until its
+  first `git push -u` (or `push.autoSetupRemote`). A removal that fails
+  does not fail the create: the worktree step reports it, with the command
+  that finishes it.
 - **Create is a real focus stop**, the ring's last, on the footer rather
   than in the row stack. `⌃S` submits from anywhere; `⌃R ⌃R` clears back to
   the resolved defaults.

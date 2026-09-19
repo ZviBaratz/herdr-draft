@@ -643,6 +643,13 @@ func TestExecute_ATabNameFailureDoesNotFailTheCreate(t *testing.T) {
 	if last.Err == nil || !strings.Contains(last.Err.Error(), "tab_not_found") {
 		t.Errorf("rename step's Err = %v, want herdr's own reason carried to the caller", last.Err)
 	}
+	// The kind is what lets a caller say "not named" for this row and
+	// something else for a worktree step's caveat (#221).
+	for _, p := range got {
+		if want := ops[p.Index].Kind; p.Kind != want {
+			t.Errorf("progress %+v carries Kind %v, want its op's, %v", p, p.Kind, want)
+		}
+	}
 }
 
 // TestExecute_ATabNameFailureDoesNotMaskALaterFailure: a rename that failed

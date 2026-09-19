@@ -44,10 +44,15 @@ func TestLocalRepoEnvVarsMatchGit(t *testing.T) {
 // answer, which is the discriminating shape: a decoy that agreed with the
 // target would let a leaking call pass.
 func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
+	// So the decoy's branch.autoSetupMerge is unset whatever the
+	// developer's own global config says.
+	isolateGitConfig(t)
 	ctx := context.Background()
 
 	repo := mkRepo(t)
 	gitRun(t, repo, "branch", "feature")
+	gitRun(t, repo, "branch", "--set-upstream-to=main", "feature")
+	gitRun(t, repo, "config", "branch.autoSetupMerge", "always")
 	linked := filepath.Join(t.TempDir(), "lane")
 	gitRun(t, repo, "worktree", "add", "-q", "-b", "lane", linked)
 
@@ -116,6 +121,25 @@ func TestProductionCallsIgnoreAnInheritedGitDir(t *testing.T) {
 	ok, reason, err := Disposable(ctx, repo, revParse(t, repo, "main"))
 	if err != nil || !ok {
 		t.Errorf("Disposable(%s) = %v, %q, %v: it judged the inherited repository", repo, ok, reason, err)
+	}
+
+	// What a new branch tracks (#221): read, compared against its base, and
+	// removed, all in this repository. The decoy has no feature branch and
+	// no autoSetupMerge, so each call that leaks answers visibly wrong.
+	if up, err := Upstream(ctx, repo, "feature"); err != nil || up != "refs/heads/main" {
+		t.Errorf("Upstream(feature) = %q, %v: it read the inherited repository's branch", up, err)
+	}
+	if name, err := FullRefName(ctx, repo, "feature"); err != nil || name != "refs/heads/feature" {
+		t.Errorf("FullRefName(feature) = %q, %v: it resolved in the inherited repository", name, err)
+	}
+	if v, err := AutoSetupMerge(ctx, repo); err != nil || v != "always" {
+		t.Errorf("AutoSetupMerge = %q, %v: it read the inherited repository's config", v, err)
+	}
+	if err := UnsetUpstream(ctx, repo, "feature"); err != nil {
+		t.Errorf("UnsetUpstream(feature): %v -- it looked for the branch in the inherited repository", err)
+	}
+	if up := strings.TrimSpace(gitOut(t, repo, "for-each-ref", "--format=%(upstream)", "refs/heads/feature")); up != "" {
+		t.Errorf("after UnsetUpstream, feature still tracks %q", up)
 	}
 
 	// The branch half of the same clean (#173): whether this run made the

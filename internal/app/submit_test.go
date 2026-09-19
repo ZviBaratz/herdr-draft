@@ -1814,3 +1814,22 @@ func TestSubmitStepDetail_NamesTheLauncherProgram(t *testing.T) {
 		}
 	}
 }
+
+// TestSubmitProgress_AWorktreeCaveatIsNotATabName: "not named" is what a
+// non-fatal tab rename left undone. A worktree step that succeeded but left
+// its branch tracking its base (#221) says that instead, in its own words.
+func TestSubmitProgress_AWorktreeCaveatIsNotATabName(t *testing.T) {
+	m := Model{submitSteps: []form.Step{{Label: "worktree", Detail: "zvi/x from origin/develop", State: plan.StepRunning}}}
+	m, _ = m.handleSubmitProgress(submitProgressMsg{progress: plan.Progress{
+		Index: 0, Total: 1, Label: "creating worktree", Kind: plan.OpWorktreeCreate,
+		State: plan.StepFailedNonFatal,
+		Err:   errors.New("plan: execute: creating worktree: branch zvi/x still tracks origin/develop, the branch it was cut from (boom); `git branch --unset-upstream zvi/x` finishes the job"),
+	}})
+	row := m.submitSteps[0]
+	if row.State != plan.StepFailedNonFatal {
+		t.Fatalf("worktree row = %+v, want StepFailedNonFatal", row)
+	}
+	if strings.HasPrefix(row.Detail, "not named") || !strings.HasPrefix(row.Detail, "branch zvi/x still tracks origin/develop") {
+		t.Errorf("worktree row detail = %q, want the caveat itself, not a tab's \"not named\"", row.Detail)
+	}
+}
