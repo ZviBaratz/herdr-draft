@@ -169,13 +169,13 @@ func TestParseStatusNullResetsAtDoesNotFailParse(t *testing.T) {
 	}
 }
 
-// TestParseStatusSchema2 is #238: clauth 0.15.2 writes schema 2, and every
-// field this package reads is still there with the same JSON type. Only
-// fields it does not read were added (pending_switch and wrap_off at the
-// top, rolling_token and auto_start_queue per profile). Read as degraded,
-// the account row lost every profile's plan, windows and auth state on a
-// machine running the current clauth. The fixture is a live schema-2 file
-// with its profiles renamed.
+// TestParseStatusSchema2 is #238: clauth 0.15.2 writes schema 2, whose one
+// change is the auth_status value `expiring` renamed to `expired` (see
+// knownSchemas for why nothing here minds). Read as degraded, the account
+// row lost every profile's plan, windows and auth state on a machine
+// running the current clauth. The fixture is a live schema-2 file, cut to
+// two profiles and renamed, with alpha's auth_status set to `expired` so
+// the one value the bump was about is in it.
 func TestParseStatusSchema2(t *testing.T) {
 	st, err := ParseStatus(readFixture(t, filepath.Join("testdata", "status_schema2.json")))
 	if err != nil {
@@ -205,6 +205,29 @@ func TestParseStatusSchema2(t *testing.T) {
 	}
 	if w := st.Profiles[0].Windows[0]; w.Label != "5h" || w.ResetsAt != nil {
 		t.Errorf("alpha's 5h window = %+v, want a null reset time kept as nil", w)
+	}
+	// Kept as clauth wrote it: the consumers show it verbatim.
+	if got := st.Profiles[0].AuthStatus; got != "expired" {
+		t.Errorf("alpha's auth_status = %q, want expired", got)
+	}
+}
+
+// TestParseStatusSchema3Degrades holds the other side of #238's line: the
+// schema after the ones this package has checked still degrades. clauth
+// bumps one step at a time, so 3 is the next number it will write, and the
+// first a range check (`> 0`, `< 4`) would wave through unread.
+func TestParseStatusSchema3Degrades(t *testing.T) {
+	raw := readFixture(t, filepath.Join("testdata", "status_schema2.json"))
+	mutated := bytes.Replace(raw, []byte(`"schema": 2,`), []byte(`"schema": 3,`), 1)
+	if bytes.Equal(mutated, raw) {
+		t.Fatal("fixture does not contain the expected schema field; test setup is broken")
+	}
+	st, err := ParseStatus(mutated)
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+	if !st.Degraded {
+		t.Error("Degraded = false, want true for schema 3: nobody has read clauth's reason for it")
 	}
 }
 
@@ -248,7 +271,7 @@ func TestParseStatusMissingSchemaDegrades(t *testing.T) {
 		t.Errorf("Schema = %d, want 0 (zero value for an absent field)", st.Schema)
 	}
 	if !st.Degraded {
-		t.Error("Degraded = false, want true when schema is entirely absent (0 != 1)")
+		t.Error("Degraded = false, want true when schema is entirely absent (0 is not a known schema)")
 	}
 	if len(st.Profiles) != 4 {
 		t.Fatalf("len(Profiles) = %d, want 4", len(st.Profiles))

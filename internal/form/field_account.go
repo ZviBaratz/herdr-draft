@@ -112,9 +112,9 @@ const (
 	accountInertPanelHint = "switch the agent to claude to pin an account"
 
 	// accountDegradedHint is shown on the always-reserved hint row when
-	// the most recent SetProfiles carried a Degraded clauth.Status --
-	// spec §11: "schema != 1 -> degrade to name-only entries, never
-	// crash."
+	// the most recent SetProfiles carried a Degraded clauth.Status -- spec
+	// §11: a schema clauth.ParseStatus does not know (1 and 2 since #238)
+	// -> "degrade to name-only entries, never crash."
 	accountDegradedHint = "clauth status degraded — showing names only"
 
 	accountWarnAuthFailed  = "auth failed"
@@ -639,8 +639,8 @@ func (f *AccountField) refreshItems() {
 
 // buildItems builds the account picker's full item list: the "active"
 // sentinel row first, then one row per profile (name-only when the status
-// was degraded -- spec §11: "schema != 1 -> degrade to name-only
-// entries"). A profile with an empty Name, or a Name already seen, is
+// was degraded -- spec §11: a schema clauth.ParseStatus does not know ->
+// "degrade to name-only entries"). A profile with an empty Name, or a Name already seen, is
 // skipped entirely -- clauth.Profile.Name is unvalidated external JSON
 // (internal/clauth/status.go's ParseStatus enforces neither
 // non-emptiness nor uniqueness), and widgets.PickerItem.ID is built
@@ -1036,10 +1036,11 @@ func (f *AccountField) Label() string { return accountRowLabel }
 // way -- they are the reason anyone looks at this row.
 //
 // Inert (the selected agent kind is not claude) states why, dim. A
-// degraded clauth status (schema != 1) collapses the row to the name
-// alone -- spec §11's "degrade to name-only entries" applies here exactly
-// as it does to the picker's own rows, since tier, auth status and
-// windows are all fields the degraded parse marks unreliable.
+// degraded clauth status (a schema clauth.ParseStatus does not know)
+// collapses the row to the name alone -- spec §11's "degrade to name-only
+// entries" applies here exactly as it does to the picker's own rows, since
+// tier, auth status and windows are all fields the degraded parse marks
+// unreliable.
 func (f *AccountField) Row(w int) string {
 	if w < 1 {
 		w = 1

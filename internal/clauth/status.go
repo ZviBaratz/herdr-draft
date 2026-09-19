@@ -66,16 +66,28 @@ type Status struct {
 	Degraded bool `json:"-"`
 }
 
-// knownSchemas are the status schemas whose every field this package reads
-// has been checked against a live payload: 1, and 2, which clauth 0.15.2
-// writes (#238). Schema 2 added fields and changed none this package
-// reads -- pending_switch and wrap_off at the top level, rolling_token and
-// auto_start_queue per profile -- so a full parse of it is as trustworthy
-// as one of schema 1. Reading it as degraded cost the account row every
-// profile's plan, usage windows and auth state.
+// knownSchemas are the status schemas this package has read clauth's reason
+// for, and found nothing it depends on in: 1, and 2, which clauth 0.15.2
+// writes (#238).
 //
-// A new schema goes here only after the same check: every field Status
-// models, present with the same JSON type, in a live payload.
+// Schema 2 renamed one auth_status value, `expiring` to `expired`
+// (https://github.com/uwuclxdy/clauth/blob/v0.15.2/src/daemon/status_json.rs#L33-L36).
+// Nothing here keys on either word. Every reader of Profile.AuthStatus
+// asks only whether it is "ok" (or empty) -- internal/form's
+// accountWarning and row, internal/app's accountAuthBlocked, and
+// internal/create's refuseSignedOutProfile -- and shows any other value as
+// it stands. So a full parse of schema 2 is as trustworthy as
+// one of schema 1, and reading it as degraded cost the account row every
+// profile's plan, usage windows and auth state for nothing.
+//
+// Checking field presence and JSON type would not have found that, and
+// cannot admit the next schema either: clauth bumps the schema "ONLY on a
+// breaking change; additive fields do not bump it"
+// (https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L143), so
+// a bump that keeps every field's type changed some field's meaning. A new
+// schema goes here only after reading clauth's stated reason for the bump,
+// at the release tag, and confirming nothing here depends on what changed
+// -- and the reason is cited here beside the others.
 var knownSchemas = map[int]bool{1: true, 2: true}
 
 // minimalStatus is the required subset ParseStatus falls back to when the
