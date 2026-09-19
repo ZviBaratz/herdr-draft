@@ -1674,6 +1674,28 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### an empty branch (#199's open question) — 2026-09-19
+
+herdr 0.9.0, git 2.53.0. `main` at `21813c3`, built from `git archive`, and
+`zvi/refuse-empty-branch` at `192dc50`, not merged. Route A0 and Route B,
+isolated as #199's run below: its own `XDG_*` dirs, `onboarding = false`,
+`[worktrees] directory` under the scratch tree, and a scratch plugin config
+with `branch_prefix = "zvi/"`, `default_worktree = true` and `[agents]
+favorites = ["nosuchkind"]`, so no claude was started. In the form, the
+title `empty check` derived `zvi/empty-check`, and `⇥ ⇥ ⇥ ↓` and twenty
+backspaces cleared it.
+
+| Case | `main` | the fix |
+|---|---|---|
+| `create --worktree --branch "" --on-failure clean` | **the defect.** herdr invented `worktree/silver-valley-bb3f`. The create failed at `starting agent`, and the clean removed the session but said `not its branch worktree/silver-valley-bb3f: nothing shows this run made it`. The branch was left behind. | **as expected.** `--branch is empty; leave it off to use the derived branch "zvi/fix-empty"`, **exit 2**, nothing created. |
+| the form: the worktree row focused in the opening state, before a title | no verdict | no verdict |
+| the form: the branch input cleared | no verdict | no verdict |
+| the form: the same, `⌃S` | **the defect.** `✓ worktree  from HEAD`, naming no branch. `c remove it` removed the session and left `worktree/silver-meadow-372f` behind. | **as expected.** Refused: `branch name required` under the branch input, which kept the cursor. Nothing created. |
+
+Teardown: both leftover branches deleted, the disposable session stopped and
+deleted, no process with a cwd under the scratch tree, the tree removed, and
+none of the pass's binaries left running.
+
 ### a branch git cannot hold (#199) — 2026-09-19
 
 herdr 0.9.0, git 2.53.0. `main` at `5cead7a`, built from `git archive`, and
