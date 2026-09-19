@@ -84,6 +84,15 @@ without the popup. It drives herdr exclusively through the public CLI
   and marks the one a colliding title would collide with.
 - The `worktree` panel is a three-part `off · on` / `branch` / `base`
   editor, so a form with a worktree is the same height as one without.
+- **The base list offers a branch only the remote has as `origin/<name>`**
+  (#198), the name git resolves as written; one you also have locally is
+  still one row, under its local name. It used to offer the bare name,
+  which is no ref in a fresh clone, where every branch but the default one
+  is remote-only. git 2.53 handed that name as a worktree's base checks out
+  a new local branch of the same name instead of the one asked for, and
+  the create reported success. The list also no longer offers `origin`,
+  which is the remote's `HEAD` rather than a branch (#148), or a detached
+  `HEAD`'s `(HEAD detached at …)` line.
 - **Create is a real focus stop**, the ring's last, on the footer rather
   than in the row stack. `⌃S` submits from anywhere; `⌃R ⌃R` clears back to
   the resolved defaults.
@@ -380,6 +389,13 @@ without the popup. It drives herdr exclusively through the public CLI
   pristine one read as a commit ahead and was kept (#193). A create whose
   reply named no checkout is kept too, rather than judged by whichever
   repository `create` was run from.
+- **A worktree on a branch it did not ask for fails the create** (#198).
+  herdr's reply names the branch git checked out, and one that names
+  another branch than the request fails the worktree step, naming both.
+  herdr has made the checkout by then, so the popup offers keep or remove
+  and `--on-failure` applies, and the remove keeps the branch git made. A
+  reply with no branch, which is how herdr describes a detached checkout,
+  is not held against the request.
 - **Screen detection is evidence-based.** Before sending a queued prompt
   the executor reads the pane and checks it against known blocking-dialog
   signatures rather than trusting an "idle" report, and turns herdr's

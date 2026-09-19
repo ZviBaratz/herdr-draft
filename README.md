@@ -176,7 +176,9 @@ there, not the workspace the popup was opened from.
 The first time the form lands on a given repository it also runs a
 background `git fetch --prune` there — once per repository per form open,
 with no user action — so the worktree row's base picker offers remote
-branches that arrived since you last fetched. **That contacts the
+branches that arrived since you last fetched. A branch only the remote has
+is offered as `origin/<name>`, the name git resolves; one you also have
+locally is listed once, under its local name. **That contacts the
 repository's default remote** — the current branch's upstream, otherwise
 `origin` — with whatever credentials git would normally use, including a
 `core.sshCommand` or `GIT_SSH` of your own. It runs with terminal prompts
@@ -519,6 +521,17 @@ whether the branch goes, and a remove that had to keep it after all says so
 before it closes. Neither closes the repository's own workspace, which
 herdr opens alongside a repository's first worktree; close that yourself if
 you do not want it.
+
+**A worktree on a branch it did not ask for is a failed create.** herdr's
+reply names the branch git actually checked out, and herdr-draft holds it
+to the one requested. git 2.53, handed a base that names a branch only a
+remote has by its bare name, makes a local branch named after the base
+instead, and herdr reports success. The base list offers such a branch as
+`origin/<name>` and `--base` refuses a name that resolves to nothing, so
+this check is for any way past both. It fails the worktree step after
+herdr has made the checkout, so `--on-failure` and the popup's keep or
+remove apply as they do to any later failure, and the remove keeps the
+branch git made: nothing shows this run asked for it.
 
 **A worktree session runs in the worktree's own space**, which herdr's
 sidebar groups under the repository's. `--placement` therefore applies only
@@ -1054,8 +1067,9 @@ before it is used, the same way by the form and by `create`:
   says which base was dropped and where it came from: `ignoring base
   "old-feature" from projects.json: no such commit here; using HEAD`.
   `create` prints the same on stderr. A branch deleted since is the usual
-  case. A branch you have only on a remote is another: the list shows it
-  under its bare name, but git does not resolve that name to it.
+  case. A branch you have only on a remote, remembered or configured by its
+  bare name, is another: git resolves it only as `origin/<name>`, which is
+  how the base list offers it.
 
 `create --json` prints a `provenance` map naming the tier each value came
 from. In the form, only the repository tier is attributed — `from

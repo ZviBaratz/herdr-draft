@@ -93,6 +93,11 @@ type fakeRunner struct {
 	// the checkout it made, which replaces the invented one.
 	worktreeAdd    func(herdrc.WorktreeCreateReq) string
 	worktreeRemove func(workspaceID string)
+
+	// replyBranch, when set, is the branch the worktree create's reply
+	// names whatever was asked for: the reply git's guess produced (#198),
+	// which internal/plan refuses.
+	replyBranch string
 }
 
 var _ herdrc.Runner = (*fakeRunner)(nil)
@@ -199,6 +204,9 @@ func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreate
 	topo.Branch = strings.TrimSpace(req.Branch)
 	if topo.Branch == "" {
 		topo.Branch = "worktree/brave-river-0000"
+	}
+	if r.replyBranch != "" {
+		topo.Branch = r.replyBranch
 	}
 	if r.worktreeAdd != nil {
 		topo.CheckoutPath = r.worktreeAdd(req)

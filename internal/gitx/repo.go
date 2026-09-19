@@ -376,28 +376,68 @@ func checkoutDirs(ctx context.Context, dir string) (gitDirs, error) {
 }
 
 // ListBranches returns at most limit branch names in repoDir, newest by
-// committer date first. Local and remote-tracking names for the same
-// branch are deduped (the "origin/" prefix is stripped), and
-// "origin/HEAD" is dropped. A limit of 0 (or negative) yields no results.
+// committer date first, each spelled so that git resolves it as written:
+// the base picker hands the name to `git worktree add` untranslated, on the
+// popup's path and on `create --base`'s alike. A limit of 0 (or negative)
+// yields no results.
+//
+// A branch with a local copy is one row, under its local name, however
+// many commits origin's copy is ahead or behind. A branch only origin has
+// is offered as origin/<name> (#198). It used to be offered by its bare
+// name, with origin/ stripped, and that name is no ref in the clone: git
+// 2.53 given it as a worktree's start point checks out a new local branch
+// named after it, tracking origin's, and the branch the session asked for
+// is never made. Every name is git's own %(refname:short), which is the
+// shortest spelling that is still unambiguous (`heads/develop` beside a tag
+// called develop), so none of them needs a special case downstream.
+//
+// A remote's HEAD is dropped (#148). It is a symref naming the remote's
+// default branch, which is listed on its own, and git shortens
+// refs/remotes/origin/HEAD to `origin` -- so the old check, of the short
+// name against "HEAD", never matched. It is recognised by being a symref,
+// not by a name ending in HEAD, because release/HEAD is a branch name git
+// allows. Only refs are read (for-each-ref, not `git branch -a`), so a
+// detached HEAD's "(HEAD detached at <sha>)" row, which is not one, never
+// reaches the list either.
 func ListBranches(ctx context.Context, repoDir string, limit int) ([]string, error) {
-	out, err := runGit(ctx, repoDir, "branch", "-a", "--sort=-committerdate", "--format=%(refname:short)")
+	out, err := runGit(ctx, repoDir, "for-each-ref", "--sort=-committerdate",
+		"--format=%(refname) %(refname:short) %(symref)", "refs/heads", "refs/remotes")
 	if err != nil {
 		return nil, fmt.Errorf("list branches: %w", err)
 	}
 
+	type ref struct {
+		full, short string
+		symref      bool
+	}
+	var refs []ref
+	local := make(map[string]string) // branch name -> its short name
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		r := ref{full: f[0], short: f[1], symref: len(f) > 2}
+		if name, ok := strings.CutPrefix(r.full, "refs/heads/"); ok {
+			local[name] = r.short
+		}
+		refs = append(refs, r)
+	}
+
 	var result []string
 	seen := make(map[string]bool)
-	for _, line := range strings.Split(out, "\n") {
+	for _, r := range refs {
 		if len(result) >= limit {
 			break
 		}
-		name := strings.TrimSpace(line)
-		if name == "" {
+		if r.symref && strings.HasPrefix(r.full, "refs/remotes/") {
 			continue
 		}
-		name = strings.TrimPrefix(name, "origin/")
-		if name == "HEAD" {
-			continue
+		name := r.short
+		if branch, ok := strings.CutPrefix(r.full, "refs/remotes/origin/"); ok {
+			if short, ok := local[branch]; ok {
+				name = short
+			}
 		}
 		if seen[name] {
 			continue

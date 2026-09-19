@@ -890,6 +890,48 @@ func TestAssembledSubmit_BlockedStartFrame(t *testing.T) {
 		m, framePopupW, framePopupH)
 }
 
+// TestAssembledSubmit_WrongBranchFrame is the screen #198's check adds: herdr
+// made the worktree and reported success, and its reply names a branch
+// other than the one the form asked for -- git 2.53's answer to a base that
+// names a branch only a remote has by its bare name. The base list no
+// longer offers such a name, so the popup reaches this only some other way,
+// and the frame is what it shows when it does: the step that failed, both
+// branches, and the keep-or-remove gate over a checkout that exists.
+//
+// The gate's decision is the one plan.CleanCheck reaches for this failure
+// in a real repository (TestCleanKeepsABranchTheCreateDidNotAskFor): allowed,
+// keeping the branch git made. Computing it here would ask git about
+// /repo, which is no repository on the machine running the test.
+func TestAssembledSubmit_WrongBranchFrame(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{
+		WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1",
+		CheckoutPath: "/worktrees/repo/zvi-fix-login-redirect-loop", Branch: "develop",
+	}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
+	m.title.SetTitle("Fix login redirect loop", false)
+	m.worktree.SetGitTarget(true)
+	m.worktree.SetOn(true)
+	m.worktree.SetBranch("zvi/fix-login-redirect-loop", false)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	if want := stepRowIndex(t, m.submitSteps, "worktree"); done.result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the worktree op): %+v", done.result.FailedIndex, want, done.result)
+	}
+
+	m, _ = m.handleSubmitDone(done)
+	m, _ = m.handleCleanCheckResult(cleanCheckMsg{
+		result:   done.result,
+		decision: plan.CleanDecision{Allowed: true, Branch: plan.BranchKept},
+	})
+
+	assertAppSubmitFrame(t, "submit-wrong-branch-80x24", m, 80, 24)
+	assertAppSubmitFrame(t, fmt.Sprintf("submit-wrong-branch-%dx%d", framePopupW, framePopupH),
+		m, framePopupW, framePopupH)
+}
+
 // TestAssembledSubmit_WaitingOnTheDialogFrame is the screen #115 adds, and
 // it is the one screen in the pipeline that a user can sit and look at for
 // minutes: the launch found Claude Code on its first-run trust prompt, so
