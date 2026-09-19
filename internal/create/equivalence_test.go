@@ -1214,6 +1214,63 @@ func TestFormAndCommandRefuseTheSameBranches(t *testing.T) {
 	}
 }
 
+// TestFormAndCommandRefuseAnEmptyBranch is TestFormAndCommandRefuseTheSameBranches
+// for the one name no issue can supply: an empty one, which BranchFor never
+// derives. The command is given --branch "". The form is driven by keystroke
+// -- ⇥ ⇥ ⇥ from the title to the worktree row, ↓ to the branch input, and
+// one backspace per character -- because clearing the input is the only way
+// a person reaches an empty branch. That couples to the key grammar, for
+// TestFormAndCommandMarkReadyTheSameWay's reason: the claim under test is
+// that the control a person would use is refused.
+func TestFormAndCommandRefuseAnEmptyBranch(t *testing.T) {
+	const projectDir = "/projects/thing"
+	const title = "fix login redirect loop"
+	contextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + projectDir +
+		`","tab_id":"tT0","focused_pane_id":"pP0"}`
+	repoConfig := func(string) config.RepoConfig { return config.RepoConfig{} }
+	configDir, stateDir := t.TempDir(), t.TempDir()
+	writeConfig(t, configDir, "branch_prefix = \"zvi/\"\ndefault_worktree = true\n[agents]\nfavorites = [\"claude\"]\n")
+
+	_, commandErr := commandResolve(t, commandCase{
+		configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+		projectDir: projectDir, repoConfig: repoConfig,
+		args: []string{"--title", title, "--branch", ""},
+	})
+	if commandErr == nil || !strings.Contains(commandErr.Error(), "--branch is empty") {
+		t.Fatalf("the command's error is %v, want it to refuse the empty --branch", commandErr)
+	}
+
+	m := formModel(t, formCase{
+		configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+		repoConfig: repoConfig, title: title,
+	})
+	derived := m.PlanInput().Branch
+	if derived == "" || !m.PlanInput().UseWorktree {
+		t.Fatalf("test setup: want a worktree and a derived branch, got worktree %v, branch %q", m.PlanInput().UseWorktree, derived)
+	}
+	for range 3 {
+		m = send(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	var cmd tea.Cmd
+	for range derived {
+		var next tea.Model
+		next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+		m = next.(app.Model)
+	}
+	if got := m.PlanInput().Branch; got != "" {
+		t.Fatalf("test setup: the branch input holds %q after the backspaces, want it empty", got)
+	}
+	// The last edit's checks: a submit waits for the check of the form as
+	// it now stands.
+	m = pump(t, m, cmd)
+
+	next, _ := m.Update(form.SubmitMsg{})
+	if view := ansi.Strip(next.(app.Model).View().Content); !strings.Contains(view, "branch name required") {
+		t.Fatalf("the form did not refuse the empty branch; its view after submit is:\n%s", view)
+	}
+}
+
 // TestFormAndCommandResolveAutoTheSameWay extends the promise above to the
 // account picker. A plan.Input field only ONE path can fill is exactly the
 // drift TestFormAndCommandProduceTheSamePlan exists to catch, and `auto` adds

@@ -2637,19 +2637,36 @@ func TestCreateIgnoresAnInvalidBranchWithoutAWorktree(t *testing.T) {
 	}
 }
 
-// NOT DECIDED (#199): an empty --branch is not refused. It is left out of
-// herdr's argv, and herdr names the branch itself
-// (worktree/<adjective>-<noun>-NNNN). Whether it should be refused instead
-// was left to the owner; this pins today's behaviour so a change to it is a
-// decision rather than a side effect.
-func TestCreateEmptyBranchStillLetsHerdrNameIt(t *testing.T) {
+// An empty --branch is refused (#199's open question, decided 2026-09-19).
+// Left out of herdr's argv it had herdr invent a
+// worktree/<adjective>-<noun>-NNNN branch: one that ignores branch_prefix,
+// that the duplicate check never saw, and that a clean could never show this
+// run made -- so a failed create left it behind. And an empty flag is far
+// more often an unset variable than a request. The refusal names the branch
+// that leaving the flag off would use.
+func TestCreateRefusesAnEmptyBranch(t *testing.T) {
 	h := newHarness(t)
 
-	if code := h.run("--title", "fix login", "--branch", "", "--worktree"); code != ExitOK {
-		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	code := h.run("--title", "fix login", "--branch", "", "--worktree")
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
 	}
-	if want := "WorktreeCreate(/projects/thing,,"; !strings.Contains(strings.Join(h.runner.calls, " "), want) {
-		t.Errorf("calls = %v, want a worktree create naming no branch (%s...)", h.runner.calls, want)
+	stderr := h.stderr.String()
+	if !strings.Contains(stderr, "--branch is empty") || !strings.Contains(stderr, `fix-login"`) {
+		t.Errorf("stderr should say --branch is empty and name the branch leaving it off would use:\n%s", stderr)
+	}
+	if h.createdAnything() {
+		t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+	}
+}
+
+// Without a worktree an empty --branch names nothing that would be made, so
+// it is not refused -- the rule every other branch refusal follows.
+func TestCreateIgnoresAnEmptyBranchWithoutAWorktree(t *testing.T) {
+	h := newHarness(t)
+
+	if code := h.run("--title", "fix login", "--branch", "", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
 	}
 }
 

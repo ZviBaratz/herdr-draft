@@ -657,6 +657,11 @@ func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn bool) t
 // not quiet: every prefixed branch passes through "zvi/" as it is typed,
 // and "zvi/" is not a branch name. The submit does not wait on it for its
 // correctness -- checkSubmitValidation asks BranchRefusal itself.
+//
+// An empty branch is not judged here at all. It is refused at submit, the
+// way an empty title is: the form opens with none, because nobody has typed
+// the title it is derived from, and a panel calling that state wrong would
+// be a refusal of a form still being filled in.
 func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 	git := m.deps.Git
 	workspaces := m.workspaces
@@ -665,7 +670,10 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 	return func() tea.Msg {
 		labelTaken := workspaceLabelTaken(workspaces, req.key)
 
-		invalid := BranchRefusal(worktreeOn, branch)
+		var invalid error
+		if branch != "" {
+			invalid = BranchRefusal(worktreeOn, branch)
+		}
 		branchExists := false
 		if invalid == nil && worktreeOn && branch != "" && dir != "" {
 			exists, err := git.BranchExists(context.Background(), pathx.ExpandTilde(dir), branch)
@@ -771,10 +779,15 @@ func (m Model) titleNote(verdict string) string {
 }
 
 // branchVerdictText is the worktree panel's line for a refused branch, in v2
-// spec §6's `<state>  <reason>` shape, or "" for none.
+// spec §6's `<state>  <reason>` shape, or "" for none. An empty branch is
+// not a wrong name but a missing one, and says so as the title row does:
+// "title required", "branch name required".
 func branchVerdictText(invalid error) string {
-	if invalid == nil {
+	switch {
+	case invalid == nil:
 		return ""
+	case errors.Is(invalid, gitx.ErrBranchNameEmpty):
+		return "branch name required"
 	}
 	return "invalid branch name  " + invalid.Error()
 }
