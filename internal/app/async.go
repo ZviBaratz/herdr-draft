@@ -972,6 +972,9 @@ func (m Model) linkedCommitCmd() tea.Cmd {
 // anyway. It stops on the worktree row, where another base is one keystroke
 // away.
 func (m Model) handleLinkedCommit(msg linkedCommitMsg) (Model, tea.Cmd) {
+	// The round trip is over; continueSubmit freezes the form again if the
+	// `auto` pick follows (#136).
+	m.submitResolving = false
 	if msg.err != nil {
 		m.worktree.SetBaseStatus("couldn't resolve " + m.linkedBaseRef() + ": pick a base")
 		return m, m.form.FocusByID("worktree")
@@ -1008,6 +1011,7 @@ func (m Model) pickerCommitCmd() tea.Cmd {
 // design was amended to forbid. Focus moves to the account row so the manual
 // choices are one keystroke away.
 func (m Model) handlePickerCommit(msg pickerCommitMsg) (Model, tea.Cmd) {
+	m.submitResolving = false // the round trip is over (#136)
 	if m.account == nil {
 		return m, nil
 	}

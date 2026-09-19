@@ -608,6 +608,13 @@ type Model struct {
 	// still out.
 	submitHeld bool
 
+	// submitResolving is a submit that has passed validation and is out on a
+	// round trip before it builds the plan: the lane's commit (#171) or the
+	// `auto` account pick. The form is frozen for it (updateResolving, #136).
+	// Set where either round trip starts, and cleared where its answer lands
+	// (handleLinkedCommit, handlePickerCommit) and in beginSubmit.
+	submitResolving bool
+
 	// linearIssues is the last Linear issue list this Model has seen --
 	// New's own Setup.LinearCache, refreshed by handleLinearResult
 	// alongside its m.issue.SetIssues call. Kept for the same reason as
@@ -1199,6 +1206,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.submitting {
 		return m.updateSubmitting(msg)
 	}
+	if m.submitResolving {
+		if next, cmd, frozen := m.updateResolving(msg); frozen {
+			return next, cmd
+		}
+	}
 	switch msg := msg.(type) {
 	case form.IssueChosenMsg:
 		return m.handleIssueChosen(msg)
@@ -1370,9 +1382,39 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 	// of the account pick: it has no side effect, and a lane whose base
 	// cannot be resolved should not have spent a pick first.
 	if m.needsLinkedCommit() {
+		m.submitResolving = true
 		return m, m.linkedCommitCmd()
 	}
 	return m.continueSubmit()
+}
+
+// updateResolving is Update while a submit is out on a round trip after
+// validation (submitResolving, #136), and reports whether it took msg.
+//
+// The submit builds the plan the form held when validation passed, so
+// nothing the user does may change the form until it has. Every key and
+// mouse event is dropped, as are the form's own submit, clear and issue
+// messages already on their way from a key pressed just before: a second
+// ⌃S would spend a second `auto` pick, a ⌃R⌃R would have the pick submit a
+// rebuilt form validation never saw, and an edit would reach the plan
+// unchecked -- a project typed then was built from the previous project's
+// answers, #195's shape. esc and ⌃C still cancel, as the form's key grammar
+// always has them do.
+//
+// Everything else -- the round trip's own answer, the async results, a
+// resize -- is not the user's, and goes through as usual.
+func (m Model) updateResolving(msg tea.Msg) (Model, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if s := msg.String(); s == "esc" || s == "ctrl+c" {
+			return m, tea.Quit, true
+		}
+		return m, nil, true
+	case tea.MouseMsg, tea.PasteMsg,
+		form.SubmitMsg, form.ClearRequestedMsg, form.IssueChosenMsg:
+		return m, nil, true
+	}
+	return m, nil, false
 }
 
 // dirCheckPending reports whether the project row has a check in flight:
@@ -1396,6 +1438,7 @@ func (m Model) continueSubmit() (Model, tea.Cmd) {
 	// out an account to a session that never exists.
 	if m.deps.Picker != nil && m.account != nil && m.account.IsAuto() && m.autoPick.Profile == "" {
 		m.account.SetPickerPreview(form.AccountPickerPreview{Pending: true})
+		m.submitResolving = true
 		return m, m.pickerCommitCmd()
 	}
 	return m.beginSubmit()
@@ -1407,6 +1450,7 @@ func (m Model) continueSubmit() (Model, tea.Cmd) {
 // tea.Cmd first, and re-running the validation list on the way back would
 // re-report verdicts the user has already seen.
 func (m Model) beginSubmit() (Model, tea.Cmd) {
+	m.submitResolving = false
 	in := m.buildPlanInput()
 	ops, err := plan.Build(in)
 	if err != nil {

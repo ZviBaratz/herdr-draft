@@ -99,6 +99,11 @@ without the popup. It drives herdr exclusively through the public CLI
   duplicate check the same way (#137), so a duplicate title typed and
   submitted at once no longer gets past the refusal, and a duplicate fixed
   at once is no longer refused with no warning on screen.
+- **A submit that has passed validation builds what validation saw**
+  (#136). When it must first pick an `auto` account or read a lane's commit,
+  the form is frozen until it has: a second `⌃S` used to spend a second
+  pick, a `⌃R ⌃R` had the pick submit the rebuilt form, and an edit reached
+  the session unchecked. `esc` still cancels.
 - Mouse: click a row to focus it, click a panel line to select it, wheel to
   scroll the panel.
 - The popup is a fixed **104×32 cells**, a manifest value rather than a
