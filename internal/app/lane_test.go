@@ -208,21 +208,35 @@ func TestSubmit_AnUnreadableLaneCommitStopsTheSubmit(t *testing.T) {
 }
 
 // TestSubmit_ALaneAnswerForAnotherDirectoryIsNotUsed: the dir check's answer
-// belongs to the directory it was asked about. Typed away from the lane and
-// submitted before the next check lands, the form must not send the new
-// project's worktree to the lane's repository.
+// belongs to the directory it was asked about, and linkedCheckout uses it only
+// while the project row still holds that directory.
+//
+// A submit no longer starts before the check of the current value lands
+// (#195), so the window this used to be driven through -- typing away from
+// the lane and submitting at once -- now waits for the new answer. The guard
+// is still reachable after that wait: the form stays live while the submit
+// reads the lane's commit, and a project typed then is not checked before the
+// plan is built. That window is #195's own shape and is not closed here;
+// what is pinned is that the lane's repository does not receive the new
+// project's worktree.
 func TestSubmit_ALaneAnswerForAnotherDirectoryIsNotUsed(t *testing.T) {
 	git := laneGit()
 	m := laneModel(t, &submitFakeRunner{}, git, true)
-	typeDir(&m, "x")
-	if m.dir.Value() == laneDir {
-		t.Fatal("test setup: the project did not change")
+
+	next, readCommit := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting || readCommit == nil {
+		t.Fatal("test setup: the submit did not stop to read the lane's commit")
+	}
+	retypeProject(&m, "/elsewhere")
+	if got := m.dir.Value(); got != "/elsewhere" {
+		t.Fatalf("test setup: project = %q, want /elsewhere", got)
 	}
 
-	next, _ := m.Update(form.SubmitMsg{})
+	next, _ = m.Update(readCommit())
 	m = next.(Model)
 	if !m.submitting {
-		t.Fatal("the submit waited for a lane commit it has no business reading")
+		t.Fatal("the submit did not go on once the lane's commit was read")
 	}
 	if m.submitInput.Linked != (plan.LinkedCheckout{}) {
 		t.Errorf("linked = %+v, want nothing: that answer was about %s", m.submitInput.Linked, laneDir)

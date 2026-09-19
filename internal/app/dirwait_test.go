@@ -1,0 +1,314 @@
+package app
+
+import (
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/ZviBaratz/herdr-draft/internal/config"
+	"github.com/ZviBaratz/herdr-draft/internal/form"
+	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
+)
+
+// These pin #195: a submit that arrives while the project row's check is in
+// flight waits for the check of the value the row now holds, then runs
+// validation on its answers and goes on -- with no second ⌃S. Before, it was
+// built from the previous project's answers: whether the directory exists,
+// whether it is a repository, its .herdr-draft.toml, its memory, and whether
+// it is a lane.
+
+// settledRepoForm is #195's starting point: a form settled on a repository,
+// with a title and the worktree on.
+func settledRepoForm(t *testing.T, git *fakeGit) Model {
+	t.Helper()
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
+	m := settle(t, newSubmitTestModel(t, runner, testSetup{Git: git, Ctx: herdrc.Context{WorkspaceCwd: "/repo"}}))
+	m.title.SetTitle("Fix pagination", false)
+	m.worktree.SetOn(true)
+	m.worktree.SetBranch("zvi/fix-pagination", false)
+	if !m.worktree.Enabled() || !m.worktree.On() {
+		t.Fatal("test setup: the worktree is not on for the repository")
+	}
+	return m
+}
+
+// retypeProject types path into the project row and runs the reaction a
+// keystroke through Update runs after it, returning the checks it scheduled.
+// Typed a key at a time through Update, every keystroke would also batch the
+// input's blink timer, which really sleeps.
+func retypeProject(m *Model, path string) []tea.Cmd {
+	m.form.FocusByID("dir")
+	typeDir(m, path)
+	return m.reactToChanges()
+}
+
+// fireDirDebounce runs the scheduled checks and delivers the project row's
+// debounce, returning the directory check it starts -- in flight, not yet
+// landed.
+func fireDirDebounce(t *testing.T, m *Model, cmds []tea.Cmd) tea.Cmd {
+	t.Helper()
+	for _, c := range cmds {
+		for _, msg := range flatten(c) {
+			if d, ok := msg.(dirDebounceMsg); ok {
+				next, check := m.Update(d)
+				*m = next.(Model)
+				if check == nil {
+					t.Fatal("the project row's debounce started no check")
+				}
+				return check
+			}
+		}
+	}
+	t.Fatal("no project check was scheduled")
+	return nil
+}
+
+// landDirCheck delivers the directory check's answer, returning what the
+// model did with it.
+func landDirCheck(t *testing.T, m Model, check tea.Cmd) (Model, tea.Cmd) {
+	t.Helper()
+	res, ok := check().(dirResultMsg)
+	if !ok {
+		t.Fatal("the project check did not answer with a dirResultMsg")
+	}
+	next, out := m.Update(res)
+	return next.(Model), out
+}
+
+// submitChain is the submit pipeline among what a landing check returned. A
+// check whose answer moves the worktree toggle or the branch re-runs the
+// title check too (handleDirResult), and batches it beside the submit.
+func submitChain(t *testing.T, out tea.Cmd) tea.Cmd {
+	t.Helper()
+	for _, msg := range flatten(out) {
+		if p, ok := msg.(submitProgressMsg); ok {
+			return func() tea.Msg { return p }
+		}
+	}
+	t.Fatal("the landing check returned no submit pipeline")
+	return nil
+}
+
+// TestSubmit_WaitsForTheProjectCheckThenRefusesAMissingDirectory is #195's
+// own scenario: the project row retyped as a path that is not there, and
+// submitted before its check lands. The submit waits for the check, and the
+// check's answer refuses it on the project row -- rather than a worktree
+// being sent to a repository the form has left.
+func TestSubmit_WaitsForTheProjectCheckThenRefusesAMissingDirectory(t *testing.T) {
+	git := newFakeGit()
+	m := settledRepoForm(t, git)
+
+	git.dirExists, git.isGitRepo = false, false
+	cmds := retypeProject(&m, "/nowhere")
+	if got := m.dir.Value(); got != "/nowhere" {
+		t.Fatalf("test setup: project = %q, want /nowhere", got)
+	}
+	// ⌃S submits from any row. Sent from the title, where the refusal
+	// visibly moves focus away from.
+	m.form.FocusByID("title")
+
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("the submit started before /nowhere was checked: project %q, git repo %v, worktree %v",
+			m.submitInput.ProjectDir, m.submitInput.IsGitRepo, m.submitInput.UseWorktree)
+	}
+
+	m, _ = landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
+	if m.submitting {
+		t.Fatal("the submit went ahead for a directory that is not there")
+	}
+	if got := m.form.FocusedID(); got != "dir" {
+		t.Errorf("focus ended on %q, want the project row, which says why", got)
+	}
+}
+
+// TestSubmit_WaitsForTheProjectCheckThenGoesOnWithItsAnswers: when the new
+// project is fine, the held submit goes on by itself once its check lands,
+// built from the new project's answers -- here a plain directory, so no
+// worktree.
+func TestSubmit_WaitsForTheProjectCheckThenGoesOnWithItsAnswers(t *testing.T) {
+	git := newFakeGit()
+	m := settledRepoForm(t, git)
+
+	git.isGitRepo = false
+	cmds := retypeProject(&m, "/scratch")
+
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("the submit started before /scratch was checked: git repo %v, worktree %v",
+			m.submitInput.IsGitRepo, m.submitInput.UseWorktree)
+	}
+
+	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
+	if !m.submitting {
+		t.Fatal("the check landed and the held submit did not go on")
+	}
+	in := m.submitInput
+	if in.ProjectDir != "/scratch" || in.IsGitRepo || in.UseWorktree {
+		t.Errorf("submitted project %q, git repo %v, worktree %v; want /scratch, a plain directory, no worktree",
+			in.ProjectDir, in.IsGitRepo, in.UseWorktree)
+	}
+	drainSubmitProgress(t, m, submitChain(t, out))
+}
+
+// TestSubmit_OnlyTheCheckOfTheCurrentValueReleasesIt: the user may keep
+// typing while a submit is held. A check that was already running for the
+// previous value and lands afterwards is not the answer the submit is
+// waiting for; the one for the value the row now holds is.
+func TestSubmit_OnlyTheCheckOfTheCurrentValueReleasesIt(t *testing.T) {
+	git := newFakeGit()
+	m := settledRepoForm(t, git)
+
+	git.isGitRepo = false
+	first := fireDirDebounce(t, &m, retypeProject(&m, "/scratch"))
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatal("the submit started before /scratch was checked")
+	}
+
+	// /scratch's check is running when the user types on.
+	cmds := retypeProject(&m, "-two")
+	if got := m.dir.Value(); got != "/scratch-two" {
+		t.Fatalf("test setup: project = %q, want /scratch-two", got)
+	}
+	m, _ = landDirCheck(t, m, first)
+	if m.submitting {
+		t.Fatal("the check for /scratch released a submit of /scratch-two")
+	}
+
+	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
+	if !m.submitting {
+		t.Fatal("the check for the current value landed and the held submit did not go on")
+	}
+	if got := m.submitInput.ProjectDir; got != "/scratch-two" {
+		t.Errorf("submitted project %q, want /scratch-two", got)
+	}
+	drainSubmitProgress(t, m, submitChain(t, out))
+}
+
+// TestSubmit_AFreshFormWaitsForItsOpeningCheck: the form opens with its
+// project's check scheduled (New's initCmds) and nothing landed yet, which
+// is also what gives the worktree row its repository and the project its
+// defaults. A submit that quick is held like any other.
+func TestSubmit_AFreshFormWaitsForItsOpeningCheck(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m.title.SetTitle("Fix pagination", false)
+
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatal("the submit started before the opening project was checked")
+	}
+
+	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, m.initCmds))
+	if !m.submitting {
+		t.Fatal("the opening check landed and the held submit did not go on")
+	}
+	if in := m.submitInput; in.ProjectDir != "/repo" || !in.IsGitRepo {
+		t.Errorf("submitted project %q, git repo %v; want /repo, the repository its check found", in.ProjectDir, in.IsGitRepo)
+	}
+	drainSubmitProgress(t, m, submitChain(t, out))
+}
+
+// TestSubmit_AStaleAnswerDoesNotEndTheWait: a check that was running for a
+// value the user has typed past lands and is dropped, and a ⌃S sent after it
+// is still held -- the stale answer did not count as the current one landing.
+func TestSubmit_AStaleAnswerDoesNotEndTheWait(t *testing.T) {
+	git := newFakeGit()
+	m := settledRepoForm(t, git)
+
+	git.isGitRepo = false
+	first := fireDirDebounce(t, &m, retypeProject(&m, "/scratch"))
+	retypeProject(&m, "-two")
+	m, _ = landDirCheck(t, m, first)
+
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("a submit of %q went ahead after only /scratch's check landed: git repo %v, worktree %v",
+			m.submitInput.ProjectDir, m.submitInput.IsGitRepo, m.submitInput.UseWorktree)
+	}
+}
+
+// TestSubmit_ACheckFromBeforeAClearDoesNotReleaseIt: ⌃R⌃R rebuilds the form,
+// and a check the discarded form had in flight still lands afterwards. Its
+// answer is about a path the fresh form never asked about, so it must not
+// pass for the fresh form's own check -- which it did while the rebuild
+// started the request counter again from zero, and the two versions could
+// meet.
+func TestSubmit_ACheckFromBeforeAClearDoesNotReleaseIt(t *testing.T) {
+	git := newFakeGit()
+	m := settledRepoForm(t, git)
+	m.width, m.height = 104, 32
+
+	// The check in flight when the form is cleared: /good, a repository.
+	before := fireDirDebounce(t, &m, retypeProject(&m, "/good"))().(dirResultMsg)
+
+	next, _ := m.Update(form.ClearRequestedMsg{})
+	m = settle(t, next.(Model))
+	m.title.SetTitle("Fix pagination", false)
+	git.dirExists, git.isGitRepo = false, false
+	retypeProject(&m, "/nowhere")
+
+	next, _ = m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatal("test setup: the submit was not held")
+	}
+	next, _ = m.Update(before)
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("the check for %s, from before the clear, released a submit of %q: git repo %v",
+			before.req.key, m.submitInput.ProjectDir, m.submitInput.IsGitRepo)
+	}
+}
+
+// TestSubmit_AReleasedSubmitWaitsForTheBaseCheckItsProjectStarts: the dir
+// check that releases a held submit also starts the new project's base check
+// (#194), when its memory names a base. The submit holds again for that one,
+// and goes on when it lands -- which it can only do if the landing dir check
+// handed the base check back to run.
+func TestSubmit_AReleasedSubmitWaitsForTheBaseCheckItsProjectStarts(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main"}
+	git.commits = map[string]string{"/repo-b old-branch": "3d4e5f6"}
+	m := settle(t, newSubmitTestModel(t, runner, testSetup{
+		Git: git,
+		Ctx: herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-b": {Worktree: ptrBool(true), Base: "old-branch"},
+		}),
+	}))
+	m.title.SetTitle("Fix pagination", false)
+	cmds := retypeProject(&m, "/repo-b")
+
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, out := landDirCheck(t, m, fireDirDebounce(t, &m, cmds))
+	if m.submitting {
+		t.Fatalf("the submit went on with /repo-b's base check still out, from base %q", m.submitInput.BaseRef)
+	}
+
+	var settled []baseSettledMsg
+	for _, msg := range flatten(out) {
+		if b, ok := msg.(baseSettledMsg); ok {
+			settled = append(settled, b)
+		}
+	}
+	if len(settled) != 1 {
+		t.Fatalf("base checks handed back = %d, want /repo-b's one: without it the held submit waits for good", len(settled))
+	}
+	next, _ = m.Update(settled[0])
+	m = next.(Model)
+	if !m.submitting {
+		t.Fatal("the base check landed and the held submit did not go on")
+	}
+	if in := m.submitInput; in.ProjectDir != "/repo-b" || in.BaseRef != "old-branch" {
+		t.Errorf("submitted project %q from base %q, want /repo-b from its remembered old-branch", in.ProjectDir, in.BaseRef)
+	}
+}

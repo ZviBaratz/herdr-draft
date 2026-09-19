@@ -1274,6 +1274,7 @@ func TestUpdate_CancelQuits(t *testing.T) {
 // pipeline starting.
 func TestUpdate_SubmitAndClearNowActInsteadOfNoOp(t *testing.T) {
 	m := newTestModel(t, testSetup{})
+	m = settle(t, m)
 
 	next, cmd := m.Update(form.SubmitMsg{})
 	if cmd == nil {

@@ -87,6 +87,15 @@ without the popup. It drives herdr exclusively through the public CLI
 - **Create is a real focus stop**, the ring's last, on the footer rather
   than in the row stack. `⌃S` submits from anywhere; `⌃R ⌃R` clears back to
   the resolved defaults.
+- **A submit waits for the project row's check** (#195). The row's path is
+  checked 150 ms after the last edit: whether it exists, whether it is a
+  repository or a linked worktree, its `.herdr-draft.toml` and its
+  remembered choices. A `⌃S` sent sooner was built from the previous
+  project's answers, so a worktree could be sent to a repository the form
+  had already left. It now waits for the answer about the path the row
+  holds — the one you end on, if you keep typing in the row meanwhile —
+  and for the check of the base that project remembers, when it remembers
+  one (#194), then validates and goes on by itself.
 - Mouse: click a row to focus it, click a panel line to select it, wheel to
   scroll the panel.
 - The popup is a fixed **104×32 cells**, a manifest value rather than a

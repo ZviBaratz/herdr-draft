@@ -846,6 +846,7 @@ func TestAssembledSubmit_BlockedStartFrame(t *testing.T) {
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
 	}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 	m.title.SetTitle("Fix login redirect loop", false)
 	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
 
@@ -913,6 +914,7 @@ func TestAssembledSubmit_WaitingOnTheDialogFrame(t *testing.T) {
 	}
 	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 300000}}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m = settle(t, m)
 	m.title.SetTitle("Fix login redirect loop", false)
 	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
 
@@ -962,6 +964,7 @@ func TestAssembledSubmit_UnansweredDialogFrame(t *testing.T) {
 	}
 	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 300000}}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m = settle(t, m)
 	m.title.SetTitle("Fix login redirect loop", false)
 	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
 
@@ -1010,6 +1013,7 @@ func TestAssembledSubmit_WaitingOnThePromptDialogFrame(t *testing.T) {
 	}
 	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 300000}}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m = settle(t, m)
 	m.title.SetTitle("Fix login redirect loop", false)
 	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
 
@@ -1056,6 +1060,7 @@ func TestAssembledSubmit_PromptKilledTheAgentFrame(t *testing.T) {
 			"exit status 1: no agent detected in pane pane-1"),
 	}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 	m.title.SetTitle("Fix login redirect loop", false)
 	m.prompt.SetValue("Work on ENG-101: Fix login redirect loop\n\nhttps://linear.app/x/ENG-101", true)
 

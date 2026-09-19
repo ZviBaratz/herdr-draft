@@ -291,6 +291,15 @@ func newSubmitTestModel(t *testing.T, runner herdrc.Runner, s testSetup) Model {
 	})
 }
 
+// settle lands the checks New scheduled for the opening project, as a
+// running popup has long before anyone presses ⌃S. A submit waits for the
+// project row's check (#195), so one sent before it lands is held -- which
+// is not what a test of what the submit then does is about.
+func settle(t *testing.T, m Model) Model {
+	t.Helper()
+	return pumpAsync(t, m, m.initCmds)
+}
+
 // drainSubmitProgress runs a submit-pipeline Cmd chain (as returned by
 // Update(form.SubmitMsg{}) once startSubmit has begun) until it produces
 // a submitDoneMsg, applying every intermediate submitProgressMsg via m's
@@ -369,6 +378,7 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 		}},
 		Clauth: &fakeClauth{},
 	})
+	m = settle(t, m)
 
 	m.title.SetTitle("Fix pagination", false)
 	m.worktree.SetGitTarget(true) // must precede SetOn: the chip row starts inert (see WorktreeField's own doc).
@@ -460,6 +470,7 @@ func TestSubmit_HappyPathMatchesTask12FirstMatrixCase(t *testing.T) {
 func TestSubmit_DuplicateVerdictBlocksAndRefocusesTitle(t *testing.T) {
 	runner := &submitFakeRunner{}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 	m.titleDupBlocked = true // simulates handleTitleResult's own already-computed, already-shown verdict.
 
@@ -495,6 +506,7 @@ func TestSubmit_PinnedProfileAuthFailedBlocksWithAccountVerdict(t *testing.T) {
 		}},
 		Clauth: &fakeClauth{},
 	})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 	m.account.SetPin("work")
 	m.account.SetAgentIsClaude(true)
@@ -548,6 +560,7 @@ func TestSubmit_FailedStepShowsFailureWithCleanCheckReasonThreaded(t *testing.T)
 		failErr: failErr,
 	}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 	// worktree/account untouched: worktree off (no git target confirmed),
 	// no account configured -- plan.Build's own topologyOp default is
@@ -609,6 +622,7 @@ func TestSubmit_ATabThatKeptItsNumberIsStillASuccess(t *testing.T) {
 		failErr: errors.New(`herdr tab rename tab-1 Fix pagination: exit status 1: {"error":{"code":"tab_not_found"}}`),
 	}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 
 	next, cmd := m.Update(form.SubmitMsg{})
@@ -785,6 +799,7 @@ func TestUpdateSubmitting_EscQuitsOnlyInTheStepOneDeadEnd(t *testing.T) {
 func TestSubmit_EmptyTitleBlocksAndRefocusesTitle(t *testing.T) {
 	runner := &submitFakeRunner{}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 
 	next, cmd := m.Update(form.SubmitMsg{})
 	m = next.(Model)
@@ -808,6 +823,7 @@ func TestSubmit_EmptyTitleBlocksAndRefocusesTitle(t *testing.T) {
 func TestSubmit_InvalidDirectoryBlocksSubmit(t *testing.T) {
 	runner := &submitFakeRunner{}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 	m.dirInvalid = true // simulates handleDirResult's own already-computed verdict.
 
@@ -833,6 +849,7 @@ func TestSubmit_StepOneFailureHasNoKeepOrCleanPrompt(t *testing.T) {
 	failErr := errors.New("boom")
 	runner := &submitFakeRunner{failAt: "WorkspaceCreate", failErr: failErr}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 
 	next, cmd := m.Update(form.SubmitMsg{})
@@ -878,6 +895,7 @@ func TestSubmit_StepOneFailureHasNoKeepOrCleanPrompt(t *testing.T) {
 func TestUpdateSubmitting_EscDuringActiveStreamingDoesNotQuit(t *testing.T) {
 	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 	m.worktree.SetGitTarget(true)
 	m.worktree.SetOn(true)
@@ -1574,6 +1592,7 @@ func TestSubmit_PopupWaitsThroughTheTrustDialog(t *testing.T) {
 	}
 	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 300000}}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 	m.prompt.SetValue("implement the fix", false)
 
@@ -1618,6 +1637,7 @@ func TestSubmit_TrustWaitComesFromTheConfig(t *testing.T) {
 	}
 	cfg := config.Config{Timeouts: config.TimeoutsConfig{TrustWaitMS: 90000}}
 	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}, Config: cfg})
+	m = settle(t, m)
 	m.title.SetTitle("Fix pagination", false)
 
 	next, cmd := m.Update(form.SubmitMsg{})
