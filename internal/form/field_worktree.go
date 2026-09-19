@@ -205,6 +205,13 @@ type WorktreeField struct {
 	// refused branch_prefix. See SetNotes.
 	notes []string
 
+	// branchVerdict is SetBranchVerdict's refusal of the branch, and
+	// branchVerdictKey the branch it was computed for: it is drawn only
+	// while Branch() still says that, the same staleness-by-comparison
+	// guard TitleField's verdictKey is.
+	branchVerdictKey string
+	branchVerdict    string
+
 	// headBranch is the branch currently checked out in the target repo,
 	// shown alongside the base picker's HEAD row -- spec §6 field 4's own
 	// "row 0 `HEAD (<current branch>)`". "" (a detached HEAD, or before
@@ -774,20 +781,33 @@ func (w *WorktreeField) Panel(width, h int) string {
 	inner := panelInner(width)
 	labelW, valueW := labelCol(inner)
 
-	// Under the three parts come the notes (SetNotes), then the provenance
-	// line, then the base list, and a short panel gives them up in the
-	// reverse of that order. At v2 spec §9's three-row floor the three parts
-	// are the whole panel: neither a report about a config file nor a note
-	// about where a value came from may cost the control that changes it. A
-	// note outlasts the provenance line because it says something the user
-	// wrote was thrown away, where provenance only attributes a value that
-	// stands.
+	// The branch verdict (SetBranchVerdict), when there is one, sits
+	// directly under the branch part: it is about the value on the line
+	// above it, and it is the one thing in this panel that stops a submit.
+	// It is also the last thing a short panel gives up. At v2 spec §9's
+	// three-row floor it takes the base part's line, the one control the
+	// refusal is not about, because a submit refused with nothing on screen
+	// saying why is the worst thing this panel can do -- the rule
+	// TitleField's verdict follows over its list.
+	//
+	// Under the parts come the notes (SetNotes), then the provenance line,
+	// then the base list, and a short panel gives them up in the reverse of
+	// that order. With no verdict, the three parts are the whole panel at
+	// the floor: neither a report about a config file nor a note about where
+	// a value came from may cost the control that changes it. A note
+	// outlasts the provenance line because it says something the user wrote
+	// was thrown away, where provenance only attributes a value that stands.
 	//
 	// Both sit directly under the parts rather than after the base list,
 	// because they speak about them -- and because a fixed line placed after
 	// a list whose length follows the window would move every time the popup
 	// is resized.
-	extra := h - worktreePanelParts
+	verdict := w.branchVerdictShown()
+	if h < worktreePanelParts {
+		// No line under the branch part to put it on.
+		verdict = ""
+	}
+	extra := h - worktreePanelParts - verdictRows(verdict)
 	if extra < 0 {
 		extra = 0
 	}
@@ -828,6 +848,10 @@ func (w *WorktreeField) Panel(width, h int) string {
 	if h > 1 {
 		lines = append(lines, w.panelPart(partBranch, worktreeBranchLabel, w.panelBranch(valueW), labelW))
 	}
+	if verdict != "" {
+		lines = append(lines, noteLine(verdict, width, w.palette))
+	}
+	// At the floor with a verdict this line is the one panelBlock cuts.
 	if h > 2 {
 		lines = append(lines, w.panelPart(partBase, worktreeBaseLabel, w.panelBase(valueW, w.baseListNamesSelection(rows)), labelW))
 	}
@@ -968,16 +992,18 @@ func (w *WorktreeField) panelBaseRows(labelW, valueW, rows int) []string {
 	return out
 }
 
-// PanelRows is the three parts, one line per note, the provenance line when
-// there is one, and one line per base candidate, capped at
-// worktreePanelMaxRows. An inert or off worktree asks for the parts alone --
+// PanelRows is the three parts, the branch verdict's line when one applies,
+// one line per note, the provenance line when there is one, and one line per
+// base candidate, capped at worktreePanelMaxRows. An inert or off worktree
+// asks for the parts alone -- it has no verdict either, since it makes no
+// branch --
 // there is no list to show, and reserving rows for one would leave a hole
 // where the panel says nothing -- but it still asks for the notes and the
 // provenance line: a repository that turned the worktree OFF is exactly the
 // case a reader needs told, and a refused branch_prefix is refused whether
 // or not this session makes a worktree.
 func (w *WorktreeField) PanelRows() int {
-	head := worktreePanelParts + len(w.notes) + provenanceRows(w.provenance)
+	head := worktreePanelParts + verdictRows(w.branchVerdictShown()) + len(w.notes) + provenanceRows(w.provenance)
 	if !w.isGitRepo || !w.On() {
 		return head
 	}
@@ -995,6 +1021,46 @@ func (w *WorktreeField) PanelRows() int {
 // the ten rows the base list is competing for. See PlacementField
 // .SetProvenance for why this takes a plain file name.
 func (w *WorktreeField) SetProvenance(source string) { w.provenance = source }
+
+// SetBranchVerdict records the app layer's refusal of a branch, already
+// worded, and key -- the branch it refused (#199). It is drawn under the
+// three parts only while Branch() still holds key, and only while a
+// worktree, and so a branch, will be made: an edit hides it at once rather
+// than leaving a verdict about the previous text on screen until the app's
+// next answer lands. "" clears it.
+//
+// A line of its own, directly under the branch part, rather than text on
+// it: v2 spec §6 puts verdicts in the panel so a recomputing verdict cannot
+// shift text under the cursor, and the branch part IS the cursor while the
+// name is being typed. The line under it moves instead, and so does
+// everything below.
+func (w *WorktreeField) SetBranchVerdict(key, text string) {
+	w.branchVerdictKey, w.branchVerdict = key, text
+}
+
+// branchVerdictShown is SetBranchVerdict's text when it applies to the field
+// as it stands, and "" otherwise.
+func (w *WorktreeField) branchVerdictShown() string {
+	if !w.isGitRepo || !w.On() || w.branchVerdictKey != w.Branch() {
+		return ""
+	}
+	return w.branchVerdict
+}
+
+// verdictRows is the rows a verdict line costs: one when there is a verdict.
+func verdictRows(verdict string) int {
+	if verdict == "" {
+		return 0
+	}
+	return 1
+}
+
+// FocusBranch moves the part cursor to the branch input: where the app layer
+// lands a submit it refused because of the branch (#199), so the fix can be
+// typed straight away. Focus alone parks the cursor on the chips, so this is
+// called after the form has focused the field; the clamp keeps it on the
+// chips when there is no branch to edit.
+func (w *WorktreeField) FocusBranch() tea.Cmd { return w.setPart(partBranch) }
 
 // SetNotes records the app layer's reports about this panel's values that
 // were thrown away, already worded: config.Load's refused branch_prefix

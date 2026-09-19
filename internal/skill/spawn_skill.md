@@ -102,6 +102,8 @@ you are doing right now.
   dropped, and it is cut to 32 runes. One line on stderr gives the title
   used whenever that changes it, so write one plain line that fits.
 - `--branch NAME` names the branch. Left off, it is derived from the title.
+  With a worktree, a name git cannot use as a branch, or one with
+  whitespace at either end, is refused with exit 2 and nothing created.
 - `--base REF` is what the branch is cut from. Left off it resolves like
   every other unset value — usually `HEAD`, which is *your current commit*,
   though a repository's own `.herdr-draft.toml` can set a different
@@ -396,7 +398,7 @@ answered; run it.
 |---|---|---|
 | 0 | created | report where it is |
 | 1 | the plan started and failed | part of the session may exist — a space, or only some of a worktree: its branch, its checkout; look at it before retrying |
-| 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, and a pinned account clauth reports as signed out | fix the command and re-run |
+| 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, a branch name git cannot use, and a pinned account clauth reports as signed out | fix the command and re-run |
 | 3 | herdr is unreachable, found before anything started | nothing was created; stop |
 | 4 | the plan started, and its first step failed before making anything | nothing exists and there is nothing to clean up; the error says why the step failed, so report it, or re-run once it is dealt with |
 

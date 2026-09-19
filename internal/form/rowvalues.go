@@ -407,8 +407,9 @@ func provenanceLine(source string, w int, p theme.Palette) string {
 
 // noteLine composes one line of a panel's report that something the user
 // wrote was refused: a key in the repository's .herdr-draft.toml (DirField),
-// or in their own config.toml (AccountField, WorktreeField). One composer, so
-// the three panels that carry such a report cannot draw it three ways.
+// or in their own config.toml (AccountField, WorktreeField), or the branch
+// name itself (WorktreeField's verdict, #199). One composer, so the three
+// panels that carry such a report cannot draw it three ways.
 //
 // Warning, not dim: a note styled like a hint is a note nobody reads, which
 // is the whole defect v2 spec §11's "with a visible note" names. The text is

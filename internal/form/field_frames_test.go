@@ -222,6 +222,29 @@ func TestFrames_WorktreePanel(t *testing.T) {
 	assertFrame(t, "worktree-panel-80x24", buildWorktreePanelForm(theme.Default()), 80, 24)
 }
 
+// buildWorktreeBranchVerdictForm is #199's refusal as the user meets it: a
+// submit refused over a branch with a trailing space, the part cursor on
+// the branch input it has to be fixed in, and the verdict under the parts.
+// The space itself is invisible, which is the whole reason the verdict names
+// it.
+func buildWorktreeBranchVerdictForm(palette theme.Palette) Model {
+	w := NewWorktreeField(palette)
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBranch("zvi/old ", false)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, []string{"main", "release/1.4"})
+	w.SetBranchVerdict("zvi/old ", "invalid branch name  ends with a space")
+
+	m := fieldFrame(palette, w)
+	w.FocusBranch()
+	return m
+}
+
+func TestFrames_WorktreeBranchVerdict(t *testing.T) {
+	assertFrame(t, "worktree-branch-verdict-80x24", buildWorktreeBranchVerdictForm(theme.Default()), 80, 24)
+}
+
 // buildWorktreeNonGitForm pins the other end of the field: a target that
 // cannot host a worktree at all, where the row and all three panel parts
 // carry the non-git reason rather than an empty control.

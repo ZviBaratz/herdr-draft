@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // forbiddenRefRunes are the characters `git check-ref-format` rejects
@@ -44,6 +45,12 @@ const forbiddenRefRunes = " ~^:?*[\\"
 //     child that reads it as an option (measured on git 2.53.0). A `--`
 //     would not help; the child parses its own argv. That is the
 //     argument-injection surface; the git rules below only bound the rest.
+//   - Ours, not git's: the prefix may not begin with whitespace. A prefix
+//     begins the branch name, and herdr trims the name it is handed (see
+//     ValidateBranchName), so " zvi/" or a leading no-break space -- which
+//     git would accept -- would make a branch other than the one derived.
+//     Whitespace anywhere else is left to the rules below: a slug always
+//     follows, so a prefix never ends the name.
 //   - Rule 4: no ASCII control character (NUL included), space, "~", "^"
 //     or ":" anywhere. Widened slightly: any Unicode control character
 //     (category Cc, so DEL and the C1 block too), not just the C0 range
@@ -94,26 +101,16 @@ func ValidateBranchPrefix(prefix string) error {
 		return nil
 	}
 
+	if r, _ := utf8.DecodeRuneInString(prefix); unicode.IsSpace(r) {
+		return fmt.Errorf("begins with %s", describeSpace(r))
+	}
+
 	if strings.HasPrefix(prefix, "-") {
 		return errors.New(`starts with "-", which git would read as an option rather than a branch name`)
 	}
 
-	for _, r := range prefix {
-		switch {
-		case unicode.IsControl(r):
-			return fmt.Errorf("contains the control character %q", r)
-		case r == ' ':
-			return errors.New("contains a space")
-		case strings.ContainsRune(forbiddenRefRunes, r):
-			return fmt.Errorf("contains %q, which git forbids in a ref name", r)
-		}
-	}
-
-	if strings.Contains(prefix, "..") {
-		return errors.New(`contains ".."`)
-	}
-	if strings.Contains(prefix, "@{") {
-		return errors.New(`contains "@{"`)
+	if err := checkRefChars(prefix); err != nil {
+		return err
 	}
 
 	components := strings.Split(prefix, "/")
@@ -134,5 +131,33 @@ func ValidateBranchPrefix(prefix string) error {
 		}
 	}
 
+	return nil
+}
+
+// checkRefChars applies the rules of `git check-ref-format` that hold for
+// any stretch of a refname, whole or not: rules 4, 5 and 10's characters,
+// anywhere, then rule 3's ".." and rule 8's "@{". ValidateBranchPrefix and
+// ValidateBranchName both start from it, so a prefix that fails here fails
+// as a branch name too, for the same reason in the same words.
+//
+// Rule 4 is widened slightly: any Unicode control character (category Cc,
+// so the C1 block too), not just the C0 range and DEL git names.
+func checkRefChars(s string) error {
+	for _, r := range s {
+		switch {
+		case unicode.IsControl(r):
+			return fmt.Errorf("contains the control character %q", r)
+		case r == ' ':
+			return errors.New("contains a space")
+		case strings.ContainsRune(forbiddenRefRunes, r):
+			return fmt.Errorf("contains %q, which git forbids in a ref name", r)
+		}
+	}
+	if strings.Contains(s, "..") {
+		return errors.New(`contains ".."`)
+	}
+	if strings.Contains(s, "@{") {
+		return errors.New(`contains "@{"`)
+	}
 	return nil
 }

@@ -1674,6 +1674,49 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### a branch git cannot hold (#199) — 2026-09-19
+
+herdr 0.9.0, git 2.53.0. `main` at `5cead7a`, built from `git archive`, and
+`zvi/fix-199-branch-name-validity` at `fce2882`, since rebased as `50c3687`
+with the refusal unchanged, not merged. Route A0 with
+its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME` under `/var/tmp`,
+`onboarding = false`, `[worktrees] directory` under the same path, and a
+scratch plugin config and state dir with `branch_prefix = "zvi/"`,
+`default_worktree = true` and `[agents] favorites = ["nosuchkind"]`, so no
+claude was started. The throwaway repository had a branch `zvi/old` at
+`cd7690e` ("old work"), one commit behind `main` at `7cab5a8`. The headless
+cases ran `create --project <repo> --worktree --branch <name>`. The form ran
+by Route B in the session's one pane. There the title `old` gave the branch
+`zvi/old`, `⇥ ⇥ ⇥ ↓` reached the branch input, one space was typed after it,
+and then `⌃S`.
+
+| Case | `main` | the fix |
+|---|---|---|
+| `create --branch "zvi/old "` | **the defect.** A worktree on the existing `zvi/old` at `cd7690e`, not cut from `main`. Exit 1 at `starting agent`. | **as expected.** `--branch "zvi/old " cannot be used as a branch name: ends with a space`, **exit 2**, nothing created. |
+| `create --branch "zvi/old<U+00A0>"`, a no-break space, which git accepts | **the defect.** herdr trimmed it: the same worktree on `zvi/old` at `cd7690e`. | **as expected.** `ends with whitespace (U+00A0)`, exit 2, nothing created. |
+| `create --branch zvi/a..b` | failed inside herdr, `fatal: 'zvi/a..b' is not a valid branch name`, exit 1, and `herdr may have made part of it`. | **as expected.** `contains ".."`, exit 2, nothing created. |
+| `create --branch zvi/new-work`, the control | — | a worktree on a new `zvi/new-work` cut from `7cab5a8` |
+| the form: `zvi/old ` typed, `⌃S` | **the defect.** `✓ worktree  zvi/old  from HEAD`, but git put it on the existing `zvi/old` at `cd7690e`. | **as expected.** The worktree panel read `invalid branch name  ends with a space` under the parts. `⌃S` changed nothing: the cursor stayed in the branch input. |
+| the form: the same, `⇥` to the agent row, `⌃S` | — | refused, and focus came back to the worktree row with the cursor in the branch input |
+| the form: the space and `⌃S` sent 12 ms apart, inside the debounce | — | held for the check, then refused as above; nothing created |
+
+**Second pass, after the independent review** (`3032541`, the same isolation
+and a fresh scratch tree). The review moved the verdict to the line under the
+branch part, and kept it at the panel's three-row floor, where it had been
+dropped while the submit was still refused. It also stopped `create`
+refusing the branch where no worktree can be made. For the 14-row case,
+`stty rows 14 cols 104` ran in the pane before the form started.
+
+| Case | the fix |
+|---|---|
+| the form: `zvi/old ` typed, `⇥` to the agent row, `⌃S` | refused; the panel read `branch  zvi/old`, then `invalid branch name  ends with a space`, then `base` |
+| the same in a 14-row window | refused; the panel's three rows were the chips, the branch and the verdict, the base part giving way |
+| `create --worktree --branch "zvi/a b"` in a directory that is not a repository | `worktree creation requires a git repository at "<plain>"`, exit 2: the more basic refusal first |
+
+Teardown for each pass: the disposable session stopped and deleted, no process
+with a cwd under the scratch tree, the tree removed, and none of the pass's
+binaries left running.
+
 ### `create --dry-run` and `launch_options` (#209) — 2026-09-19
 
 herdr 0.9.0. `zvi/fix-209-spawn-skill-session-options` at `8dc7393`, not

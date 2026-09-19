@@ -45,12 +45,31 @@ func SanitizeBranch(s string) string {
 // it. Callers must have run it through ValidateBranchPrefix first: the
 // result reaches `herdr worktree create --branch <value>` as an argv
 // element, so an unchecked prefix is an argument-injection surface.
+//
+// For a prefix ValidateBranchPrefix accepts, the result is always a name
+// ValidateBranchName accepts (FuzzBranchSlugIsAValidBranchName), because a
+// refusal of a derived name would be this function's fault and not the
+// user's (#199). One case needs handling to make that true: a prefix whose
+// last component is left open, like "zvi.", lets the slug finish it into
+// ".lock" -- "zvi." and the title "Lock" make "zvi.lock", which git
+// refuses. The slug then takes the same deterministic hash the empty title
+// does, as a suffix: "zvi.lock-xxxxxxxx".
 func BranchSlug(prefix, title string) string {
 	body := SanitizeBranch(title)
 	if body == "" {
-		h := fnv.New64a()
-		h.Write([]byte(title))
-		body = fmt.Sprintf("session-%08x", uint32(h.Sum64()))
+		body = fmt.Sprintf("session-%08x", titleHash(title))
+	}
+	if strings.HasSuffix(prefix+body, ".lock") {
+		body += fmt.Sprintf("-%08x", titleHash(title))
 	}
 	return prefix + body
+}
+
+// titleHash is BranchSlug's deterministic stand-in for a slug that will not
+// do on its own. Deterministic is the point: the form and `create` derive
+// the branch separately and must arrive at the same one.
+func titleHash(title string) uint32 {
+	h := fnv.New64a()
+	h.Write([]byte(title))
+	return uint32(h.Sum64())
 }

@@ -13,12 +13,14 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
+	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/picker"
@@ -690,6 +692,28 @@ type commandCase struct {
 
 func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	t.Helper()
+	resolved, err := commandResolve(t, c)
+	if err != nil {
+		t.Fatalf("resolveRequest: %v", err)
+	}
+	// run() resolves an `auto` account after the rest of the pre-flight
+	// (#145), so the comparison has to take that step too -- the command's
+	// counterpart of formPlanInputAuto's ResolveAccount. Without it the
+	// command side would hand back the sentinel and the auto test would be
+	// comparing the pick against nothing.
+	in, _, err := resolveAccount(context.Background(), resolved.input, accountPicker(resolved.tiers.cfg, Deps{Picker: c.picker}), false)
+	if err != nil {
+		t.Fatalf("resolveAccount: %v", err)
+	}
+	return in
+}
+
+// commandResolve is commandPlanInput's first half, the command's own
+// resolveRequest, with its refusal handed back rather than fatal: a request
+// the command refuses is what TestFormAndCommandRefuseTheSameBranches
+// compares.
+func commandResolve(t *testing.T, c commandCase) (resolution, error) {
+	t.Helper()
 	t.Setenv("LINEAR_API_KEY", "")
 
 	req, err := parseArgs(c.args)
@@ -711,7 +735,7 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	if c.issue != nil {
 		issues = &fakeLinear{issues: []linear.Issue{*c.issue}}
 	}
-	resolved, err := resolveRequest(context.Background(), req, Env{
+	return resolveRequest(context.Background(), req, Env{
 		ConfigDir:   c.configDir,
 		StateDir:    c.stateDir,
 		ContextJSON: c.contextJSON,
@@ -732,19 +756,6 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 		Workdir:    func() (string, error) { return c.projectDir, nil },
 		Picker:     c.picker,
 	})
-	if err != nil {
-		t.Fatalf("resolveRequest: %v", err)
-	}
-	// run() resolves an `auto` account after the rest of the pre-flight
-	// (#145), so the comparison has to take that step too -- the command's
-	// counterpart of formPlanInputAuto's ResolveAccount. Without it the
-	// command side would hand back the sentinel and the auto test would be
-	// comparing the pick against nothing.
-	in, _, err := resolveAccount(context.Background(), resolved.input, accountPicker(resolved.tiers.cfg, Deps{Picker: c.picker}), false)
-	if err != nil {
-		t.Fatalf("resolveAccount: %v", err)
-	}
-	return in
 }
 
 // formCase/formPlanInput build a real app.Model over the same tiers, let
@@ -770,8 +781,13 @@ type formCase struct {
 	paste bool
 	// issue, when set, is offered by a Linear source and then chosen, as
 	// commandCase.issue is found by --issue.
-	issue  *linear.Issue
-	picker picker.Source
+	issue *linear.Issue
+	// landChecks runs what choosing the issue schedules -- the debounced
+	// title and branch check among it -- instead of dropping it, so that a
+	// submit sent afterwards is not held for a check that will never land.
+	// Only a scenario that submits needs it.
+	landChecks bool
+	picker     picker.Source
 	// clauthStatus is what makes the account row exist at all (app.New's own
 	// ">= 2 profiles" gate). The command path never consults clauth, so this
 	// has no counterpart on the other side -- it is scaffolding for the row,
@@ -858,7 +874,11 @@ func formModel(t *testing.T, c formCase) app.Model {
 	// formCase draws. What it schedules is dropped for the reason given
 	// below: the seeding plan.Input reads is synchronous.
 	if c.issue != nil {
-		m = send(m, form.IssueChosenMsg{Issue: c.issue})
+		next, cmd := m.Update(form.IssueChosenMsg{Issue: c.issue})
+		m = next.(app.Model)
+		if c.landChecks {
+			m = pump(t, m, cmd)
+		}
 	}
 	// Then the one thing a user types. The commands a keystroke returns
 	// are deliberately dropped rather than pumped: they are the cursor's
@@ -1118,6 +1138,80 @@ func showInput(in plan.Input) string {
 		return "<unencodable>"
 	}
 	return string(b)
+}
+
+// TestFormAndCommandRefuseTheSameBranches is #199's half of spec §13's
+// promise. A refusal is not a plan.Input field, so the table above cannot
+// see the two paths disagree about one; this drives both to the point of
+// creating a session and compares which branches each refuses.
+//
+// The branch is the Linear issue's own: the one source of a name that
+// reaches both paths through the same rule (app.BranchFor) with nothing
+// typed. The command must refuse in resolveRequest, before anything else is
+// asked. The form is submitted, and must stay on the form with the worktree
+// panel saying why -- in the same words, since both ask one function. The
+// last name is a control: neither refuses it, and both build one plan.Input.
+func TestFormAndCommandRefuseTheSameBranches(t *testing.T) {
+	const projectDir = "/projects/thing"
+	contextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + projectDir +
+		`","tab_id":"tT0","focused_pane_id":"pP0"}`
+	repoConfig := func(string) config.RepoConfig { return config.RepoConfig{} }
+
+	for _, tc := range []struct {
+		branch  string
+		refused bool
+	}{
+		{"zvi/old ", true},
+		{" zvi/old", true},
+		{"zvi/a..b", true},
+		{"zvi/a~1", true},
+		{"zvi/a:b", true},
+		{"zvi/a b", true},
+		{"zvi/old.lock", true},
+		{"zvi/old" + string(rune(0xa0)), true},
+		{"zvi/lin-42-fix-login", false},
+	} {
+		t.Run(tc.branch, func(t *testing.T) {
+			configDir, stateDir := t.TempDir(), t.TempDir()
+			writeConfig(t, configDir, "default_worktree = true\n[agents]\nfavorites = [\"claude\"]\n")
+			issue := &linear.Issue{Identifier: "LIN-42", Title: "Fix login redirect loop", BranchName: tc.branch}
+			command := commandCase{
+				configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+				projectDir: projectDir, repoConfig: repoConfig, issue: issue,
+				args: []string{"--issue", "LIN-42"},
+			}
+
+			_, commandErr := commandResolve(t, command)
+
+			m := formModel(t, formCase{
+				configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+				repoConfig: repoConfig, issue: issue, landChecks: true,
+			})
+			if got := m.PlanInput(); !got.UseWorktree || got.Branch != tc.branch {
+				t.Fatalf("test setup: the form holds worktree %v, branch %q; want the issue's branch, with a worktree", got.UseWorktree, got.Branch)
+			}
+			fromForm := withLinkedCommit(t, m).PlanInput()
+			next, _ := m.Update(form.SubmitMsg{})
+			view := ansi.Strip(next.(app.Model).View().Content)
+			formRefused := strings.Contains(view, "invalid branch name")
+
+			if (commandErr != nil) != tc.refused || formRefused != tc.refused {
+				t.Fatalf("want refused = %v from both; the command's error is %v, and the form's view after submit is:\n%s",
+					tc.refused, commandErr, view)
+			}
+			if tc.refused {
+				reason := gitx.ValidateBranchName(tc.branch).Error()
+				if !strings.Contains(commandErr.Error(), reason) || !strings.Contains(view, reason) {
+					t.Errorf("both should give the reason %q\ncommand: %v\nform:\n%s", reason, commandErr, view)
+				}
+				return
+			}
+			if fromCommand := commandPlanInput(t, command); !reflect.DeepEqual(fromCommand, fromForm) {
+				t.Fatalf("the command and the form disagree.\ncommand: %s\nform:    %s",
+					showInput(fromCommand), showInput(fromForm))
+			}
+		})
+	}
 }
 
 // TestFormAndCommandResolveAutoTheSameWay extends the promise above to the
