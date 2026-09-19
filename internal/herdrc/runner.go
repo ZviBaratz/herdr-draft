@@ -512,9 +512,12 @@ const promptAgentGoneCode = "agent_not_running"
 // BEFORE sending fails as `agent_not_found` instead, and the app's prompt
 // handler never raises it, so this code cannot mean "nothing was typed".
 //
-// In practice it is #116's killed agent -- the prompt's Enter answering a
-// dialog's "No, exit" -- noticed by herdr's wait before herdr-draft's own
-// read of the pane.
+// Its likeliest cause is #116's killed agent -- the prompt's Enter
+// answering a dialog's "No, exit" -- noticed by herdr's wait before
+// herdr-draft's own read of the pane. Not the only one: once herdr has seen
+// the agent working, the same wait runs on to a settled status for the
+// rest of the timeout, so an agent that exits mid-turn, or a pane closed
+// under it, is reported with this code too.
 var ErrPromptAgentGone = errors.New("the agent stopped running after the prompt was sent")
 
 // focusFlag returns "--focus" or "--no-focus": herdr's CLI models placement

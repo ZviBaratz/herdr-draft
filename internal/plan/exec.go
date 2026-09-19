@@ -905,8 +905,8 @@ func explainAbandonedDialog(err error) error {
 		"nothing was sent, and this session can be removed and started again: %w", err)
 }
 
-// explainPromptKilledAgent says what a pane that stopped being readable
-// immediately after a send actually means.
+// explainPromptKilledAgent says what an agent that stopped answering after
+// a send actually means.
 //
 // Deliberately not explainAbandonedDialog beside it, whose "nothing was
 // sent" is the one thing that is NOT true here: a prompt went out, and it
@@ -927,7 +927,12 @@ func explainAbandonedDialog(err error) error {
 // Its head says what was seen, not what it most likely means, because the
 // head is the clause the popup's truncation leaves. It used to open "the
 // agent exited", beside a remove line saying "most likely it exited" about
-// the same evidence.
+// the same evidence. Nor does it say WHEN: herdr's `agent prompt --wait`
+// runs on to a settled status once it has seen the agent working, up to
+// prompt_wait_ms, and confirmPromptLanded reads only after that returns,
+// so either witness can report an agent that went a whole turn after the
+// send. The dialog is therefore offered as how an exit at the send
+// happens, not as what happened here.
 //
 // Two callers reach it holding the same fact from different witnesses:
 // confirmPromptLanded, whose reads of the pane failed (errAgentGoneAfterSend),
@@ -935,9 +940,9 @@ func explainAbandonedDialog(err error) error {
 // (herdrc.ErrPromptAgentGone). err carries whichever it was, which is what
 // lets classifyPromptDelivery name the evidence.
 func explainPromptKilledAgent(err error) error {
-	return fmt.Errorf("the agent stopped answering as the prompt was sent -- most likely it exited "+
-		"because a dialog that had not painted yet took the prompt's own Enter; read the pane before "+
-		"removing this session or starting it again: %w", err)
+	return fmt.Errorf("the agent stopped answering after the prompt was sent, most likely because it "+
+		"exited -- a dialog that had not painted yet can take the prompt's own Enter; read the pane "+
+		"before removing this session or starting it again: %w", err)
 }
 
 // explainStalledPrompt says what is left after a prompt stalled TWICE --
@@ -2113,7 +2118,7 @@ func unconfirmedCleanReason(cause unconfirmedCause) string {
 			"screen, so its Enter may have answered that dialog and whether any of it reached the " +
 			"agent is unknown. Read the pane before removing anything."
 	case causeAgentGoneAfterSend:
-		return "the agent stopped answering as the prompt was typed into it -- most likely it " +
+		return "the agent stopped answering after the prompt was typed into it -- most likely it " +
 			"exited, which nothing here can see, and if it is still running it has the prompt. " +
 			"Read the pane before removing anything."
 	}
