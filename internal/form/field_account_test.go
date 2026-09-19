@@ -96,6 +96,121 @@ func TestAccountField_InertFlipsWithAgentKind(t *testing.T) {
 	}
 }
 
+// TestAccountField_InertIgnoresInputEvenWhenFocused is #182. The row is
+// inert while the agent is not claude, but a click still focuses it
+// (form.go's FocusByID ignores Enabled), and from there the arrows browsed
+// and Enter pinned -- a pin app.accountPin then drops for the non-claude
+// kind, so the row let you do something that did nothing. PlacementField
+// and OptionsField already ignore input while inert; this is the same rule.
+func TestAccountField_InertIgnoresInputEvenWhenFocused(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetProfiles(sampleStatus(), sampleNow())
+	f.SetAgentIsClaude(false)
+	f.Focus()
+
+	before, _ := f.picker.Selected()
+	f.Update(key(tea.KeyDown, 0))
+	f.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if after, _ := f.picker.Selected(); after.ID != before.ID {
+		t.Errorf("cursor moved from %q to %q on an inert row -- browsing a list that does not apply", before.ID, after.ID)
+	}
+
+	// Enter needs its own guard, because the cursor can already be off the
+	// pin when the row goes inert: browse while the agent is claude, then
+	// switch the agent away. SetAgentIsClaude leaves the cursor where it is.
+	g := NewAccountField(theme.Default())
+	g.SetProfiles(sampleStatus(), sampleNow())
+	g.SetAgentIsClaude(true)
+	browseTo(g, 1)
+	g.SetAgentIsClaude(false)
+	g.Focus()
+	if g.Complete() {
+		t.Error("Complete() = true on an inert row, want false so Enter advances instead of pinning")
+	}
+	if got := g.Pin(); got != "" {
+		t.Errorf("Pin() = %q after Enter on an inert row, want \"\"", got)
+	}
+}
+
+// TestAccountField_UnavailableIgnoresInput is the other inert state, and the
+// one where the guard matters most. A clauth that failed at open leaves the
+// row unavailable, and a later reload on account focus loads profiles
+// without clearing that (app's handleClauthResult). The panel draws no list,
+// but the picker behind it was live: ↓ ↓ ↵ committed a profile nobody could
+// see, and for a claude agent that pin launches. Enabled() covers this state
+// and agentIsClaude alone does not, which is what this test holds.
+func TestAccountField_UnavailableIgnoresInput(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetUnavailable("exit status 1: clauth crashed")
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow())
+	f.Focus()
+
+	before, _ := f.picker.Selected()
+	f.Update(key(tea.KeyDown, 0))
+	f.Update(key(tea.KeyDown, 0))
+	if after, _ := f.picker.Selected(); after.ID != before.ID {
+		t.Errorf("cursor moved from %q to %q under a list that is not drawn", before.ID, after.ID)
+	}
+	if f.Complete() {
+		t.Error("Complete() = true with clauth unavailable, want false -- it would pin a profile nobody saw")
+	}
+	if got := f.Pin(); got != "" {
+		t.Errorf("Pin() = %q with clauth unavailable, want \"\" -- the agent is claude, so this pin would launch", got)
+	}
+}
+
+// TestAccountField_InertOffersNothingToChoose: an inert row does not look
+// like a chooser. Its panel draws no list -- no cursor, no ✓, no click zone
+// on a row that ignores clicks, and no legend saying the pin is what the
+// session launches under -- and its footer does not advertise ↑↓ and ↵,
+// which it ignores. PlacementField and OptionsField already behave this way
+// while inert.
+func TestAccountField_InertOffersNothingToChoose(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*AccountField)
+		says  string
+	}{
+		{"not claude", func(f *AccountField) { f.SetAgentIsClaude(false) }, "switch the agent to claude to pin an account"},
+		{"clauth unavailable", func(f *AccountField) {
+			f.SetAgentIsClaude(true)
+			f.SetUnavailable("exit status 1: clauth crashed")
+		}, "exit status 1: clauth crashed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewAccountField(theme.Default())
+			f.SetProfiles(sampleStatus(), sampleNow())
+			f.SetNotes([]string{"[clauth] launcher is not on PATH"})
+			tc.setup(f)
+
+			panel := ansi.Strip(f.Panel(80, 6))
+			if !strings.Contains(panel, tc.says) {
+				t.Errorf("panel does not say %q:\n%s", tc.says, panel)
+			}
+			// The list's rows, its legend, the count beside it, and the notes
+			// about how accounts launch: all of it describes a chooser that is
+			// not there.
+			for _, row := range []string{"alpha", "beta", accountActiveLabel, "launches under", accountCountMany, "launcher"} {
+				if strings.Contains(panel, row) {
+					t.Errorf("inert panel still draws %q:\n%s", row, panel)
+				}
+			}
+			if got := f.PanelRows(); got != 1 {
+				t.Errorf("PanelRows() = %d, want 1 -- the one sentence", got)
+			}
+
+			footer := ansi.Strip(fieldFrame(theme.Default(), f).ViewAt(80, 24))
+			if strings.Contains(footer, "↵ pin") || strings.Contains(footer, "browse") {
+				t.Errorf("footer advertises keys the inert row ignores:\n%s", footer)
+			}
+			if !strings.Contains(footer, "nothing to set here") {
+				t.Errorf("footer does not say there is nothing to set:\n%s", footer)
+			}
+		})
+	}
+}
+
 // browseTo walks the account cursor down n rows WITHOUT committing --
 // the gesture that used to pin an account by accident (v3 spec §10.3) and
 // now does not.

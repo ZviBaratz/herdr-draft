@@ -373,6 +373,20 @@ func TestFrames_AccountPanel(t *testing.T) {
 	assertFrame(t, "account-panel-80x24", buildAccountPanelForm(theme.Default()), 80, 24)
 }
 
+// buildAccountInertForm is the account row with a non-claude agent, reached
+// by a click since Tab skips it (#182): the dim row, a panel of one sentence
+// that gives the choice back, and a footer promising no keys.
+func buildAccountInertForm(palette theme.Palette) Model {
+	f := NewAccountField(palette)
+	f.SetAgentIsClaude(false)
+	f.SetProfiles(sampleStatus(), sampleNow())
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_AccountInert(t *testing.T) {
+	assertFrame(t, "account-inert-80x24", buildAccountInertForm(theme.Default()), 80, 24)
+}
+
 // TestFrames_AccountPanelNarrow pins the SHRINK ladder, which no other
 // frame reaches: the account panel is the widest table in the form (four
 // cell columns, a mark column and a badge), so 44 cells is where v3 spec

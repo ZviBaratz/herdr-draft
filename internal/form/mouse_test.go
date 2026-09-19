@@ -214,6 +214,41 @@ func TestMouseZones_ChipClickSelectsPlacement(t *testing.T) {
 	}
 }
 
+// TestMouseZones_ClickOnAnInertAccountRowDoesNotPin is #182 by mouse. When
+// the issue was found the inert row's panel still drew the profile list, a
+// zone per row, and a click on one committed a pin for an agent kind that
+// cannot use it. The inert panel no longer draws that list, so the zones
+// here are the ones rendered while the agent was still claude, and the click
+// lands after the switch: Update's own guard is what must refuse it, not the
+// panel's having stopped drawing the target.
+func TestMouseZones_ClickOnAnInertAccountRowDoesNotPin(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetProfiles(sampleStatus(), sampleNow())
+	f.SetAgentIsClaude(true)
+
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{f}})
+	m.Init()
+	if cmd := m.FocusByID("account"); cmd != nil {
+		cmd()
+	}
+	_ = m.ViewAt(80, 24)
+	syncZones()
+	f.SetAgentIsClaude(false)
+
+	const zoneID = "row:account:1"
+	zi := widgets.Zones.Get(zoneID)
+	if zi.IsZero() {
+		t.Fatalf("zone %q never resolved after ViewAt(80, 24)'s own Scan", zoneID)
+	}
+
+	next, _ := m.Update(clickAt(zi.StartX, zi.StartY))
+	m = next.(Model)
+
+	if got := f.Pin(); got != "" {
+		t.Fatalf("Pin() after clicking %s on an inert row = %q, want \"\" -- the agent is not claude", zoneID, got)
+	}
+}
+
 // TestMouseZones_WheelMovesBasePickerCursor is the brief's own third
 // scenario: a wheel over the base picker moves its cursor. Task 21's own
 // wheel grammar (form.go's handleMouseWheel doc comment: "scroll the
