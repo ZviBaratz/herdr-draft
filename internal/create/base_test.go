@@ -237,3 +237,91 @@ func TestLane_AFlagHeadIsTheLanesCommitAndStillTheFlags(t *testing.T) {
 		t.Errorf("--json base = %q from %q, want the lane's commit %s from flag", out.Base, out.Provenance["base"], laneHead)
 	}
 }
+
+// TestTierBase_ASpellingOfHeadIsTheHeadRow: HEAD^0 names HEAD's own commit,
+// so it is the HEAD row, as HEAD is -- still the tier's, with nothing said.
+func TestTierBase_ASpellingOfHeadIsTheHeadRow(t *testing.T) {
+	h := newHarness(t)
+	rememberBase(t, h, "HEAD^0")
+
+	if code := h.run("--title", "t", "--worktree", "--json"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if base := createdFrom(t, h); base != "" {
+		t.Errorf("worktree create base = %q, want none: the HEAD row", base)
+	}
+	if out := jsonReportOf(t, h); out.Base != "" || out.Provenance["base"] != "projects.json" {
+		t.Errorf("--json base = %q from %q, want none, still from projects.json", out.Base, out.Provenance["base"])
+	}
+	if strings.Contains(h.stderr.String(), "ignoring base") {
+		t.Errorf("stderr = %q, want nothing said: nothing was dropped", h.stderr)
+	}
+}
+
+// TestFlagBase_ASpellingOfHeadIsTheHeadRow: the same for --base, which is
+// the route #193 was reached by before any tier was.
+func TestFlagBase_ASpellingOfHeadIsTheHeadRow(t *testing.T) {
+	h := newHarness(t)
+
+	if code := h.run("--title", "t", "--worktree", "--base", "HEAD^0", "--json"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if base := createdFrom(t, h); base != "" {
+		t.Errorf("worktree create base = %q, want none: the HEAD row", base)
+	}
+	if out := jsonReportOf(t, h); out.Base != "" || out.Provenance["base"] != "flag" {
+		t.Errorf("--json base = %q from %q, want none from flag", out.Base, out.Provenance["base"])
+	}
+}
+
+// TestFlagBase_IsCheckedOnlyWhereAWorktreeUsesIt: --base is what a worktree
+// is cut from, and nothing else reads it. Without a worktree, or outside a
+// repository, it is not asked about -- a session with no worktree used to
+// be created with any --base at all, and a non-git --worktree has a better
+// reason to be refused, which plan.Build gives.
+func TestFlagBase_IsCheckedOnlyWhereAWorktreeUsesIt(t *testing.T) {
+	t.Run("no worktree", func(t *testing.T) {
+		h := newHarness(t)
+		if code := h.run("--title", "t", "--no-worktree", "--base", "gone-branch"); code != ExitOK {
+			t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+		}
+		if len(h.git.resolveCalls) != 0 {
+			t.Errorf("git asked %v about a base nothing uses", h.git.resolveCalls)
+		}
+	})
+	t.Run("not a repository", func(t *testing.T) {
+		// No repository, so no commits either.
+		h := newHarness(t)
+		h.git.isRepo, h.git.commits = false, nil
+		if code := h.run("--title", "t", "--no-worktree", "--base", "main"); code != ExitOK {
+			t.Fatalf("--no-worktree: exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+		}
+		h = newHarness(t)
+		h.git.isRepo, h.git.commits = false, nil
+		if code := h.run("--title", "t", "--worktree", "--base", "main"); code != ExitUsage {
+			t.Fatalf("--worktree: exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
+		}
+		if msg := h.stderr.String(); strings.Contains(msg, "names no commit") || !strings.Contains(msg, "git repository") {
+			t.Errorf("stderr = %q, want plan.Build's reason (a git repository) rather than the base's", msg)
+		}
+	})
+}
+
+// TestTierBase_ARepositoryDefaultThatDoesNotResolveNamesTheFile: the note
+// says which tier the dropped base came from, so a team can tell its own
+// committed default from what this machine remembered -- and --json stops
+// attributing the base to a file whose value was not used.
+func TestTierBase_ARepositoryDefaultThatDoesNotResolveNamesTheFile(t *testing.T) {
+	h := newHarness(t)
+	h.deps.RepoConfig = func(string) config.RepoConfig { return config.RepoConfig{DefaultBase: "develop"} }
+
+	if code := h.run("--title", "t", "--worktree", "--json"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if want := `herdr-draft create: ignoring base "develop" from .herdr-draft.toml: `; !strings.Contains(h.stderr.String(), want) {
+		t.Errorf("stderr = %q, want a line beginning %q", h.stderr, want)
+	}
+	if out := jsonReportOf(t, h); out.Base != "" || out.Provenance["base"] != "built-in" {
+		t.Errorf("--json base = %q from %q, want none from built-in", out.Base, out.Provenance["base"])
+	}
+}

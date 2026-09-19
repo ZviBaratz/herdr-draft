@@ -68,7 +68,43 @@ func TestSettleBase(t *testing.T) {
 	}
 }
 
-// baseModel is a form opened on /repo-a -- whose branch list is main and
+// TestSettleBase_ASpellingOfHeadIsTheHeadRow: HEAD and @ are mapped without
+// asking git (defaults.NormalizeBase), and every other spelling of HEAD
+// itself -- HEAD^0, @~0, HEAD@{0}, anything spelled from HEAD or @ that names
+// HEAD's own commit -- is found here, where git is already being asked.
+// These are the refs that open #193's hole: inside the new worktree they
+// name the worktree itself, and the clean gate then counts no commits in it.
+// The popup used to drop them to "" silently; rule 1 alone would have kept
+// them, and let the popup reach that hole for the first time.
+//
+// Only HEAD-relative spellings: a branch that happens to be at HEAD's commit
+// is a branch, and HEAD~1 is another commit.
+func TestSettleBase_ASpellingOfHeadIsTheHeadRow(t *testing.T) {
+	git := newFakeGit()
+	git.commits = map[string]string{
+		"/repo HEAD": "0a1b2c3", "/repo HEAD^0": "0a1b2c3", "/repo @{0}": "0a1b2c3",
+		"/repo main": "0a1b2c3", "/repo HEADroom": "0a1b2c3", "/repo HEAD~1": "1b2c3d4",
+	}
+	resolve := func(base string) defaults.Resolved {
+		return defaults.Resolve(defaults.Sources{Project: config.ProjectDefaults{Base: base}, HaveProject: true})
+	}
+	for _, tc := range []struct{ ref, want string }{
+		{"HEAD^0", ""}, {"@{0}", ""},
+		{"HEAD~1", "HEAD~1"}, {"main", "main"}, {"HEADroom", "HEADroom"},
+	} {
+		got, note := SettleBase(context.Background(), git, "/repo", resolve(tc.ref))
+		if got.BaseRef != tc.want || note != "" {
+			t.Errorf("SettleBase(%q) = %q, note %q; want %q and no note", tc.ref, got.BaseRef, note, tc.want)
+		}
+		// Chosen by the tier, as HEAD is: it is the tier's value, spelled
+		// another way, and nothing was dropped.
+		if got.From[defaults.FieldBaseRef] != defaults.TierProjectMemory {
+			t.Errorf("SettleBase(%q) attributed to %v, want %v", tc.ref, got.From[defaults.FieldBaseRef], defaults.TierProjectMemory)
+		}
+	}
+}
+
+// baseModel is a form opened on /repo-a// baseModel is a form opened on /repo-a -- whose branch list is main and
 // develop, and in which commits are the refs git can resolve -- with
 // projects.json remembering base there, settled: the dir check, the branch
 // list and the check SettleBase runs for the popup have all landed.
@@ -388,5 +424,66 @@ func TestPopup_AStaleBaseCheckDoesNotReleaseASubmit(t *testing.T) {
 	m = next.(Model)
 	if !m.submitting || m.submitInput.BaseRef != "old-b" {
 		t.Errorf("after /repo-b's answer: submitting=%v from %q, want a submit from old-b", m.submitting, m.submitInput.BaseRef)
+	}
+}
+
+// TestPopup_AChosenBaseSurvivesAProjectChange: a base the user picked is
+// theirs, and a project change re-applies nothing to it. The review's
+// scenario: an offered base the user has chosen for themselves, then the
+// project row moved within the same repository. Withdrawing the offer took
+// the row out from under the selection, and widgets.Picker keeps a vanished
+// row's INDEX -- so the base became whichever branch sat there next, without
+// a word, and with no check left to run for it.
+func TestPopup_AChosenBaseSurvivesAProjectChange(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main", "develop"}
+	git.repoRoots = map[string]string{"/repo-a/sub": "/repo-a"}
+	git.commits = map[string]string{"/repo-a old-branch": "3d4e5f6"}
+	m := memoryModel(t, "/repo-a", memoryFor(map[string]config.ProjectDefaults{
+		"/repo-a": {Worktree: ptrBool(true), Base: "old-branch"},
+	}), git)
+	m.form.FocusByID("worktree")
+	for _, k := range []tea.KeyPressMsg{
+		{Code: tea.KeyDown}, {Code: tea.KeyDown}, // chips -> branch -> base
+		{Code: tea.KeyUp}, {Code: tea.KeyDown}, // old-branch -> HEAD -> old-branch
+	} {
+		next, _ := m.Update(k)
+		m = next.(Model)
+	}
+	if !m.baseTouched || m.worktree.Base() != "old-branch" {
+		t.Fatalf("setup: touched=%v, Base() = %q, want the user's own old-branch", m.baseTouched, m.worktree.Base())
+	}
+
+	m = switchProject(t, m, "/repo-a", "/repo-a/sub")
+
+	if got := m.worktree.Base(); got != "old-branch" {
+		t.Errorf("Base() after the project change = %q, want the user's old-branch", got)
+	}
+}
+
+// TestPopup_APendingBaseReadsAsTheHeadRow: between a project change and the
+// check that answers for the new project's base, the row names no branch
+// that nobody chose. It used to read whichever branch of the new list sat at
+// the old selection's index.
+func TestPopup_APendingBaseReadsAsTheHeadRow(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main", "develop"}
+	git.commits = map[string]string{"/repo-a old-a": "3d4e5f6", "/repo-b old-b": "4e5f607"}
+	m := memoryModel(t, "/repo-a", memoryFor(map[string]config.ProjectDefaults{
+		"/repo-a": {Worktree: ptrBool(true), Base: "old-a"},
+		"/repo-b": {Worktree: ptrBool(true), Base: "old-b"},
+	}), git)
+	if got := m.worktree.Base(); got != "old-a" {
+		t.Fatalf("setup: Base() = %q, want the offered old-a", got)
+	}
+
+	backspaceDir(&m, len("/repo-a"))
+	typeDir(&m, "/repo-b")
+	m, held := pumpHoldingBaseChecks(t, m, m.reactToChanges())
+	if len(held) != 1 {
+		t.Fatalf("base checks held = %d, want /repo-b's", len(held))
+	}
+	if got := m.worktree.Base(); got != "" {
+		t.Errorf("Base() with /repo-b's check still out = %q, want the HEAD row", got)
 	}
 }

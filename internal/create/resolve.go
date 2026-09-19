@@ -597,10 +597,16 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 
 // withBase checks the base a worktree is cut from against the checkout it
 // will be cut in, which is the project: it fills in plan.Input.Linked for a
-// worktree session from a linked checkout (#171), and refuses an explicit
-// --base that names no commit (#194). A tier's base has already been through
-// app.SettleBase, so the only one that can fail here is one the caller named
-// -- or HEAD itself, in a repository with no commit yet.
+// worktree session from a linked checkout (#171), refuses an explicit --base
+// that names no commit (#194), and maps one that is HEAD itself spelled
+// another way to the HEAD row (app.NamesHead). A tier's base has already
+// been through app.SettleBase, so the only one that can fail here is one the
+// caller named -- or HEAD itself, in a repository with no commit yet.
+//
+// --base is asked about only where a worktree will use it: in a repository,
+// with a worktree. Nothing else reads it, a session without a worktree was
+// always created whatever --base said, and a non-git --worktree has a better
+// reason to be refused, which plan.Build gives.
 //
 // From a lane, Linked is the primary checkout herdr will accept as the
 // source, and the commit the base names IN the linked checkout -- HEAD's when
@@ -626,7 +632,8 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 // remembered commit would pin every later session in the repository to it.
 func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]string, explicit bool, git GitSource) (plan.Input, error) {
 	lane := in.UseWorktree && t.primary != ""
-	if !lane && (!explicit || in.BaseRef == "") {
+	chosen := explicit && in.BaseRef != "" && in.UseWorktree && t.isGitRepo
+	if !lane && !chosen {
 		return in, nil
 	}
 	ref := cmp.Or(in.BaseRef, "HEAD")
@@ -636,7 +643,11 @@ func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]strin
 		return plan.Input{}, fmt.Errorf("%s is a linked worktree checkout, so the base is resolved there, and %s could not be: %v -- pass --base to choose another", in.ProjectDir, ref, err)
 	case err != nil:
 		return plan.Input{}, fmt.Errorf("--base %q names no commit in %s -- pass a branch, tag or commit that exists there, or leave --base off", ref, in.ProjectDir)
-	case !lane:
+	}
+	if chosen && app.NamesHead(ctx, git, in.ProjectDir, ref, commit) {
+		in.BaseRef = ""
+	}
+	if !lane {
 		return in, nil
 	}
 	in.Linked = plan.LinkedCheckout{RepoRoot: t.primary, Commit: commit}

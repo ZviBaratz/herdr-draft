@@ -508,6 +508,11 @@ func (w *WorktreeField) SetBaseItems(version int, refs []string) {
 // the list naming it exists. It is forgotten the moment it lands, so a
 // later refresh cannot re-apply it over a selection the user has since
 // moved.
+//
+// Meanwhile the field reads as the HEAD row, not as whatever it held
+// before: after a project change that would be the previous project's base,
+// or -- once a refresh has taken that row away, since widgets.Picker keeps a
+// vanished row's index -- some branch nobody chose (#194's review).
 func (w *WorktreeField) SetBase(ref string) {
 	id := ref
 	if id == "" {
@@ -517,6 +522,7 @@ func (w *WorktreeField) SetBase(ref string) {
 		w.pendingBase, w.havePendingBase = "", false
 		return
 	}
+	w.base.SelectID(baseHeadID)
 	w.pendingBase, w.havePendingBase = id, true
 }
 
@@ -990,10 +996,10 @@ func (w *WorktreeField) PanelRows() int {
 // .SetProvenance for why this takes a plain file name.
 func (w *WorktreeField) SetProvenance(source string) { w.provenance = source }
 
-// SetNotes records the app layer's report about the one key of the user's
-// own config.toml this panel's branch depends on: config.Load's refused
-// branch_prefix, already worded (#123). nil -- the resting state -- reserves
-// no rows.
+// SetNotes records the app layer's reports about this panel's values that
+// were thrown away, already worded: config.Load's refused branch_prefix
+// (#123), and a remembered or configured base that names no commit, dropped
+// for the HEAD row (#194). nil -- the resting state -- reserves no rows.
 //
 // A line of its own rather than a reuse of SetProvenance's, and ahead of it,
 // because the two say different kinds of thing: provenance attributes a

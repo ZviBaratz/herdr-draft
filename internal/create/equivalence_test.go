@@ -446,8 +446,20 @@ favorites = ["claude"]
 			want:       baseScenarioWant("old-branch"),
 		},
 		{
-			// A per-checkout ref other than HEAD itself resolves, so rule 1
-			// keeps it as written. What it does to the clean gate is #193's.
+			// Another spelling of HEAD itself is the HEAD row too, found by
+			// git: inside the new worktree it would name the worktree, which
+			// is #193's hole, and the form used to drop it to "" -- so keeping
+			// it under rule 1 would have let the popup reach that hole.
+			name:       "a remembered HEAD^0 names HEAD's commit, so it is the HEAD row",
+			configTOML: baseScenarioConfig,
+			projects:   rememberedBase(projectDir, "HEAD^0"),
+			args:       []string{"--title", title},
+			want:       baseScenarioWant(""),
+		},
+		{
+			// A per-checkout ref that is another commit resolves, so rule 1
+			// keeps it as written. At the clean gate it fails closed, and
+			// that is #193's.
 			name:       "a remembered HEAD~1 resolves, so it is kept",
 			configTOML: baseScenarioConfig,
 			projects:   rememberedBase(projectDir, "HEAD~1"),
@@ -1043,6 +1055,7 @@ func baseScenarioWant(base string) plan.Input {
 var repoCommits = map[string]string{
 	"HEAD":       "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
 	"@":          "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+	"HEAD^0":     "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
 	"HEAD~1":     "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
 	"main":       "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
 	"dev":        "2c3d4e5f60718293a4b5c6d7e8f9012345678ab1",

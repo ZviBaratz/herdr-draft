@@ -495,8 +495,10 @@ func AgentOptions(cfg config.Config, kind string) (agentopts.Values, map[string]
 // before, and what turned off the clean gate's commit check for `create`
 // alone (#193).
 //
-// Only the two spellings of HEAD itself. HEAD~1 and HEAD@{1} are other
-// commits, which the HEAD row does not stand for.
+// Only these two spellings, because only these two need no git to
+// recognise. Every other spelling of HEAD itself (HEAD^0, @{0}) is found by
+// app.NamesHead, in the check both callers already make, and HEAD~1 or
+// HEAD@{1} are other commits, which the HEAD row does not stand for.
 func NormalizeBase(ref string) string {
 	if ref == "HEAD" || ref == "@" {
 		return ""

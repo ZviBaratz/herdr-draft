@@ -171,6 +171,55 @@ func TestListBranchesDedupesLocalAndRemote(t *testing.T) {
 	}
 }
 
+// TestResolveRefAnswersTheBaseRule holds real git to the two facts #194's
+// base rule stands on (app.SettleBase, app.NamesHead), which every other
+// test of that rule takes from a fake:
+//
+//   - A branch that exists only on a remote is listed under its bare name
+//     (ListBranches strips origin/), and that name resolves to nothing. So a
+//     remembered or configured `develop` in a fresh clone falls back to HEAD,
+//     while `origin/develop` resolves.
+//   - HEAD^0, @~0 and @{0} are HEAD itself, and HEAD~1 is not.
+func TestResolveRefAnswersTheBaseRule(t *testing.T) {
+	repo := mkRepo(t)
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "second")
+	ctx := context.Background()
+
+	remoteDir := t.TempDir()
+	gitRun(t, remoteDir, "init", "-q", "--bare")
+	gitRun(t, repo, "remote", "add", "origin", remoteDir)
+	gitRun(t, repo, "branch", "develop")
+	gitRun(t, repo, "push", "-q", "origin", "main", "develop")
+	gitRun(t, repo, "branch", "-q", "-D", "develop")
+
+	branches, err := ListBranches(ctx, repo, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if !strings.Contains(strings.Join(branches, " "), "develop") {
+		t.Fatalf("setup: ListBranches = %v, want the remote-only develop listed under its bare name", branches)
+	}
+	if got, err := ResolveRef(ctx, repo, "develop"); err == nil {
+		t.Errorf("ResolveRef(develop) = %s with only origin/develop present, want an error", got)
+	}
+	if _, err := ResolveRef(ctx, repo, "origin/develop"); err != nil {
+		t.Errorf("ResolveRef(origin/develop): %v", err)
+	}
+
+	head, err := ResolveRef(ctx, repo, "HEAD")
+	if err != nil {
+		t.Fatalf("ResolveRef(HEAD): %v", err)
+	}
+	for _, ref := range []string{"HEAD^0", "@~0", "@{0}"} {
+		if got, err := ResolveRef(ctx, repo, ref); err != nil || got != head {
+			t.Errorf("ResolveRef(%s) = %s, %v; want HEAD's own %s", ref, got, err, head)
+		}
+	}
+	if got, err := ResolveRef(ctx, repo, "HEAD~1"); err != nil || got == head {
+		t.Errorf("ResolveRef(HEAD~1) = %s, %v; want a commit other than HEAD's", got, err)
+	}
+}
+
 func TestIsGitRepoNonRepoDir(t *testing.T) {
 	dir := t.TempDir()
 	if IsGitRepo(dir) {

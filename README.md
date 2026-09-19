@@ -351,10 +351,12 @@ files to keep them from drifting. The project directory defaults to the
 working directory. A successful create records what it used, so the form's
 next open defaults to it too.
 
-`--base HEAD` and `--base @` mean what leaving `--base` off means when
-nothing else chooses a base: the form's `HEAD` row, which is no base at all.
-A `--base` that names no commit in the project is refused before anything
-is created, rather than handed to herdr to fail at the worktree step.
+`--base HEAD` and `--base @`, like any other spelling of HEAD itself
+(`HEAD^0`, `@{0}`), mean what leaving `--base` off means when nothing else
+chooses a base: the form's `HEAD` row, which is no base at all. With a
+worktree, a `--base` that names no commit in the project is refused before
+anything is created, rather than handed to herdr to fail at the worktree
+step. Without one, nothing reads `--base`, and it is not checked.
 
 **Inside a linked worktree** (another session's, say) the project is that
 checkout. herdr will not create a worktree *from* a linked checkout, so a
@@ -984,7 +986,9 @@ before it is used, the same way by the form and by `create`:
   only the 50 most recently committed branches, so a base it does not name
   — an older branch, a tag, `HEAD~1` — is offered right after the `HEAD`
   row.
-- `HEAD` and `@` are the `HEAD` row.
+- `HEAD` and `@` are the `HEAD` row, and so is any other spelling that
+  names HEAD's own commit (`HEAD^0`, `@{0}`). `HEAD~1` is another commit,
+  and is kept.
 - One that names no commit falls back to `HEAD`, and the worktree panel
   says which base was dropped and where it came from: `ignoring base
   "old-feature" from projects.json: no such commit here; using HEAD`.
@@ -1026,9 +1030,9 @@ The list above is therefore the *complete* set of keys it may set:
 - `default_worktree`, `default_placement`, `default_base` — as above. A
   `default_base` has to name a commit in each clone that uses it, or it
   falls back to `HEAD` there with a note (see
-  [Where defaults come from](#where-defaults-come-from)). A team branch
-  that a fresh clone has only as `origin/develop` needs
-  `default_base = "origin/develop"`, not `"develop"`.
+  [Where defaults come from](#where-defaults-come-from)). The `"develop"`
+  above works in a clone with a local `develop`. For a team branch a fresh
+  clone has only as `origin/develop`, write `"origin/develop"`.
 - `linear_branch_name` (default: `true`) — whether a selected Linear
   issue's own `branchName` owns the branch. Set it to `false` in a
   repository with its own branch naming: the branch is then derived from

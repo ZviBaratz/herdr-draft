@@ -136,7 +136,9 @@ without the popup. It drives herdr exclusively through the public CLI
   runs there. The popup does the same, from a lane's space or with one
   picked in the `project` row.
 - **`--base HEAD` and `--base @` mean no base**, as the form's `HEAD` row
-  does, with `--json` omitting `base` and its provenance still `flag`. A
+  does, and so does any other spelling of HEAD itself (`HEAD^0`). Their
+  provenance stays `flag`. `--json` omits `base`, or from a lane reports
+  the lane's commit, as it does for no base at all. With a worktree, a
   `--base` that names no commit is refused before anything is created
   (exit `2`) rather than reaching herdr and failing at the worktree step
   (#194).
@@ -196,7 +198,8 @@ without the popup. It drives herdr exclusively through the public CLI
   on both paths** (#194). One that names a commit is kept, and the form's
   base list offers it right after the `HEAD` row even when it is not among
   the 50 most recently committed branches the list holds. `HEAD` and `@`
-  are the `HEAD` row, whose value is no base at all. One that names no
+  are the `HEAD` row, whose value is no base at all, and so is any other
+  spelling that names HEAD's own commit (`HEAD^0`, `@{0}`). One that names no
   commit — a branch deleted since, or one you have only on a remote under
   its bare name — falls back to `HEAD`, and the worktree panel, or a
   `herdr-draft create:` line on stderr, says which base was dropped.

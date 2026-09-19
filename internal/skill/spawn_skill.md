@@ -107,10 +107,10 @@ you are doing right now.
   though a repository's own `.herdr-draft.toml` can set a different
   default. If you are on a feature branch and the new work should start
   from `main`, pass it rather than assume. `--base HEAD` is your current
-  commit whatever a default says. A `--base` that names no commit is
-  refused with exit 2 and nothing created. A remembered or configured one
-  that names no commit is dropped for `HEAD`, with a `herdr-draft create:`
-  line on stderr saying so.
+  commit whatever a default says. With a worktree, a `--base` that names
+  no commit is refused with exit 2 and nothing created. A remembered or
+  configured one that names no commit is dropped for `HEAD`, with a
+  `herdr-draft create:` line on stderr saying so.
 - `--project DIR` is the repository. Left off, it resolves to the working
   directory. That is right inside another session's worktree too. herdr
   requires the new worktree to be created from the repository's primary

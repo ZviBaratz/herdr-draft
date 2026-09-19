@@ -387,6 +387,25 @@ func TestWorktreeField_SetBaseRoundTrip(t *testing.T) {
 	}
 }
 
+// TestWorktreeField_AHeldBaseShowsTheHeadRow: a ref SetBase has to hold,
+// because nothing on offer names it yet, is not selected yet either -- so
+// the field reads as the HEAD row meanwhile, not as whatever it held before
+// (#194's review: a project change left the previous project's base, or the
+// branch at its index, standing in for one nobody had answered for).
+func TestWorktreeField_AHeldBaseShowsTheHeadRow(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetBaseItems(1, []string{"main", "develop"})
+	w.SetBase("develop")
+	w.SetBase("not-listed-yet")
+	if got := w.Base(); got != "" {
+		t.Fatalf("Base() while holding a ref nothing names = %q, want \"\" (the HEAD row)", got)
+	}
+	w.SetBaseItems(2, []string{"main", "not-listed-yet"})
+	if got := w.Base(); got != "not-listed-yet" {
+		t.Fatalf("Base() once the list names it = %q, want the held ref", got)
+	}
+}
+
 // TestWorktreeField_OfferBaseSitsRightAfterHEAD is #194's rule 1 on screen:
 // a base the app has confirmed resolves is kept even though the branch list
 // -- the 50 most recently committed -- does not name it. It is offered right

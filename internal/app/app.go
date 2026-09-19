@@ -1888,10 +1888,13 @@ func (m *Model) noteUserEdits() {
 	}
 	// The base needs one extra guard the other three do not: its value
 	// also changes when the CANDIDATE LIST changes underneath it (an async
-	// `git for-each-ref` landing, a project switch clearing the pool), and
-	// widgets.Picker falls back to row 0 when the ref it held is no longer
-	// on offer. Only a move AWAY from HEAD counts as a decision; a fall
-	// back to HEAD is the list moving, not the user.
+	// `git for-each-ref` landing, a project switch replacing the pool).
+	// WorktreeField.SetBase shows the HEAD row while it holds a ref nothing
+	// names yet, so the app's own moves go through HEAD. Only a move AWAY
+	// from HEAD counts as a decision; a fall back to HEAD is the list
+	// moving, not the user. (widgets.Picker itself keeps a vanished row's
+	// index rather than going back to row 0, which is why a user's own base
+	// is kept on offer across a project change -- applyProjectDefaults.)
 	if b := m.worktree.Base(); b != m.appliedBaseRef && b != "" {
 		m.baseTouched = true
 	}
@@ -1991,8 +1994,16 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 		m.agent.SetKind(m.resolved.AgentKind)
 	}
 	// The previous project's offer and note are about a base that is no
-	// longer this form's, and a ref offered there may name nothing here.
-	m.worktree.OfferBase("")
+	// longer this form's, and a ref offered there may name nothing here --
+	// unless the base is the user's own, which a project change re-applies
+	// nothing to. Then it stays on offer, because that is what keeps it
+	// selected: widgets.Picker keeps a vanished row's INDEX, so withdrawing
+	// the row the user chose would hand them the branch that sits there next.
+	offer := ""
+	if m.baseTouched {
+		offer = m.worktree.Base()
+	}
+	m.worktree.OfferBase(offer)
 	m.baseNote = ""
 	if !m.baseTouched {
 		// The remembered base almost always arrives BEFORE the branch list
@@ -2110,7 +2121,8 @@ func (m *Model) showRepoConfig() {
 // otherwise falls back to the HEAD row (defaults.Resolved.WithoutBase), with
 // a note saying so. The note is "" when nothing was dropped. HEAD and @
 // arrive here already mapped to "" by defaults.Resolve (rule 2), and ""
-// asks git nothing.
+// asks git nothing. Any other spelling of HEAD itself is mapped here, where
+// git is already being asked (NamesHead).
 //
 // It exists because the base picker's branch list was the only test a
 // remembered base ever met, and the list is not a test of anything: it is
@@ -2131,11 +2143,53 @@ func SettleBase(ctx context.Context, git commitResolver, dir string, res default
 	if res.BaseRef == "" {
 		return res, ""
 	}
-	if _, err := git.ResolveCommit(ctx, dir, res.BaseRef); err == nil {
-		return res, ""
+	commit, err := git.ResolveCommit(ctx, dir, res.BaseRef)
+	if err != nil {
+		return res.WithoutBase(), fmt.Sprintf("ignoring base %q from %s: no such commit here; using HEAD",
+			res.BaseRef, res.From[defaults.FieldBaseRef])
 	}
-	return res.WithoutBase(), fmt.Sprintf("ignoring base %q from %s: no such commit here; using HEAD",
-		res.BaseRef, res.From[defaults.FieldBaseRef])
+	if NamesHead(ctx, git, dir, res.BaseRef, commit) {
+		// Still the tier's choice, as a tier's HEAD is: it chose HEAD,
+		// spelled another way, and nothing was dropped.
+		res.BaseRef = ""
+	}
+	return res, ""
+}
+
+// NamesHead reports whether ref, which names commit in dir, is HEAD itself
+// spelled another way -- HEAD^0, @~0, HEAD@{0}, @{0}, anything spelled from
+// HEAD or @ that names HEAD's own commit -- and so means the base picker's
+// HEAD row, "", as HEAD and @ do (defaults.NormalizeBase). `create` asks it
+// of --base too.
+//
+// It matters beyond tidiness: each of these names the worktree itself once
+// inside it, which is where the clean gate evaluates a base, so a worktree
+// holding work would count as having none (#193). The popup used to drop
+// them all to "" without asking; keeping them under rule 1 would have
+// opened that hole on the popup's path for the first time. Git decides
+// rather than a list of spellings, because no list is complete
+// (HEAD@{now} is one more).
+//
+// Only a ref spelled from HEAD or @: a branch that happens to be at HEAD's
+// commit is still a branch, and HEAD~1 is another commit.
+func NamesHead(ctx context.Context, git commitResolver, dir, ref, commit string) bool {
+	if !headRelative(ref) {
+		return false
+	}
+	head, err := git.ResolveCommit(ctx, dir, "HEAD")
+	return err == nil && head == commit
+}
+
+// headRelative reports whether ref is spelled from HEAD or @: either alone,
+// or followed by a revision suffix (~ ^ @ {). A branch called HEADroom is
+// not.
+func headRelative(ref string) bool {
+	for _, p := range []string{"HEAD", "@"} {
+		if rest, ok := strings.CutPrefix(ref, p); ok && (rest == "" || strings.ContainsRune("~^@{", rune(rest[0]))) {
+			return true
+		}
+	}
+	return false
 }
 
 // commitResolver is the one git question SettleBase asks -- a subset of both
