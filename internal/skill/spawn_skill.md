@@ -232,7 +232,7 @@ learn a repository's conventions before it can start is rarely small
 enough for it.
 
 **Keep the user's own model id.** When the family you chose is the one
-their default already names, pass the id the dry run reports for it
+their default already names, pass the id the first dry run reports for it
 (section 7), quoted: `--model 'claude-opus-5[1m]'` rather than
 `--model opus`. An id can carry a variant that the alias does not. Unquoted,
 the shell reads the brackets as a file pattern: zsh refuses the whole
@@ -320,7 +320,7 @@ worker nobody will steer afterwards — never for an orchestrator or a
 `/loop` session, which must not close themselves. It adds nothing to an
 empty prompt or a slash command. `--no-reap` turns it off where the user's
 configuration turned it on. With neither, that configuration decides, and
-the dry run's `mark_ready` says which way it went (section 7; absent means
+the first dry run's `mark_ready` says which way it went (section 7; absent means
 off). When that is
 `true` for a session someone will steer, pass `--no-reap`. Every
 `plan`-mode session is one: it stops to wait for the user's approval.
@@ -330,15 +330,18 @@ off). When that is
 Building the command is your job. Choosing among plausible ones is the
 user's. Before running anything, ask **once**, with `AskUserQuestion`.
 
-Before you ask, dry-run the command twice. **Both runs are needed, and the
-first cannot be folded into the second.** A flag you pass displaces the
-default it would have shown, so a dry run that already carries your
-choices cannot tell you what those choices replace. The confirmation then
-says something about the user's defaults that nobody read.
+Before you ask, dry-run the command twice. **The first cannot be folded
+into the second.** A flag you pass displaces the default it would have
+shown, so a dry run that already carries your choices cannot tell you what
+those choices replace. The confirmation then says something about the
+user's defaults that nobody read. (When you will pass none of those flags,
+because the user said to use their defaults or the agent is not `claude`,
+the first run is already the command you will offer, and it is enough.)
 
 **1. Dry-run it without the option flags.** Add `--dry-run --json` to the
-command you mean to offer, leave `--model`, `--effort` and
-`--permission-mode` off, and keep the same `--prompt`:
+command you mean to offer, leave `--model`, `--effort`,
+`--permission-mode`, `--reap` and `--no-reap` off, and keep the same
+`--prompt`:
 
 ```bash
 # with section 2's three exports above it, in the same command
