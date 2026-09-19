@@ -3318,6 +3318,10 @@ func TestCleanCheckNamesTheEvidenceForEachUnconfirmedShape(t *testing.T) {
 	if !strings.Contains(gone.Reason, "stopped answering") {
 		t.Errorf("gone reason = %q, want it to name the reads that failed", gone.Reason)
 	}
+	if strings.Contains(gone.Reason, "as the prompt was") {
+		t.Errorf("gone reason = %q, want no claim about when the agent went -- herdr's wait can "+
+			"report it a whole turn after the send", gone.Reason)
+	}
 
 	decisions := map[string]CleanDecision{
 		"timeout": timeout, "stalled": stalled, "after-send": afterSend,
@@ -3596,8 +3600,18 @@ func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 	if strings.Contains(msg, "can be removed") || strings.Contains(msg, "nothing was delivered") {
 		t.Errorf("step message = %q, want it to send the user to the pane rather than offer a removal", msg)
 	}
-	if !strings.Contains(msg, "the agent exited as the prompt was sent") {
-		t.Errorf("step message = %q, want its head kept: it is the clause the popup's truncation leaves", msg)
+	// The head is the clause the popup's truncation leaves, so it states
+	// what was seen. "Exited" is the likeliest cause of that, not an
+	// observation: the reads fail the same way whatever went wrong. Nor is
+	// "as the prompt was sent" something either witness can see: the reads
+	// run only once `agent prompt --wait` returns, which can be a whole
+	// turn after the send.
+	if !strings.HasPrefix(strings.TrimPrefix(msg, "plan: execute: sending prompt: "),
+		"the agent stopped answering after the prompt was sent") {
+		t.Errorf("step message = %q, want it to open with what was seen", msg)
+	}
+	if strings.Contains(msg, "the agent exited") || strings.Contains(msg, "as the prompt was sent") {
+		t.Errorf("step message = %q, want neither the exit nor its timing asserted", msg)
 	}
 }
 
@@ -3756,9 +3770,15 @@ func TestExecutePromptAgentGoneFromHerdrIsUnconfirmed(t *testing.T) {
 		d.Reason != unconfirmedCleanReason(causeAgentGoneAfterSend) {
 		t.Errorf("CleanCheck = %+v, want the clean refused for the agent-gone evidence", d)
 	}
+	// herdr's wait runs on to a settled status once it has seen the agent
+	// working, so `agent_not_running` can arrive a whole turn after the
+	// send -- which is why the sentence may not say "as it was sent".
 	msg := progressed[len(progressed)-1].Err.Error()
-	if !strings.Contains(msg, "the agent exited as the prompt was sent") {
-		t.Errorf("step message = %q, want herdr's code explained, not passed through raw", msg)
+	if !strings.Contains(msg, "the agent stopped answering after the prompt was sent") {
+		t.Errorf("step message = %q, want herdr's code explained by the lost-agent sentence", msg)
+	}
+	if strings.Contains(msg, "as the prompt was sent") {
+		t.Errorf("step message = %q, want no claim about when the agent went", msg)
 	}
 }
 
