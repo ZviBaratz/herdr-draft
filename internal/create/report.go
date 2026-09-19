@@ -36,6 +36,9 @@ type report struct {
 	outcome plan.CleanOutcome
 
 	json bool
+	// dryRun marks a --dry-run's report (#209): input and provenance are
+	// set, and nothing ran, so result is the zero value and means nothing.
+	dryRun bool
 }
 
 // write emits the result: one JSON object on stdout under --json, a human
@@ -48,6 +51,10 @@ func (r report) write(stdout, stderr io.Writer) {
 		r.writeJSON(stdout)
 		return
 	}
+	if r.dryRun {
+		fmt.Fprintln(stdout, r.dryRunLine())
+		return
+	}
 	if r.ok() {
 		fmt.Fprintln(stdout, r.humanLine())
 		r.writeUnsentPrompt(stderr)
@@ -57,8 +64,9 @@ func (r report) write(stdout, stderr io.Writer) {
 	r.writeUnsentPrompt(stderr)
 }
 
-// ok reports whether every op ran.
-func (r report) ok() bool { return r.result.FailedIndex == -1 }
+// ok reports whether every op ran -- or, for a dry run, that the real run
+// would have gone ahead, which is all a dry run that got this far can say.
+func (r report) ok() bool { return r.dryRun || r.result.FailedIndex == -1 }
 
 // humanLine is the one line a successful create prints: key=value, so it
 // is greppable by a shell that did not ask for --json but still wants the
@@ -87,6 +95,34 @@ func (r report) humanLine() string {
 	parts = append(parts, "agent="+r.input.AgentKind)
 	if r.input.UseWorktree {
 		parts = append(parts, "branch="+r.input.Branch)
+	}
+	return strings.Join(parts, " ")
+}
+
+// dryRunLine is the one line a --dry-run prints without --json: what the
+// run would create, in humanLine's key=value shape, naming what a command
+// line usually leaves to the defaults -- the branch and base or the
+// placement, the account, and the session options the agent would launch
+// with. The title is quoted, being the one value with spaces in it.
+func (r report) dryRunLine() string {
+	in := r.input
+	parts := []string{"would create", fmt.Sprintf("title=%q", in.Title), "agent=" + in.AgentKind}
+	if in.UseWorktree {
+		parts = append(parts, "branch="+in.Branch, "base="+cmp.Or(in.BaseRef, plan.WorktreeBase(in), "HEAD"))
+	} else {
+		parts = append(parts, "placement="+defaults.PlacementValue(in.Placement))
+	}
+	if in.AccountPin != "" {
+		parts = append(parts, "account="+in.AccountPin)
+	}
+	launch := launchOptions(in)
+	for _, o := range agentopts.For(in.AgentKind) {
+		if v := launch[o.Name]; v != "" {
+			parts = append(parts, o.Name+"="+v)
+		}
+	}
+	if in.MarkReady && plan.ReapApplies(in.Prompt) {
+		parts = append(parts, "mark_ready=true")
 	}
 	return strings.Join(parts, " ")
 }
@@ -176,7 +212,12 @@ const (
 // stable; anything absent (no worktree, no prompt, no failure) is omitted
 // rather than emitted empty, so a consumer can test for presence.
 type jsonReport struct {
-	OK         bool   `json:"ok"`
+	OK bool `json:"ok"`
+	// DryRun is true for a --dry-run's report (#209): everything below was
+	// resolved and checked, and nothing was created, so there are no ids
+	// and no prompt fate to report. OK then means the real run would go
+	// ahead.
+	DryRun     bool   `json:"dry_run,omitempty"`
 	Error      string `json:"error,omitempty"`
 	FailedStep string `json:"failed_step,omitempty"`
 
@@ -246,6 +287,21 @@ type jsonReport struct {
 	// what [agents.extra_args] passes on its own. Absent when every option
 	// inherits; provenance's option.<name> entries say where each came from.
 	AgentOptions agentopts.Values `json:"agent_options,omitempty"`
+	// LaunchOptions is what the agent's command line actually carries for
+	// each declared option (#209): a chosen value, or the one
+	// [agents.extra_args] passes for an option left on inherit. The #208
+	// session ran on a model and an effort extra_args set, with
+	// agent_options absent. Absent here means no flag at all, so the
+	// agent's own settings decide; provenance's option.<name> says which
+	// source supplied each, "extra_args" included.
+	//
+	// It reads the declared flags and nothing else. Any other argument in
+	// extra_args reaches the agent as written and unreported, one that
+	// skips its permission prompts included, whatever permission_mode says
+	// here. And a `[clauth] launcher` of the form `sh -c "..."` drops every
+	// argument after it (agent-options spec §5.1), which nothing in this
+	// report can see.
+	LaunchOptions agentopts.Values `json:"launch_options,omitempty"`
 
 	OnFailure    string `json:"on_failure,omitempty"`
 	Cleaned      bool   `json:"cleaned,omitempty"`
@@ -265,15 +321,17 @@ type jsonReport struct {
 
 	// Provenance is spec §10's tier attribution, one entry per resolved
 	// value: which file supplied it, or "flag" when the caller did,
-	// "worktree" for the placement a worktree decides, and "checkout" for
-	// the commit a linked checkout supplies as an unset base (see
-	// provenanceFlag and its siblings).
+	// "worktree" for the placement a worktree decides, "checkout" for the
+	// commit a linked checkout supplies as an unset base, and "extra_args"
+	// for a session option left on inherit that [agents.extra_args] passes
+	// anyway (see provenanceFlag and its siblings).
 	Provenance map[string]string `json:"provenance"`
 }
 
 func (r report) writeJSON(w io.Writer) {
 	out := jsonReport{
 		OK:         r.ok(),
+		DryRun:     r.dryRun,
 		Title:      r.input.Title,
 		ProjectDir: r.input.ProjectDir,
 		AgentKind:  r.input.AgentKind,
@@ -283,7 +341,8 @@ func (r report) writeJSON(w io.Writer) {
 		Provenance: r.provenance,
 		MarkReady:  r.input.MarkReady && plan.ReapApplies(r.input.Prompt),
 
-		AgentOptions: r.input.AgentOptions,
+		AgentOptions:  r.input.AgentOptions,
+		LaunchOptions: launchOptions(r.input),
 	}
 	if r.input.UseWorktree {
 		out.Branch = r.input.Branch
@@ -298,7 +357,9 @@ func (r report) writeJSON(w io.Writer) {
 	if a := r.result.AgentAt; a != nil {
 		out.WorkspaceID, out.TabID, out.PaneID = a.WorkspaceID, a.TabID, a.PaneID
 	}
-	if r.input.Prompt != "" {
+	// A dry run sent nothing, so the prompt has no fate to report -- and
+	// "unsent" would read as one that needs sending again.
+	if r.input.Prompt != "" && !r.dryRun {
 		if r.result.PromptUnconfirmed {
 			// PromptSent deliberately left nil: see its doc comment.
 			out.PromptStatus = promptStatusUnconfirmed
@@ -332,6 +393,14 @@ func (r report) writeJSON(w io.Writer) {
 	// The only way this fails is an unencodable value, and every field
 	// above is a string, bool or map[string]string.
 	_ = enc.Encode(out)
+}
+
+// launchOptions is jsonReport.LaunchOptions: the declared flags in the
+// argument list both launch paths start the agent with, read back the same
+// way the form reads what extra_args pins, so the report and the launch
+// cannot disagree about what displaced what.
+func launchOptions(in plan.Input) agentopts.Values {
+	return agentopts.Pinned(in.AgentKind, agentopts.Launch(in.AgentKind, in.ExtraArgs, in.AgentOptions))
 }
 
 // shortCommit is the first seven characters of a full commit id, git's own

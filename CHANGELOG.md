@@ -118,13 +118,22 @@ without the popup. It drives herdr exclusively through the public CLI
   reads stdin), `--branch`, `--base`, `--worktree` / `--no-worktree`,
   `--reap` / `--no-reap`, `--placement`, `--workspace`, `--agent`,
   `--model`, `--effort`, `--permission-mode`, `--account`, `--issue`,
-  `--json`, `--on-failure keep|clean`.
+  `--json`, `--dry-run`, `--on-failure keep|clean`.
 - **`--model`, `--effort` and `--permission-mode`** are the `options` row's
   flags, registered from the same per-kind declaration. `inherit` clears a
   configured default for one session. An option the agent kind does not
   declare, like `--effort` with `--agent codex`, is refused rather than
-  ignored, and `--json` reports what the agent was launched with as
-  `agent_options`.
+  ignored. `--json` reports the chosen options as `agent_options`, and as
+  `launch_options` what the agent's command line actually carried for
+  each, including what `[agents.extra_args]` passed for an option left on
+  `inherit`. For those, provenance says `extra_args`, not `built-in`
+  (#209).
+- **`--dry-run` shows what a create would make, and makes nothing.** It
+  runs the whole pre-flight, with the real run's exit 2 and 3, then
+  reports and stops. It creates nothing and remembers nothing, and an
+  `auto` account goes to the picker's own `--dry-run`, so no pick is spent.
+  Under `--json` it prints the create's object with `dry_run: true` and no
+  ids (#209).
 - **`--placement tab-in` and `--workspace <id>`** place the agent's tab in a
   workspace other than the invoking one — the one already holding the
   project (the default when there is one), or any open workspace by id —
@@ -216,7 +225,11 @@ without the popup. It drives herdr exclusively through the public CLI
   an agent asked to hand work off creates a session instead of writing a
   handoff document and stopping. It carries the `HERDR_PLUGIN_*` exports
   and why they must share one command, the placement choice, the prompt,
-  and how to read `prompt_status` and the pane afterwards. It also carries
+  and how to read `prompt_status` and the pane afterwards. Unless the user
+  names them, the agent chooses the model, effort and permission mode for
+  the task and passes them, never a mode more permissive than its own. It
+  dry-runs the command, and the confirmation it asks for shows each choice
+  with its reason and what the session will run with (#209). It also carries
   the absolute path of the binary that printed it, which is why the emitted
   file is machine-specific and is regenerated after an upgrade.
 

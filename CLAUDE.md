@@ -111,7 +111,11 @@ Layering, outermost to innermost:
   real `app.Model` and a real `create` request over the same files and
   asserts the two `plan.Input`s are identical field for field, which is the
   test that keeps them from drifting. Progress goes to stderr one line per
-  step; stdout carries a created session and nothing else.
+  step; stdout carries a created session and nothing else. `--dry-run`
+  (#209) stops after the whole pre-flight, before `plan.Execute`: it
+  reports what would be created, spends no pick and writes no memory. It
+  adds nothing to `plan.Input`, so it does not break the rule that every
+  flag has a form control; the form's counterpart is the form itself.
 - **`internal/form`** — "the form is a dumb view" (spec §4): a `Section`
   interface, focus ring, key grammar (`keys.go`), mouse zones
   (`bubblezone/v2`), and rendering only. No I/O, no knowledge of herdr/git/

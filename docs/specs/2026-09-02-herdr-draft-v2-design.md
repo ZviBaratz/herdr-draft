@@ -645,6 +645,16 @@ command and the form produce the same session from the same inputs.
 > **Extended, reap spec (2026-09-17).** `--reap` / `--no-reap` (that
 > document's §7).
 
+> **Extended, #209 (2026-09-19): `--dry-run`.** It resolves and checks
+> exactly what a create would, then reports and stops. No plan runs,
+> nothing is remembered, and an `auto` account goes to the picker's own
+> `--dry-run`, so no pick is spent. Exit 0 means it would create, and exits
+> 2 and 3 are the real run's. With `--json` it prints the create's object
+> with `dry_run: true`, and without the ids or a prompt fate. It adds
+> nothing to `plan.Input`. Its counterpart in the form is the form itself,
+> which shows every value before Enter. The spawn skill runs one so that
+> its confirmation can show what a session will run with.
+
 > **Amended, #171 (2026-09-18): from inside a linked worktree.** Both paths
 > take the linked checkout as the project: `create` because it is the
 > working directory, and the form because a linked worktree's space now

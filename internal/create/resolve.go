@@ -726,6 +726,18 @@ func agentOptions(req request, cfg config.Config, kind string, prov map[string]s
 		}
 		prov[defaults.FieldAgentOption(name)] = provenanceFlag
 	}
+	// An option left on inherit sends no flag of its own, but
+	// [agents.extra_args] may still pass one, and then that value is what
+	// the agent runs with. The provenance says so (#209): "built-in" there
+	// told the #208 spawner claude's own settings would decide a model and
+	// an effort that extra_args had in fact set. That includes an explicit
+	// --model inherit, which asks for no flag of this command's own and
+	// cannot take extra_args's away.
+	for name := range agentopts.Pinned(kind, cfg.Agents.ExtraArgs[kind]) {
+		if vals[name] == "" {
+			prov[defaults.FieldAgentOption(name)] = provenanceExtraArgs
+		}
+	}
 	if len(vals) == 0 {
 		return nil, nil
 	}
@@ -796,22 +808,25 @@ func accountPicker(cfg config.Config, deps Deps) picker.Source {
 
 // resolveAccount turns an `auto` pin into a real profile and its config dir.
 //
-// --strict, and not --dry-run. Strict because this verb has nobody at the
-// keyboard: a picker that would have prompted must refuse instead. Not dry-run
-// because this is the real launch, and the protocol's ledger write is what
-// keeps two concurrent creates off one account.
+// --strict always, and --dry-run only for `create --dry-run`. Strict because
+// this verb has nobody at the keyboard: a picker that would have prompted
+// must refuse instead. Not dry-run for a real create, because that is the
+// real launch, and the protocol's ledger write is what keeps two concurrent
+// creates off one account. A `create --dry-run` launches nothing, so its
+// pick is the picker's own dry run (#209), as the popup's live preview is:
+// the answer, with no account spent and no config dir built.
 //
 // The picker's `warnings` come back beside the input, for run() to print:
 // the popup draws them on the account panel, and this verb has no panel
 // (#165).
-func resolveAccount(ctx context.Context, in plan.Input, src picker.Source) (plan.Input, []string, error) {
+func resolveAccount(ctx context.Context, in plan.Input, src picker.Source, dryRun bool) (plan.Input, []string, error) {
 	if in.AccountPin != clauthAuto {
 		return in, nil, nil
 	}
 	if err := requirePicker(in, src); err != nil {
 		return in, nil, err
 	}
-	res, err := src.Pick(ctx, in.ProjectDir, picker.Options{Strict: true})
+	res, err := src.Pick(ctx, in.ProjectDir, picker.Options{Strict: true, DryRun: dryRun})
 	if err != nil {
 		return in, nil, err
 	}
@@ -1042,16 +1057,18 @@ func workspaceByID(workspaces []herdrc.WorkspaceInfo, id string) (plan.Space, bo
 	return plan.Space{}, false
 }
 
-// provenanceFlag, provenanceWorktree and provenanceCheckout are the
-// provenance values spec §10's tier names cannot express: a value the
-// caller gave outright on the command line, the one value a worktree
-// decides by itself (placement spec §14: a worktree session's placement is
-// its own space), and the base a linked checkout supplies when none was
-// chosen -- its own commit (#171).
+// provenanceFlag, provenanceWorktree, provenanceCheckout and
+// provenanceExtraArgs are the provenance values spec §10's tier names cannot
+// express: a value the caller gave outright on the command line, the one
+// value a worktree decides by itself (placement spec §14: a worktree
+// session's placement is its own space), the base a linked checkout
+// supplies when none was chosen -- its own commit (#171) -- and a session
+// option left on inherit that [agents.extra_args] passes anyway (#209).
 const (
-	provenanceFlag     = "flag"
-	provenanceWorktree = "worktree"
-	provenanceCheckout = "checkout"
+	provenanceFlag      = "flag"
+	provenanceWorktree  = "worktree"
+	provenanceCheckout  = "checkout"
+	provenanceExtraArgs = "extra_args"
 )
 
 // provenanceOf turns the resolver's own tier attribution into the string

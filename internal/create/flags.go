@@ -54,6 +54,9 @@ type request struct {
 	issue     string
 	onFailure string
 	json      bool
+	// dryRun is --dry-run (#209): the whole pre-flight, then a report of
+	// what would be created, and nothing else.
+	dryRun bool
 
 	// worktree is the --worktree/--no-worktree pair as one tri-state: nil
 	// when neither was given, so spec §10's resolved default stands.
@@ -125,18 +128,25 @@ flags:
                      manual | plan | acceptEdits | auto
                      These three are claude's session options. Unset, each
                      comes from config.toml's [agents.options.<kind>], else
-                     the agent's own settings; "inherit" sends none even
-                     when config.toml sets one. A kind that does not
-                     declare an option refuses its flag
+                     whatever [agents.extra_args] passes, else the agent's
+                     own settings. "inherit" sends no flag of its own, even
+                     when config.toml sets one, though [agents.extra_args]
+                     can still pass one; --json's launch_options says what
+                     the agent runs with. A kind that does not declare an
+                     option refuses its flag
   --account NAME     clauth account to pin (claude only); "auto" asks the
                      configured [clauth] picker to choose
   --issue ID         seed title, branch and prompt from a Linear issue
   --json             print one JSON object instead of a human line
+  --dry-run          resolve and check everything a create would, report
+                     what it would create, and stop: nothing is created
+                     or remembered, and --account auto asks the picker
+                     without spending a pick
   --on-failure WHAT  keep | clean -- what to do with a session that failed
                      partway (default: keep)
 
 exit codes:
-  0  created
+  0  created, or with --dry-run, would create
   1  the plan started and failed, and part of the session may exist
      (--on-failure applied)
   2  bad usage, or a request that cannot be resolved
@@ -190,6 +200,7 @@ func registerFlags(fs *flag.FlagSet, req *request, worktreeOn, worktreeOff *bool
 	fs.StringVar(&req.account, "account", "", "")
 	fs.StringVar(&req.issue, "issue", "", "")
 	fs.BoolVar(&req.json, "json", false, "")
+	fs.BoolVar(&req.dryRun, "dry-run", false, "")
 	fs.StringVar(&req.onFailure, "on-failure", onFailureKeep, "")
 }
 

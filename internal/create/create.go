@@ -301,7 +301,7 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	// request nothing is left to refuse. The picker's own refusal is still
 	// before anything is created -- the whole of the contract the spec
 	// states for its exit 2/3/4.
-	in, warnings, err := resolveAccount(ctx, resolved.input, accountPicker(resolved.tiers.cfg, deps))
+	in, warnings, err := resolveAccount(ctx, resolved.input, accountPicker(resolved.tiers.cfg, deps), req.dryRun)
 	if err != nil {
 		return usageError(deps.stderr(), err)
 	}
@@ -314,6 +314,16 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	ops, err := plan.Build(resolved.input)
 	if err != nil {
 		return usageError(deps.stderr(), err)
+	}
+	if req.dryRun {
+		// --dry-run stops here (#209), with every refusal above already
+		// made: what it reports is what the plan would be built from, and
+		// a request it passes is one the real run would not refuse before
+		// starting. Nothing past this point runs -- no plan, no memory
+		// write, and the pick above was the picker's own dry run.
+		report{input: resolved.input, provenance: resolved.provenance, json: req.json, dryRun: true}.
+			write(deps.stdout(), deps.stderr())
+		return ExitOK
 	}
 	return execute(ctx, resolved, req, deps, ops)
 }
