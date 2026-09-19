@@ -590,9 +590,11 @@ type Model struct {
 	baseSettleLanded  int
 	baseNote          string
 
-	// submitHeld is a submit waiting for the base check (#194): set by
-	// handleSubmit while one is out, and cleared by the handleBaseSettled
-	// that lands it, which re-enters handleSubmit.
+	// submitHeld is a submit waiting for the project row's check (#195) or
+	// the base check (#194): set by handleSubmit while either is out. The
+	// handler that lands one -- handleDirResult or handleBaseSettled --
+	// re-enters handleSubmit, which re-checks both and holds again if the
+	// other is still out.
 	submitHeld bool
 
 	// linearIssues is the last Linear issue list this Model has seen --
@@ -673,7 +675,12 @@ type Model struct {
 
 	// request-version counters -- see async.go's request type and the
 	// schedule*/handle* pair for each source.
-	dirReqVersion    int
+	dirReqVersion int
+	// dirLandedVersion is the version of the last directory check whose
+	// answer was applied (handleDirResult). It trails dirReqVersion exactly
+	// while a check is in flight -- debouncing or running -- which is what
+	// dirCheckPending compares (#195).
+	dirLandedVersion int
 	baseReqVersion   int
 	titleReqVersion  int
 	browseReqVersion int
@@ -1310,12 +1317,22 @@ func BranchFor(res defaults.Resolved, issueBranch, title string) string {
 // refusing to create anything at all when one fires -- no plan.Build call,
 // no plan.Execute, nothing -- and only once every check clears does it
 // build the plan and start the staged execution (startSubmit).
+//
+// Before any of that it waits for the project row's check (#195). Until the
+// check of the value the row now holds lands, dirInvalid, the worktree row's
+// git target, the repository's defaults and the lane answer all describe the
+// previous project, and validation would pass or refuse on them. The check
+// is already on its way -- reactToChanges scheduled it with the edit -- so
+// holding is all there is to do here; handleDirResult comes back through
+// this function when it lands, and the user presses nothing twice.
+//
+// It waits for the base check too (#194), which the landing dir check itself
+// schedules. A base check still out means the base row may be about to
+// change: a remembered base the list does not name has not been offered yet,
+// and one that names no commit has not fallen back. It answers in the time a
+// `git rev-parse` takes, and handleBaseSettled comes back through here.
 func (m Model) handleSubmit() (Model, tea.Cmd) {
-	// A base check still out means the base row may be about to change: a
-	// remembered base the list does not name has not been offered yet, and
-	// one that names no commit has not fallen back. It answers in the time a
-	// `git rev-parse` takes, and handleBaseSettled comes back through here.
-	if m.baseSettlePending() {
+	if m.dirCheckPending() || m.baseSettlePending() {
 		m.submitHeld = true
 		return m, nil
 	}
@@ -1331,6 +1348,13 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 	}
 	return m.continueSubmit()
 }
+
+// dirCheckPending reports whether the project row has a check in flight:
+// scheduled for its current value and not yet landed. Every edit to the row
+// schedules one (reactToChanges) and a stale answer is dropped rather than
+// landed (handleDirResult), so the versions agree only once the answer for
+// the value the row now holds is the one applied.
+func (m Model) dirCheckPending() bool { return m.dirLandedVersion != m.dirReqVersion }
 
 // continueSubmit is handleSubmit's second step, and where a lane's commit
 // resumes it (handleLinkedCommit).

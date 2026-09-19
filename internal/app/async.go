@@ -269,6 +269,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	if msg.req.version != m.dirReqVersion {
 		return m, nil // a newer request landed while this one was in flight
 	}
+	m.dirLandedVersion = msg.req.version
 
 	validity := form.ValidityRepo
 	switch {
@@ -309,7 +310,18 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		// is going to be created (see Model.titleNote).
 		m.title.SetVerdict(m.title.Value(), m.titleNote(""))
 	}
-	return m, tea.Batch(cmd, settle)
+	cmd = tea.Batch(cmd, settle)
+	if m.submitHeld {
+		// The submit this check was holding goes on from the top, so the
+		// validation it waited for runs on these answers (#195) -- or holds
+		// again for the base check just scheduled, which is why settle stays
+		// in the batch: without it that check never runs and the submit
+		// waits for good.
+		var submit tea.Cmd
+		m, submit = m.handleSubmit()
+		cmd = tea.Batch(cmd, submit)
+	}
+	return m, cmd
 }
 
 // --- path-mode directory browsing (spec §6 field 2) ----------------------
