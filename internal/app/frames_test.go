@@ -1339,6 +1339,14 @@ func stepRowIndex(t *testing.T, steps []form.Step, label string) int {
 // nothing about the other: before a pick (↵ acts, and says so) and after
 // one (↵ has nothing to commit and falls through to a plain advance, so
 // the footer must stop promising it).
+//
+// These two frames are also where #281 is visible closing. Until then
+// the "before" one read `↵ use HEAD … ↵ create` -- the same glyph
+// twice on one line, meaning commit-this-row on the left and create-the-
+// session on the right, with the right-hand one false. The button now
+// says `⌃S create` here, which is the key that really does create from
+// this row, so the ↵ on the line is unambiguous and belongs to the base
+// list alone.
 func TestAssembledForm_TheBasePartTeachesItsCommitKey(t *testing.T) {
 	// A held ref over an empty list: the picker is the single HEAD row,
 	// which is the state #269 is about.
