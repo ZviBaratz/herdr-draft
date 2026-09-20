@@ -184,7 +184,9 @@ another without pretending to be a pane there.
 
 If the user has not said anything about accounts, pass neither flag. Show
 which account the session will run under anyway (section 7): it is the
-account the session is billed to.
+account the session is billed to. The one place to offer an account they
+did not ask for is a spent usage window (section 7), and then it is an
+option they pick, never a swap you make.
 
 `claude` also takes three session options, each one flag:
 
@@ -432,11 +434,29 @@ that model only. One without a model in its label, such as `7d`, limits
 every model. 95% is where the popup marks an account rate limited. With
 nothing pinned it is also where clauth's auto-switch can move the active
 account elsewhere before the session starts, so say that the session may
-bill another account. Section 5 has already taken the lower for you: put
-that cheaper configuration first (a row up section 5's table, or a step
-down in effort), and beside it what you would have picked otherwise, so
-the user sees what the quota costs. The user may answer with another
-account instead. Do not pick one yourself (section 5).
+bill another account.
+
+What to offer depends on what is left of the window, because a cheaper
+configuration spends the rest of one more slowly and does not raise the
+cap. While the window still has room, section 5 has already taken the
+lower for you: put that cheaper configuration first (a row up section 5's
+table, or a step down in effort), and beside it what you would have
+picked otherwise, so the user sees what the quota costs. A window at 100%
+is spent, and there section 5's step down is off: no configuration helps,
+so keep the one the task deserves and change what can change. The two
+answers that do are another account and waiting for the reset. Offer
+both, with what the user asked for beside them, and say that waiting
+creates nothing now, since `create` cannot schedule it.
+
+`clauth status --json` lists the accounts and their windows, so you can
+see which ones have room; a dry run naming one reports the same windows
+for that account, and neither spends anything. An account clauth reports
+as signed out is refused with exit 2, which makes it not a candidate
+rather than a failure worth reporting. When you offer accounts, name each
+one's spent windows even where they cap a model you did not pick: an
+account that cannot run `fable` at all is a different kind of candidate.
+Never swap an account in silently: whatever the user asked for stays on
+the list (section 5).
 
 A label is not reviewable. A command, and what it resolves to, is.
 

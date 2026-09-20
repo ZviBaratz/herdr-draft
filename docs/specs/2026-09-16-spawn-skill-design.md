@@ -351,7 +351,16 @@ observed failure modes.
    full and when it resets, and offers what would otherwise have been
    picked beside it. With nothing pinned, it also says the session may
    bill another account, since clauth's auto-switch acts there. It never
-   picks another account itself.)
+   picks another account itself.) (Amended, #250: a cheaper configuration
+   spends what is left of a window more slowly and does not raise its cap,
+   so it is offered only while the window has room. A spent window — at
+   100% — is answered by another account or by waiting for the reset, and
+   those are what the question offers, with the user's own request beside
+   them, and waiting is said to create nothing, since `create` cannot
+   schedule it. There section 5's step down is off: no configuration helps,
+   so the task's own configuration stands. Offering an account is allowed
+   there; swapping one in silently is not, and `clauth status --json` is
+   how the candidates are found.)
 
 8. **Read the result; the exit code is not the whole story.** Exit codes
    0/1/2/3; that under `--json`, exits 2 and 3 print nothing on stdout, so

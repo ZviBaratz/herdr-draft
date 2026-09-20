@@ -1451,9 +1451,11 @@ under test, so answer it with "Other: don't create" once you have read it.
   scratch config to see.
 - With a window of the session's account at or above 95% that limits the
   model it picks (#215), the question names the window, how full it is and
-  when it resets. It offers the cheaper configuration beside what it would
-  have picked otherwise. With no such window it says nothing about usage.
-  With `account_usage` absent it says usage is unknown.
+  when it resets. While that window has room it offers the cheaper
+  configuration beside what it would have picked otherwise; at 100% it
+  offers another account and waiting for the reset instead, since nothing
+  cheaper raises a cap, and it keeps the task's own configuration (#250). With no such window it says nothing
+  about usage. With `account_usage` absent it says usage is unknown.
 - The wording fix gets a small configuration: `sonnet` at `low` or
   `medium`.
 - The second gets `--permission-mode plan`, and `--no-reap` when

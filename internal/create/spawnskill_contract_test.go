@@ -535,8 +535,18 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 		// "a row up": section 5's table gets dearer going down, and this
 		// paragraph once sent the agent down it for the cheaper option.
 		{"the rule for a window at the threshold", "**If a window in `account_usage`", "A label is not reviewable.", []string{
-			"say so in the question", "when it resets", "cheaper configuration", "a row up",
-			"what you would have picked otherwise", "limits that model only", "every model",
+			"say so in the question", "when it resets", "limits that model only", "every model",
+			// While the window has room, a cheaper configuration spends the
+			// rest of it more slowly.
+			"cheaper configuration", "a row up", "what you would have picked otherwise",
+			// Once it is spent, nothing cheaper helps: the live pass found
+			// the rule asking for a cheaper option against a `7d` at 100%,
+			// which caps every model (#250).
+			"does not raise the cap", "another account", "waiting for the reset",
+			// The branch point is a number, not a judgement; waiting is not
+			// something create can schedule; and an agent told to offer
+			// another account needs a way to find one.
+			"at 100%", "creates nothing", "lists the accounts",
 		}},
 	} {
 		// One line, so a phrase the prose wraps still matches.
