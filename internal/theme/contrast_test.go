@@ -650,6 +650,67 @@ func TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride(t *testing.T) {
 	}
 }
 
+// TestTerminalPalette_FocusedRowCarriesAnInheritedForeground is the one
+// floor in this file that measures a SINGLE palette, and the reason is that
+// terminal is the only one whose foreground is unknown: herdr gives that
+// theme Color::Reset for text and panel_bg alike, so the words on a focused
+// row are drawn in whatever the host terminal's own foreground is. The
+// other seventeen have a Text this package can read, and their focused rows
+// are covered by ActiveRowContrastFloor against a PanelBG it can read too.
+//
+// What is asserted is the property #7f7f7f was actually chosen for, which
+// is nowhere written down as a floor: an unknown foreground is near-black
+// or near-white -- the host's background is equally unknown and a terminal
+// nobody can read is not a terminal -- so the fill has to carry BOTH. A mid
+// grey does, at 4.00:1 against white and 5.25:1 against black.
+//
+// This is a guard, not a fix, and the defect it guards is the one #276 is
+// open on: that same fill draws terminal's #ff0000 Danger at 1.00:1, so the
+// word `invalid` is invisible on the focused project row of that theme.
+// #276's candidate fix is to repoint this field, and the measurement here
+// is why that cannot be it. Carrying an unknown foreground of either
+// polarity at SemanticTextContrastFloor pins the fill's relative luminance
+// to [0.1000, 0.3000]; #ff0000's relative luminance is 0.2126, inside that
+// same band; and two luminances both inside it can differ by at most
+// 2.333:1. There is no fill. What the candidates cost, measured: #363636
+// gives the red 3.02:1 and takes a dark inherited foreground to 1.74:1,
+// #e5e5e5 gives it 3.17:1 and takes a light one to 1.26:1 -- one word
+// legible and every other word on the row gone.
+//
+// And the ANSI set is inconsistent with itself even setting the inherited
+// foreground aside: Accent's #0000ee needs a fill of luminance >= 0.2852
+// and Success's #00cd00 one of <= 0.1122, so no single fill carries those
+// two either, whatever is done about the red.
+func TestTerminalPalette_FocusedRowCarriesAnInheritedForeground(t *testing.T) {
+	palette, ok := Builtin("terminal")
+	if !ok {
+		t.Fatal("Builtin(\"terminal\") not found")
+	}
+	// The premise, asserted rather than assumed: if herdr ever gives this
+	// theme a Text and a panel_bg this package can read, the floors above
+	// stop exempting it and this test has nothing left to say.
+	if _, inherit := palette.Text.(lipgloss.NoColor); !inherit {
+		t.Fatalf("the terminal palette's Text is %v, not NoColor -- this test's premise has changed", palette.Text)
+	}
+
+	for _, inherited := range []struct {
+		where string
+		value Color
+	}{
+		{"a light foreground on a dark terminal", lipgloss.Color("#ffffff")},
+		{"a dark foreground on a light terminal", lipgloss.Color("#000000")},
+	} {
+		got, ok := contrastRatio(inherited.value, palette.ActiveRowBG)
+		if !ok {
+			t.Fatalf("the focused row's fill is unmeasurable against %s", inherited.where)
+		}
+		if got < SemanticTextContrastFloor-contrastAssertionEpsilon {
+			t.Errorf("%s reads at %.3f:1 on the focused row, want >= %.2f:1 -- every ordinary word on that row is drawn in it, and trading them for one semantic colour is not a fix for #276",
+				inherited.where, got, SemanticTextContrastFloor)
+		}
+	}
+}
+
 // semanticSeparationFloor is a tripwire, not a perceptual metric: plain
 // Euclidean distance in sRGB, which is a crude stand-in for "these two still
 // look like different colors". It is here because #273 named convergence as
