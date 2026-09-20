@@ -230,11 +230,12 @@ session that fails and has to be redone costs more than a stronger first
 attempt. So step down only for work that is plainly mechanical, and
 between two neighbouring rows of real engineering, take the higher. If the
 user has said quota is tight, take the lower, and say what you would have
-picked otherwise. The first dry run's `account_usage` says how full the
-session's account is (section 7). A window there at or above 95% counts as
-tight too, when it limits the model you would pick — except one with no
-model in its label sitting at 100%, where nothing cheaper helps and
-section 7 says what to offer instead. `haiku` is the smallest
+picked otherwise — and section 7 says which lower to take, since the two
+cheaper moves are not equal. The first dry run's `account_usage` says how
+full the session's account is (section 7). A window there at or above 95%
+counts as tight too, when it limits the model you would pick — except one
+with no model in its label sitting at 100%, where nothing cheaper helps
+and section 7 says what to offer instead. `haiku` is the smallest
 model, and a session that has to
 learn a repository's conventions before it can start is rarely small
 enough for it.
@@ -449,9 +450,17 @@ picked otherwise beside it.
 **A window with no model in its label** caps every model, so a cheaper
 configuration only spends what is left of it more slowly; it does not
 raise the cap. While there is room, section 5 has already taken the lower
-for you: put that cheaper configuration first (a row up section 5's
-table, or a step down in effort), and what you would have picked
-otherwise beside it, so the user sees what the quota costs. At 100% there
+for you: put that cheaper configuration first, and what you would have
+picked otherwise beside it, so the user sees what the quota costs. Take
+the effort step down before the row up section 5's table: the table says
+what the task needs and effort is how hard the same model works at it, so
+dropping the model is the move that risks the redo section 5 calls dearer
+than a stronger first attempt. Take the row up only when it names a
+smaller model for this task, which is the row's own conditional to
+decide, not the column: "`sonnet`, or `opus` where the repository's
+conventions are heavy" is `opus` in a repository like this one. Not
+`haiku` either way — section 5 rules it out for a session that has to
+learn a repository's conventions before it can start. At 100% there
 is nothing left to spend more slowly and section 5's step down is off:
 keep the configuration the task deserves, and change what can change. The
 two answers that do are another account and waiting for the reset. Offer

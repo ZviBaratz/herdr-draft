@@ -538,7 +538,7 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 		order []string
 	}{
 		{name: "the first dry run's reading list", from: "**1. Dry-run it without the option flags.**", to: "**2. Choose the three options**", want: []string{"`account_usage`"}},
-		{name: "section 5's cost judgement", from: "**Model and effort follow the shape of the task:**", to: "**Keep the user's own model id.**", want: []string{"`account_usage`", "limits the model"}},
+		{name: "section 5's cost judgement", from: "**Model and effort follow the shape of the task:**", to: "**Keep the user's own model id.**", want: []string{"`account_usage`", "limits the model", "section 7 says which"}},
 		// Its own paragraph, not the whole of "Then ask": that section also
 		// says "once, in the question" about the exports.
 		{
@@ -550,7 +550,13 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 				// While a label-less window has room, cheaper spends what is
 				// left more slowly; at 100% only another account or the reset
 				// changes anything, and waiting is not something create does.
-				"a row up", "what you would have picked otherwise", "creates nothing",
+				"row up section 5's table", "what you would have picked otherwise",
+				"creates nothing",
+				// The two cheaper moves are ranked, and the row up is read
+				// with its row's own conditional, which in a conventions-heavy
+				// repository names the same model again (#258).
+				"effort step down before the row up", "only when it names a smaller model",
+				"`haiku`",
 				// An agent told to offer another account needs a way to find
 				// one, and a way to tell a candidate from an unknown.
 				"`clauth status --json`", "not a candidate", "unknown rather than free",
