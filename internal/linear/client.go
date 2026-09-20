@@ -408,15 +408,36 @@ const keyCmdPrefix = "resolve linear api key"
 // package must not import. picker.CLI.run made the same trade for the same
 // shape.
 //
-// THREE ARMS, and the middle one is a working-config regression if it is
-// left out.
+// FOUR ARMS, and only the first is about what happened rather than what
+// went wrong.
 //
-// The DEADLINE is read before the exit code, which is load-bearing rather
-// than tidy: exec.CommandContext kills the process and cmd.Run then reports
-// an ordinary *exec.ExitError carrying -1, so exit-code-first would turn a
-// deadlock into `run api_key_cmd: signal: killed` -- a deadlock reported as
-// a decision, which is precisely what picker.CLI.run's own ordering comment
-// exists to prevent.
+// AN ANSWER IN HAND BEATS A CONTEXT THAT IS DONE, which is the same rule
+// app.AwaitCheck's own peek states, and it is why `runErr == nil` is read
+// first rather than the deadline. It cannot mask a timeout: a run the
+// deadline ended has been killed, so Process.Wait reports a non-zero state
+// and cmd.Run returns an *exec.ExitError -- runErr is never nil there
+// (go1.26.4 src/os/exec/exec.go, Cmd.Wait: the watcher's error is preferred
+// only `if err == nil`). What it covers is the window AFTER cmd.Run has
+// come back clean and before ctx.Err() is read, where reporting a deadline
+// would refuse a call that had already succeeded. Nanoseconds wide, and not
+// pinnable by a test at any cost worth paying -- written down because that
+// makes it a decision rather than an accident, and because this repository
+// has twice been wrong about two things being ready at once.
+//
+// Note what it does NOT cover, which is a decision rather than a gap: a
+// command that exits 0 and whose grandchild is still draining when the
+// deadline arrives has had a Cancel, so it comes back as the context's
+// error rather than as ErrWaitDelay and is reported as a timeout. That is
+// the budget read literally -- sixty seconds to produce an answer, drain
+// included -- and reaching it needs a helper that answers within
+// keyCmdWaitDelay of the deadline it nearly missed.
+//
+// Otherwise the DEADLINE is read before the exit code, which is
+// load-bearing rather than tidy: exec.CommandContext kills the process and
+// cmd.Run then reports an ordinary *exec.ExitError carrying -1, so
+// exit-code-first would turn a deadlock into `run api_key_cmd: signal:
+// killed` -- a deadlock reported as a decision, which is precisely what
+// picker.CLI.run's own ordering comment exists to prevent.
 //
 // It is read as DeadlineExceeded specifically and never as `ctx.Err() != nil`.
 // A caller that was CANCELLED reports context.Canceled, and calling a ⌃C a
@@ -462,13 +483,13 @@ func runKeyCmd(ctx context.Context, apiKeyCmd []string) (string, error) {
 	runErr := cmd.Run()
 
 	switch {
+	case runErr == nil || errors.Is(runErr, exec.ErrWaitDelay):
+		// The command answered.
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return "", timeout{prefix: keyCmdPrefix, what: "api_key_cmd gave no answer", deadline: keyCmdTimeout}
 	case ctx.Err() != nil:
 		return "", fmt.Errorf("%s: run api_key_cmd: %w", keyCmdPrefix, ctx.Err())
-	case errors.Is(runErr, exec.ErrWaitDelay):
-		// The command worked; only its grandchildren overstayed.
-	case runErr != nil:
+	default:
 		return "", fmt.Errorf("%s: run api_key_cmd: %w: %s", keyCmdPrefix, runErr, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil

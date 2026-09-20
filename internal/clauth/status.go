@@ -257,10 +257,16 @@ func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 // internal/app and which this package must not import. picker.CLI.run made
 // the same trade for the same shape.
 //
-// THREE ARMS, and the middle one is a working-config regression if it is
-// left out.
+// FOUR ARMS, and only the first is about what happened rather than what
+// went wrong. `runErr == nil` is read before the deadline because an answer
+// in hand beats a context that is done -- app.AwaitCheck's own rule -- and
+// it cannot mask a timeout, since a run the deadline ended has been killed
+// and comes back as an *exec.ExitError rather than as nil. See
+// linear.runKeyCmd's comment for the window it covers, the one it does not,
+// and why neither is pinnable by a test.
 //
-// The DEADLINE is read first, which is load-bearing rather than tidy:
+// Otherwise the DEADLINE is read first, which is load-bearing rather than
+// tidy:
 // exec.CommandContext kills the process and cmd.Run then reports an ordinary
 // *exec.ExitError, so exit-code-first would put `clauth status --json:
 // signal: killed` on the account row -- a deadlock presented as a verdict
@@ -290,13 +296,13 @@ func loadFromCLI(ctx context.Context, bin string) (Status, error) {
 	runErr := cmd.Run()
 
 	switch {
+	case runErr == nil || errors.Is(runErr, exec.ErrWaitDelay):
+		// clauth answered.
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return Status{}, fmt.Errorf("clauth status --json: no answer within %s", cliTimeout)
 	case ctx.Err() != nil:
 		return Status{}, fmt.Errorf("clauth status --json: %w", ctx.Err())
-	case errors.Is(runErr, exec.ErrWaitDelay):
-		// clauth worked; only its grandchildren overstayed.
-	case runErr != nil:
+	default:
 		// The wrapping keeps exec.ErrNotFound reachable through
 		// errors.Is, which the app layer needs: "clauth is not installed"
 		// and "clauth is installed and broken" are the same error value
