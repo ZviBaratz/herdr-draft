@@ -280,6 +280,17 @@ func (d Deps) repoConfig() func(string) config.RepoConfig {
 // read only for `--prompt -`, and only because the caller asked -- and
 // never panics: progress goes to Stderr one line per step, the result to
 // Stdout.
+//
+// ctx may be cancellable and must NOT carry a deadline of its own. A
+// cancel is what a signal becomes (#252) and reaches everything it should.
+// A deadline does not: the pre-flight's own bound would honour it on the
+// git call and not on the wait, so a question the caller's deadline killed
+// would come back as an ordinary error and be read as its own negative --
+// a branch that is free, a repository with no root. checks.go's bounded
+// has the mechanism and what a caller wanting otherwise would need. Said
+// here as well as there because this is where a caller looks; the one
+// in-module caller (cmd/herdr-draft's runCreate) passes
+// context.WithCancel of Background. Raised in review.
 func Run(ctx context.Context, args []string, env Env, deps Deps) int {
 	req, err := parseArgs(args)
 	switch {

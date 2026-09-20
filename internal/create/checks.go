@@ -8,7 +8,11 @@
 //
 //   - os.Getwd, in resolveProjectDir, is on the project's mount whenever
 //     --project is absent -- and it runs BEFORE the first bounded question.
-//     It is the one read a stalled project mount can reach first.
+//     It is the one read a stalled project mount could reach first, though
+//     "could" is doing real work there: getcwd(2) is answered from the
+//     dentry cache and is unlikely to block on a stalled mount at all. The
+//     ordering is the accurate part; the hang is not the one to go looking
+//     for.
 //   - The repository's own .herdr-draft.toml (config.LoadRepoConfig, an
 //     os.ReadFile) is on that mount too, but loadTiers reads it after the
 //     three git questions, so on a stalled mount git runs out first.
@@ -179,9 +183,15 @@ func (checkTimeout) Is(target error) bool { return target == errCheckTimedOut }
 // defect: `create`'s one caller passes context.WithCancel of Background
 // (cmd/herdr-draft's runCreate) and this package cannot be imported from
 // outside the module. Anything that starts passing a deadline here wants
-// the bound to be the smaller of the two, which needs a cancel-only child
-// that ignores its parent's deadline, and that is not what any of this is.
-// Found in review.
+// the bound to be the smaller of the two. The machinery for the first half
+// is cheap -- context.AfterFunc over context.WithCancel of
+// context.WithoutCancel(ctx) propagates a cancellation without the
+// parent's deadline, in about four lines -- but the second half is not:
+// taking the smaller of the two puts a min on the wait, and a parent
+// deadline expiring at nearly the same instant as the shrunken wait is
+// this same situation again unless something is authoritative. Cheap
+// machinery, undecided semantics, and no caller. Found in review, and the
+// alternative is named here rather than left for someone to rediscover.
 //
 // Nothing is lost by dropping that timer. git is still told to stop a few
 // microseconds later, when this returns -- and unlike #211's account pick
