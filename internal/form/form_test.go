@@ -1456,6 +1456,16 @@ func TestRenderFooter_ExactFitKeepsCancel(t *testing.T) {
 // "↵ advance" from every zone, including a filled Title where Enter
 // submits the form. FocusZone.TitleEmpty was already computed for the
 // grammar; the footer simply never read it.
+//
+// The map is every zone a real section can reach EXCEPT ZoneTitle, which
+// is asserted below the loop in both its states. ZoneOptions was missing
+// from it for no recorded reason until #289 -- so the zone's rung, and
+// the ↵/⌃S ownership rule the loop enforces since #281, were asserted
+// for nine zones out of ten. Nothing else here distinguishes it; it is
+// in the map because a table that answers for every member of a closed
+// set is cheaper to trust than one that answers for most of them, which
+// is the same reason zoneRungs itself still carries ZoneBranch and
+// ZoneBase.
 func TestFooterRungs_PerZone(t *testing.T) {
 	want := map[ZoneKind]string{
 		ZoneIssue:     "type to filter",
@@ -1464,6 +1474,7 @@ func TestFooterRungs_PerZone(t *testing.T) {
 		ZoneWorktree:  "↑↓ part",
 		ZonePlacement: "←→ choose",
 		ZoneAgent:     "←→ favorites",
+		ZoneOptions:   "↑↓ option",
 		ZoneAccount:   "↑↓ browse",
 		ZoneCreate:    "⇧⇥ back",
 	}
@@ -1536,14 +1547,47 @@ func TestFooterRungs_PerZone(t *testing.T) {
 // some point -- a bare constant tail out-measuring a crossing, and then
 // a narrower crossing out-measuring a wider lead standing alone -- which
 // is why the assertion runs down a ladder of widths rather than at one.
+//
+// It runs every zone, which is the whole point of a property (#289 item
+// 2): until then it ran ZoneTitle with a filled title and nothing else,
+// so it was the test that should have caught #281's ladder movement and
+// did not -- the movement was found by measuring by hand instead.
+//
+// The property is POSITIVE, and stating it the obvious way makes the
+// test fail on correct behaviour. "A lead always wins" is false: below
+// the narrowest lead a zone owns, NOTHING of that zone fits, and falling
+// to the constant tail is the right answer rather than an inversion.
+// Written naively this test reports exactly the six accepted floor
+// losses createKey's doc comment records, plus every width below them,
+// as defects. So the rule is "WHEN a lead fits, a lead wins", and the
+// second branch is what says the floor is a floor: no rung of the zone's
+// own fits in that many cells, so the line is the narrowest constant and
+// carries nothing else.
+//
+// The two branches meet at each zone's narrowest lead, computed from
+// zoneRungs rather than written down, so a reworded rung moves the
+// boundary with it and no literal here goes stale.
 func TestFooterRungs_AZoneHintNeverLosesToTheConstantTail(t *testing.T) {
-	rungs := footerRungs(FocusZone{Kind: ZoneTitle, TitleEmpty: false}, false)
-	for _, width := range []int{120, 80, 64, 53, 40, 30} {
-		got := fitFooter(rungs, width)
-		if !strings.Contains(got, "for the prompt") {
-			t.Errorf("at width %d the footer = %q, want it to still teach the focused field", width, got)
+	floor := tailRungs(false)[len(tailRungs(false))-1]
+	for _, zone := range everyFocusableZone() {
+		rungs := footerRungs(zone, false)
+		narrowestLead := narrowestRung(zoneRungs(zone))
+		for width := 60; width >= lipgloss.Width(floor); width-- {
+			got := fitFooter(rungs, width)
+			switch {
+			case width >= lipgloss.Width(narrowestLead):
+				if !teachesTheZone(zone, got) {
+					t.Errorf("zone %+v at width %d = %q, want it to still teach the focused field -- %q fits",
+						zone, width, got, narrowestLead)
+				}
+			case got != floor:
+				t.Errorf("zone %+v at width %d = %q, want the constant tail's floor %q -- no rung of its own fits in %d cells",
+					zone, width, got, floor, width)
+			}
 		}
 	}
+
+	rungs := footerRungs(FocusZone{Kind: ZoneTitle, TitleEmpty: false}, false)
 
 	// The tail is what goes first, and it goes before the lead is
 	// abbreviated: 37 cells is the space a 64-column popup leaves beside
@@ -1968,4 +2012,36 @@ func TestSecondaryButtonFillIsFlooredAgainstThePanel(t *testing.T) {
 			}
 		})
 	}
+}
+
+// teachesTheZone reports whether line still leads with something the
+// zone itself teaches. A PREFIX rather than a substring: crossRungs
+// builds every rung as lead + " · " + tail, so a lead that has been
+// traded away cannot be hiding further along the line, and a tail that
+// happened to contain one would not count anyway.
+func teachesTheZone(zone FocusZone, line string) bool {
+	for _, lead := range zoneRungs(zone) {
+		if strings.HasPrefix(line, lead) {
+			return true
+		}
+	}
+	return false
+}
+
+// narrowestRung is the least a caller can spend and still get one of
+// these rungs. Over zoneRungs it is the last thing the zone has to say,
+// so its width is where the footer is allowed -- required -- to fall to
+// the constant tail.
+//
+// Computed rather than assumed to be the last entry: the ladders are
+// written widest-first by convention, and a property test that trusts a
+// convention it does not assert is a property test with a hole in it.
+func narrowestRung(rungs []string) string {
+	narrowest := ""
+	for i, r := range rungs {
+		if i == 0 || lipgloss.Width(r) < lipgloss.Width(narrowest) {
+			narrowest = r
+		}
+	}
+	return narrowest
 }

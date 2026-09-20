@@ -1,10 +1,13 @@
 package form
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
@@ -592,4 +595,100 @@ func buildOptionsInertForm(palette theme.Palette) Model {
 
 func TestFrames_OptionsInert(t *testing.T) {
 	assertFrame(t, "options-inert-80x24", buildOptionsInertForm(theme.Default()), 80, 24)
+}
+
+// narrowFloorCases is the six (field, terminal width) pairs where #281's
+// per-zone create button moved the key ladder's floor one column earlier
+// than the single 10-cell face that preceded it: the button grew to 11
+// cells in these zones, the rung budget lost that cell, and the zone's
+// narrowest lead stopped fitting.
+//
+// Re-measured rather than copied (2026-09-20). Replaying the whole
+// ladder over terminals 24-160 against the tree at 15f3934 -- the old
+// button AND the old rungs, which differ for the empty title --
+// reproduces createKey's doc comment exactly: the chosen rung differs at
+// 74 (zone, width) pairs, six of which are these. `lead` is what the
+// footer taught at this width before #281, and teaches again one column
+// wider, which is what makes each of these a cliff rather than a floor
+// the zone never leaves.
+//
+// The widths are TERMINAL widths, two more than the boxWidth renderFooter
+// measures against (contentBox's sideMargin on each side) -- which is
+// the reading that makes the doc comment's numbers and the fixtures below
+// the same numbers.
+//
+// Four of the six reach the footer through the zone table, which is what
+// was measured. Two do NOT: with the part cursor where these builders
+// leave it, WorktreeField and OptionsField answer for themselves
+// (footerHinter), and the cliff still lands on the same column because
+// their narrowest lead is the same string the table's is -- "↑↓ part"
+// and "←→ value". So these two frames pin a coincidence of wording as
+// well as a width, and if either override is reworded the boundary below
+// will say so rather than the frame quietly moving.
+var narrowFloorCases = []struct {
+	name  string
+	build func(theme.Palette) Model
+	width int
+	lead  string
+}{
+	{"worktree", buildWorktreePanelForm, 35, "↑↓ part"},
+	{"options", func(p theme.Palette) Model { return buildOptionsPanelForm(p, false) }, 36, "←→ value"},
+	{"issue", buildIssuePanelForm, 37, "↑↓ choose"},
+	{"dir", buildDirPanelForm, 37, "↑↓ choose"},
+	{"placement", func(p theme.Palette) Model { return buildPlacementPanelForm(p, false) }, 37, "←→ choose"},
+	{"agent", buildAgentPanelForm, 40, "↑↓ all kinds"},
+}
+
+// TestFrames_NarrowBandAtTheLaddersFloor is #289 item 3. Below 57 columns
+// this suite had exactly two frames -- account-panel-44x12, and a
+// degraded-40x8 built from STUB sections, which zoneFor maps onto
+// ZonePlacement -- so one real field was pinned at one width in the whole
+// 33-44 band, and not one of the six widths #281 moved.
+//
+// One frame each, at the width where the field's own footer falls to the
+// constant tail. They are fixtures of the WHOLE screen at a width nothing
+// else here reaches, so what they pin is not only the footer: the label
+// column collapsing, the panel's own shrink ladder and the row values'
+// ellipsis are all in the band these frames cover and nowhere else.
+//
+// The footer they show is the accepted answer, not a defect -- see
+// narrowFloorCases, and createKey's doc comment for why a shorter lead
+// would move the cliff rather than remove it.
+func TestFrames_NarrowBandAtTheLaddersFloor(t *testing.T) {
+	for _, c := range narrowFloorCases {
+		assertFrame(t, fmt.Sprintf("%s-floor-%dx12", c.name, c.width), c.build(theme.Default()), c.width, 12)
+	}
+}
+
+// TestFooter_TheFloorIsACliffAtTheMeasuredWidth is the other half of the
+// same six pairs, and the half a golden frame cannot state: a frame at 35
+// records what the worktree row's footer says at 35, and says nothing
+// about whether 34 or 36 says it too. This renders each field at its
+// floor width and one column wider and asserts the ladder steps back up,
+// so the six widths are pinned as a BOUNDARY rather than as six points.
+//
+// It goes through ViewAt rather than renderFooter deliberately: the
+// widths in play are terminal widths, and the two-cell margin between a
+// terminal and the box the footer is measured against is exactly the
+// arithmetic that made #281's measurements hard to check against a
+// fixture.
+func TestFooter_TheFloorIsACliffAtTheMeasuredWidth(t *testing.T) {
+	floor := tailRungs(false)[len(tailRungs(false))-1]
+	for _, c := range narrowFloorCases {
+		t.Run(c.name, func(t *testing.T) {
+			at := func(width int) string {
+				lines := strings.Split(ansi.Strip(c.build(theme.Default()).ViewAt(width, 12)), "\n")
+				return strings.TrimSpace(lines[len(lines)-1])
+			}
+			if got := at(c.width); !strings.HasPrefix(got, floor) {
+				t.Errorf("at %d columns the footer = %q, want it to have fallen to %q", c.width, got, floor)
+			}
+			if got := at(c.width); strings.Contains(got, c.lead) {
+				t.Errorf("at %d columns the footer = %q, want %q not to fit", c.width, got, c.lead)
+			}
+			if got := at(c.width + 1); !strings.HasPrefix(got, c.lead) {
+				t.Errorf("at %d columns the footer = %q, want the zone's own %q back", c.width+1, got, c.lead)
+			}
+		})
+	}
 }
