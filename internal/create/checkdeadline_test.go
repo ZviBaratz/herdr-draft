@@ -491,6 +491,15 @@ func TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout(t *testing.T) {
 // together and a coin decide the verdict; asserting the absence of that
 // second timer is deterministic, where asserting what the coin landed on
 // is not.
+//
+// What it covers, exactly: the absence of a CONTEXT deadline on the call.
+// A second timer introduced some other way -- time.AfterFunc(deadline,
+// cancelCall) beside it, say -- would slip past, because the call's
+// context would still carry none. That is the boundary rather than a gap
+// to close: context.WithTimeout is the shape the regression actually
+// takes, being the one this already shipped as, and no pin catches every
+// shape. Raised in review, and written down because a guard whose reach
+// nobody has stated gets trusted past it.
 func TestBounded_TheCallCarriesNoDeadlineOfItsOwn(t *testing.T) {
 	sawOwnDeadline := make(chan bool, 1)
 	_, err := boundedErr(context.Background(), 20*time.Millisecond, "asking git something",
