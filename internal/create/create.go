@@ -140,13 +140,18 @@ const pluginID = herdrc.PluginID
 // app.NewGitSource satisfies it directly and production has one
 // implementation rather than two.
 //
-// Nothing in the pre-flight calls it directly, and that is enforced by the
-// compiler rather than remembered: every question goes through
-// Deps.checks() and checks.go's boundedGit, whose versions of the two
-// methods below that answer with a bare bool answer with an error as well
-// (#272). A call site added here instead would be one that can wait for
-// good on a stalled mount, and one that reads a question nobody answered
-// as its own negative.
+// Nothing in the pre-flight calls it directly: every question goes through
+// Deps.checks() and checks.go's boundedGit (#272). A call site added here
+// instead would be one that can wait for good on a stalled mount, and one
+// that reads a question nobody answered as its own negative.
+//
+// The compiler catches TWO of the six, not all of them, and the difference
+// is worth knowing before trusting it. DirExists and IsGitRepo answer with
+// a bare bool here and with an error as well on boundedGit, so an
+// unbounded call to either does not build. The other four have identical
+// signatures on both types, so `deps.git().RepoRoot(ctx, dir)` compiles
+// and passes -- demonstrated in review, which is also where the claim that
+// the compiler enforced all six came from and was wrong.
 type GitSource interface {
 	DirExists(path string) bool
 	IsGitRepo(dir string) bool

@@ -157,9 +157,17 @@ func (checkTimeout) Is(target error) bool { return target == errCheckTimedOut }
 // second reading is the damaging one: a ResolveCommit the deadline killed
 // becomes `--base "main" names no commit in <dir>`, blaming a ref that is
 // perfectly fine, and the same shape elsewhere becomes "no root" and "the
-// branch is free". TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout
-// pins it; giving callCtx a deadline shorter than the wait's fails it
-// three times out of three.
+// branch is free".
+//
+// What pins it is TestBounded_TheCallCarriesNoDeadlineOfItsOwn, which
+// asserts the ABSENCE of that second timer rather than what the coin
+// landed on. The difference is not pedantry: against the exact defect --
+// two timers of the same duration -- asserting the outcome caught it 2
+// runs in 3 on a busy machine and 0 in 5 on a quiet one, while asserting
+// the cause catches it 40 times out of 40. An earlier version of this
+// comment cited the outcome test and a `deadline/2` mutation nobody would
+// make, which was a true sentence about the wrong thing. Found in
+// review.
 //
 // What ctx must NOT carry, for the same reason, is a deadline of its own.
 // callCtx inherits it and the wait does not (context.WithoutCancel drops

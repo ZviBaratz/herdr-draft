@@ -405,9 +405,26 @@ func TestCheckDeadline_ACancelledCallerIsNotATimeout(t *testing.T) {
 // gitx.anyRefExists behind BranchExists very nearly is: it sets no
 // WaitDelay and gives exec no pipes to drain, so its call comes back as
 // soon as the kill is reaped.
-type cancelAwareGit struct{ *fakeGit }
+// ownDeadline reports, once, whether the context the call was handed
+// carried a deadline of its own -- which is the CAUSE the tests below
+// assert, rather than the consequence they can only sample. A channel
+// and not a field: bounded returns while this goroutine is still running,
+// so a plain bool would be read unsynchronised.
+type cancelAwareGit struct {
+	*fakeGit
+	ownDeadline chan bool
+}
+
+func newCancelAwareGit(g *fakeGit) *cancelAwareGit {
+	return &cancelAwareGit{fakeGit: g, ownDeadline: make(chan bool, 1)}
+}
 
 func (g *cancelAwareGit) ResolveCommit(ctx context.Context, _, _ string) (string, error) {
+	_, ok := ctx.Deadline()
+	select {
+	case g.ownDeadline <- ok:
+	default:
+	}
 	<-ctx.Done()
 	return "", ctx.Err()
 }
@@ -425,15 +442,34 @@ func (g *cancelAwareGit) ResolveCommit(ctx context.Context, _, _ string) (string
 //
 // So the call is cancelled by RETURNING rather than by a timer of its own:
 // bounded's deferred cancel fires after the verdict, which is an ordering
-// and not a race. This fake makes the difference deterministic -- it comes
-// back the instant its context is done, so a call-side timer that fired
-// first would win every time instead of almost never.
+// and not a race.
+//
+// The FIRST assertion is the one that pins it, and the ordering here is
+// deliberate: the call must have been handed no deadline of its own. An
+// earlier version of this test asserted only the exit code, which samples
+// the consequence rather than stating the cause -- and sampling a race is
+// not pinning it. Measured against the exact defect that shipped (two
+// timers of the SAME duration): caught 2 runs out of 3 on a busy machine
+// and 0 out of 5 on a quiet one. A guard whose verdict depends on the load
+// is the #202 story again, where one CI runner went red and the other
+// stayed green. Found in review.
 func TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout(t *testing.T) {
 	h := newHarness(t)
-	h.deps.Git = &cancelAwareGit{fakeGit: h.git}
+	git := newCancelAwareGit(h.git)
+	h.deps.Git = git
 	h.deps.CheckDeadline = 20 * time.Millisecond
 
 	code := runWithin(t, h, "--title", "fix login redirect", "--worktree", "--base", "main")
+
+	select {
+	case sawOwnDeadline := <-git.ownDeadline:
+		if sawOwnDeadline {
+			t.Error("the call was handed a deadline of its own, so two timers race to decide the " +
+				"verdict; the wait's deadline must be the only one")
+		}
+	default:
+		t.Fatal("the call never ran, so this test proves nothing")
+	}
 
 	if code == ExitUsage {
 		t.Fatalf("exit = %d: the deadline's own kill was reported as a bad --base\nstderr: %s", code, h.stderr)
@@ -448,14 +484,48 @@ func TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout(t *testing.T) {
 
 // --- the helper itself ----------------------------------------------------
 
-// TestBounded_ACallThatAnswersItsOwnContextIsStillATimeout is the direct
-// form of the test above, and it is a LOOP for a measured reason: with one
-// timer the property holds every time, and with two it held about 24 runs
-// in 25, so a single iteration proves almost nothing. An independent review
-// put numbers on the two-timer version -- 3.4% misclassified over 2000
-// runs with an ask that returns the instant its context is done, and 1.0%
-// over 300 with a real `exec.CommandContext` subprocess shaped like
-// gitx.runGit, on a mean gap between the two deadlines of 388ns.
+// TestBounded_TheCallCarriesNoDeadlineOfItsOwn states the property the two
+// tests around it can only sample, and is the pin for all three.
+//
+// One deadline, on the wait. A call handed a second one makes the two fire
+// together and a coin decide the verdict; asserting the absence of that
+// second timer is deterministic, where asserting what the coin landed on
+// is not.
+func TestBounded_TheCallCarriesNoDeadlineOfItsOwn(t *testing.T) {
+	sawOwnDeadline := make(chan bool, 1)
+	_, err := boundedErr(context.Background(), 20*time.Millisecond, "asking git something",
+		func(ctx context.Context) (string, error) {
+			_, ok := ctx.Deadline()
+			sawOwnDeadline <- ok
+			<-ctx.Done()
+			return "", ctx.Err()
+		})
+
+	select {
+	case ok := <-sawOwnDeadline:
+		if ok {
+			t.Error("the call was handed a deadline of its own; the wait's must be the only one")
+		}
+	default:
+		t.Fatal("the call never ran, so this test proves nothing")
+	}
+	if !errors.Is(err, errCheckTimedOut) {
+		t.Errorf("err = %v, want the bound's own verdict", err)
+	}
+}
+
+// TestBounded_ACallThatAnswersItsOwnContextIsStillATimeout demonstrates
+// what that second timer would COST, which the assertion above cannot
+// show. It is a loop because the cost is probabilistic: an independent
+// review measured the two-timer version at 3.4% over 2000 runs with an ask
+// that returns the instant its context is done, and 1.0% over 300 with a
+// real exec.CommandContext subprocess shaped like gitx.runGit, on a mean
+// gap between the two deadlines of 388ns.
+//
+// It is NOT the pin, and saying so is the point: its kill rate moves with
+// machine load, and it has gone 0 for 5 on a quiet one. It never fails on
+// correct code, so it costs nothing to keep -- but the test above is what
+// a regression has to get past.
 //
 // What the percentage costs is the thing to keep in view: one run in a
 // hundred where a branch check comes back "the branch is free" and the
