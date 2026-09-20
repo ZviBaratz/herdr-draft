@@ -149,12 +149,25 @@ var httpTimeout = 30 * time.Second
 // issue panel's status row.
 const assignedIssuesPrefix = "linear assigned issues"
 
-// wireError classifies a failed exchange. The DEADLINE is read before the
-// error itself, and from the CONTEXT rather than from the error's chain:
-// an http.Client reports a cancelled request and an expired one through the
-// same *url.Error, and only the context can say which of the two happened.
+// wireError classifies a failed exchange. The DEADLINE is read from the
+// CONTEXT rather than from the error's chain -- not because the chain
+// cannot answer (it can: a *url.Error from a cancelled request matches
+// context.Canceled and one from an expired request matches
+// DeadlineExceeded, and io.ReadAll on a stalled body returns the context
+// error directly -- probed, after an earlier version of this comment
+// asserted the opposite) but because the context gives ONE answer for both
+// failure points. Do and ReadAll fail differently and this has to classify
+// them the same way.
+//
 // A caller that was cancelled is not a call that timed out (#272), so
 // DeadlineExceeded specifically, never `ctx.Err() != nil`.
+//
+// Reading the context carries runKeyCmd's caveat, which applies here too: a
+// caller whose own context held a deadline SHORTER than httpTimeout would
+// be told "no answer within 30s" about a budget that never fired. Neither
+// caller does -- app's refresh passes context.Background and create's
+// pre-flight context carries a cancel and no deadline -- and this package
+// cannot be imported from outside the module.
 func wireError(ctx context.Context, stage string, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return timeout{prefix: assignedIssuesPrefix, what: "no answer", deadline: httpTimeout}
@@ -412,25 +425,39 @@ const keyCmdPrefix = "resolve linear api key"
 // went wrong.
 //
 // AN ANSWER IN HAND BEATS A CONTEXT THAT IS DONE, which is the same rule
-// app.AwaitCheck's own peek states, and it is why `runErr == nil` is read
-// first rather than the deadline. It cannot mask a timeout: a run the
-// deadline ended has been killed, so Process.Wait reports a non-zero state
-// and cmd.Run returns an *exec.ExitError -- runErr is never nil there
-// (go1.26.4 src/os/exec/exec.go, Cmd.Wait: the watcher's error is preferred
-// only `if err == nil`). What it covers is the window AFTER cmd.Run has
-// come back clean and before ctx.Err() is read, where reporting a deadline
-// would refuse a call that had already succeeded. Nanoseconds wide, and not
-// pinnable by a test at any cost worth paying -- written down because that
-// makes it a decision rather than an accident, and because this repository
-// has twice been wrong about two things being ready at once.
+// app.AwaitCheck's own peek states, and it is why this arm is read first
+// rather than the deadline. It is the arm that carries the most weight, and
+// an earlier version of this comment argued it could not matter. That was
+// wrong, and the measurement is the reason to read this rather than infer
+// it.
 //
-// Note what it does NOT cover, which is a decision rather than a gap: a
-// command that exits 0 and whose grandchild is still draining when the
-// deadline arrives has had a Cancel, so it comes back as the context's
-// error rather than as ErrWaitDelay and is reported as a timeout. That is
-// the budget read literally -- sixty seconds to produce an answer, drain
-// included -- and reaching it needs a helper that answers within
-// keyCmdWaitDelay of the deadline it nearly missed.
+// The claim was that a deadline and ErrWaitDelay are mutually exclusive --
+// that a run the deadline ended has had its Cancel called, so it could not
+// come back as ErrWaitDelay. **They are simultaneously observable, and
+// deterministically so.** cmd.Wait takes Process.Wait FIRST, so a command
+// that exits 0 before the deadline records no watcher error and no Cancel
+// occurs; only then does awaitGoroutines start the WaitDelay timer
+// (go1.26.4 src/os/exec/exec.go), and that timer can expire after the
+// deadline has passed. The result is runErr == ErrWaitDelay and
+// ctx.Err() == DeadlineExceeded both true, with the key already in the
+// buffer. Measured at the shipped 60:2 ratio scaled to 1s:33ms: 20 runs out
+// of 20, and a deadline sweep around the exit instant hit it about half the
+// time. Found in review.
+//
+// So the order between these arms decides a real outcome, not a
+// nanosecond's worth of one: reading the deadline first throws away the key
+// of an api_key_cmd that answered between 58s and 60s and had a
+// `gpg-agent`-shaped grandchild, and reports it as a timeout -- which is
+// the working-config regression the ErrWaitDelay arm exists to prevent,
+// arriving by the other door.
+// TestAnAPIKeyCmdThatAnsweredJustInsideItsBudgetKeepsItsAnswer pins it, and
+// the pre-reorder order fails it 3 times out of 3.
+//
+// The `runErr == nil` half alone is the one nothing can pin: it covers the
+// window after cmd.Run has come back clean and before ctx.Err() is read,
+// which is nanoseconds wide. Dropping just that half survives the suite.
+// Kept because it costs nothing and because this repository has twice been
+// wrong about two things being ready at once.
 //
 // Otherwise the DEADLINE is read before the exit code, which is
 // load-bearing rather than tidy: exec.CommandContext kills the process and
@@ -458,19 +485,19 @@ const keyCmdPrefix = "resolve linear api key"
 // stdout is used and the run counts as the success it was.
 //
 // The obvious objection to those two budgets is that they are two timers on
-// one deadline, which is what #272 was bitten by. They are not: they measure
-// different things -- the deadline runs from the start of the command, the
-// grace from the moment Wait observes it exited -- and the clause above is
-// what keeps them from ever being confused. A run the deadline ended has had
-// its Cancel called, so it can NOT come back as ErrWaitDelay, and a run that
-// comes back as ErrWaitDelay had no deadline fire. The two arms are mutually
-// exclusive by exec's own contract rather than by which timer was read
-// first, which is the property that makes the order between them irrelevant.
-// What it does require is that the two numbers stay in their shipped
-// RELATIONSHIP, sixty to two: shrinking both to the same value makes a
-// command that exits instantly expire the deadline first, which is a
-// timeout, correctly reported and about nothing. That is stated because the
-// test that pins this arm reproduced exactly that, 4 runs in 5.
+// one deadline, which is what #272 was bitten by. They are not two timers on
+// ONE deadline -- they measure different things, the deadline from the start
+// of the command and the grace from the moment Wait observes it exited --
+// but they are not mutually exclusive either, and the arm above is where
+// that is measured and what it costs. Both can be true at once.
+//
+// What the two numbers do require is that they stay in their shipped
+// RELATIONSHIP, sixty to two. Shrinking both to the same value makes a
+// command that exits instantly expire the deadline first, which reaches the
+// answer arm anyway now but would once have been reported as a timeout
+// about nothing. That is stated because the test that pins this arm
+// reproduced exactly that, 4 runs in 5, before the budgets were fixed
+// rather than the code.
 func runKeyCmd(ctx context.Context, apiKeyCmd []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, keyCmdTimeout)
 	defer cancel()

@@ -405,3 +405,45 @@ func TestTheBudgetsAreWhatTheDocumentsSay(t *testing.T) {
 		t.Errorf("the assignedIssues budget is now %s. The same documents name it", httpTimeout)
 	}
 }
+
+// A command that ANSWERED must keep its answer even when the deadline
+// expired while its grandchild was still draining the pipe.
+//
+// This is the case the first arm of runKeyCmd's switch exists for, and the
+// comment there used to claim it could not arise -- that a run the deadline
+// ended has had its Cancel called, so it could never come back as
+// ErrWaitDelay. That is false, and this test is the measurement that says
+// so. The shape is `pass show`'s: a grandchild on the stdout pipe, and a
+// command that answers just inside its budget.
+//
+// exec's own ordering is why. cmd.Wait takes Process.Wait first, and the
+// process really did exit 0 before the deadline, so the watcher records no
+// error and no Cancel occurs. Only then does awaitGoroutines start the
+// WaitDelay timer, which expires AFTER the deadline has passed -- leaving
+// runErr == ErrWaitDelay and ctx.Err() == DeadlineExceeded true at the same
+// time, with the key sitting in the buffer. Measured at the shipped 60:2
+// ratio scaled to 1s:33ms: 20 runs out of 20, deterministic rather than a
+// race.
+//
+// So the two arms are NOT mutually exclusive and the order between them is
+// what decides the outcome. Reading the deadline first throws a working
+// helper's key away and reports a timeout; reading the answer first is what
+// this pins. Found in review.
+func TestAnAPIKeyCmdThatAnsweredJustInsideItsBudgetKeepsItsAnswer(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	cmd := scriptKeyCmd(t, "sleep 30 &\nsleep 0.98\nprintf 'lin_api_justintime\\n'\n")
+	setKeyCmdBudgets(t, time.Second, 33*time.Millisecond)
+
+	var key string
+	var err error
+	within(t, 10*time.Second, "ResolveAPIKey", func() {
+		key, err = ResolveAPIKey(context.Background(), cmd, "", t.TempDir())
+	})
+
+	if err != nil {
+		t.Fatalf("ResolveAPIKey = %v, want the key its api_key_cmd printed just inside the budget", err)
+	}
+	if key != "lin_api_justintime" {
+		t.Errorf("ResolveAPIKey = %q, want the key", key)
+	}
+}

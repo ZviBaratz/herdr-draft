@@ -258,12 +258,19 @@ func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 // the same trade for the same shape.
 //
 // FOUR ARMS, and only the first is about what happened rather than what
-// went wrong. `runErr == nil` is read before the deadline because an answer
-// in hand beats a context that is done -- app.AwaitCheck's own rule -- and
-// it cannot mask a timeout, since a run the deadline ended has been killed
-// and comes back as an *exec.ExitError rather than as nil. See
-// linear.runKeyCmd's comment for the window it covers, the one it does not,
-// and why neither is pinnable by a test.
+// went wrong. It is read BEFORE the deadline because an answer in hand
+// beats a context that is done -- app.AwaitCheck's own rule -- and that
+// order decides a real outcome rather than a hypothetical one: a clauth
+// that exits 0 just inside its budget with a grandchild on the stdout pipe
+// comes back with runErr == exec.ErrWaitDelay and ctx.Err() ==
+// DeadlineExceeded BOTH true, payload in the buffer. Reading the deadline
+// first reports that working clauth as one that never answered. See
+// linear.runKeyCmd for the measurement and
+// TestACLIThatAnsweredJustInsideItsBudgetKeepsItsAnswer for the pin.
+//
+// A run the deadline KILLED is a different thing and does not reach this
+// arm: Process.Wait reports a non-zero state, so runErr is an
+// *exec.ExitError and the deadline arm below takes it.
 //
 // Otherwise the DEADLINE is read first, which is load-bearing rather than
 // tidy:
