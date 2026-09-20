@@ -1727,6 +1727,18 @@ func TestFooterButton_NamesAKeyThatActuallyCreates(t *testing.T) {
 		if got, _ := MapKey(msg, zone, false); got != ActionSubmit {
 			t.Errorf("zone %+v: the button says %q creates, but MapKey(%s) = %v: %q", zone, glyph, glyph, got, line)
 		}
+
+		// And the glyph is ↵ exactly where ↵ creates, which is the
+		// half the check above cannot make. ⌃S submits from every zone
+		// (MapKey's ctrl+s case sits above every zone test), so a button
+		// that said `⌃S create` on all ten rows would satisfy it while
+		// being strictly worse than what shipped: the prompt is a
+		// TEXTAREA whose bare ↵ submits, and the button is the only
+		// thing on screen that warns about it.
+		enter, _ := MapKey(keyEnter, zone, false)
+		if wantEnter := enter == ActionSubmit; wantEnter != (glyph == "↵") {
+			t.Errorf("zone %+v: the button wears %q, but ↵ creating here = %v: %q", zone, glyph, wantEnter, line)
+		}
 	}
 }
 
