@@ -160,6 +160,34 @@ then have to remember to undo, and it runs the **real form** — `pane run` the
 Route B block below into one of its panes, then `pane send-keys` and
 `pane read --source visible` to drive and read it.
 
+**Stopping it is two commands, and it is not `pkill`.** The server daemonises,
+so it outlives the shell that started it and every command below:
+
+```bash
+herdr[S] session stop <your-session-name>
+herdr[S] session delete <your-session-name>
+```
+
+Both print what they did and exit 0; `stop` ends the process, `delete` removes
+the session's state directory. Reaching for `pkill -f` on the session name
+instead **matches nothing and exits 1**: the name reaches the server through
+the environment, so its command line is the bare `herdr server` and the paths
+carrying the name are in its *startup output*, not its argv. `|| true` after
+that `pkill` — or not reading its exit code — leaves a live server behind
+silently. (`kill` is not a `session` verb either; the four are `list`,
+`attach`, `stop`, `delete`.)
+
+The tell, if it happened anyway: **the scratch `XDG_STATE_HOME` comes back
+after you `rm -rf` it**, holding a fresh `herdr/agent-detection/` tree. That is
+the live server re-flushing its manifest cache into a directory you watched
+disappear. Measured on 0.9.0, 2026-09-20: two servers survived a teardown
+reported as complete, for the rest of a working session. Check with
+`herdr[S] session list` before you believe the tree is gone. Recovering from
+that state is worse than avoiding it: with the scratch tree already deleted
+there is no socket left for `session stop` to reach, so the processes have to
+be found by hand, and plain `SIGTERM` did not end either of them — both needed
+`SIGKILL`. Why it took `SIGKILL` was not established.
+
 > **Reading a TUI you are driving: two traps, both of which produce confident
 > nonsense.** Both cost a false reading on the 0.9.0 pass.
 >
