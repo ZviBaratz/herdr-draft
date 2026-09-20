@@ -279,3 +279,29 @@ func TestACLIThatAnsweredJustInsideItsBudgetKeepsItsAnswer(t *testing.T) {
 		t.Errorf("ActiveProfile = %q, want alpha", st.ActiveProfile)
 	}
 }
+
+// The clauth sibling of
+// linear.TestAnAPIKeyCmdWhoseDrainOutlivesTheDeadlineKeepsItsAnswer: a
+// drain that outlives the deadline but finishes inside the grace makes
+// cmd.Run() return nil with ctx.Err() already DeadlineExceeded, so reading
+// the deadline first would report a clauth that answered as one that never
+// did. See that test for the mechanism and for why the budgets keep the
+// shipped direction.
+func TestACLIWhoseDrainOutlivesTheDeadlineKeepsItsAnswer(t *testing.T) {
+	payload := `{"schema":1,"active_profile":"alpha","generated_at":"2026-08-31T21:29:00+00:00","refresh_interval_ms":90000,"profiles":[{"name":"alpha","active":true,"tier":"Team","auth_status":"ok","windows":[]}]}`
+	bin := scriptClauth(t, "sleep 2.5 &\nsleep 1.5\ncat <<'JSON'\n"+payload+"\nJSON\n")
+	setCLIBudgets(t, 2*time.Second, 1500*time.Millisecond)
+
+	var st Status
+	var err error
+	within(t, 15*time.Second, "Load", func() {
+		st, err = Load(context.Background(), LoadOpts{CLIBin: bin, Now: time.Now})
+	})
+
+	if err != nil {
+		t.Fatalf("Load = %v, want the status clauth printed before the deadline", err)
+	}
+	if st.ActiveProfile != "alpha" {
+		t.Errorf("ActiveProfile = %q, want alpha", st.ActiveProfile)
+	}
+}

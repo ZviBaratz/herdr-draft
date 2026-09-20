@@ -450,14 +450,27 @@ const keyCmdPrefix = "resolve linear api key"
 // `gpg-agent`-shaped grandchild, and reports it as a timeout -- which is
 // the working-config regression the ErrWaitDelay arm exists to prevent,
 // arriving by the other door.
-// TestAnAPIKeyCmdThatAnsweredJustInsideItsBudgetKeepsItsAnswer pins it, and
-// the pre-reorder order fails it 3 times out of 3.
 //
-// The `runErr == nil` half alone is the one nothing can pin: it covers the
-// window after cmd.Run has come back clean and before ctx.Err() is read,
-// which is nanoseconds wide. Dropping just that half survives the suite.
-// Kept because it costs nothing and because this repository has twice been
-// wrong about two things being ready at once.
+// The `runErr == nil` half is NOT the nanosecond read-ordering window a
+// second version of this comment called it, and that claim was as wrong as
+// the first. Once Process.Wait has reaped the child, watchCtx has handed
+// off and nothing watches the context any more -- awaitGoroutines waits on
+// its own WaitDelay timer, with no ctx involvement. So a drain that
+// outlives the deadline but finishes INSIDE the grace returns literally
+// nil with ctx.Err() already DeadlineExceeded, key in the buffer and no
+// ErrWaitDelay anywhere. Measured: 10 raw runs out of 10. At the shipped
+// 60s/2s that is the same two-second band, reached by the same helper.
+//
+// Both halves are pinned, and separately, which is what says the arm is
+// covered rather than merely present.
+// TestAnAPIKeyCmdThatAnsweredJustInsideItsBudgetKeepsItsAnswer takes the
+// ErrWaitDelay half (drain longer than the grace) and
+// TestAnAPIKeyCmdWhoseDrainOutlivesTheDeadlineKeepsItsAnswer the nil half
+// (drain shorter than it). Demoting the whole arm fails both; demoting only
+// `runErr == nil` and leaving ErrWaitDelay first fails the second alone --
+// which is the check that they cover different things rather than the same
+// thing twice. Nothing here survives now; two earlier versions of this
+// paragraph claimed something did, and both were found wrong in review.
 //
 // Otherwise the DEADLINE is read before the exit code, which is
 // load-bearing rather than tidy: exec.CommandContext kills the process and

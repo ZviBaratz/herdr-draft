@@ -264,9 +264,14 @@ func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 // that exits 0 just inside its budget with a grandchild on the stdout pipe
 // comes back with runErr == exec.ErrWaitDelay and ctx.Err() ==
 // DeadlineExceeded BOTH true, payload in the buffer. Reading the deadline
-// first reports that working clauth as one that never answered. See
-// linear.runKeyCmd for the measurement and
-// TestACLIThatAnsweredJustInsideItsBudgetKeepsItsAnswer for the pin.
+// first reports that working clauth as one that never answered.
+//
+// And a drain that finishes INSIDE the grace gives runErr == nil with the
+// deadline already expired, which is the same outcome by a different route
+// -- once Process.Wait reaps, nothing watches the context. See
+// linear.runKeyCmd for both measurements.
+// TestACLIThatAnsweredJustInsideItsBudgetKeepsItsAnswer pins the first and
+// TestACLIWhoseDrainOutlivesTheDeadlineKeepsItsAnswer the second.
 //
 // A run the deadline KILLED is a different thing and does not reach this
 // arm: Process.Wait reports a non-zero state, so runErr is an

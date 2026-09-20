@@ -456,3 +456,48 @@ func TestAnAPIKeyCmdThatAnsweredJustInsideItsBudgetKeepsItsAnswer(t *testing.T) 
 		t.Errorf("ResolveAPIKey = %q, want the key", key)
 	}
 }
+
+// And the same when the drain finishes INSIDE the grace, which is the other
+// half of the first arm and the one this suite used to leave unpinned.
+//
+// The mechanism is different and sharper than the ErrWaitDelay case above.
+// Once Process.Wait has reaped the child, watchCtx has already handed off
+// and NOTHING watches the context any more: awaitGoroutines waits on its
+// own WaitDelay timer with no ctx involvement at all (go1.26.4
+// src/os/exec/exec.go). So a drain that outlives the deadline but finishes
+// inside the grace makes cmd.Run() return LITERALLY NIL while ctx.Err() is
+// already DeadlineExceeded, with the key in the buffer and ErrWaitDelay
+// nowhere in sight. Measured raw: 10 runs out of 10.
+//
+// That is what retires this comment's predecessor, which called the
+// `runErr == nil` half a nanosecond-wide read-ordering window that no test
+// could reach. It is neither nanoseconds wide nor unreachable: at the
+// shipped 60s/2s it is the same two-second band, and one second of test
+// reaches it deterministically. Found in review, which is also where the
+// claim it replaces was found to be false.
+//
+// The numbers keep the SHIPPED DIRECTION, deadline longer than the grace,
+// rather than inverting them to make the window easier to hit -- a fixture
+// that only works with the budgets the wrong way round would pin a
+// configuration this code never has. Four orderings have to hold and each
+// has 500ms: the command exits (1.5s) before the deadline (2s), the drain
+// ends (2.5s) after it, the drain (1s) fits inside the grace (1.5s), and
+// the deadline is longer than the grace.
+func TestAnAPIKeyCmdWhoseDrainOutlivesTheDeadlineKeepsItsAnswer(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	cmd := scriptKeyCmd(t, "sleep 2.5 &\nsleep 1.5\nprintf 'lin_api_drained\\n'\n")
+	setKeyCmdBudgets(t, 2*time.Second, 1500*time.Millisecond)
+
+	var key string
+	var err error
+	within(t, 15*time.Second, "ResolveAPIKey", func() {
+		key, err = ResolveAPIKey(context.Background(), cmd, "", t.TempDir())
+	})
+
+	if err != nil {
+		t.Fatalf("ResolveAPIKey = %v, want the key its api_key_cmd printed before the deadline", err)
+	}
+	if key != "lin_api_drained" {
+		t.Errorf("ResolveAPIKey = %q, want the key", key)
+	}
+}
