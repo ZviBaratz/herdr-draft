@@ -345,13 +345,23 @@ observed failure modes.
    command and asks before creating if `agent_args` holds anything else.)
    (Amended, #215: the first dry run's `account_usage` feeds item 5's
    cost judgement. A window at or above
-   `clauth.WarnThreshold`, 95%, that limits the model in play (a window
-   labelled with a model limits that model only) counts as tight, so the
-   cheaper configuration comes first. The question says which window, how
-   full and when it resets, and offers what would otherwise have been
-   picked beside it. With nothing pinned, it also says the session may
-   bill another account, since clauth's auto-switch acts there. It never
-   picks another account itself.)
+   `clauth.WarnThreshold`, 95%, that limits the model in play counts as
+   tight. The question says which window, how full and when it resets, and
+   offers what would otherwise have been picked beside it. With nothing
+   pinned, it also says the session may bill another account, since
+   clauth's auto-switch acts there. It never picks another account
+   itself.) (Amended, #250: the remedy follows the window. One labelled
+   with a model caps that model only, so it is escaped by picking another,
+   however full it is. One with no model in its label caps every model,
+   and there a cheaper configuration only spends what is left more slowly:
+   it comes first while the window has room, and at 100% it is off — the
+   task's own configuration stands, and the answers are another account
+   and waiting for the reset, with the user's own request beside them.
+   Waiting is said to create nothing, since `create` cannot schedule it.
+   Offering an account is allowed there; swapping one in silently is not.
+   `clauth status --json` is how the candidates are found, an absent
+   `account_usage` makes one unknown rather than free, and a signed-out
+   one is refused with exit 2 and is simply not a candidate.)
 
 8. **Read the result; the exit code is not the whole story.** Exit codes
    0/1/2/3; that under `--json`, exits 2 and 3 print nothing on stdout, so

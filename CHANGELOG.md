@@ -177,7 +177,11 @@ without the popup. It drives herdr exclusively through the public CLI
   ids (#209). It also carries `account_usage`, which a real create's object
   does not: the usage windows of the account the session would bill, from
   clauth's status. The spawn skill weighs the model and effort against
-  it, and puts a window at or above 95% in its confirmation (#215).
+  it, and puts a window at or above 95% in its confirmation (#215). What
+  it offers there follows the window: one labelled with a model is
+  escaped by picking another, one that caps every model takes the cheaper
+  configuration while it has room, and at 100% only another account or
+  waiting for the reset changes anything (#250).
 - **`--placement tab-in` and `--workspace <id>`** place the agent's tab in a
   workspace other than the invoking one — the one already holding the
   project (the default when there is one), or any open workspace by id —

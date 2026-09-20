@@ -519,31 +519,70 @@ func TestSkillStatesTheUsageThreshold(t *testing.T) {
 	}
 }
 
-// TestSkillWeighsTheAccountUsage holds the skill to #215's rule: the first
-// dry run's account_usage is read, it feeds section 5's cost judgement, and
-// a window at the threshold reaches the question the user answers.
+// TestSkillWeighsTheAccountUsage holds the skill to #215's rule as #250
+// corrected it: the first dry run's account_usage is read, it feeds
+// section 5's cost judgement, and a window at the threshold reaches the
+// question the user answers -- with the right remedy for the window it is.
+//
+// The rule's two branches are pinned in ORDER as well as by their words. A
+// bare list of phrases pins vocabulary only: #250's review swapped the two
+// branches wholesale -- offering another account while the window still had
+// room, and a cheaper model once it was spent -- and every phrase the test
+// required was still present, so it stayed green.
 func TestSkillWeighsTheAccountUsage(t *testing.T) {
 	lines := strings.Split(renderedSkill(), "\n")
 	for _, where := range []struct {
 		name, from, to string
 		want           []string
+		// order is phrases that must appear, each after the one before it.
+		order []string
 	}{
-		{"the first dry run's reading list", "**1. Dry-run it without the option flags.**", "**2. Choose the three options**", []string{"`account_usage`"}},
-		{"section 5's cost judgement", "**Model and effort follow the shape of the task:**", "**Keep the user's own model id.**", []string{"`account_usage`", "limits the model"}},
+		{name: "the first dry run's reading list", from: "**1. Dry-run it without the option flags.**", to: "**2. Choose the three options**", want: []string{"`account_usage`"}},
+		{name: "section 5's cost judgement", from: "**Model and effort follow the shape of the task:**", to: "**Keep the user's own model id.**", want: []string{"`account_usage`", "limits the model"}},
 		// Its own paragraph, not the whole of "Then ask": that section also
 		// says "once, in the question" about the exports.
-		// "a row up": section 5's table gets dearer going down, and this
-		// paragraph once sent the agent down it for the cheaper option.
-		{"the rule for a window at the threshold", "**If a window in `account_usage`", "A label is not reviewable.", []string{
-			"say so in the question", "when it resets", "cheaper configuration", "a row up",
-			"what you would have picked otherwise", "limits that model only", "every model",
-		}},
+		{
+			name: "the rule for a window at the threshold",
+			from: "**If a window in `account_usage`",
+			to:   "A label is not reviewable.",
+			want: []string{
+				"say so in the question", "when it resets",
+				// While a label-less window has room, cheaper spends what is
+				// left more slowly; at 100% only another account or the reset
+				// changes anything, and waiting is not something create does.
+				"a row up", "what you would have picked otherwise", "creates nothing",
+				// An agent told to offer another account needs a way to find
+				// one, and a way to tell a candidate from an unknown.
+				"`clauth status --json`", "not a candidate", "unknown rather than free",
+			},
+			// Each phrase occurs once, so the first match is the right one.
+			order: []string{
+				// A model-labelled window is escaped by another model, whatever
+				// its level -- the case #250's first draft broke.
+				"label names a model", "escaped by not picking that model",
+				// Only a window that caps every model reaches the step-down
+				// question at all, and only at 100% does the step down go off.
+				"no model in its label", "does not raise the cap",
+				"While there is room", "put that cheaper configuration first",
+				"At 100%", "another account and waiting for the reset",
+			},
+		},
 	} {
 		// One line, so a phrase the prose wraps still matches.
 		text := strings.Join(strings.Fields(strings.Join(linesBetween(t, lines, where.from, where.to), " ")), " ")
 		for _, w := range where.want {
 			if !strings.Contains(text, w) {
 				t.Errorf("%s never says %q", where.name, w)
+			}
+		}
+		for i, w := range where.order {
+			at := strings.Index(text, w)
+			if at < 0 {
+				t.Errorf("%s never says %q", where.name, w)
+				break
+			}
+			if i > 0 && at < strings.Index(text, where.order[i-1]) {
+				t.Errorf("%s says %q before %q; the two branches have swapped", where.name, w, where.order[i-1])
 			}
 		}
 	}
