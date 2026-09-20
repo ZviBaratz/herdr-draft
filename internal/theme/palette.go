@@ -498,23 +498,33 @@ const InputFillContrastFloor = 1.25
 // mean" is true and does not help when the words are what is hard to read.
 //
 // 3:1 rather than 4.5:1, and the choice is a judgement rather than a
-// standard. 4.5:1 is WCAG's figure for body text and 3:1 its figure for
-// large text; a one-word marker in a terminal is neither, and measured
-// across the eighteen builtins 4.5:1 would raise nearly all of them far
-// enough that a clamped Danger stops reading as red. At 3:1 the split is
-// ten raised, seven already clear, and terminal exempt -- and catppuccin,
-// the default and what every golden frame in this repository renders on, is
-// one of the seven, so the clamp moves no frame.
+// standard: 4.5:1 is WCAG's figure for body text and 3:1 its figure for
+// large text, and a one-word marker in a terminal is neither. So the case
+// for 3 has to be made on what the extra 1.5 costs, and it is not that it
+// would move golden frames -- catppuccin clears 4.5:1 too (5.43:1 and
+// 7.10:1), so the frames would sit still either way.
+//
+// What it costs is the hue, which is the thing being raised in the first
+// place. The walk is longer at 4.5, and measured at both floors: nord's
+// #bf616a and #d08770 arrive at #cf898f and #d28d77 at 3:1, and at #e2b8bc
+// and #e3b7a9 at 4.5:1 -- two pastels 19 units apart in sRGB, which is
+// under the separation tripwire contrast_test.go keeps. solarized's pair
+// goes from 37 units apart to 29. A floor high enough to stop a colour
+// meaning what it meant is not a better floor.
+//
+// At 3:1 the split is ten builtins raised, seven already clear, and
+// terminal exempt.
 //
 // A theme that cannot meet it gets a better value, not a waiver, exactly as
 // ActiveRowContrastFloor says. Do not lower this to make something pass.
 const SemanticTextContrastFloor = 3.0
 
-// contrastMixStep is how coarsely ensureContrast walks away from the
-// background. It is deliberately coarse: a fine search would land a clamped
-// theme a hair over the floor, which is compliant but still marginal, and
-// 5% steps are far below the resolution at which a background shift is
-// visible anyway. No builtin needs more than four of them.
+// contrastMixStep is how coarsely walkToward steps, for both clamps built on
+// it. It is deliberately coarse: a fine search would land a clamped theme a
+// hair over the floor, which is compliant but still marginal, and 5% steps
+// are far below the resolution at which a colour shift is visible anyway.
+// No builtin needs more than four of them to raise a background, or more
+// than five to raise a word (catppuccin-latte's peach, and nord's red).
 const contrastMixStep = 0.05
 
 // floorContrast raises the fields v3 spec §5.3 puts a floor under. It runs on
@@ -684,7 +694,68 @@ func raiseSemanticText(fg Color, grounds []Color, floor float64) Color {
 	if clearsFloor(fg, grounds, floor) {
 		return fg
 	}
-	return walkToward(fg, farthestEnd(grounds), grounds, floor)
+
+	end := farthestEnd(grounds)
+	if raised := walkToward(fg, end, grounds, floor); clearsFloor(raised, grounds, floor) {
+		return raised
+	}
+	// The walk is a straight line from fg to one end of the ramp, and with
+	// several grounds at once that line can clear none of them -- the
+	// grounds pull in different directions, so the worst ratio along it need
+	// not even be monotonic. walkToward answers that by returning the ramp's
+	// end, which for a background is the best there is and for a word is a
+	// guess that can be worse than the colour it replaced. Measured: with a
+	// `[palette] surface` override of #e0e0e0 on catppuccin, its #f38ba8 red
+	// is 1.75:1 on its worst ground and plain white is 1.32:1 -- the clamp
+	// would have made the one number it exists for worse, and, since both
+	// semantics give up at the same end, would have handed back a Danger and
+	// a Warning that were byte-identical white. That is #273's own
+	// convergence objection, arriving through the back door on the very tier
+	// this clamp exists to reach.
+	//
+	// So a give-up returns the best point on the segment instead, fg
+	// included. It cannot clear the floor -- nothing here can -- but it can
+	// promise never to be worse than doing nothing, and it keeps two
+	// semantics apart by keeping each one's own hue.
+	return bestAlong(fg, end, grounds)
+}
+
+// bestAlong returns whichever point on the segment from `from` to `toward`
+// has the highest worst-case contrast against grounds, `from` itself
+// included, over the same steps walkToward takes. It is only ever reached
+// when no point on that segment clears the floor.
+func bestAlong(from, toward Color, grounds []Color) Color {
+	best, bestRatio := from, worstRatio(from, grounds)
+	fromR, fromG, fromB, _ := rgb8(from)
+	towardR, towardG, towardB, _ := rgb8(toward)
+	for f := contrastMixStep; f < 1; f += contrastMixStep {
+		mixed := color.RGBA{
+			R: mixChannel(fromR, towardR, f),
+			G: mixChannel(fromG, towardG, f),
+			B: mixChannel(fromB, towardB, f),
+			A: 0xff,
+		}
+		if r := worstRatio(mixed, grounds); r > bestRatio {
+			best, bestRatio = mixed, r
+		}
+	}
+	return best
+}
+
+// worstRatio is c's contrast against the ground it reads worst on. An
+// unmeasurable ground scores 0, for the reason clearsFloor gives.
+func worstRatio(c Color, grounds []Color) float64 {
+	worst := math.Inf(1)
+	for _, g := range grounds {
+		ratio, ok := contrastRatio(c, g)
+		if !ok {
+			return 0
+		}
+		if ratio < worst {
+			worst = ratio
+		}
+	}
+	return worst
 }
 
 // farthestEnd returns whichever of black and white has more contrast to
@@ -712,11 +783,18 @@ func farthestEnd(grounds []Color) Color {
 }
 
 // walkToward is the single mix both clamps above are made of: it steps from
-// toward toward in contrastMixStep increments and returns the first mix that
-// clears floor against every ground, or toward when none does.
+// `from` toward `toward` in contrastMixStep increments and returns the first
+// mix that clears floor against every ground, or `toward` itself when none
+// does.
 //
 // It starts at contrastMixStep rather than at zero because both callers have
-// already established that from itself does not clear the floor.
+// already established that `from` does not clear the floor.
+//
+// That exhaustion value is right for ensureContrast, whose single ground is
+// what it is walking away from, so the ramp's end is always the best
+// available answer. It is NOT right for a foreground walked against several
+// grounds at once, where the segment can miss all of them; raiseSemanticText
+// handles its own give-up rather than trusting this one.
 func walkToward(from, toward Color, grounds []Color, floor float64) Color {
 	fromR, fromG, fromB, _ := rgb8(from)
 	towardR, towardG, towardB, _ := rgb8(toward)

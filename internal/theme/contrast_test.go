@@ -601,3 +601,51 @@ func TestFarthestEnd_PicksTheDirectionWithRoomLeft(t *testing.T) {
 		})
 	}
 }
+
+// TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing covers the case
+// the walk cannot solve, on the tier that is the whole argument for clamping
+// rather than asserting. No builtin reaches it -- the grounds in a real
+// theme sit close together, so a line from a colour to one end of the ramp
+// clears all three or none -- but a `[palette]` or `[theme.custom]` override
+// can put a ground anywhere, including between Danger and both ends.
+//
+// Two promises, and the second is the one that bites. A clamp that gives up
+// must not return something WORSE than the colour it was handed: walking
+// catppuccin's #f38ba8 to plain white against a #e0e0e0 Surface takes its
+// worst ground from 1.75:1 to 1.32:1. And it must not answer for two
+// semantics with the same value: both would give up at the same end of the
+// same ramp, so Danger and Warning came back byte-identical white -- #273's
+// own convergence objection, arriving on the tier
+// TestBuiltinPalettes_ClampedSemanticsStayDistinct cannot see.
+func TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing(t *testing.T) {
+	// Chosen by measurement, not by taste: a mid grey Surface that no walk
+	// from either semantic can clear 3:1 against while still clearing the
+	// two catppuccin grounds it sits between.
+	for _, surface := range []string{"#e0e0e0", "#c0c0c0", "#a0a0a0"} {
+		t.Run(surface, func(t *testing.T) {
+			raw := Resolve(Default(), map[string]string{"surface": surface})
+			got := floorContrast(raw)
+			grounds := []Color{got.PanelBG, got.ActiveRowBG, got.Surface}
+
+			if clearsFloor(got.Danger, grounds, SemanticTextContrastFloor) {
+				t.Skipf("this fixture no longer gives up -- it needs a Surface no walk can clear")
+			}
+			for _, tc := range []struct {
+				name     string
+				was, now Color
+			}{
+				{"Danger", raw.Danger, got.Danger},
+				{"Warning", raw.Warning, got.Warning},
+			} {
+				before, after := worstRatio(tc.was, grounds), worstRatio(tc.now, grounds)
+				if after < before {
+					t.Errorf("%s went from %.3f:1 to %.3f:1 (%v -> %v): a clamp that cannot help must not hurt",
+						tc.name, before, after, tc.was, tc.now)
+				}
+			}
+			if colorEqual(got.Danger, got.Warning) {
+				t.Errorf("Danger and Warning both gave up at %v -- two refusals that are the same colour say less than one", got.Danger)
+			}
+		})
+	}
+}
