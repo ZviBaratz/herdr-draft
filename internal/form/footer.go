@@ -140,25 +140,23 @@ func zoneRungs(zone FocusZone) []string {
 			// 64-column popup exactly on that edge. "name it to
 			// create" (17) fills the hole.
 			//
-			// What it buys, measured rather than asserted, because
-			// this is a TRADE and the first draft of this comment
-			// called it a fix. Against the ladder that shipped before
-			// the button widened:
+			// What it buys, measured against the ladder that shipped
+			// before #281 rather than asserted:
 			//   - 46-63 cells: "⇥ for the prompt" becomes "name it to
 			//     create". Strictly better by v2 spec §3 rule 4 -- it
 			//     is what this zone teaches -- and the reason to keep
 			//     the rung even setting #281 aside.
-			//   - 64 cells: "name it to create · ⇥ for the prompt"
-			//     becomes "name it to create · ⌃R clear". The create
-			//     half survives; the ⇥ half does not. A swap.
-			//   - 44 cells and below: no lead fits at all and the
-			//     footer falls to the tail floor, one column earlier
-			//     than it used to. Six other zones reach that same
-			//     floor one width earlier too (worktree at 35, options
-			//     36, issue/dir/placement 37, agent 40), and they get
-			//     no rung of their own here because theirs is not this
-			//     hole: nothing in their ladder fits either way, so a
-			//     shorter lead would only move the cliff one column.
+			//   - 44 cells: "⇥ for the prompt" likewise.
+			//   - everywhere else: identical.
+			// No width teaches less than it did, at 24 improved and 113
+			// unchanged over terminals 24-160. That holds only because
+			// this zone's button wears NO key glyph (form.go's
+			// createKey) and so is the narrowest of the three faces: an
+			// earlier round gave it ⌃S, one cell wider, and this
+			// comment then had to describe 64 cells as a swap -- the
+			// create half surviving and the ⇥ half not. Dropping the
+			// glyph, which is honest here because no key creates from an
+			// empty title, took the cell back and then some.
 			return []string{"name it to create · ⇥ for the prompt", "name it to create", "⇥ for the prompt"}
 		}
 		return []string{"⌃S create now · ⇥ for the prompt", "⇥ for the prompt"}

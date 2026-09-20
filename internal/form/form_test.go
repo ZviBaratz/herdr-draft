@@ -1683,20 +1683,30 @@ func everyFocusableZone() []FocusZone {
 	return zones
 }
 
-// buttonKeyOf returns the key glyph the primary button is wearing on a
-// rendered footer line -- the token immediately before "create" inside
-// the button's own text.
-func buttonKeyOf(t *testing.T, line string) string {
+// buttonFaceOf returns the primary button's rendered text from a footer
+// line -- "↵ create", "⌃S create" or, where no key creates, "create".
+//
+// It reads from the RIGHT rather than searching for "create", because
+// two of the rungs contain that word too ("name it to create",
+// "⌃S create now") and the glyph-less face has nothing but spaces in
+// front of it to tell them apart. The buttons are flush right
+// (spreadLine), so peeling cancel off the end and trimming the gap lands
+// exactly on the create button -- which also makes this assert the
+// button is where it belongs, not merely somewhere on the line.
+func buttonFaceOf(t *testing.T, line string) string {
 	t.Helper()
-	i := strings.LastIndex(line, " create ")
-	if i < 0 {
-		t.Fatalf("no create button on the footer line: %q", line)
+	tail := strings.TrimRight(line, " ")
+	tail = strings.TrimRight(strings.TrimSuffix(tail, "esc cancel"), " ")
+	if !strings.HasSuffix(tail, "create") {
+		t.Fatalf("the footer does not end with the create button: %q", line)
 	}
-	fields := strings.Fields(line[:i])
-	if len(fields) == 0 {
-		t.Fatalf("the create button carries no key glyph: %q", line)
+	rest := strings.TrimRight(strings.TrimSuffix(tail, "create"), " ")
+	for _, glyph := range []string{"↵", "⌃S"} {
+		if strings.HasSuffix(rest, glyph) {
+			return glyph + " create"
+		}
 	}
-	return fields[len(fields)-1]
+	return "create"
 }
 
 // TestFooterButton_NamesAKeyThatActuallyCreates is #281's fix stated
@@ -1718,7 +1728,24 @@ func TestFooterButton_NamesAKeyThatActuallyCreates(t *testing.T) {
 
 	for _, zone := range everyFocusableZone() {
 		line := ansi.Strip(widgets.Zones.Scan(renderFooter(120, zone, footerRungs(zone, false), palette)))
-		glyph := buttonKeyOf(t, line)
+		face := buttonFaceOf(t, line)
+
+		// An EMPTY title is the one row where no key creates, so the
+		// button names none. ↵ advances there, and ⌃S reaches a
+		// submit that is refused -- which is a fact about
+		// internal/app's checkSubmitValidation, not about this
+		// package's grammar, so MapKey cannot be asked about it and
+		// this case is named rather than derived. The app side pins
+		// the refusal itself:
+		// TestSubmit_CtrlSFromAnEmptyTitleCreatesNothing.
+		if zone.Kind == ZoneTitle && zone.TitleEmpty {
+			if face != "create" {
+				t.Errorf("an empty title's button = %q, want no key glyph at all: %q", face, line)
+			}
+			continue
+		}
+
+		glyph := strings.TrimSuffix(face, " create")
 		msg, known := keys[glyph]
 		if !known {
 			t.Errorf("zone %+v: the button wears %q, which is not a key this form maps: %q", zone, glyph, line)
@@ -1769,6 +1796,12 @@ func TestFooter_NeverAdvertisesEnterTwice(t *testing.T) {
 		t.Helper()
 		line := ansi.Strip(widgets.Zones.Scan(renderFooter(width, zone, rungs, palette)))
 		glyph := createKey(zone)
+		if glyph == "" {
+			// An empty title's button names no key, so there is no
+			// glyph for a rung to collide with. Counting "" would
+			// match at every position in the line.
+			return
+		}
 		if n := strings.Count(line, glyph); n > 1 {
 			t.Errorf("%s at w=%d says %s %d times: %q", what, width, glyph, n, line)
 		}

@@ -261,11 +261,33 @@ func createButtonMarker(m Model, focusedID string) string {
 	case "create", "prompt":
 		return "↵ create"
 	case "title":
-		if strings.TrimSpace(m.title.Value()) != "" {
-			return "↵ create"
+		if strings.TrimSpace(m.title.Value()) == "" {
+			// No key creates from an empty title, so the button names
+			// none (form.go's createKey).
+			return "create"
 		}
+		return "↵ create"
 	}
 	return "⌃S create"
+}
+
+// carriesCreateButton reports whether frame's footer ENDS with want --
+// the primary button, which spreadLine keeps flush right beside cancel.
+//
+// Position matters rather than mere presence, and only since the button
+// gained a glyph-less face: "create" on its own also appears inside two
+// rungs ("name it to create", "⌃S create now"), so a frame whose button
+// had been clipped away entirely would still contain the word. Peeling
+// cancel off the right and trimming the gap lands on the button itself.
+func carriesCreateButton(frame, want string) bool {
+	for _, line := range strings.Split(frame, "\n") {
+		tail := strings.TrimRight(line, " ")
+		tail = strings.TrimRight(strings.TrimSuffix(tail, "esc cancel"), " ")
+		if strings.HasSuffix(tail, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestAssembledForm_FocusedSectionVisibleAt80x24 is the assertion whose
@@ -310,7 +332,7 @@ func TestAssembledForm_FocusedSectionVisibleAt80x24(t *testing.T) {
 				if ok && !strings.Contains(frame, marker) {
 					t.Errorf("with %q focused, the render at 80x24 does not contain %q:\n%s", id, marker, frame)
 				}
-				if button := createButtonMarker(m, id); !strings.Contains(frame, button) {
+				if button := createButtonMarker(m, id); !carriesCreateButton(frame, button) {
 					t.Errorf("with %q focused, the render at 80x24 lost the %q button:\n%s", id, button, frame)
 				}
 				if !strings.Contains(frame, "esc cancel") {
@@ -342,18 +364,18 @@ func TestAssembledForm_EverySectionVisibleDownToItsFloor(t *testing.T) {
 			m.form.FocusByID(id)
 			frame := ansi.Strip(m.form.ViewAt(80, h))
 			button := createButtonMarker(m, id)
-			if !strings.Contains(frame, button) {
+			if !carriesCreateButton(frame, button) {
 				t.Errorf("at 80x%d with %q focused, the %q button was clipped", h, id, button)
 			}
 			if marker, ok := sectionMarkers[id]; ok && !strings.Contains(frame, marker) {
 				t.Errorf("at 80x%d, the FOCUSED section %q is not rendered", h, id)
 			}
 			for _, other := range ids {
-				want := button
 				if marker, ok := sectionMarkers[other]; ok {
-					want = marker
-				}
-				if !strings.Contains(frame, want) {
+					if !strings.Contains(frame, marker) {
+						fits = false
+					}
+				} else if !carriesCreateButton(frame, button) {
 					fits = false
 				}
 			}

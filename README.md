@@ -47,7 +47,7 @@ new session                                                  herdr-draft · main
 ───────────────────────────────────────────────────────────────────────────────
 
 
-name it to create · ⇥ for the prompt · ⌃R clear        ⌃S create    esc cancel
+name it to create · ⇥ for the prompt · ⌃R clear           create    esc cancel
 ```
 
 Everything else is there for the session that is not the common one. Nothing
@@ -143,9 +143,10 @@ in the row order is spent on a button.
 
 The create button names whichever of those two keys creates from the row
 you are on: `↵ create` on a named title, in the prompt and on the button
-itself, `⌃S create` everywhere else. So the two mockups above differ by
-more than their key ladder — in the first the title is named and `↵`
-creates, in the second it is not and only `⌃S` will even try.
+itself, `⌃S create` everywhere else — and on an untitled form, where
+neither creates, it names no key at all. So the two mockups above differ
+by more than their key ladder: in the first the title is named and `↵`
+creates, in the second nothing will create until you type one.
 
 The mouse works too: click a row to focus it, click a panel line to select
 it, and the wheel scrolls the panel.

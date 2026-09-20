@@ -1,9 +1,11 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
@@ -340,5 +342,45 @@ func TestSubmit_AReleasedSubmitWaitsForTheBaseCheckItsProjectStarts(t *testing.T
 	}
 	if in := m.submitInput; in.ProjectDir != "/repo-b" || in.BaseRef != "old-branch" {
 		t.Errorf("submitted project %q from base %q, want /repo-b from its remembered old-branch", in.ProjectDir, in.BaseRef)
+	}
+}
+
+// TestSubmit_CtrlSFromAnEmptyTitleCreatesNothing pins the fact the footer
+// button's glyph-less face rests on (internal/form's createKey): from an
+// empty title NO key creates. ↵ advances there, which keys.go's own
+// grammar tests cover, and ⌃S -- the key that submits from every zone
+// unconditionally -- reaches a submit this layer refuses.
+//
+// It lives here and not in internal/form because that package cannot see
+// it: MapKey answers ActionSubmit for ⌃S in every zone, empty title
+// included, and the refusal is checkSubmitValidation's. A button that
+// said `⌃S create` on the opening screen would therefore have been
+// consistent with the whole grammar and still wrong on screen, which is
+// the shape of defect #281 was about. That ⌃S really does map to
+// ActionSubmit from every zone is internal/form's
+// TestMapKey_CtrlSSubmitsFromEveryZone; form.SubmitMsg here is what that
+// keystroke becomes.
+func TestSubmit_CtrlSFromAnEmptyTitleCreatesNothing(t *testing.T) {
+	git := newFakeGit()
+	m := settledRepoForm(t, git)
+	// settledRepoForm seeds a title; the opening form has none, which is
+	// the state this is about.
+	m.title.SetTitle("", false)
+	m.form.FocusByID("title")
+
+	if got := strings.TrimSpace(m.title.Value()); got != "" {
+		t.Fatalf("test setup: title = %q, want the opening form's empty one", got)
+	}
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+
+	if m.submitting {
+		t.Error("⌃S from an empty title started a create")
+	}
+	if got := m.form.FocusedID(); got != "title" {
+		t.Errorf("focus ended on %q, want the title, which says what is missing", got)
+	}
+	if got := ansi.Strip(m.form.ViewAt(101, 30)); !strings.Contains(got, "title required") {
+		t.Errorf("the refusal does not name the missing title:\n%s", got)
 	}
 }
