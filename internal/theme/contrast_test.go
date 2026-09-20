@@ -309,6 +309,33 @@ func TestRGB8_RecoversChannelsExactly(t *testing.T) {
 // produces, because a refused submit moves focus to the row carrying the
 // word -- but it is not always the worst: dracula clears 3:1 on both of the
 // other two and measures 2.91:1 on Surface.
+//
+// #277 added three more fields, and each is a different argument for the
+// same floor. Success carries field_account.go's `-> <profile>` picker badge
+// and submitview.go's `+` step glyph. Accent carries the focus gutter and the
+// running step's glyph, where "distinguishable" would be bar enough, but it
+// also carries words: widgets/picker.go's matchStyle repaints the runes a
+// query matched, and widgets/chiprow.go renders the active chip's label in
+// it. Accent is a BACKGROUND as well -- the `create` button's fill, under a
+// label knocked out in panelContrastFG, which is PanelBG. That is this same
+// pair reversed, so flooring Accent against PanelBG floors the button's own
+// label at the same time: the two uses pull together rather than against
+// each other.
+//
+// Branch is the one that asked for a different number and got this one. It
+// is not a marker -- a branch name is content, read character by character
+// to check it, which is the case WCAG's 3:1 large-text figure is least
+// defensible for. What decided it is the theme's OWN body text, measured on
+// these same three grounds: Text bottoms out at 3.14:1 (solarized-light, on
+// its focused row), with tokyo-night-day at 3.51:1, solarized at 4.29:1,
+// one-dark at 4.56:1 and kanagawa-lotus at 4.65:1 -- five of the seventeen
+// draw ordinary words below 4.5:1. A 4.5:1 floor on Branch would hold a
+// branch name to a higher standard than the title beside it, and charge 11
+// of the 17 their branch hue to do it: solarized's #d33682 walks 96 units in
+// sRGB to #e586b4, rose-pine-dawn's 76, nord's 63. At 3:1 it is three
+// builtins and at most 36 units, and the floor lands just under every
+// builtin's own worst body text -- which is where a floor belongs, catching
+// the outliers rather than redesigning the theme.
 func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 	for name := range builtinPalettes {
 		t.Run(name, func(t *testing.T) {
@@ -341,6 +368,9 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 			}{
 				{"Danger", palette.Danger},
 				{"Warning", palette.Warning},
+				{"Success", palette.Success},
+				{"Branch", palette.Branch},
+				{"Accent", palette.Accent},
 			} {
 				for _, ground := range []struct {
 					where string
@@ -356,7 +386,7 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 						continue
 					}
 					if got < SemanticTextContrastFloor-contrastAssertionEpsilon {
-						t.Errorf("%s on %s = %.3f:1, want >= %.2f:1 -- a word nobody can read is not a refusal (#273)",
+						t.Errorf("%s on %s = %.3f:1, want >= %.2f:1 -- a word nobody can read says nothing (#273, #277)",
 							field.name, ground.where, got, SemanticTextContrastFloor)
 					}
 				}
@@ -372,6 +402,13 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 // the case that matters most -- it is the default, and it is what every
 // golden frame in this repository renders on, so a raise here would move
 // frames in two packages and change the screen most users see.
+//
+// All five are asserted, not the two #273 floored, because that is what
+// makes "#277 moved no frames" a measurement rather than an observation
+// about the day it was run: catppuccin's Success, Branch and Accent clear
+// 3:1 on their worst ground by 8.46, 6.19 and 5.97, so extending the clamp
+// to them could not have moved a frame, and this is where that stops being
+// true if a future edit lowers one of the three.
 func TestFloorContrast_KeepsLegibleSemanticsUnchanged(t *testing.T) {
 	raw, ok := builtinPalettes["catppuccin"]
 	if !ok {
@@ -379,11 +416,19 @@ func TestFloorContrast_KeepsLegibleSemanticsUnchanged(t *testing.T) {
 	}
 	got := Default()
 
-	if !colorEqual(got.Danger, raw.Danger) {
-		t.Errorf("Danger = %v, want catppuccin's own %v unchanged", got.Danger, raw.Danger)
-	}
-	if !colorEqual(got.Warning, raw.Warning) {
-		t.Errorf("Warning = %v, want catppuccin's own %v unchanged", got.Warning, raw.Warning)
+	for _, tc := range []struct {
+		name     string
+		was, now Color
+	}{
+		{"Danger", raw.Danger, got.Danger},
+		{"Warning", raw.Warning, got.Warning},
+		{"Success", raw.Success, got.Success},
+		{"Branch", raw.Branch, got.Branch},
+		{"Accent", raw.Accent, got.Accent},
+	} {
+		if !colorEqual(tc.now, tc.was) {
+			t.Errorf("%s = %v, want catppuccin's own %v unchanged", tc.name, tc.now, tc.was)
+		}
 	}
 }
 
@@ -565,6 +610,64 @@ func TestBuiltinPalettes_ClampedSemanticsStayDistinct(t *testing.T) {
 	}
 }
 
+// TestBuiltinPalettes_ClampDoesNotCloseAGapItDidNotCreate is the test above
+// generalised to the five fields #277 left floored, and it is a different
+// assertion rather than three more rows because the absolute one cannot be
+// made over all ten pairs: rose-pine draws Branch and Accent in the same
+// #c4a7e7 and vesper draws Warning and Accent in the same #ffc799, by their
+// own choice and before this package touches anything. A floor over every
+// pair would fail on those two themes for a defect they do not have.
+//
+// So the promise here is relative: a pair the theme itself kept apart must
+// still be apart after the clamp. That is exactly #273's convergence
+// objection, scoped to the part of it this package is answerable for --
+// five colours walking toward one end of one ramp is five chances to
+// collide, and the Danger/Warning pair above is only one of them.
+//
+// Measured across the eighteen, the closest pair the clamp produces that
+// was not already identical is nord's Danger and Warning at 24.5, and the
+// only pair it narrows at all is tokyo-night-day's Branch and Accent, from
+// 101.6 to 88.7.
+func TestBuiltinPalettes_ClampDoesNotCloseAGapItDidNotCreate(t *testing.T) {
+	for name := range builtinPalettes {
+		t.Run(name, func(t *testing.T) {
+			raw := builtinPalettes[name]
+			palette, ok := Builtin(name)
+			if !ok {
+				t.Fatalf("Builtin(%q) not found", name)
+			}
+			fields := []struct {
+				name     string
+				was, now Color
+			}{
+				{"Danger", raw.Danger, palette.Danger},
+				{"Warning", raw.Warning, palette.Warning},
+				{"Success", raw.Success, palette.Success},
+				{"Branch", raw.Branch, palette.Branch},
+				{"Accent", raw.Accent, palette.Accent},
+			}
+			for i := range fields {
+				for j := i + 1; j < len(fields); j++ {
+					a, b := fields[i], fields[j]
+					before, ok := srgbDistance(a.was, b.was)
+					if !ok || before < semanticSeparationFloor {
+						continue // unmeasurable, or the theme's own choice
+					}
+					after, ok := srgbDistance(a.now, b.now)
+					if !ok {
+						t.Errorf("%s or %s became unmeasurable", a.name, b.name)
+						continue
+					}
+					if after < semanticSeparationFloor {
+						t.Errorf("%s %v and %s %v started %.1f apart in sRGB and the clamp left them %.1f (%v, %v), want >= %.1f -- a clamp may not close a gap it did not create (#277)",
+							a.name, a.was, b.name, b.was, before, after, a.now, b.now, semanticSeparationFloor)
+					}
+				}
+			}
+		})
+	}
+}
+
 func srgbDistance(a, b Color) (float64, bool) {
 	ar, ag, ab, aOK := rgb8(a)
 	br, bg, bb, bOK := rgb8(b)
@@ -617,6 +720,14 @@ func TestFarthestEnd_PicksTheDirectionWithRoomLeft(t *testing.T) {
 // same ramp, so Danger and Warning came back byte-identical white -- #273's
 // own convergence objection, arriving on the tier
 // TestBuiltinPalettes_ClampedSemanticsStayDistinct cannot see.
+//
+// All five floored fields are checked since #277, and the second promise is
+// why it matters that they are: five colours giving up at one end of one
+// ramp is five chances to collide, not one. catppuccin is the right base
+// for it because its five are all distinct to begin with, which is not true
+// of every builtin -- rose-pine's Branch and Accent are the same #c4a7e7 by
+// the theme's own choice, and vesper's Warning and Accent the same
+// #ffc799.
 func TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing(t *testing.T) {
 	// Chosen by measurement, not by taste: a mid grey Surface that no walk
 	// from either semantic can clear 3:1 against while still clearing the
@@ -630,21 +741,30 @@ func TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing(t *testing.T) {
 			if clearsFloor(got.Danger, grounds, SemanticTextContrastFloor) {
 				t.Skipf("this fixture no longer gives up -- it needs a Surface no walk can clear")
 			}
-			for _, tc := range []struct {
+			fields := []struct {
 				name     string
 				was, now Color
 			}{
 				{"Danger", raw.Danger, got.Danger},
 				{"Warning", raw.Warning, got.Warning},
-			} {
+				{"Success", raw.Success, got.Success},
+				{"Branch", raw.Branch, got.Branch},
+				{"Accent", raw.Accent, got.Accent},
+			}
+			for _, tc := range fields {
 				before, after := worstRatio(tc.was, grounds), worstRatio(tc.now, grounds)
 				if after < before {
 					t.Errorf("%s went from %.3f:1 to %.3f:1 (%v -> %v): a clamp that cannot help must not hurt",
 						tc.name, before, after, tc.was, tc.now)
 				}
 			}
-			if colorEqual(got.Danger, got.Warning) {
-				t.Errorf("Danger and Warning both gave up at %v -- two refusals that are the same colour say less than one", got.Danger)
+			for i := range fields {
+				for j := i + 1; j < len(fields); j++ {
+					if colorEqual(fields[i].now, fields[j].now) {
+						t.Errorf("%s and %s both gave up at %v -- two semantics that are the same colour say less than one",
+							fields[i].name, fields[j].name, fields[i].now)
+					}
+				}
 			}
 		})
 	}

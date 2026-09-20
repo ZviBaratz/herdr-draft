@@ -484,18 +484,25 @@ const ActiveRowContrastFloor = 1.25
 const InputFillContrastFloor = 1.25
 
 // SemanticTextContrastFloor is the minimum WCAG contrast ratio between a
-// color that CARRIES A WORD and whatever that word is drawn on (#273). Its
-// two siblings above are both about a background region whose edge the eye
-// has to catch, and 1.25:1 is right for that and nowhere near legible; this
-// one is about text somebody has to read, so it is a different number for a
-// different job and its own constant for the reason InputFillContrastFloor
-// gives -- moving one floor must never silently move another.
+// color that CARRIES A WORD and whatever that word is drawn on (#273, and
+// #277 for the three fields it grew to). Its two siblings above are both
+// about a background region whose edge the eye has to catch, and 1.25:1 is
+// right for that and nowhere near legible; this one is about text somebody
+// has to read, so it is a different number for a different job and its own
+// constant for the reason InputFillContrastFloor gives -- moving one floor
+// must never silently move another.
 //
-// Danger and Warning are not emphasis laid over a word that is legible
-// anyway. They are the ONLY rendering of that word: `invalid` and
+// None of the five is emphasis laid over a word that is legible anyway.
+// Each is the ONLY rendering of its word. Danger and Warning: `invalid` and
 // `check timed out` on the project row, `sign in again` and `expired` on
-// the account row, every repo-config note. "The words already say what they
-// mean" is true and does not help when the words are what is hard to read.
+// the account row, every repo-config note. Success: the account row's
+// `-> <profile>` badge and the submit view's done glyph. Branch: every
+// branch and base ref, which are the longest strings this form draws in a
+// non-Text color. Accent: the focus gutter and the running-step glyph,
+// which only have to be distinguishable, but also the runes a picker query
+// matched and the active chip's label, which have to be read. "The words
+// already say what they mean" is true and does not help when the words are
+// what is hard to read.
 //
 // 3:1 rather than 4.5:1, and the choice is a judgement rather than a
 // standard: 4.5:1 is WCAG's figure for body text and 3:1 its figure for
@@ -512,8 +519,25 @@ const InputFillContrastFloor = 1.25
 // goes from 37 units apart to 29. A floor high enough to stop a colour
 // meaning what it meant is not a better floor.
 //
-// At 3:1 the split is ten builtins raised, seven already clear, and
-// terminal exempt.
+// Branch is the field that asked hardest for 4.5:1 and did not get it, and
+// the argument that settled it is a measurement of the themes' own body
+// text rather than a preference. A branch name is content -- read character
+// by character to check it, not glanced at -- so the large-text figure is
+// least defensible there. But Text itself, measured on these same three
+// grounds, bottoms out at 3.14:1 (solarized-light on its focused row), with
+// tokyo-night-day at 3.51:1, solarized at 4.29:1, one-dark at 4.56:1 and
+// kanagawa-lotus at 4.65:1: five of the seventeen draw ordinary words below
+// 4.5:1. A 4.5:1 floor on Branch would hold a branch name to a higher
+// standard than the title beside it, and charge 11 of the 17 their branch
+// hue to do it -- solarized's #d33682 walks 96 units in sRGB to #e586b4,
+// rose-pine-dawn's 76, nord's 63. At 3:1 it is three builtins and at most
+// 36 units, and the floor lands just under every builtin's own worst body
+// text, which is where a floor belongs.
+//
+// At 3:1 the split is twelve builtins raised on at least one of the five,
+// five already clear, and terminal exempt -- 25 of the 85 theme-and-field
+// pairs move. catppuccin, the default, is not one of them on any field,
+// which is why #273 and #277 between them moved no golden frame.
 //
 // A theme that cannot meet it gets a better value, not a waiver, exactly as
 // ActiveRowContrastFloor says. Do not lower this to make something pass.
@@ -537,10 +561,10 @@ const contrastMixStep = 0.05
 // against the table directly rather than repairing it here. Border has no
 // floor either -- it is a deliberately near-invisible fill.
 //
-// Danger and Warning are floored for a different reason from ActiveRowBG's,
-// and against three grounds rather than one: they are the only rendering of
-// the words a refusal is made of, and a word reaches every ground this form
-// paints (#273). See SemanticTextContrastFloor and raiseSemanticText.
+// The five semantic colors are floored for a different reason from
+// ActiveRowBG's, and against three grounds rather than one: each is the only
+// rendering of some word, and a word reaches every ground this form paints
+// (#273, #277). See SemanticTextContrastFloor and raiseSemanticText.
 func floorContrast(p Palette) Palette {
 	p.ActiveRowBG = ensureContrast(p.PanelBG, p.ActiveRowBG, p.Text, ActiveRowContrastFloor)
 
@@ -563,6 +587,9 @@ func floorContrast(p Palette) Palette {
 	grounds := []Color{p.PanelBG, p.ActiveRowBG, p.Surface}
 	p.Danger = raiseSemanticText(p.Danger, grounds, SemanticTextContrastFloor)
 	p.Warning = raiseSemanticText(p.Warning, grounds, SemanticTextContrastFloor)
+	p.Success = raiseSemanticText(p.Success, grounds, SemanticTextContrastFloor)
+	p.Branch = raiseSemanticText(p.Branch, grounds, SemanticTextContrastFloor)
+	p.Accent = raiseSemanticText(p.Accent, grounds, SemanticTextContrastFloor)
 	return p
 }
 
