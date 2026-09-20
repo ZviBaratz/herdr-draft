@@ -253,6 +253,11 @@ without the popup. It drives herdr exclusively through the public CLI
   next one. None of the budgets is configurable, for the reason above.
   A cancelled caller is not a timeout here either. Still unbounded, and
   deliberately: every `herdr` CLI call, including the reachability probe.
+
+  In the popup the clauth bound compounds with #200: an `account` row that
+  is unavailable asks clauth again when you focus it, so a reload that runs
+  out replaces the reason with its own budget rather than leaving the one
+  from open. Before the bound that reload could not come back at all.
 - **`--dry-run` shows what a create would make, and makes nothing.** It
   runs the whole pre-flight, with the real run's exit 2, 3 and 5, then
   reports and stops. It creates nothing and remembers nothing, and an
