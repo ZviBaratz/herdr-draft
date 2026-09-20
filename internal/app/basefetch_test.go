@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
+	"github.com/ZviBaratz/herdr-draft/internal/form/widgets"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 )
 
@@ -79,8 +81,16 @@ func TestPopup_APrunedChosenBaseFallsBackAndSaysSo(t *testing.T) {
 	if got := m.PlanInput().BaseRef; got != "" {
 		t.Errorf("plan.Input.BaseRef = %q, want the HEAD row", got)
 	}
-	if panel := worktreePanel(t, m); !strings.Contains(panel, `ignoring base "origin/gone"`) {
+	panel := worktreePanel(t, m)
+	if !strings.Contains(panel, `ignoring base "origin/gone"`) {
 		t.Errorf("the worktree panel does not say which base went:\n%s", panel)
+	}
+	// And the row goes with it. Asserted on the candidate lines rather than
+	// the whole panel, because the note names the ref too.
+	for line := range strings.Lines(panel) {
+		if strings.TrimSpace(line) == "origin/gone" {
+			t.Errorf("a ref that names no commit is still offered as a candidate:\n%s", panel)
+		}
 	}
 }
 
@@ -316,56 +326,216 @@ func TestPopup_TheRelistKeepsAnOfferTheUserMovedOffOf(t *testing.T) {
 	}
 }
 
-// TestPopup_TheAnswerAndTheNewListLandInEitherOrder: handleFetchPruneDone
-// batches the check with the re-list, and nothing decides which of the two
-// Cmds answers first. Both orders have to end in the same place, and they
-// reach it by different means -- the offer is what holds the selection when
-// the new list lands first, and the HEAD row is what the refresh preserves
-// by ID when the check's answer lands first -- so one order passing says
-// nothing about the other.
-func TestPopup_TheAnswerAndTheNewListLandInEitherOrder(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		listFirst bool
-	}{
-		{"the new list first", true},
-		{"the check's answer first", false},
+// TestPopup_TheBaseNeverPassesThroughTheNeighbour: the offer is applied in
+// the SAME Update as the list it protects against, so there is no moment --
+// not one message wide -- at which the row names a branch nobody chose. Both
+// outcomes go through that moment identically and only diverge when the
+// check answers, which is the point: the list is not what decides.
+func TestPopup_TheBaseNeverPassesThroughTheNeighbour(t *testing.T) {
+	for _, tc := range []struct{ name, resolves, want string }{
+		{"a base that still resolves", "origin/gone", "origin/gone"},
+		{"a base the fetch pruned", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			git := newFakeGit()
+			if tc.resolves != "" {
+				git.commits = map[string]string{"/repo-a " + tc.resolves: "3d4e5f6"}
+			}
 			m := chosenBaseModel(t, git)
-			git.listBranchesResult = []string{"main", "origin/next"}
 
+			git.listBranchesResult = []string{"main", "origin/next"}
 			next, cmd := m.Update(fetchPruneDoneMsg{path: "/repo-a"})
 			m = next.(Model)
-			var settled, listed tea.Msg
-			for _, c := range cmd().(tea.BatchMsg) {
-				switch msg := c().(type) {
-				case baseSettledMsg:
-					settled = msg
-				case baseResultMsg:
-					listed = msg
-				}
+
+			listed, ok := cmd().(baseResultMsg)
+			if !ok {
+				t.Fatalf("the fetch's re-list produced %T, want a baseResultMsg", cmd())
 			}
-			if settled == nil || listed == nil {
-				t.Fatalf("the re-list produced settled=%v listed=%v, want one of each", settled, listed)
+			next, settle := m.Update(listed)
+			m = next.(Model)
+			if got := m.worktree.Base(); got != "origin/gone" {
+				t.Fatalf("Base() with the new list applied and the check still out = %q, want origin/gone held by the offer", got)
 			}
 
-			order := []tea.Msg{settled, listed}
-			if tc.listFirst {
-				order = []tea.Msg{listed, settled}
-			}
-			for _, msg := range order {
-				next, _ := m.Update(msg)
-				m = next.(Model)
-			}
-
-			if got := m.worktree.Base(); got != "" {
-				t.Errorf("Base() = %q, want the HEAD row", got)
-			}
-			if panel := worktreePanel(t, m); !strings.Contains(panel, `ignoring base "origin/gone"`) {
-				t.Errorf("the worktree panel does not say which base went:\n%s", panel)
+			m = pumpAsync(t, m, []tea.Cmd{settle})
+			if got := m.worktree.Base(); got != tc.want {
+				t.Errorf("Base() after the check answered = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// pickBase moves the base picker's cursor onto ref from wherever it is,
+// through the real keys -- the user deciding.
+func pickBase(t *testing.T, m Model, ref string) Model {
+	t.Helper()
+	m.form.FocusByID("worktree")
+	for _, k := range []tea.KeyPressMsg{{Code: tea.KeyDown}, {Code: tea.KeyDown}} {
+		next, _ := m.Update(k)
+		m = next.(Model)
+	}
+	for range 12 {
+		if m.worktree.Base() == ref {
+			return m
+		}
+		next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = next.(Model)
+	}
+	t.Fatalf("could not reach base %q; stopped on %q", ref, m.worktree.Base())
+	return m
+}
+
+// TestPopup_ABaseMovedWhileTheCheckIsOutStands: the check is a `git
+// rev-parse` wide and #195's hold parks the user inside it, so a base moved
+// in that window is the likely case rather than the rare one. The answer is
+// about the ref they HAD; applying it would take away the ref they HAVE --
+// #212's own symptom, reintroduced from the other side. This is the first
+// path on which an async answer can move a touched base at all, which is
+// why the tier branch's !baseTouched guard does not already cover it.
+func TestPopup_ABaseMovedWhileTheCheckIsOutStands(t *testing.T) {
+	git := newFakeGit()
+	git.commits = map[string]string{"/repo-a origin/next": "1b2c3d4"}
+	m := chosenBaseModel(t, git)
+
+	git.listBranchesResult = []string{"main", "origin/next"}
+	next, cmd := m.Update(fetchPruneDoneMsg{path: "/repo-a"})
+	m, held := pumpHoldingBaseChecks(t, next.(Model), []tea.Cmd{cmd})
+	if len(held) != 1 {
+		t.Fatalf("base checks held = %d, want the one the re-list scheduled", len(held))
+	}
+
+	m = pickBase(t, m, "origin/next")
+	next, _ = m.Update(held[0])
+	m = next.(Model)
+
+	if got := m.worktree.Base(); got != "origin/next" {
+		t.Errorf("Base() = %q, want the %q the user moved to while the check was out", got, "origin/next")
+	}
+	if got := m.PlanInput().BaseRef; got != "origin/next" {
+		t.Errorf("plan.Input.BaseRef = %q, want %q", got, "origin/next")
+	}
+	if panel := worktreePanel(t, m); strings.Contains(panel, "ignoring base") {
+		t.Errorf("a note about the base they replaced reached the panel:\n%s", panel)
+	}
+}
+
+// TestPopup_ASubmitResumesFromTheBaseTheUserActuallyHas is the same window
+// with the submit in it, which is what the hold puts there: the submit is
+// held for the check, the user picks while they wait, and the answer that
+// releases it must not be the thing that changed what it submits.
+func TestPopup_ASubmitResumesFromTheBaseTheUserActuallyHas(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "t-1", PaneID: "pane-1"}}
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main", "origin/gone", "origin/next"}
+	git.currentBranchResult = "main"
+	git.commits = map[string]string{"/repo-a origin/next": "1b2c3d4"}
+	m := newSubmitTestModel(t, runner, testSetup{
+		Git: git,
+		Ctx: herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true)},
+		}),
+	})
+	m = chooseGoneBase(t, pumpAsync(t, m, m.initCmds))
+	m.title.SetTitle("fix the thing", false)
+	m = landTitle(t, m, m.reactToChanges())
+
+	git.listBranchesResult = []string{"main", "origin/next"}
+	next, cmd := m.Update(fetchPruneDoneMsg{path: "/repo-a"})
+	m, held := pumpHoldingBaseChecks(t, next.(Model), []tea.Cmd{cmd})
+	if len(held) != 1 {
+		t.Fatalf("base checks held = %d, want the one the re-list scheduled", len(held))
+	}
+
+	next, _ = m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if m.submitting {
+		t.Fatalf("the submit started with the base check still out, from base %q", m.submitInput.BaseRef)
+	}
+	m = pickBase(t, m, "origin/next")
+
+	next, _ = m.Update(held[0])
+	m = next.(Model)
+	if !m.submitting {
+		t.Fatal("the base check landing did not resume the submit")
+	}
+	if got := m.submitInput.BaseRef; got != "origin/next" {
+		t.Errorf("submitted base = %q, want the %q the user chose while the submit was held", got, "origin/next")
+	}
+}
+
+// TestPopup_ABasePickedWhileTheRelistIsInFlightIsKept: the fetch COMPLETING
+// and the new list being APPLIED are two moments with three subprocess calls
+// between them, and a base picked in between reaches SetBaseItems with no
+// offer under it. That is #212 verbatim in a narrower window, so the offer
+// has to be made where the list is replaced rather than where the fetch
+// finished.
+func TestPopup_ABasePickedWhileTheRelistIsInFlightIsKept(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main", "origin/gone", "origin/next"}
+	git.currentBranchResult = "main"
+	git.commits = map[string]string{"/repo-a origin/gone": "3d4e5f6"}
+	m := memoryModel(t, "/repo-a", memoryFor(map[string]config.ProjectDefaults{
+		"/repo-a": {Worktree: ptrBool(true)},
+	}), git)
+
+	next, cmd := m.Update(fetchPruneDoneMsg{path: "/repo-a"})
+	m = next.(Model)
+	// The user picks from the list still on screen, before the re-list lands.
+	git.listBranchesResult = []string{"main", "origin/next"}
+	m = pickBase(t, m, "origin/gone")
+	m = pumpAsync(t, m, []tea.Cmd{cmd})
+
+	if got := m.worktree.Base(); got != "origin/gone" {
+		t.Errorf("Base() = %q, want the %q the user picked before the re-list landed", got, "origin/gone")
+	}
+}
+
+// TestPopup_TheFallbackResnapshotsWhatTheAppPutThere: the fall-back is the
+// app moving the base, so snapshotAppliedDefaults has to record HEAD as what
+// the app put there. It matters in one corner, and the corner is reachable:
+// the check can fail for a reason other than the ref being gone -- git
+// unavailable for that moment -- and then the ref is still in the list for
+// the user to pick straight back. Without the resnapshot the snapshot still
+// holds that ref, so noteUserEdits sees no change, and the note saying HEAD
+// is in use stays on screen beside the base they just re-picked.
+func TestPopup_TheFallbackResnapshotsWhatTheAppPutThere(t *testing.T) {
+	git := newFakeGit()
+	git.resolveErr = errors.New("git: unavailable for a moment")
+	m := chosenBaseModel(t, git)
+
+	// The list keeps origin/gone -- nothing was pruned, the check just could
+	// not answer -- so it is still there to be picked again. Directly under
+	// the HEAD row, which is load-bearing: reaching it past another ref
+	// would clear the note on the way through and the test would pass
+	// whether or not the fall-back resnapshotted anything.
+	m = prune(t, m, git, []string{"origin/gone", "main", "origin/next"})
+	if got := m.worktree.Base(); got != "" {
+		t.Fatalf("setup: Base() = %q, want the HEAD row the failed check fell back to", got)
+	}
+
+	// By CLICK, not by keystroke, and that is the whole test. Walking there
+	// with the arrows takes at least one message to get into the picker, and
+	// reactToChanges resnapshots at the end of every message -- so the
+	// keyboard route repairs the stale snapshot before the base can move,
+	// and passes whether or not the fall-back resnapshotted. A click moves
+	// the base in the SAME message, which is the one order that reads the
+	// snapshot the fall-back left behind.
+	git.resolveErr = nil
+	m.form.FocusByID("worktree")
+	_ = m.form.ViewAt(80, 24)
+	syncZones()
+	zi := widgets.Zones.Get("row:base:1") // HEAD is row 0; origin/gone is row 1
+	if zi.IsZero() {
+		t.Fatal("setup: the base panel's second row never resolved")
+	}
+	next, _ := m.Update(tea.MouseClickMsg{X: zi.StartX, Y: zi.StartY, Button: tea.MouseLeft})
+	m = next.(Model)
+	if got := m.worktree.Base(); got != "origin/gone" {
+		t.Fatalf("setup: the click selected %q, want origin/gone", got)
+	}
+
+	if panel := worktreePanel(t, m); strings.Contains(panel, "ignoring base") {
+		t.Errorf("the note stayed beside the base the user picked straight back:\n%s", panel)
 	}
 }

@@ -471,6 +471,15 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 	if msg.req.version != m.baseReqVersion {
 		return m, nil
 	}
+	// Claimed here rather than read below, so that a result which takes the
+	// error path spends it too: this request is answered either way, and a
+	// flag left set for a request that is over would be claimed by whatever
+	// list landed next -- which after a project change is the one path that
+	// must NOT settle a chosen base (#197).
+	relist := msg.req.version == m.relistAfterFetch
+	if relist {
+		m.relistAfterFetch = 0
+	}
 	if msg.err {
 		m.worktree.SetBaseStatus("couldn't list")
 		m.worktree.SetHeadBranch("")
@@ -480,6 +489,17 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 
 	m.baseItemsVersion++
 	m.worktree.SetHeadBranch(msg.head)
+	// #212, and it goes immediately before the list is replaced rather than
+	// back where the fetch finished. Those are two moments with three
+	// subprocess calls between them (runBaseCheck's IsGitRepo, ListBranches
+	// and CurrentBranch), and a base picked in between would reach
+	// SetBaseItems with no offer under it -- the same hole in a narrower
+	// window. "Before the list is applied" is the property that matters;
+	// "before the re-list is scheduled" does not imply it.
+	var settle tea.Cmd
+	if relist {
+		settle = m.keepChosenBaseAcrossRelist()
+	}
 	m.worktree.SetBaseItems(m.baseItemsVersion, msg.refs)
 	m.worktree.SetBaseStatus("")
 	m.refreshFormContext()
@@ -490,7 +510,7 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 		m.fetchedRepos[path] = true
 		cmd = m.runFetchPrune(path)
 	}
-	return m, cmd
+	return m, tea.Batch(settle, cmd)
 }
 
 func (m Model) runFetchPrune(path string) tea.Cmd {
@@ -525,9 +545,13 @@ func (m Model) handleFetchPruneDone(msg fetchPruneDoneMsg) (Model, tea.Cmd) {
 	if m.dir.Value() != msg.path {
 		return m, nil
 	}
-	settle := m.keepChosenBaseAcrossRelist()
 	m.baseReqVersion++
-	return m, tea.Batch(settle, m.runBaseCheck(request{version: m.baseReqVersion, key: msg.path}))
+	// Which re-list is the fetch's, for handleBaseResult to recognise. The
+	// version rather than a bool, and it needs no clearing: every later
+	// request bumps baseReqVersion past it, so a flag the form navigates
+	// away from can never match again.
+	m.relistAfterFetch = m.baseReqVersion
+	return m, m.runBaseCheck(request{version: m.baseReqVersion, key: msg.path})
 }
 
 // keepChosenBaseAcrossRelist is #212, and it runs BEFORE the re-list above
@@ -558,7 +582,17 @@ func (m *Model) keepChosenBaseAcrossRelist() tea.Cmd {
 		return nil
 	}
 	m.worktree.OfferBase(chosen)
-	return m.scheduleChosenBaseSettle(chosen)
+	// Bumped here rather than in a scheduler of its own, and shared with
+	// scheduleBaseSettle deliberately: the two ask about the same value, so
+	// the later question is the live one, a project change retires an answer
+	// to either, and a submit waits for either check (#197) -- which is
+	// wanted, since the plan must not be built from a base being re-checked.
+	m.baseSettleVersion++
+	v := m.baseSettleVersion
+	git, dir := m.deps.Git, pathx.ExpandTilde(m.dir.Value())
+	return func() tea.Msg {
+		return baseSettledMsg{version: v, chosen: chosen, note: settleChosenBase(context.Background(), git, dir, chosen)}
+	}
 }
 
 // --- a tier's base: does it still name a commit? (#194) ------------------
@@ -611,27 +645,6 @@ func (m *Model) scheduleBaseSettle() tea.Cmd {
 	}
 }
 
-// scheduleChosenBaseSettle is the same, asked of ref -- the base the user
-// picked -- rather than of the resolution (#212, keepChosenBaseAcrossRelist).
-// It shares baseSettleVersion with scheduleBaseSettle deliberately, and not
-// just to save a field: the two ask about the same value, so the later
-// question is the live one and a project change must retire an answer to
-// either. Sharing it is also what makes a submit wait for this check the way
-// it already waits for that one (#197), which is wanted -- the plan must not
-// be built from a base that is being re-checked.
-func (m *Model) scheduleChosenBaseSettle(ref string) tea.Cmd {
-	m.baseSettleVersion++
-	if ref == "" {
-		m.baseSettleLanded = m.baseSettleVersion
-		return nil
-	}
-	v := m.baseSettleVersion
-	git, dir := m.deps.Git, pathx.ExpandTilde(m.dir.Value())
-	return func() tea.Msg {
-		return baseSettledMsg{version: v, chosen: ref, note: settleChosenBase(context.Background(), git, dir, ref)}
-	}
-}
-
 // handleBaseSettled applies SettleBase's answer: a base that resolves is
 // offered in the picker whether or not the branch list names it (rule 1),
 // and one that does not becomes the HEAD row, with its note on the worktree
@@ -655,6 +668,19 @@ func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
 	}
 	m.baseSettleLanded = msg.version
 	switch {
+	case msg.chosen != "" && msg.chosen != m.worktree.Base():
+		// The user moved the base while the question about the old one was
+		// out, and the question they raised went with it. Applying this
+		// would take away the ref they have on the strength of a ref they
+		// dropped -- #212's own symptom from the other side -- and its note
+		// says HEAD is in use, which would be false twice over. This is the
+		// tier branch's !baseTouched guard said about the ref instead of the
+		// flag, and it is needed separately because that flag is already
+		// true on every path that reaches here.
+		//
+		// The window is a `git rev-parse` wide and #195's hold parks the
+		// user inside it, which is what makes this the likely case rather
+		// than the rare one.
 	case msg.chosen != "":
 		// Their own base, so the resolution and its provenance are left
 		// exactly as they are: no tier supplies what is on screen either

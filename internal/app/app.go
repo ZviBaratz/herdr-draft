@@ -590,6 +590,14 @@ type Model struct {
 	linked       linkedProject
 	linkedCommit string
 
+	// relistAfterFetch is the baseReqVersion of the base check the
+	// once-per-repo `git fetch --prune` scheduled when it finished, and 0
+	// when none is out: the one re-list on which a base the user chose is
+	// kept on offer and settled (#212, keepChosenBaseAcrossRelist). Every
+	// other base check leaves a chosen base alone, a project change's
+	// above all (#197).
+	relistAfterFetch int
+
 	// baseSettleVersion is the staleness guard on scheduleBaseSettle's
 	// answers, and baseSettleLanded the version of the last one landed: the
 	// two differ exactly while a base check is out (baseSettlePending).
@@ -2287,8 +2295,9 @@ func (m *Model) showRepoConfig() {
 	// config.toml's own refused branch_prefix follows the resolution the same
 	// way, because a repository's .herdr-draft.toml can take the prefix over
 	// -- see BranchPrefixWarning. A dropped base's note joins it unguarded,
-	// unlike the provenance above: it is about the base the row shows, and
-	// the user is one of the two who can have lost one (#212). What used to
+	// unlike the provenance above: it is about what the row now shows and
+	// why -- the base that WENT, and HEAD in its place -- and the user is
+	// one of the two who can have lost one (#212). What used to
 	// stand here was a baseTouched guard, for the true half of that -- a note
 	// about a TIER's base says HEAD is used, which stops being true the
 	// moment the user picks their own. That is now handled where the fact is
