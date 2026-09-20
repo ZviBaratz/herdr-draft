@@ -426,9 +426,12 @@ out, and nothing was created.
 
 Each check gets its own thirty seconds, and one create spends at most one
 of them, because the questions are asked in order and a timeout refuses the
-run. The plain file reads beside them — the repository's `.herdr-draft.toml`,
-your `config.toml`, the two state files — are not bounded; git is asked
-first and answers first, so in practice it is git that runs out.
+run. The plain file reads beside them are not bounded — but only two are on
+the project at all, and of those, the repository's `.herdr-draft.toml` is
+read after the git questions, so on a stalled project it is git that runs
+out. The exception is `os.Getwd`, which runs first and is on the project
+whenever you leave `--project` off. Your `config.toml` and the two state
+files are in the plugin's own directories, not the project's.
 
 It is not exit 2: that one means "fix the command and re-run", and there is
 nothing in the command to fix. It is not exit 3 either, which would send you

@@ -729,7 +729,8 @@ prompts.
 > root and its primary checkout, does this branch already exist, what commit
 > does this base name -- now gives up after thirty seconds instead of
 > waiting for good, and reports **5**. The plain file reads beside them are
-> not bounded; git is asked first and answers first. Nothing was
+> not bounded; of those, only `.herdr-draft.toml` and `os.Getwd` are on the
+> project, and only the second of them runs before a git question. Nothing was
 > created, and nothing on stdout, as for 2 and 3.
 >
 > It is not 2, whose documented remedy is "fix the command and re-run":

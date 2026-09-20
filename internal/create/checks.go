@@ -2,15 +2,26 @@
 // mount refuses the create instead of swallowing it (#272).
 //
 // Read that scope literally, because an earlier draft of this comment did
-// not and said "the filesystem or git", which is false. The plain file
-// reads beside these are NOT bounded: the repository's own
-// .herdr-draft.toml (config.LoadRepoConfig, an os.ReadFile, on the same
-// mount and two lines after the three git questions in loadTiers),
-// os.Getwd, config.Load and the two state files. Bounding a bare
-// os.ReadFile is a larger change than this, and git answering first makes
-// them unlikely to be reached at all -- but "unlikely to be reached" is
-// not "bounded", and the difference belongs in the comment rather than in
-// whoever next reads it. Found in review.
+// not and said "the filesystem or git", which is false. Four plain file
+// reads beside these are NOT bounded, and what separates them is WHICH
+// filesystem each one is on, not whether it could hang:
+//
+//   - os.Getwd, in resolveProjectDir, is on the project's mount whenever
+//     --project is absent -- and it runs BEFORE the first bounded question.
+//     It is the one read a stalled project mount can reach first.
+//   - The repository's own .herdr-draft.toml (config.LoadRepoConfig, an
+//     os.ReadFile) is on that mount too, but loadTiers reads it after the
+//     three git questions, so on a stalled mount git runs out first.
+//   - config.Load and the two state files are in the plugin's own config
+//     and state directories, not the project's, so a stalled project does
+//     not reach them at all. config.Load is nonetheless the very first
+//     read the pre-flight makes.
+//
+// Bounding a bare os.ReadFile is a larger change than this one wants. The
+// point of writing it down is that "unlikely to be reached" is not
+// "bounded", and the ordering that makes it unlikely is not obvious from
+// any one function. Found in review; the ordering above was checked
+// against resolveRequest rather than assumed.
 //
 // #202 bounded the four checks that hold a submit in the popup. The same
 // questions in headless `create` were still unbounded, and `create` is the

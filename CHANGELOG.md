@@ -197,9 +197,11 @@ without the popup. It drives herdr exclusively through the public CLI
   already exist, what commit does this base name. Each check gets its own
   thirty seconds, and a create spends at most one of them, because the
   questions are asked in order and a timeout refuses the run. The plain
-  file reads beside them -- the repository's `.herdr-draft.toml`, your
-  `config.toml`, the two state files -- are not bounded; git is asked first
-  and answers first, so in practice it is git that runs out.
+  file reads beside them are not bounded, and only two are on the project
+  at all: the repository's `.herdr-draft.toml`, read after the git
+  questions, and `os.Getwd`, which runs before them whenever `--project` is
+  left off. `config.toml` and the two state files are in the plugin's own
+  directories.
 
   It is its own exit code because the answer is unknown rather than
   negative: `2` means "fix the command and re-run", and nothing in the
