@@ -525,8 +525,40 @@ func (m Model) handleFetchPruneDone(msg fetchPruneDoneMsg) (Model, tea.Cmd) {
 	if m.dir.Value() != msg.path {
 		return m, nil
 	}
+	settle := m.keepChosenBaseAcrossRelist()
 	m.baseReqVersion++
-	return m, m.runBaseCheck(request{version: m.baseReqVersion, key: msg.path})
+	return m, tea.Batch(settle, m.runBaseCheck(request{version: m.baseReqVersion, key: msg.path}))
+}
+
+// keepChosenBaseAcrossRelist is #212, and it runs BEFORE the re-list above
+// is even scheduled, for the reason applyProjectDefaults offers a touched
+// base across a project change (#197): widgets.Picker keeps a vanished row's
+// INDEX, so a list that no longer names the base the user chose hands them
+// whichever branch sits there instead -- the worktree row naming it, the
+// plan built from it, and nothing saying so.
+//
+// The offer is what keeps it selected through the re-list, and it is only
+// half an answer: a ref can leave the list for two reasons that look
+// identical from here. It may have been pruned, and name nothing any more,
+// or it may simply have fallen out of the 50 newest branches (maxBaseRefs)
+// and be as good a start point as ever. So the offer is followed by the
+// settle that tells them apart, and the settle -- not the list -- is what
+// decides. A base already on the HEAD row asks nothing: there is no row to
+// lose.
+//
+// This is the one path on which a base the user chose is settled at all.
+// A project CHANGE deliberately still does not settle one (#197 keeps it,
+// full stop, and applyProjectDefaults' own offer is what carries it over);
+// what is settled here is not a tier's default re-applying over the user's
+// choice but the single question their choice raised, "does the ref you
+// picked out of this list still name a commit in this project".
+func (m *Model) keepChosenBaseAcrossRelist() tea.Cmd {
+	chosen := m.worktree.Base()
+	if !m.baseTouched || chosen == "" {
+		return nil
+	}
+	m.worktree.OfferBase(chosen)
+	return m.scheduleChosenBaseSettle(chosen)
 }
 
 // --- a tier's base: does it still name a commit? (#194) ------------------
@@ -539,6 +571,14 @@ type baseSettledMsg struct {
 	version  int
 	resolved defaults.Resolved
 	note     string
+
+	// chosen is the ref when this answer is about the base the USER picked
+	// rather than the one a tier supplied (#212, settleChosenBase). The
+	// resolution is then not the subject and is left zero: nothing about it
+	// changed, and a tier's base must not re-apply over the user's choice.
+	// It is kept when note is "" and falls back to the HEAD row when it is
+	// not, which is the same rule read off the same field.
+	chosen string
 }
 
 // scheduleBaseSettle asks, off the update loop, whether the base the current
@@ -546,6 +586,12 @@ type baseSettledMsg struct {
 // there is nothing to ask: no base, or one the user has already replaced
 // with their own. It is not debounced: applyProjectDefaults calls it once
 // per dir check, which already was.
+//
+// The baseTouched half of that is about a TIER's base, which is what this
+// asks about and which a user who has chosen for themselves has overridden;
+// it is not "the user's base is never checked". Their own base raises its own
+// question on its own path -- scheduleChosenBaseSettle, once, when the fetch
+// re-lists the branches under it (#212).
 //
 // Bumping the version here is what retires an answer about an earlier
 // resolution, so every call site must come through this rather than build
@@ -565,23 +611,66 @@ func (m *Model) scheduleBaseSettle() tea.Cmd {
 	}
 }
 
+// scheduleChosenBaseSettle is the same, asked of ref -- the base the user
+// picked -- rather than of the resolution (#212, keepChosenBaseAcrossRelist).
+// It shares baseSettleVersion with scheduleBaseSettle deliberately, and not
+// just to save a field: the two ask about the same value, so the later
+// question is the live one and a project change must retire an answer to
+// either. Sharing it is also what makes a submit wait for this check the way
+// it already waits for that one (#197), which is wanted -- the plan must not
+// be built from a base that is being re-checked.
+func (m *Model) scheduleChosenBaseSettle(ref string) tea.Cmd {
+	m.baseSettleVersion++
+	if ref == "" {
+		m.baseSettleLanded = m.baseSettleVersion
+		return nil
+	}
+	v := m.baseSettleVersion
+	git, dir := m.deps.Git, pathx.ExpandTilde(m.dir.Value())
+	return func() tea.Msg {
+		return baseSettledMsg{version: v, chosen: ref, note: settleChosenBase(context.Background(), git, dir, ref)}
+	}
+}
+
 // handleBaseSettled applies SettleBase's answer: a base that resolves is
 // offered in the picker whether or not the branch list names it (rule 1),
 // and one that does not becomes the HEAD row, with its note on the worktree
 // panel (rule 3). The resolution itself is replaced too, so the provenance
 // line stops crediting a tier with a base it no longer supplies.
 //
+// It also applies settleChosenBase's answer, about the base the USER picked
+// (#212, msg.chosen), which is the same two outcomes reached from the other
+// side -- and the resolution is deliberately left alone there, since nothing
+// about it changed and a tier's base re-applying over the user's choice is
+// the one thing that path must not do.
+//
 // A stale answer -- the project has changed since, and with it the
-// resolution -- moves nothing, and neither does any answer once the user has
-// chosen a base of their own: noteUserEdits runs before this, so their
-// choice has already been recorded and stands. Either way a current answer
-// has landed, and a submit held for it goes on (handleSubmit).
+// resolution -- moves nothing, and neither does any answer about a TIER's
+// base once the user has chosen one of their own: noteUserEdits runs before
+// this, so their choice has already been recorded and stands. Either way a
+// current answer has landed, and a submit held for it goes on (handleSubmit).
 func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
 	if msg.version != m.baseSettleVersion {
 		return m, nil
 	}
 	m.baseSettleLanded = msg.version
-	if !m.baseTouched {
+	switch {
+	case msg.chosen != "":
+		// Their own base, so the resolution and its provenance are left
+		// exactly as they are: no tier supplies what is on screen either
+		// way. Only the ref itself is at stake, and only when it lost.
+		m.baseNote = msg.note
+		if msg.note != "" {
+			m.worktree.SetBase("")
+			// Withdrawn after the selection has moved off it, so the
+			// refresh that takes the row away finds the HEAD row selected
+			// and keeps it by ID rather than by index.
+			m.worktree.OfferBase("")
+		}
+		m.showRepoConfig()
+		// The app moved the base, not the user -- see snapshotAppliedDefaults.
+		m.snapshotAppliedDefaults()
+	case !m.baseTouched:
 		m.resolved = msg.resolved
 		m.baseNote = msg.note
 		m.worktree.OfferBase(m.resolved.BaseRef)
