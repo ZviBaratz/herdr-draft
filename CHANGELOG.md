@@ -376,8 +376,11 @@ without the popup. It drives herdr exclusively through the public CLI
   malfunction rather than obeyed as a decision. **Quitting the popup takes
   the picker with it** (#211): the commit-time pick is the one call that is
   not a dry run, so it is the one that writes the picker's ledger, and it
-  now runs on a context cancelled at quit — the process stays up only long
-  enough for that cancellation to be delivered. `esc` used to leave it
+  now runs on a context cancelled at quit, and the process then stays up a
+  further quarter-second so the kill can be delivered — sized for the kill
+  (milliseconds) rather than for the killed call to return, which for a
+  picker that shells out per account is two seconds of waiting on something
+  already dead. `esc` used to leave it
   running, so a pick the user had cancelled could still record an account
   for a session that never existed. A pick that had ALREADY written is
   unchanged, because the protocol has no verb for handing an account back.

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,10 +76,69 @@ func TestShutdownGivesUpAtTheGrace(t *testing.T) {
 	}()
 	<-started
 
+	// Shutdown runs in a goroutine of its own, and the assertion is made
+	// from here. Calling it inline instead would leave the failure it
+	// claims unreachable: the worker cannot be released until this function
+	// returns, so an unbounded Shutdown would hang rather than take too
+	// long, and the test could only fail as the package-wide timeout panic
+	// ten minutes later, with none of its own words.
+	returned := make(chan struct{})
+	go func() {
+		lt.Shutdown(100 * time.Millisecond)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown has not returned on work that never returns -- the grace does not bound it")
+	}
+}
+
+// A Begin may arrive after Shutdown has already started waiting, and it must
+// not take the process down with it.
+//
+// bubbletea does not wait for its Cmd goroutines before Run returns -- v2.0.8's
+// tea.go says so in as many words ("Don't wait on these goroutines... we'll
+// have to leak the goroutine until Cmd returns") -- so a Cmd launched just
+// before the quit can reach Begin after runProgram has reached Shutdown. A
+// bare sync.WaitGroup cannot take that: an Add that lifts the counter off zero
+// concurrently with Wait is misuse, and misuse is a panic, so the tidy exit
+// this type exists to provide would have ended in a stack dump over the pane
+// (measured: this loop panicked within a few hundred iterations).
+func TestBeginRacingShutdownDoesNotPanic(t *testing.T) {
+	for range 20000 {
+		lt := NewLifetime()
+		_, first := lt.Begin()
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() { defer wg.Done(); first() }()
+		go func() { defer wg.Done(); _, done := lt.Begin(); done() }()
+		go func() { defer wg.Done(); lt.Shutdown(time.Second) }()
+		wg.Wait()
+	}
+}
+
+// A late Begin is handed the cancelled context and is not waited for, which is
+// the right answer both ways round: exec.Cmd.Start refuses an already-cancelled
+// context before forking, so a picker begun here is never started and there is
+// nothing left to kill.
+func TestABeginAfterShutdownIsCancelledAndUntracked(t *testing.T) {
+	lt := NewLifetime()
+	lt.Shutdown(time.Second)
+
+	ctx, done := lt.Begin()
+	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a Begin after Shutdown got a context reporting %v, want context.Canceled", err)
+	}
+	done()
+
+	// And Shutdown is callable again without waiting on that work or
+	// panicking -- only runProgram calls it today, but a second caller must
+	// not be a landmine.
 	start := time.Now()
-	lt.Shutdown(100 * time.Millisecond)
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("Shutdown took %s on work that never returns -- the grace does not bound it", elapsed)
+	lt.Shutdown(5 * time.Second)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("a second Shutdown took %s, want it to find nothing to wait for", elapsed)
 	}
 }
 
@@ -144,10 +204,12 @@ func TestThePreviewPickRunsOnACancellableContext(t *testing.T) {
 	lastCancelled(t, p.ctxs)
 }
 
-// And the lane's base, the other call a submit blocks on (owner, same
-// decision): a `git rev-parse` that writes nothing either way, on the same
-// context so that "everything the submit is waiting for dies with the popup"
-// is a rule rather than a list.
+// And the lane's base (owner, same decision): a `git rev-parse` that writes
+// nothing either way, run at submit and blocking it. It is not the only thing
+// a submit waits for -- handleSubmit also holds for the dir check, the base
+// settle and the title-duplicate check, all three still on
+// context.Background() -- so this is one more entry on that list rather than
+// the end of it.
 func TestTheLaneCommitReadRunsOnACancellableContext(t *testing.T) {
 	lt := NewLifetime()
 	git := laneGit()

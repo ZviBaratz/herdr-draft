@@ -1747,13 +1747,26 @@ Each case typed a title, pressed `ctrl+s`, and sent `Escape` 0.5s later.
 | the fix, pick allowed to finish | Unchanged. The row read `auto · asking the picker…` for the three seconds, the stub logged its ledger line, and the refusal landed on the `account` row (`auto · stub refuses, after the sleep`) with focus moved there. No session was created. |
 
 The quit was not perceptibly slower: `shutdownGrace` is 250ms and the
-process was gone within one 250ms poll of `esc` both times. The stub's own
+process was gone within one 250ms poll of `esc` both times. In this case
+the grace is the whole of the protection rather than an upper bound on it
+— `Pick` does not return for ~2s after the cancel (the orphaned `sleep`
+holds its stdout pipe open for `pickerWaitDelay`), so the wait on the
+work itself never completes and the dwell is what covers the kill. The stub's own
 orphaned `sleep` outlives the kill either way — herdr-draft kills the
 picker it started, not that picker's children — but it writes nothing,
 which is the point.
 
+**Run again the same day**, after the independent review found that the
+new `Lifetime` could panic on the quit path (a `sync.WaitGroup` `Add`
+overlapping its `Wait`): the `esc` case gave the same result, the pane
+showed no panic dump, and the popup exited **0**. A `#!/bin/sh` popup
+wrapper printing `EXIT=$?` is what to reach for there — `pane run` does
+not report an exit code, and a Go panic exits 2, so `EXIT=0` is the
+assertion.
+
 Teardown: the form was escaped, the pane closed, `/var/tmp/d211` removed,
-and `pgrep -x herdr-draft` and the picker count both confirmed 0.
+and `pgrep -x herdr-draft` and the picker count both confirmed 0 after
+each pass.
 
 ### `account_usage` on a dry run (#215) — 2026-09-19
 

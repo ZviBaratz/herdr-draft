@@ -204,7 +204,10 @@ func runPopup() int {
 	model, err := app.Bootstrap(env, herdrRunner(), clauthSrc, gitSrc, app.Clock{}, lt)
 	if err != nil {
 		// spec §9's pre-open refusal: plain-text error to stderr, exit 1,
-		// before the form ever renders.
+		// before the form ever renders. Nothing has begun on the Lifetime
+		// yet -- Bootstrap's own startup calls do not use it -- so this
+		// releases its context rather than stopping anything.
+		lt.Shutdown(0)
 		fmt.Fprintln(os.Stderr, "herdr-draft:", err)
 		return 1
 	}
@@ -227,10 +230,11 @@ func runPopup() int {
 // for the cancellation of its own background work to be delivered (#211).
 //
 // It is sized for the KILL, not for the call that is being killed. Measured
-// on 2026-09-20 over twenty runs against a `#!/bin/sh` + `sleep` stub: from
-// cancel to a dead picker, 1.4ms worst case; from cancel to exec.Cmd.Wait
-// returning, 2.05s, because the picker's orphaned `sleep` inherits the stdout
-// pipe and holds Wait open for the whole of picker.pickerWaitDelay. A real
+// on 2026-09-20 over fifty runs against a `#!/bin/sh` + `sleep` stub: from
+// cancel to a dead picker, 3.8ms worst case (4.8ms on a second pass, so the
+// claim is the order of magnitude); from cancel to exec.Cmd.Wait returning,
+// 2.00s, because the picker's orphaned `sleep` inherits the stdout pipe and
+// holds Wait open for the whole of picker.pickerWaitDelay. A real
 // picker shells out per account, so that slow shape is the ordinary one --
 // and waiting it out would hold the popup on screen for two seconds after the
 // form is gone, waiting on a process that has already been dead for all but
