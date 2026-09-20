@@ -203,9 +203,15 @@ Layering, outermost to innermost:
   the exit code that covers the typing rather than the command: an unquoted
   `[agents.extra_args]` model id became `zsh: no matches found` with the
   launch step still reporting ok (#72). Note where the quoting may NOT go:
-  `AgentStart` hands the same values to herdr as an argv vector with no
-  shell anywhere, so quoting them there corrupts them — which is why the
-  old config-side workaround could not be right for both paths at once.
+  `AgentStart` hands the same values to herdr as an argv vector, and herdr
+  quotes them itself — at v0.9.0 `agent start` quotes each element for the
+  pane's shell and types the line, exactly as `pane run` does
+  (`herdr:src/app/agents.rs` and `src/platform/mod.rs` at v0.9.0), so the
+  agent's command is resolved by that shell on both paths. Quoting them
+  here would quote them twice, which is why the old config-side workaround
+  could not be right for both paths at once. What differs between the two
+  is who quotes, not whether a shell is involved: this side of `pane run`,
+  and herdr's side of `agent start`.
 - **Screen detection is evidence-based, not trusted blindly.** herdr's own
   agent detection can report a pane "idle"/ready while it is actually
   showing a blocking dialog. `plan.Execute` always calls `Runner.AgentRead`
