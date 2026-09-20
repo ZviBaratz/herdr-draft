@@ -264,7 +264,11 @@ without the popup. It drives herdr exclusively through the public CLI
   failure after herdr has accepted the send, including a first send that
   the read straight afterwards finds did not land, or that herdr's own
   wait reports the agent gone after (#154): `unsent` means herdr never
-  took the text.
+  took the text. And it is a send herdr failed itself with
+  `agent_prompt_failed`, which it answers both before typing anything and
+  when the pane fails partway through the text, with nothing to say which
+  — so the pane may hold part of the prompt, and neither "unsent" nor the
+  clean that would remove the pane is safe (#228).
 - **The reported ids name the agent, not the space.** `--json` carries the
   space's triple alongside the agent's. The two differ when herdr answers a
   worktree create with a workspace that was already open, and the agent is
@@ -517,7 +521,7 @@ without the popup. It drives herdr exclusively through the public CLI
   matters most when the retry itself is refused, the first send having
   stalled against a screen that had not painted and the dialog being up by
   the time the retry looks. "Gone out" is recorded the moment herdr
-  accepts the send, or read from one of the herdr errors that only come
+  accepts the send, or read from one of the herdr errors that can come
   after it has typed. It is no longer inferred from whichever error ended
   the step, which is how a first send found not to have landed used to
   escape it (#154).
