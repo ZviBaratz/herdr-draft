@@ -522,17 +522,92 @@ func runKeyCmd(ctx context.Context, apiKeyCmd []string) (string, error) {
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
 
-	switch {
-	case runErr == nil || errors.Is(runErr, exec.ErrWaitDelay):
-		// The command answered.
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+	switch classifyRun(runErr, ctx.Err()) {
+	case outcomeTimedOut:
 		return "", timeout{prefix: keyCmdPrefix, what: "api_key_cmd gave no answer", deadline: keyCmdTimeout}
-	case ctx.Err() != nil:
+	case outcomeCancelled:
 		return "", fmt.Errorf("%s: run api_key_cmd: %w", keyCmdPrefix, ctx.Err())
-	default:
+	case outcomeFailed:
 		return "", fmt.Errorf("%s: run api_key_cmd: %w: %s", keyCmdPrefix, runErr, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// runOutcome is what one subprocess invocation amounted to.
+type runOutcome int
+
+const (
+	outcomeAnswered runOutcome = iota
+	outcomeTimedOut
+	outcomeCancelled
+	outcomeFailed
+)
+
+// classifyRun turns what cmd.Run returned, plus the context's own state,
+// into one of four outcomes. It is a pure function of those two errors, and
+// that is the point: the ORDER of these cases is the whole behaviour under
+// discussion, and as a switch over live exec state it could only be tested
+// by arranging real subprocesses to land in a window measured in hundreds
+// of milliseconds.
+//
+// That was tried and it does not hold. Under CPU-bound processes inside the
+// same cgroup quota -- a noisy neighbour in a container -- the shell can
+// reach its final write and still not be scheduled to EXIT before the
+// deadline, so the run is killed and classified as a timeout, correctly.
+// Measured in review at a 500ms margin: clean at 8 same-cgroup burners,
+// 5% failures at 32, 15% at 64, and 90% with a 50% CPU quota on top. No
+// margin fixes that, because the margin can go negative; only removing the
+// timing from the assertion does. This is #272's rule -- assert the cause,
+// not the verdict -- applied to the sibling of the defect that taught it.
+//
+// THE ORDER, and why it is this one:
+//
+// An ANSWER IN HAND BEATS A CONTEXT THAT IS DONE, which is app.AwaitCheck's
+// own rule. Both of the two ways cmd.Run says "the command answered" can
+// arrive with the deadline already expired, and both are a real band rather
+// than a race:
+//
+//   - runErr == nil. Once Process.Wait has reaped the child, watchCtx has
+//     handed off and NOTHING watches the context any more -- awaitGoroutines
+//     waits on its own WaitDelay timer (go1.26.4 src/os/exec/exec.go). A
+//     drain that outlives the deadline but finishes inside the grace
+//     therefore returns literally nil with ctx.Err() already
+//     DeadlineExceeded. Measured raw: 10 runs out of 10.
+//   - exec.ErrWaitDelay, which is returned only when "no Cancel call has
+//     occurred, and the command has otherwise exited with a successful
+//     status". A drain that outlives the grace as well gives that, with the
+//     deadline expired alongside it. Measured raw: 20 runs out of 20.
+//
+// At the shipped 60s/2s both are the same two-second band: an api_key_cmd
+// that answers between 58s and 60s and leaves a `gpg-agent`-shaped
+// grandchild on the pipe. Reading the deadline first throws that working
+// helper's key away -- the regression the ErrWaitDelay case exists to
+// prevent, arriving by the other door. Three successive versions of this
+// comment claimed one or other of these windows was impossible or
+// nanoseconds wide; all three were wrong, and each was found so in review.
+//
+// A run the deadline KILLED does not reach the first case: Process.Wait
+// reports a non-zero state, so cmd.Run returns an *exec.ExitError and the
+// watcher's error is preferred only `if err == nil`. So the first case
+// cannot swallow a timeout.
+//
+// The deadline is then read before the exit code, and as DeadlineExceeded
+// SPECIFICALLY rather than `ctxErr != nil`: exec.CommandContext kills the
+// process and cmd.Run reports an ordinary *exec.ExitError carrying -1, so
+// exit-code-first turns a deadlock into `signal: killed` -- picker.CLI.run's
+// own documented hazard -- and a caller that was CANCELLED reports
+// context.Canceled, which is not a timeout and must not say it was (#272).
+func classifyRun(runErr, ctxErr error) runOutcome {
+	switch {
+	case runErr == nil || errors.Is(runErr, exec.ErrWaitDelay):
+		return outcomeAnswered
+	case errors.Is(ctxErr, context.DeadlineExceeded):
+		return outcomeTimedOut
+	case ctxErr != nil:
+		return outcomeCancelled
+	default:
+		return outcomeFailed
+	}
 }
 
 // checkConfigPerm rejects an inline api_key literal when

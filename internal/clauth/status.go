@@ -307,14 +307,12 @@ func loadFromCLI(ctx context.Context, bin string) (Status, error) {
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
 
-	switch {
-	case runErr == nil || errors.Is(runErr, exec.ErrWaitDelay):
-		// clauth answered.
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+	switch classifyRun(runErr, ctx.Err()) {
+	case outcomeTimedOut:
 		return Status{}, fmt.Errorf("clauth status --json: no answer within %s", cliTimeout)
-	case ctx.Err() != nil:
+	case outcomeCancelled:
 		return Status{}, fmt.Errorf("clauth status --json: %w", ctx.Err())
-	default:
+	case outcomeFailed:
 		// The wrapping keeps exec.ErrNotFound reachable through
 		// errors.Is, which the app layer needs: "clauth is not installed"
 		// and "clauth is installed and broken" are the same error value
@@ -334,6 +332,42 @@ func loadFromCLI(ctx context.Context, bin string) (Status, error) {
 		return Status{}, fmt.Errorf("clauth status --json: %w", runErr)
 	}
 	return ParseStatus(stdout.Bytes())
+}
+
+// runOutcome is what one `clauth status --json` invocation amounted to.
+type runOutcome int
+
+const (
+	outcomeAnswered runOutcome = iota
+	outcomeTimedOut
+	outcomeCancelled
+	outcomeFailed
+)
+
+// classifyRun turns what cmd.Run returned, plus the context's own state,
+// into one of four outcomes. It is a pure function of those two errors so
+// that the ORDER of the cases -- which is the whole behaviour here -- can be
+// asserted without arranging a real subprocess to land inside a window a
+// loaded machine can miss.
+//
+// linear.classifyRun is the same four cases for the same reasons and carries
+// the full argument: why an answer in hand beats a context that is done,
+// the two measured ways that combination arises, why a killed run cannot
+// reach the first case, and why the deadline is read as DeadlineExceeded
+// specifically. It is duplicated rather than shared because this package and
+// that one both import only the standard library, which is what keeps them
+// thin; each has its own table test, so neither can drift silently.
+func classifyRun(runErr, ctxErr error) runOutcome {
+	switch {
+	case runErr == nil || errors.Is(runErr, exec.ErrWaitDelay):
+		return outcomeAnswered
+	case errors.Is(ctxErr, context.DeadlineExceeded):
+		return outcomeTimedOut
+	case ctxErr != nil:
+		return outcomeCancelled
+	default:
+		return outcomeFailed
+	}
 }
 
 // loadFreshStatusFile reads and parses path, returning (Status, true) only

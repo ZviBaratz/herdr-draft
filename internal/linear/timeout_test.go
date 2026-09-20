@@ -1,11 +1,13 @@
 package linear
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -406,98 +408,94 @@ func TestTheBudgetsAreWhatTheDocumentsSay(t *testing.T) {
 	}
 }
 
-// A command that ANSWERED must keep its answer even when the deadline
-// expired while its grandchild was still draining the pipe.
+// THE PIN for the order of runKeyCmd's four cases, and it carries no timing
+// at all.
 //
-// This is the case the first arm of runKeyCmd's switch exists for, and the
-// comment there used to claim it could not arise -- that a run the deadline
-// ended has had its Cancel called, so it could never come back as
-// ErrWaitDelay. That is false, and this test is the measurement that says
-// so. The shape is `pass show`'s: a grandchild on the stdout pipe, and a
-// command that answers just inside its budget.
+// The two rows that matter are the ones where cmd.Run says the command
+// answered AND the context has already expired. Both are real -- see
+// classifyRun's comment for the two mechanisms and the raw measurements --
+// and both must come back as an answer, because reading the deadline first
+// throws away the key of an api_key_cmd that answered inside its budget and
+// left a grandchild on the pipe.
 //
-// exec's own ordering is why. cmd.Wait takes Process.Wait first, and the
-// process really did exit 0 before the deadline, so the watcher records no
-// error and no Cancel occurs. Only then does awaitGoroutines start the
-// WaitDelay timer, which expires AFTER the deadline has passed -- leaving
-// runErr == ErrWaitDelay and ctx.Err() == DeadlineExceeded true at the same
-// time, with the key sitting in the buffer. Measured at the shipped 60:2
-// ratio scaled to 1s:33ms: 20 runs out of 20, deterministic rather than a
-// race.
-//
-// The numbers here are NOT that ratio, deliberately. Entering the window
-// needs two orderings to hold -- the command must exit before the deadline,
-// and the pipe grace must outlast it -- and at 1s:33ms each had about 20ms
-// of margin. That held 30 runs here under eight spinners and at -cpu=1, and
-// 20ms is still the shape of a test that is green on one CI runner and red
-// on the other, which is #202's own story. 2s with a 1s grace and an exit
-// at 1.5s gives 500ms either side for the same property, and costs two and
-// a half seconds.
-//
-// So the two arms are NOT mutually exclusive and the order between them is
-// what decides the outcome. Reading the deadline first throws a working
-// helper's key away and reports a timeout; reading the answer first is what
-// this pins. Found in review.
-func TestAnAPIKeyCmdThatAnsweredJustInsideItsBudgetKeepsItsAnswer(t *testing.T) {
-	t.Setenv("LINEAR_API_KEY", "")
-	cmd := scriptKeyCmd(t, "sleep 30 &\nsleep 1.5\nprintf 'lin_api_justintime\\n'\n")
-	setKeyCmdBudgets(t, 2*time.Second, time.Second)
-
-	var key string
-	var err error
-	within(t, 10*time.Second, "ResolveAPIKey", func() {
-		key, err = ResolveAPIKey(context.Background(), cmd, "", t.TempDir())
-	})
-
-	if err != nil {
-		t.Fatalf("ResolveAPIKey = %v, want the key its api_key_cmd printed just inside the budget", err)
-	}
-	if key != "lin_api_justintime" {
-		t.Errorf("ResolveAPIKey = %q, want the key", key)
+// This used to be pinned end to end, by arranging a real subprocess to land
+// in that window. It worked and it was not safe: under CPU-bound processes
+// in the same cgroup quota the shell can reach its final write and still
+// not be scheduled to exit before the deadline, and the run is then killed
+// and classified as a timeout -- correctly, but the test reads it as the
+// ordering being wrong. Measured in review at a 500ms margin: 5% failures
+// at 32 same-cgroup burners, 15% at 64, 90% with a 50% CPU quota on top.
+// A margin cannot fix that because the margin can go negative. Asserting
+// the cause can, and does: this fails deterministically under either
+// demotion of the first case.
+func TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone(t *testing.T) {
+	killed := &exec.ExitError{}
+	for _, tc := range []struct {
+		name   string
+		runErr error
+		ctxErr error
+		want   runOutcome
+	}{
+		{"answered, nothing wrong", nil, nil, outcomeAnswered},
+		{"answered while the deadline was expiring", nil, context.DeadlineExceeded, outcomeAnswered},
+		{"answered while the caller was cancelling", nil, context.Canceled, outcomeAnswered},
+		{"drain overstayed the grace, nothing wrong", exec.ErrWaitDelay, nil, outcomeAnswered},
+		{"drain overstayed the grace AND the deadline", exec.ErrWaitDelay, context.DeadlineExceeded, outcomeAnswered},
+		{"killed by the deadline", killed, context.DeadlineExceeded, outcomeTimedOut},
+		{"killed by the caller", killed, context.Canceled, outcomeCancelled},
+		{"exited non-zero on its own", killed, nil, outcomeFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyRun(tc.runErr, tc.ctxErr); got != tc.want {
+				t.Errorf("classifyRun(%v, %v) = %d, want %d", tc.runErr, tc.ctxErr, got, tc.want)
+			}
+		})
 	}
 }
 
-// And the same when the drain finishes INSIDE the grace, which is the other
-// half of the first arm and the one this suite used to leave unpinned.
+// And the evidence that those two rows are not hypothetical: the same two
+// combinations, observed from a real subprocess.
 //
-// The mechanism is different and sharper than the ErrWaitDelay case above.
-// Once Process.Wait has reaped the child, watchCtx has already handed off
-// and NOTHING watches the context any more: awaitGoroutines waits on its
-// own WaitDelay timer with no ctx involvement at all (go1.26.4
-// src/os/exec/exec.go). So a drain that outlives the deadline but finishes
-// inside the grace makes cmd.Run() return LITERALLY NIL while ctx.Err() is
-// already DeadlineExceeded, with the key in the buffer and ErrWaitDelay
-// nowhere in sight. Measured raw: 10 runs out of 10.
-//
-// That is what retires this comment's predecessor, which called the
-// `runErr == nil` half a nanosecond-wide read-ordering window that no test
-// could reach. It is neither nanoseconds wide nor unreachable: at the
-// shipped 60s/2s it is the same two-second band, and one second of test
-// reaches it deterministically. Found in review, which is also where the
-// claim it replaces was found to be false.
-//
-// The numbers keep the SHIPPED DIRECTION, deadline longer than the grace,
-// rather than inverting them to make the window easier to hit -- a fixture
-// that only works with the budgets the wrong way round would pin a
-// configuration this code never has. Four orderings have to hold and each
-// has 500ms: the command exits (1.5s) before the deadline (2s), the drain
-// ends (2.5s) after it, the drain (1s) fits inside the grace (1.5s), and
-// the deadline is longer than the grace.
-func TestAnAPIKeyCmdWhoseDrainOutlivesTheDeadlineKeepsItsAnswer(t *testing.T) {
-	t.Setenv("LINEAR_API_KEY", "")
-	cmd := scriptKeyCmd(t, "sleep 2.5 &\nsleep 1.5\nprintf 'lin_api_drained\\n'\n")
-	setKeyCmdBudgets(t, 2*time.Second, 1500*time.Millisecond)
+// It SKIPS rather than fails when the machine did not cooperate, which is
+// the whole reason the pin above exists separately. Entering either window
+// needs the command to exit before the deadline, and a starved shell may
+// not be scheduled to do that; a test that called the resulting kill a
+// defect would be reporting the load, not the code.
+func TestBothAnsweredCombinationsAreObservable(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		body      string
+		waitDelay time.Duration
+		wantErr   error
+	}{
+		// The drain outlives the grace, so Wait closes the pipes: ErrWaitDelay.
+		{"drain longer than the grace", "sleep 30 &\nsleep 0.5\nprintf 'K\\n'\n", 800 * time.Millisecond, exec.ErrWaitDelay},
+		// The drain finishes inside the grace, so Wait returns cleanly: nil.
+		{"drain shorter than the grace", "sleep 1.5 &\nsleep 0.5\nprintf 'K\\n'\n", 5 * time.Second, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := scriptKeyCmd(t, tc.body)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
 
-	var key string
-	var err error
-	within(t, 15*time.Second, "ResolveAPIKey", func() {
-		key, err = ResolveAPIKey(context.Background(), cmd, "", t.TempDir())
-	})
+			var stdout bytes.Buffer
+			cmd := exec.CommandContext(ctx, bin[0])
+			cmd.WaitDelay = tc.waitDelay
+			cmd.Stdout = &stdout
+			runErr := cmd.Run()
 
-	if err != nil {
-		t.Fatalf("ResolveAPIKey = %v, want the key its api_key_cmd printed before the deadline", err)
-	}
-	if key != "lin_api_drained" {
-		t.Errorf("ResolveAPIKey = %q, want the key", key)
+			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Skipf("the deadline had not expired (ctx=%v, runErr=%v) -- machine too fast or too slow to enter the window", ctx.Err(), runErr)
+			}
+			if !errors.Is(runErr, tc.wantErr) {
+				t.Skipf("cmd.Run = %v, want %v -- the command was killed before it could exit, which a loaded machine does", runErr, tc.wantErr)
+			}
+			if got := stdout.String(); got != "K\n" {
+				t.Errorf("stdout = %q, want the answer the command printed", got)
+			}
+			if got := classifyRun(runErr, ctx.Err()); got != outcomeAnswered {
+				t.Errorf("classifyRun(%v, %v) = %d, want outcomeAnswered -- this combination really happens", runErr, ctx.Err(), got)
+			}
+		})
 	}
 }

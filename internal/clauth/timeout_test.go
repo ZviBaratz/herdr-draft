@@ -3,6 +3,7 @@ package clauth
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -247,61 +248,32 @@ func TestTheBudgetIsWhatTheDocumentsSay(t *testing.T) {
 	}
 }
 
-// clauth that ANSWERED must keep its answer even when the deadline expired
-// while its grandchild was still draining the pipe -- the case the first
-// arm of loadFromCLI's switch exists for, and the one whose comment used to
-// claim it could not arise.
-//
-// See linear.TestAnAPIKeyCmdThatAnsweredJustInsideItsBudgetKeepsItsAnswer
-// for why it does: cmd.Wait takes Process.Wait first, so a process that
-// exits 0 before the deadline records no watcher error and no Cancel, and
-// only then does awaitGoroutines start the WaitDelay timer -- which can
-// expire after the deadline has passed, leaving runErr == ErrWaitDelay and
-// ctx.Err() == DeadlineExceeded true together with the payload in the
-// buffer. The two arms are not mutually exclusive, and the order between
-// them is what decides whether a working clauth is reported as broken.
-// Found in review.
-func TestACLIThatAnsweredJustInsideItsBudgetKeepsItsAnswer(t *testing.T) {
-	payload := `{"schema":1,"active_profile":"alpha","generated_at":"2026-08-31T21:29:00+00:00","refresh_interval_ms":90000,"profiles":[{"name":"alpha","active":true,"tier":"Team","auth_status":"ok","windows":[]}]}`
-	bin := scriptClauth(t, "sleep 30 &\nsleep 1.5\ncat <<'JSON'\n"+payload+"\nJSON\n")
-	setCLIBudgets(t, 2*time.Second, time.Second)
-
-	var st Status
-	var err error
-	within(t, 10*time.Second, "Load", func() {
-		st, err = Load(context.Background(), LoadOpts{CLIBin: bin, Now: time.Now})
-	})
-
-	if err != nil {
-		t.Fatalf("Load = %v, want the status clauth printed just inside the budget", err)
-	}
-	if st.ActiveProfile != "alpha" {
-		t.Errorf("ActiveProfile = %q, want alpha", st.ActiveProfile)
-	}
-}
-
-// The clauth sibling of
-// linear.TestAnAPIKeyCmdWhoseDrainOutlivesTheDeadlineKeepsItsAnswer: a
-// drain that outlives the deadline but finishes inside the grace makes
-// cmd.Run() return nil with ctx.Err() already DeadlineExceeded, so reading
-// the deadline first would report a clauth that answered as one that never
-// did. See that test for the mechanism and for why the budgets keep the
-// shipped direction.
-func TestACLIWhoseDrainOutlivesTheDeadlineKeepsItsAnswer(t *testing.T) {
-	payload := `{"schema":1,"active_profile":"alpha","generated_at":"2026-08-31T21:29:00+00:00","refresh_interval_ms":90000,"profiles":[{"name":"alpha","active":true,"tier":"Team","auth_status":"ok","windows":[]}]}`
-	bin := scriptClauth(t, "sleep 2.5 &\nsleep 1.5\ncat <<'JSON'\n"+payload+"\nJSON\n")
-	setCLIBudgets(t, 2*time.Second, 1500*time.Millisecond)
-
-	var st Status
-	var err error
-	within(t, 15*time.Second, "Load", func() {
-		st, err = Load(context.Background(), LoadOpts{CLIBin: bin, Now: time.Now})
-	})
-
-	if err != nil {
-		t.Fatalf("Load = %v, want the status clauth printed before the deadline", err)
-	}
-	if st.ActiveProfile != "alpha" {
-		t.Errorf("ActiveProfile = %q, want alpha", st.ActiveProfile)
+// THE PIN for the order of loadFromCLI's four cases, carrying no timing at
+// all -- the sibling of linear's
+// TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone, whose comment has
+// the argument and the measurements, including why this is a table rather
+// than a real subprocess landing in a window a loaded machine can miss.
+func TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone(t *testing.T) {
+	killed := &exec.ExitError{}
+	for _, tc := range []struct {
+		name   string
+		runErr error
+		ctxErr error
+		want   runOutcome
+	}{
+		{"answered, nothing wrong", nil, nil, outcomeAnswered},
+		{"answered while the deadline was expiring", nil, context.DeadlineExceeded, outcomeAnswered},
+		{"answered while the caller was cancelling", nil, context.Canceled, outcomeAnswered},
+		{"drain overstayed the grace, nothing wrong", exec.ErrWaitDelay, nil, outcomeAnswered},
+		{"drain overstayed the grace AND the deadline", exec.ErrWaitDelay, context.DeadlineExceeded, outcomeAnswered},
+		{"killed by the deadline", killed, context.DeadlineExceeded, outcomeTimedOut},
+		{"killed by the caller", killed, context.Canceled, outcomeCancelled},
+		{"exited non-zero on its own", killed, nil, outcomeFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyRun(tc.runErr, tc.ctxErr); got != tc.want {
+				t.Errorf("classifyRun(%v, %v) = %d, want %d", tc.runErr, tc.ctxErr, got, tc.want)
+			}
+		})
 	}
 }
