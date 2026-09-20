@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
@@ -451,6 +452,35 @@ func TestFrames_AccountGauge(t *testing.T) {
 
 func TestFrames_AccountPanelNarrow(t *testing.T) {
 	assertFrame(t, "account-panel-44x12", buildAccountPanelForm(theme.Default()), 44, 12)
+}
+
+// buildAccountExpiredForm is beta with clauth's `expired` rather than the
+// `broken` sampleStatus gives it, so the third auth state reaches a frame.
+//
+// Its own builder rather than a fourth profile in sampleStatus: the panel is
+// the widest table in the form, an extra row moves the `N profiles` legend
+// and can push the 44-cell frame into a scrollbar, and re-making that layout
+// decision as a side effect of an auth-vocabulary change is exactly what
+// TestFrames_AccountPanelNarrow exists to catch. The seven frames built over
+// sampleStatus keep pinning the state that actually blocks a submit; this
+// one pins the state that must NOT.
+func buildAccountExpiredForm(palette theme.Palette) Model {
+	status := sampleStatus()
+	status.Profiles[1].AuthStatus = clauth.AuthExpired
+	f := NewAccountField(palette)
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(status, sampleNow())
+	f.SetPin("beta")
+	f.Focus()
+	return fieldFrame(palette, f)
+}
+
+// TestFrames_AccountExpired is #243 in bytes: `expired` reads as clauth's own
+// word in the warning color, on the row and in the panel alike, where every
+// non-"ok" status used to read `sign in again` in red and name a remedy that
+// would not have helped.
+func TestFrames_AccountExpired(t *testing.T) {
+	assertFrame(t, "account-expired-101x30", buildAccountExpiredForm(theme.Default()), 101, 30)
 }
 
 // buildAgentPanelForm focuses AgentField over more kinds than fit its

@@ -258,8 +258,21 @@ without the popup. It drives herdr exclusively through the public CLI
   it says what may be left, as `create` does.
 - **It refuses what the form refuses**, before anything is created (exit
   `2`): a branch that already exists when a worktree would create it, a
-  title an open workspace already carries, and a pinned account clauth
-  reports as signed out (#147). The branch check matters most: herdr checks
+  title an open workspace already carries, and a pinned account whose
+  credential clauth reports dead (#147, #243). Dead means clauth's
+  `broken` — "last refresh rejected as revoked/invalid" — and only that.
+  Its other non-`ok` values are not that. `expired` (and `expiring`, which
+  is what clauth wrote for the same state before 0.15.0) is an access token
+  past its expiry whose refresh has not run yet: the `clauth start` this
+  types hands the stored refresh token to `claude`, which refreshes it, so
+  the popup marks it on the account row in the warning colour and neither
+  path refuses it. `unknown` is quiet, being the absence of a reading
+  rather than a finding. A value a later clauth adds is marked in its own
+  spelling, in the warning colour, and refused by neither path.
+  Neither path refuses on a **degraded** clauth status either (#245), since
+  a schema nobody has read clauth's reason for makes every field past a
+  profile's name unreliable — the account row has always said so and drawn
+  names only, while these two checks read that same field anyway. The branch check matters most: herdr checks
   an existing branch out rather than refusing it, and ignores `--base` when
   it does. `--account auto`'s real pick runs after every other check, so a
   refused request spends no pick (#145), and `--account active` means no

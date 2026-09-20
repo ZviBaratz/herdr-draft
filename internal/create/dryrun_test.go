@@ -218,10 +218,13 @@ func TestDryRun_RefusesWhatTheRunRefuses(t *testing.T) {
 			want: ExitUsage,
 		},
 		{
-			name: "a pinned profile clauth reports signed out",
+			// `broken` since #243 -- `expired` is a token between
+			// refreshes and no longer refuses anything, so a dry run of it
+			// would report a create that a real run would make.
+			name: "a pinned profile whose credential clauth reports dead",
 			args: []string{"--no-worktree", "--account", "alpha-2"},
 			setup: func(h *harness) {
-				h.deps.Clauth = &fakeClauth{status: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "alpha-2", AuthStatus: "expired"}}}}
+				h.deps.Clauth = &fakeClauth{status: clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "alpha-2", AuthStatus: clauth.AuthBroken}}}}
 			},
 			want: ExitUsage,
 		},

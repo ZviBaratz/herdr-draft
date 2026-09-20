@@ -1196,9 +1196,18 @@ pin a profile for the launched Claude session (by default
 `clauth start <profile> --`, routed through `herdr pane run`; see
 [`[clauth]`](#clauth) to change the launcher). Pinning is optional — leaving the row on
 `active` lets clauth use whatever profile is currently live, with no wrapper
-involved. The row carries each profile's own state: `<name> · <plan> · ok`,
-a rate-limited profile's percentage in the warning color, an expired one
-reading `sign in again` in red.
+involved. The row carries each profile's own state: `<name> · <plan> · 5h N%
+· 7d N%`, with a rate-limited profile's percentage in the warning color.
+`ok` is the state that needs no words, so the auth status appears only when
+it is not `ok`, and then as one of three things. A profile clauth reports
+`expired` — an access token between refreshes, which the launch heals by
+itself — reads `expired` in the warning color and is launchable; so does
+`expiring`, which is what clauth wrote before 0.15.0 for the same state. One
+it reports `broken` reads `sign in again` in red and is refused at submit,
+because `clauth login` really is what clears that one. Any value a later
+clauth adds reads in the warning color, in clauth's own spelling, and is
+launchable — the value set is not fixed, and nothing here will call an
+unfamiliar word a failure.
 
 **Tested with clauth 0.14.1+.** This is the empirically-confirmed floor
 from this plugin's own live validation (`clauth status --json` schema `1`

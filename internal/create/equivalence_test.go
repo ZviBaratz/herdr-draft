@@ -1497,3 +1497,147 @@ func TestFormAndCommandAgentOptionsTheSameWay(t *testing.T) {
 		})
 	}
 }
+
+// pinAccount tabs to the account row and commits a pin on the profile in
+// `row` (1-based among the profiles, below the `active` sentinel), which is
+// the only way a pin reaches the form from outside package app: no config or
+// memory tier carries an account, AccountField.SetPin is unexported, and
+// Model.WithAccount -- the commit-time picker answer -- lands AFTER
+// checkSubmitValidation has already run and so cannot stand in for a pin the
+// validation is supposed to see.
+//
+// The tab count is discovered rather than written down, so a change to the
+// row order (which internal/app declares in one place) moves this with it
+// instead of silently pinning the wrong row.
+func pinAccount(t *testing.T, m app.Model, row int, want string) app.Model {
+	t.Helper()
+	focused := false
+	for i := 0; i < 20 && !focused; i++ {
+		for _, ln := range strings.Split(ansi.Strip(m.View().Content), "\n") {
+			if strings.Contains(ln, "\u258c") && strings.Contains(ln, "account") {
+				focused = true
+				break
+			}
+		}
+		if !focused {
+			m = send(m, tea.KeyPressMsg{Code: tea.KeyTab})
+		}
+	}
+	if !focused {
+		t.Fatalf("never reached the account row by tabbing; the form is:\n%s", ansi.Strip(m.View().Content))
+	}
+	for i := 0; i < row; i++ {
+		m = send(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := m.PlanInput().AccountPin; got != want {
+		t.Fatalf("test setup: the form pinned %q, want %q", got, want)
+	}
+	return m
+}
+
+// TestFormAndCommandRefuseTheSameAuthStatuses is the auth half of spec
+// §13's promise, and it did not exist until #243/#245 -- which is how the
+// two paths came to be compared on branches, labels and every plan.Input
+// field while nothing at all held them to the same answer about a clauth
+// profile. A refusal is not a plan.Input field, so the equivalence table
+// cannot see this kind of disagreement; the two functions that decide it
+// (app.Model.accountAuthBlocked and refuseUnusableProfile) live in different
+// packages, were written at different times, and each carries a doc comment
+// claiming to be the other.
+//
+// The table is every auth_status clauth is known to write -- across three
+// of its versions, because the set is not closed: `expiring` is schema 1's
+// spelling of `expired`, and `unknown` joined additively under schema 2
+// without a bump. `revoked` stands in for the next such arrival, which is a
+// thing that happens rather than a thing the schema rule prevents. Only
+// `broken` is refused. The degraded column is #245: a schema nobody has
+// read clauth's reason for makes every field past the profile's name
+// unreliable, so neither path may refuse on one, `broken` included.
+//
+// Each path is driven through its own real entry point rather than through
+// its refusal function, so the ORDER each applies the check in is under test
+// too: a check the command ran after the account pick, or the form ran after
+// the plan was built, would pass a direct call and fail here.
+func TestFormAndCommandRefuseTheSameAuthStatuses(t *testing.T) {
+	const projectDir = "/projects/thing"
+	contextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + projectDir +
+		`","tab_id":"tT0","focused_pane_id":"pP0"}`
+
+	for _, tc := range []struct {
+		name     string
+		status   string
+		degraded bool
+		refused  bool
+	}{
+		{name: "absent", status: "", refused: false},
+		{name: "ok", status: clauth.AuthOK, refused: false},
+		{name: "expired", status: clauth.AuthExpired, refused: false},
+		{name: "expiring", status: clauth.AuthExpiring, refused: false},
+		{name: "unknown", status: clauth.AuthUnknown, refused: false},
+		{name: "broken", status: clauth.AuthBroken, refused: true},
+		{name: "unrecognized", status: "revoked", refused: false},
+
+		{name: "absent degraded", status: "", degraded: true, refused: false},
+		{name: "ok degraded", status: clauth.AuthOK, degraded: true, refused: false},
+		{name: "expired degraded", status: clauth.AuthExpired, degraded: true, refused: false},
+		{name: "expiring degraded", status: clauth.AuthExpiring, degraded: true, refused: false},
+		{name: "unknown degraded", status: clauth.AuthUnknown, degraded: true, refused: false},
+		{name: "broken degraded", status: clauth.AuthBroken, degraded: true, refused: false},
+		{name: "unrecognized degraded", status: "revoked", degraded: true, refused: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status := clauth.Status{
+				Schema:        1,
+				ActiveProfile: "alpha-1",
+				Degraded:      tc.degraded,
+				Profiles: []clauth.Profile{
+					{Name: "alpha-1", Tier: "Max", AuthStatus: clauth.AuthOK},
+					{Name: "alpha-2", Tier: "Max", AuthStatus: tc.status},
+				},
+			}
+			if tc.degraded {
+				status.Schema = 7
+			}
+
+			// The command, through Run: every pre-flight step in its real
+			// order, exit 2 for a request it will not resolve.
+			h := newHarness(t)
+			h.deps.Clauth = &fakeClauth{status: status}
+			code := h.run("--title", "fix login redirect loop", "--account", "alpha-2", "--no-worktree")
+			commandRefused := code == ExitUsage
+			if !commandRefused && code != ExitOK {
+				t.Fatalf("test setup: the command exited %d, which is neither a refusal nor a create\nstderr: %s", code, h.stderr)
+			}
+
+			// The form, through a submit on a pin a person committed.
+			configDir, stateDir := t.TempDir(), t.TempDir()
+			writeConfig(t, configDir, "[agents]\nfavorites = [\"claude\"]\n")
+			issue := &linear.Issue{Identifier: "LIN-42", Title: "Fix login redirect loop", BranchName: "zvi/lin-42-fix-login"}
+			m := pinAccount(t, formModel(t, formCase{
+				configDir: configDir, stateDir: stateDir, contextJSON: contextJSON,
+				repoConfig:   func(string) config.RepoConfig { return config.RepoConfig{} },
+				issue:        issue,
+				landChecks:   true,
+				clauthStatus: status,
+			}), 2, "alpha-2")
+
+			next, _ := m.Update(form.SubmitMsg{})
+			view := ansi.Strip(next.(app.Model).View().Content)
+			formRefused := strings.Contains(view, "clauth reports")
+
+			if commandRefused != tc.refused || formRefused != tc.refused {
+				t.Fatalf("want refused = %v from both; the command exited %d (stderr: %s) and the form's view after submit is:\n%s",
+					tc.refused, code, h.stderr, view)
+			}
+			if !tc.refused {
+				return
+			}
+			// Both refusals name the value, so neither can be read as a
+			// generic "clauth said no" that a future widening would hide in.
+			if !strings.Contains(h.stderr.String(), clauth.AuthBroken) || !strings.Contains(view, clauth.AuthBroken) {
+				t.Errorf("both refusals should name %q\ncommand: %s\nform:\n%s", clauth.AuthBroken, h.stderr, view)
+			}
+		})
+	}
+}

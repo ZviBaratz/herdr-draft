@@ -117,7 +117,23 @@ const (
 	// -> "degrade to name-only entries, never crash."
 	accountDegradedHint = "clauth status degraded — showing names only"
 
-	accountWarnAuthFailed  = "auth failed"
+	// accountWarnAuthFailed is the picker badge for a credential that
+	// cannot be used: clauth's `broken`, and any value clauth has never
+	// written (clauth.AuthUnrecognized -- marked like the dead one,
+	// refused like neither).
+	accountWarnAuthFailed = "auth failed"
+	// accountWarnAuthExpired is the picker badge for clauth's `expired`:
+	// an OAuth access token past its expiry whose refresh has not run yet
+	// (#243). clauth's own word, because the alternatives all claim
+	// something this form does not observe -- "refreshing" asserts a
+	// refresh is pending, which clauth says may instead be blocked, and
+	// "sign in again" names a remedy that is not the remedy.
+	//
+	// Seven cells. The badge column is a max over every row
+	// (widgets/picker.go), today 12 for accountWarnRateLimited, so this
+	// re-lays out nothing; a longer one would, and would re-elide the
+	// 44-cell panel frame.
+	accountWarnAuthExpired = "expired"
 	accountWarnRateLimited = "rate limited"
 
 	// accountWarnThreshold is the utilization percentage at or past which
@@ -162,8 +178,17 @@ const (
 	accountRowSep = " · "
 	// accountRowAuthFailed is v2 spec §6's danger-colored state word,
 	// replacing v1's bare "!" marker: "an auth failure reads `beta · max ·
-	// sign in again` in the danger color".
+	// sign in again` in the danger color". It is the DEAD credential's
+	// word now, and ONLY that one's (#243) -- which is what makes it true:
+	// `clauth login` is exactly what clears a `broken`, and is not known to
+	// clear anything else, which is why an unfamiliar value gets clauth's
+	// own word instead of this one.
 	accountRowAuthFailed = "sign in again"
+	// accountRowAuthExpired is the row's word for clauth's `expired`, in
+	// Warning rather than Danger. Same word as the picker badge on
+	// purpose: the row and the panel naming one state two ways is how a
+	// reader learns to distrust both.
+	accountRowAuthExpired = accountWarnAuthExpired
 	// accountPanelMaxRows caps PanelRows -- a clauth profile set is small
 	// and the panel should not claim more of the form than it can fill.
 	accountPanelMaxRows = 8
@@ -201,15 +226,21 @@ type AccountField struct {
 	focused bool
 
 	agentIsClaude bool
-	degraded      bool
 
-	// profiles and activeProfile are the parts of the most recent
-	// SetProfiles payload the ROW needs: with nothing pinned it reads the
-	// LIVE profile's tier and utilization, which needs both the profile
-	// records themselves and clauth's own answer to "which one is
+	// status is the most recent SetProfiles payload, retained whole. The
+	// ROW needs its Profiles and ActiveProfile: with nothing pinned it
+	// reads the LIVE profile's tier and utilization, which needs both the
+	// profile records themselves and clauth's own answer to "which one is
 	// active". v1 discarded both.
-	profiles      []clauth.Profile
-	activeProfile string
+	//
+	// Whole, rather than the three fields this used to split into, because
+	// Degraded and the profile it qualifies must not be reachable
+	// separately. clauth.Status.AuthOf is the only classifier this field
+	// calls, and it applies the degraded guard itself -- which is what
+	// makes it impossible to ask for a profile's auth state here without
+	// asking on a status that may not mean it (#245, where the two readers
+	// OUTSIDE this package did exactly that).
+	status clauth.Status
 
 	// now is the wall clock the panel's reset times are measured against
 	// (v3 spec §10.2: "reset times are relative"). internal/form performs
@@ -613,9 +644,8 @@ func (f *AccountField) SetAgentIsClaude(isClaude bool) { f.agentIsClaude = isCla
 // spec §10.2). It rides alongside the status rather than being read here
 // because internal/form performs no I/O at all; see AccountField.now.
 func (f *AccountField) SetProfiles(status clauth.Status, now time.Time) {
-	f.degraded = status.Degraded
-	f.profiles = append([]clauth.Profile(nil), status.Profiles...)
-	f.activeProfile = status.ActiveProfile
+	f.status = status
+	f.status.Profiles = append([]clauth.Profile(nil), status.Profiles...)
 	f.now = now
 	f.refreshItems()
 }
@@ -651,7 +681,7 @@ func (f *AccountField) refreshItems() {
 // an identical seen map, and field_issue.go's refreshItems guards against
 // for issues with an empty Identifier.
 func (f *AccountField) buildItems() []widgets.PickerItem {
-	items := make([]widgets.PickerItem, 0, len(f.profiles)+2)
+	items := make([]widgets.PickerItem, 0, len(f.status.Profiles)+2)
 	if f.pickerAvailable {
 		items = append(items, f.autoItem())
 	}
@@ -672,7 +702,7 @@ func (f *AccountField) buildItems() []widgets.PickerItem {
 		Current: !f.auto && f.pinned == "",
 	})
 	seen := map[string]bool{accountActiveID: true, accountAutoID: true}
-	for _, p := range f.profiles {
+	for _, p := range f.status.Profiles {
 		if p.Name == "" || seen[p.Name] {
 			continue
 		}
@@ -775,15 +805,21 @@ func (f *AccountField) autoWindowPct(i int) *float64 {
 // accountWindowLabels, then when that window reports one, how long until
 // it resets. Name-only when the status was degraded (see buildItems).
 //
-// A rate-limited (any usage window at or past accountWarnThreshold) or
-// auth-failed (AuthStatus set and not "ok") profile carries a warning
-// Marker plus the warning itself as its badge -- spec §6 field 7:
+// A profile accountWarning has anything to say about carries a warning
+// Marker plus that warning as its badge -- spec §6 field 7:
 // "Rate-limited or auth-failed profiles are selectable but visibly
 // marked", and spec §16 non-goal 9: v1 stops at this inline marker, no
 // blocking modal. The badge is toned by which condition fired, which the
-// single `!` cannot say: an auth failure is Danger (the profile cannot be
-// used at all) where a rate limit is Warning (it can, later) -- the same
-// split rowParts draws the stack row's own state word with.
+// single `!` cannot say: a dead credential is Danger (it cannot be used
+// at all) where a rate limit and clauth's `expired` are Warning (both
+// pass, one later and one by itself) -- the same split rowParts draws the
+// stack row's own state word with.
+//
+// Every warning still takes the `!`, `expired` included, and v3 spec §8.2
+// still gives the marker priority over `✓`. A pinned `expired` profile
+// therefore gives up its currency glyph, exactly as a pinned rate-limited
+// one has since v3 shipped; singling `expired` out would make one
+// warning-grade state behave unlike the other.
 //
 // Current marks the PINNED profile and `●` marks the LIVE one, and they
 // are two different rows in general -- which is the point of drawing both
@@ -792,22 +828,22 @@ func (f *AccountField) autoWindowPct(i int) *float64 {
 // out of §8.2's first Current pass.
 func (f *AccountField) profileItem(p clauth.Profile) widgets.PickerItem {
 	current := p.Name == f.pinned
-	if f.degraded {
+	if f.status.Degraded {
 		return widgets.PickerItem{ID: p.Name, Cells: []string{p.Name}, Current: current}
 	}
 
-	warning := accountWarning(p)
+	// The tone travels WITH the text. Deriving it by comparing the text to
+	// accountWarnAuthFailed defaulted everything else to ToneWarning, so a
+	// third badge got the right tone by luck and would have got the wrong
+	// one the first time the conditions were reordered.
+	warning, tone := f.accountWarning(p)
 	marker := ""
-	tone := widgets.ToneWarning
 	if warning != "" {
 		marker = markerWarning
-		if warning == accountWarnAuthFailed {
-			tone = widgets.ToneDanger
-		}
 	}
 
 	name := p.Name
-	if p.Name == f.activeProfile {
+	if p.Name == f.status.ActiveProfile {
 		name += " " + accountLiveGlyph
 	}
 
@@ -836,18 +872,63 @@ func (f *AccountField) profileItem(p clauth.Profile) widgets.PickerItem {
 	}
 }
 
-// accountWarning reports the profile's own warning text -- "" when
-// neither condition applies.
-func accountWarning(p clauth.Profile) string {
-	if p.AuthStatus != "" && p.AuthStatus != "ok" {
-		return accountWarnAuthFailed
+// accountWarning reports the profile's own warning text -- "" when no
+// condition applies -- and the tone it is drawn in.
+//
+// Three conditions now share one badge, so their PRECEDENCE is a decision
+// rather than a side effect of the order they were written in: a dead
+// credential, then a spent window, then a token between refreshes. The
+// middle rung is the one that moved. While every non-"ok" status was a
+// failure, auth beat a window unconditionally and rightly; now that
+// `expired` fixes itself and a spent window does not, a profile that is
+// both would have hidden the only half the user can act on behind the half
+// that needs nothing from them.
+//
+// The verdict comes off the retained STATUS rather than off p.AuthStatus,
+// so a degraded feed answers "usable" here exactly as it does for the two
+// readers outside this package (#245). The row and the picker item both
+// short-circuit on Degraded before reaching this, so today that is belt
+// and braces -- but it is the belt that the two other readers were missing.
+func (f *AccountField) accountWarning(p clauth.Profile) (text string, tone widgets.Tone) {
+	verdict := f.status.AuthOf(p.Name)
+	if verdict == clauth.AuthDead {
+		return accountWarnAuthFailed, widgets.ToneDanger
 	}
 	for _, w := range p.Windows {
 		if w.UtilizationPct >= accountWarnThreshold {
-			return accountWarnRateLimited
+			return accountWarnRateLimited, widgets.ToneWarning
 		}
 	}
-	return ""
+	switch verdict {
+	case clauth.AuthSelfHealing:
+		return accountWarnAuthExpired, widgets.ToneWarning
+	case clauth.AuthUnrecognized:
+		return unrecognizedAuthWord(p.AuthStatus), widgets.ToneWarning
+	}
+	return "", widgets.ToneWarning
+}
+
+// unrecognizedAuthWord is what the badge and the row say for a value none
+// of clauth's known ones: the value itself, in clauth's spelling, capped at
+// the badge column's existing width.
+//
+// Its own word rather than a state this package invents, because there is
+// no state to name -- and inventing "auth failed" for it was wrong twice
+// over in the two cases that actually arrived (`expiring`, `unknown`),
+// neither of which was a failure. A reader who can see the word can look it
+// up; one shown a verdict nobody computed cannot.
+//
+// The cap is accountWarnRateLimited's width, which is the badge column's
+// max today (widgets.Picker sizes that column over every row), so an
+// unfamiliar value -- whose length nothing here controls -- cannot re-lay
+// out the panel or re-elide the 44-cell frame. Bytes, not cells: clauth's
+// values come from a `&'static str` match and are ASCII, and a cap that
+// cut a multi-byte rune in half would be worse than a wide one.
+func unrecognizedAuthWord(status string) string {
+	if len(status) > len(accountWarnRateLimited) {
+		return status[:len(accountWarnRateLimited)]
+	}
+	return status
 }
 
 // accountWindow returns the profile's window carrying label, or
@@ -972,7 +1053,9 @@ func (f *AccountField) SetPin(pin string) {
 // shape Pin() returns) that was current when it was computed: a short
 // note shown on the always-reserved hint row, taking priority there over
 // the degraded-status hint (View's own doc comment) -- e.g. spec §9's "a
-// pinned account whose auth_status != ok blocks with an account verdict."
+// pinned account whose credential clauth reports dead blocks with an
+// account verdict" (§9 as #243 amended it -- it read `auth_status != ok`,
+// which was three states treated as one).
 // A later call whose key no longer matches Pin() (the user has since
 // moved to a different profile) is stored but never rendered -- see
 // verdictKey's own doc comment; there is no separate Clear method,
@@ -1031,8 +1114,12 @@ func (f *AccountField) Label() string { return accountRowLabel }
 // literal AuthStatus for a pinned profile and the utilization only for an
 // unpinned one. That is backwards, and §10.1 says why: **`ok` is the state
 // that needs no words.** So the auth status appears only when it is NOT
-// "ok", as `sign in again` in Danger, and the numbers are shown either
-// way -- they are the reason anyone looks at this row.
+// "ok", and then as one of three things (#243): `sign in again` in Danger
+// for a credential clauth reports dead, `expired` -- clauth's own word --
+// in Warning for a token between refreshes, which the launch heals on its
+// own, and any unfamiliar value in Warning spelled the way clauth spelled
+// it. The numbers are shown either way; they are the reason anyone looks
+// at this row.
 //
 // Inert (the selected agent kind is not claude) states why, dim. A
 // degraded clauth status (a schema clauth.ParseStatus does not know)
@@ -1065,13 +1152,13 @@ func (f *AccountField) Row(w int) string {
 	}
 
 	name := accountRowActive
-	lookup := f.activeProfile
+	lookup := f.status.ActiveProfile
 	if pin := f.Pin(); pin != "" {
 		name, lookup = pin, pin
 	}
 
 	profile, known := f.profileByName(lookup)
-	if !known || f.degraded {
+	if !known || f.status.Degraded {
 		return fitLine(text.Render(keepHead(name, w)), w)
 	}
 
@@ -1101,7 +1188,8 @@ func (f *AccountField) Row(w int) string {
 // (resets 22:49)` in Warning when it refused, `auto · asking the picker…`
 // while a call is in flight.
 //
-// It builds its tail from f.preview alone and never from f.profiles: the
+// It builds its tail from f.preview alone and never from the retained
+// status: the
 // picker's answer is about a project directory, and the profile it names may
 // not be one clauth currently reports (a picker is free to know about accounts
 // this plugin's clauth feed does not).
@@ -1149,7 +1237,10 @@ type accountRowPart struct {
 
 // rowParts builds the row's tail (v3 spec §10.1): the plan, then one part
 // per reported window in accountWindowLabels, then -- only when it is not
-// "ok" -- the auth status, as `sign in again` in Danger.
+// "ok" -- the auth status, in the three shapes accountWarning draws it in:
+// `sign in again` in Danger for a dead credential, `expired` in Warning for
+// a token between refreshes, and an unfamiliar value in Warning spelled the
+// way clauth spelled it.
 //
 // A window at or past accountWarnThreshold is drawn in Warning, which is
 // the surface the threshold change is most visible on: at v2's 100 a
@@ -1177,7 +1268,18 @@ func (f *AccountField) rowParts(p clauth.Profile) []accountRowPart {
 		}
 		parts = append(parts, accountRowPart{text: accountWindowPercent(label, w.UtilizationPct), style: style})
 	}
-	if p.AuthStatus != "" && p.AuthStatus != "ok" {
+	switch f.status.AuthOf(p.Name) {
+	case clauth.AuthSelfHealing:
+		parts = append(parts, accountRowPart{
+			text:  accountRowAuthExpired,
+			style: lipgloss.NewStyle().Foreground(f.palette.Warning),
+		})
+	case clauth.AuthUnrecognized:
+		parts = append(parts, accountRowPart{
+			text:  unrecognizedAuthWord(p.AuthStatus),
+			style: lipgloss.NewStyle().Foreground(f.palette.Warning),
+		})
+	case clauth.AuthDead:
 		parts = append(parts, accountRowPart{
 			text:  accountRowAuthFailed,
 			style: lipgloss.NewStyle().Foreground(f.palette.Danger),
@@ -1193,7 +1295,7 @@ func (f *AccountField) profileByName(name string) (clauth.Profile, bool) {
 	if name == "" {
 		return clauth.Profile{}, false
 	}
-	for _, p := range f.profiles {
+	for _, p := range f.status.Profiles {
 		if p.Name == name {
 			return p, true
 		}
@@ -1332,7 +1434,7 @@ func (f *AccountField) filterCount() string {
 	if !f.Enabled() {
 		return ""
 	}
-	return filterCount(len(f.profiles), len(f.profiles), accountCountOne, accountCountMany)
+	return filterCount(len(f.status.Profiles), len(f.status.Profiles), accountCountOne, accountCountMany)
 }
 
 // panelStatus renders the panel's last line at inner cells wide:
@@ -1360,9 +1462,9 @@ func (f *AccountField) panelStatus(inner int) string {
 		return dimHint(f.palette).Render(accountInertPanelHint)
 	case f.verdictKey == f.Pin() && f.verdictText != "":
 		return lipgloss.NewStyle().Foreground(f.palette.Danger).Render(f.verdictText)
-	case f.degraded:
+	case f.status.Degraded:
 		return dimHint(f.palette).Render(accountDegradedHint)
-	case len(f.profiles) == 0:
+	case len(f.status.Profiles) == 0:
 		return dimHint(f.palette).Render(accountPanelEmpty)
 	default:
 		return dimHint(f.palette).Render(f.panelLegend(inner))
@@ -1383,7 +1485,7 @@ func (f *AccountField) panelLegend(inner int) string {
 	if f.IsAuto() && lipgloss.Width(accountAutoLegend) <= inner {
 		return accountAutoLegend
 	}
-	if _, live := f.profileByName(f.activeProfile); live {
+	if _, live := f.profileByName(f.status.ActiveProfile); live {
 		for _, rung := range []string{accountLiveLegend, accountLiveLegendShort} {
 			if lipgloss.Width(rung) <= inner {
 				return rung
@@ -1402,7 +1504,7 @@ func (f *AccountField) PanelRows() int {
 	if !f.Enabled() {
 		return 1
 	}
-	rows := 2 + len(f.profiles) + len(f.panelNotes())
+	rows := 2 + len(f.status.Profiles) + len(f.panelNotes())
 	if f.pickerAvailable {
 		rows++
 	}

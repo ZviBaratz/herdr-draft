@@ -42,7 +42,16 @@ func sampleStatus() clauth.Status {
 				},
 			},
 			{
-				Name: "beta", Active: false, Tier: "Max 20x", AuthStatus: "expired",
+				// `broken`, the one auth_status that means the credential
+				// cannot be used at all, and so the one the danger-colored
+				// `sign in again` belongs to (#243). It carried `expired`
+				// until then, which turned out to be a token between
+				// refreshes -- warned about, never refused -- and is
+				// fixtured on its own in TestAccountBadgeIsTonedByAuthVerdict
+				// and TestAccountField_RowVocabulary rather than here, so
+				// the seven frames built over this status keep pinning the
+				// state that actually blocks a submit.
+				Name: "beta", Active: false, Tier: "Max 20x", AuthStatus: clauth.AuthBroken,
 				Windows: []clauth.Window{{Label: "5h", UtilizationPct: 0, ResetsAt: resetIn(45 * time.Minute)}},
 			},
 			{
@@ -402,7 +411,10 @@ func TestAccountField_DegradedRendersNameOnly(t *testing.T) {
 	f.SetProfiles(status, sampleNow())
 
 	frame := fieldText(f, 60)
-	if strings.Contains(frame, "Team") || strings.Contains(frame, "expired") {
+	// The needle has to move with sampleStatus: it names what the auth
+	// state RENDERS as, so a fixture change that silently emptied it would
+	// leave this assertion testing nothing.
+	if strings.Contains(frame, "Team") || strings.Contains(frame, accountWarnAuthFailed) {
 		t.Errorf("View(60) while degraded = %q, want no tier/auth_status text", frame)
 	}
 	if !strings.Contains(frame, "alpha") {
@@ -423,6 +435,109 @@ func TestAccountField_WarnsOnAuthFailedAndRateLimited(t *testing.T) {
 	}
 	if !strings.Contains(frame, accountWarnRateLimited) {
 		t.Errorf("View(60) = %q, want it to contain the rate-limited marker for gamma", frame)
+	}
+}
+
+// TestAccountBadgeIsTonedByAuthVerdict asserts the auth vocabulary and its
+// tone as a MAPPING, the way TestAccountAutoBadgeIsTonedByState asserts the
+// auto row's, and for the same reason: a frame pins whichever states its
+// fixture happens to hold, and says nothing about which tone each state
+// should have.
+//
+// The mapping is #243's whole point. `expired` is an OAuth token past its
+// expiry whose refresh has not run -- the launch hands its refresh token
+// straight to `claude` -- so it is Warning and says the word clauth itself
+// uses. `broken` is a credential rejected as revoked, so it keeps Danger
+// and the remedy that is actually the remedy.
+//
+// The last three rows are the ones that keep `broken` from creeping back
+// into meaning "not ok". `expiring` is schema 1's spelling of `expired`,
+// which this plugin's documented clauth floor still writes; `unknown` is a
+// codex profile with no usage cache, which joined the set additively under
+// schema 2; and `revoked` stands for the next such arrival. Painting any of
+// them red would be a false alarm, and two of the three are not hypothetical.
+func TestAccountBadgeIsTonedByAuthVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    string
+		wantBadge string
+		wantTone  widgets.Tone
+	}{
+		{"ok", clauth.AuthOK, "", widgets.ToneWarning},
+		{"absent", "", "", widgets.ToneWarning},
+		{"expired", clauth.AuthExpired, accountWarnAuthExpired, widgets.ToneWarning},
+		{"broken", clauth.AuthBroken, accountWarnAuthFailed, widgets.ToneDanger},
+		{"expiring", clauth.AuthExpiring, accountWarnAuthExpired, widgets.ToneWarning},
+		{"unknown", clauth.AuthUnknown, "", widgets.ToneWarning},
+		{"unrecognized", "revoked", "revoked", widgets.ToneWarning},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewAccountField(theme.Default())
+			f.SetAgentIsClaude(true)
+			f.SetProfiles(clauth.Status{Profiles: []clauth.Profile{
+				{Name: "solo", Tier: "Team", AuthStatus: tc.status,
+					Windows: []clauth.Window{{Label: "5h", UtilizationPct: 12}}},
+			}}, sampleNow())
+
+			item := f.profileItem(f.status.Profiles[0])
+			if item.Badge != tc.wantBadge {
+				t.Fatalf("auth_status %q rendered badge %q, want %q", tc.status, item.Badge, tc.wantBadge)
+			}
+			if tc.wantBadge == "" {
+				return
+			}
+			if item.BadgeTone != tc.wantTone {
+				t.Errorf("auth_status %q rendered badge tone %v, want %v", tc.status, item.BadgeTone, tc.wantTone)
+			}
+		})
+	}
+}
+
+// TestUnrecognizedAuthWordIsCapped: the badge column is sized over every
+// row, so an unfamiliar value -- whose length nothing in this package
+// controls -- must not be able to widen it past what `rate limited` already
+// costs, which is what every account frame is laid out around.
+func TestUnrecognizedAuthWordIsCapped(t *testing.T) {
+	long := strings.Repeat("x", 80)
+	if got := unrecognizedAuthWord(long); len(got) != len(accountWarnRateLimited) {
+		t.Errorf("a %d-character value rendered %d cells, want at most %d", len(long), len(got), len(accountWarnRateLimited))
+	}
+	if got := unrecognizedAuthWord("revoked"); got != "revoked" {
+		t.Errorf("a short value was altered: %q", got)
+	}
+}
+
+// TestAccountBadgePrefersTheActionableWarning pins the three-way precedence
+// accountWarning now has to make, and which did not exist while every
+// non-"ok" status was a failure: dead beats a spent window, and a spent
+// window beats `expired`.
+//
+// The middle case is the one worth the test. A profile both expired and at
+// 98% used to show the auth word unconditionally, because auth was checked
+// first and every non-"ok" value was the same kind of bad. Now the auth
+// half of that pair fixes itself and the window does not, so hiding the
+// rate limit behind it would hide the only half the user can act on.
+func TestAccountBadgePrefersTheActionableWarning(t *testing.T) {
+	spent := []clauth.Window{{Label: "5h", UtilizationPct: 98}}
+	for _, tc := range []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{"broken beats a spent window", clauth.AuthBroken, accountWarnAuthFailed},
+		{"a spent window beats expired", clauth.AuthExpired, accountWarnRateLimited},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewAccountField(theme.Default())
+			f.SetAgentIsClaude(true)
+			f.SetProfiles(clauth.Status{Profiles: []clauth.Profile{
+				{Name: "solo", Tier: "Team", AuthStatus: tc.status, Windows: spent},
+			}}, sampleNow())
+
+			if got := f.profileItem(f.status.Profiles[0]).Badge; got != tc.want {
+				t.Errorf("badge for %q at 98%% = %q, want %q", tc.status, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -832,7 +947,7 @@ func TestAccountField_NotesOutliveThePinAndTheVerdict(t *testing.T) {
 		t.Fatalf("the panel does not carry the note:\n%s", text)
 	}
 
-	const verdict = "sign in again  clauth reports expired"
+	const verdict = "sign in again  clauth reports broken"
 	f.SetPin("gamma")
 	f.SetVerdict("gamma", verdict)
 	text := fieldText(f, 80)

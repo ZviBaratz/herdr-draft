@@ -286,6 +286,45 @@ directory validity; branch/label duplicates; pinned account
 `auth_status != ok` → blocking verdict on the account field; prompt required
 only if config demands it (default: optional).
 
+> **Amended, #243/#245 (2026-09-20): only `broken` blocks, and never off a
+> degraded status.** `auth_status != ok` was three states treated as one.
+> clauth ranks its values:
+> `broken` is "last refresh rejected as revoked/invalid" and is the one
+> clauth itself excludes from fallback walks and refuses as a switch target,
+> while `expired` is an access token past its expiry whose refresh has not
+> run yet
+> ([wiki/Daemon.md](https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L150)).
+> The launch this form builds — `clauth start <profile> --` — resolves its
+> credentials through `install_source_path` and runs no auth gate
+> ([src/claude.rs](https://github.com/uwuclxdy/clauth/blob/v0.15.2/src/claude.rs)),
+> so the stored refresh token reaches `claude`, which refreshes it. Blocking
+> on `expired` named `clauth login` as the remedy for a state that needed
+> nothing.
+>
+> So: `broken` blocks. `expired` is marked on the row and blocks nothing,
+> and so is `expiring`, schema 1's spelling of the same state — clauth's own
+> note on that rename tells a reader keying on the new word to "refuse or
+> translate", and since schema 1 is admitted in full, this translates.
+> `unknown` is quiet, like an absent value: it is a codex profile with no
+> usage cache, not a finding about a credential.
+>
+> A word none of those is marked in clauth's own spelling, in the warning
+> colour, and blocks nothing. Not red, and the reason is evidence rather
+> than caution: the value set is **not** closed under a schema. `unknown`
+> joined additively under schema 2, named as such in clauth's evolution
+> rule, which governs fields and never promised otherwise. Two arrivals so
+> far, neither a dead credential — so a reader that paints an unfamiliar
+> word red is wrong more often than right, and wrong in the direction this
+> amendment exists to stop being wrong in. And a **degraded**
+> status blocks nothing at all (#245): §11 already told callers to treat
+> every field past `profiles[].name` as unreliable, which the account row
+> did while this gate refused to launch on the very state it was refusing to
+> show.
+>
+> Note what this gate has never covered, before or after: an `auto` account.
+> The commit-time pick runs *after* the last refusal on both paths — by
+> design in both — so the picker's answer is not auth-checked.
+
 Staged creation, with per-step progress lines rendered in the popup
 (`creating worktree… ✓` / `starting claude… ✗ <error>`):
 
@@ -398,9 +437,17 @@ it.)
   > writes `schema: 2`. Its one change is the `auth_status` value
   > `expiring`, renamed `expired`
   > ([clauth v0.15.2](https://github.com/uwuclxdy/clauth/blob/v0.15.2/src/daemon/status_json.rs#L33-L36)).
-  > Nothing here keys on either word: every reader asks only whether the
-  > status is `ok`, and shows any other value as it stands. So schema 2 is
-  > parsed in full like 1. Read as degraded, it cost the account row every
+  > Nothing keyed on either word at the time: every reader asked only
+  > whether the status was `ok`, and showed any other value as it stood. So
+  > schema 2 is parsed in full like 1.
+  >
+  > **That ground is gone as of #243** — the readers now key on the literal
+  > `expired` and `broken`, one of which refuses a launch — so admitting the
+  > next schema takes one more check than this paragraph describes: the
+  > auth_status *values* are read at the release tag too, not only the field
+  > set. `internal/clauth`'s `knownSchemas` carries both clauses. The
+  > conclusion about schema 2 is unchanged; the ritual that reached it is
+  > not. Read as degraded, it cost the account row every
   > profile's plan, usage windows and auth state. Any other schema still
   > degrades. clauth bumps the schema only on a breaking change
   > ([wiki/Daemon.md](https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L143)),
@@ -532,7 +579,9 @@ silently.
 7. Prompt-history reuse picker (`↑` on empty prompt).
 8. Reading herdr theme changes live (v1 reads at startup only).
 9. Account exhausted-confirm modal (Atrium's gate); v1 ships the inline
-   rate-limit marker plus a blocking verdict on `auth_status != ok` only.
+   rate-limit marker plus a blocking verdict on a dead credential only
+   (`auth_status: broken` — see §9's #243/#245 amendment, which narrowed
+   this from every non-`ok` value).
 
 ## 17. Implementation-time validation checklist
 

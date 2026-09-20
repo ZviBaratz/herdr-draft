@@ -831,6 +831,31 @@ when none is. That is backwards: **`ok` is the state that needs no words.**
 Auth status appears only when it is *not* `ok`, as `sign in again` in
 `Danger`.
 
+> **Amended, #243 (2026-09-20): two states, not one.** `sign in again` is
+> the DEAD credential's word, and clauth spells that one `broken` — "last
+> refresh rejected as revoked/invalid", which `clauth login` is exactly the
+> remedy for. Its other non-`ok` value, `expired`, is an access token past
+> its expiry whose refresh has not run yet
+> ([wiki/Daemon.md](https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L150)),
+> and the `clauth start <profile> --` this form types hands the stored
+> refresh token to `claude`, which refreshes it. So `expired` reads as
+> `expired` — clauth's own word — in `Warning`, names no remedy, and blocks
+> nothing. So does `expiring`, schema 1's spelling of the same state, which
+> is translated rather than shown as unfamiliar. `unknown` shows nothing at
+> all, like an absent value.
+>
+> Any OTHER value reads in `Warning`, spelled the way clauth spelled it,
+> and blocks nothing. Not red: the value set is not closed under a schema
+> (`unknown` arrived additively under schema 2), and neither addition so
+> far was a dead credential, so an unfamiliar word painted red is a false
+> alarm by default. §9's amendment carries the evidence.
+>
+> The mark column is unchanged: an `expired` profile still takes `!`, and
+> §8.2's marker-over-`✓` priority still applies to it. That is a decision,
+> not an omission — a rate-limited profile has taken the marker and given up
+> its `✓` since v3 shipped, and singling `expired` out would make one
+> warning-grade state behave unlike the other.
+
 Read windows by label from an ordered list rather than hard-coding `"5h"`, so
 the third window is dropped by an explicit decision rather than by a constant
 nobody remembers.

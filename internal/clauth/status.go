@@ -83,23 +83,37 @@ type Status struct {
 // writes (#238).
 //
 // Schema 2 renamed one auth_status value, `expiring` to `expired`
-// (https://github.com/uwuclxdy/clauth/blob/v0.15.2/src/daemon/status_json.rs#L33-L36).
-// Nothing here keys on either word. Every reader of Profile.AuthStatus
-// asks only whether it is "ok" (or empty) -- internal/form's
-// accountWarning and row, internal/app's accountAuthBlocked, and
-// internal/create's refuseSignedOutProfile -- and shows any other value as
-// it stands. So a full parse of schema 2 is as trustworthy as
-// one of schema 1, and reading it as degraded cost the account row every
-// profile's plan, usage windows and auth state for nothing.
+// (https://github.com/uwuclxdy/clauth/blob/v0.15.2/src/daemon/status_json.rs#L33-L36),
+// and #238 admitted it on the grounds that nothing here keyed on either
+// word: every reader asked only whether the status was "ok". Reading it as
+// degraded cost the account row every profile's plan, usage windows and
+// auth state for nothing, so the full parse was right and stays right.
 //
-// Checking field presence and JSON type would not have found that, and
-// cannot admit the next schema either: clauth bumps the schema "ONLY on a
-// breaking change; additive fields do not bump it"
-// (https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L143), so
-// a bump that keeps every field's type changed some field's meaning. A new
-// schema goes here only after reading clauth's stated reason for the bump,
-// at the release tag, and confirming nothing here depends on what changed
-// -- and the reason is cited here beside the others.
+// That GROUND is now gone, and the admission ritual is the poorer for it
+// (#243). This package keys on the literal values -- AuthOK, AuthExpired
+// and AuthBroken in auth.go, one of which refuses a launch outright -- so a
+// bump that renamed `expired` again would be admitted here by a reader who
+// checked only the field set, and would silently reclassify a live
+// credential. Two clauses, then, not one:
+//
+//   - Checking field presence and JSON type does not admit a schema, and
+//     never did. clauth bumps "ONLY on a breaking change; additive fields do
+//     not bump it"
+//     (https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L143),
+//     so a bump that keeps every field's type changed some field's MEANING.
+//   - And the auth_status VALUES are checked too, against auth.go's
+//     constants, at the release tag -- but a schema bump is NOT when to
+//     check them. clauth has renamed one of these words once (`expiring`
+//     to `expired`, the schema 2 bump) and ADDED one without a bump at all
+//     (`unknown`, named as additive under schema 2 in clauth's own
+//     evolution rule). The rule is about fields; it has never promised the
+//     value set is closed under a schema. So auth.go's unrecognised arm is
+//     what actually catches the next one, and this clause is the smaller
+//     half: read the values whenever the floor moves, bump or no bump.
+//
+// A new schema goes here only after reading clauth's stated reason for the
+// bump, at the release tag, and confirming both clauses -- and the reason is
+// cited here beside the others.
 var knownSchemas = map[int]bool{1: true, 2: true}
 
 // minimalStatus is the required subset ParseStatus falls back to when the
