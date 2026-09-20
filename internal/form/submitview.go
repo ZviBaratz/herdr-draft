@@ -1035,15 +1035,22 @@ const (
 // shape and panelContrastFG's knocked-out foreground) so the keep/remove
 // buttons wear exactly the face the Create button does one screen
 // earlier.
+//
+// "Exactly the face" is why the two secondary kinds take SurfaceFill(PanelBG)
+// rather than the Surface field (#149), and why they moved in the same
+// change as form.go's cancel button: this footer is painted PanelBG the
+// same way that one is, so the same twelve builtins drew these two with no
+// face either. #149 found the defect on the cancel button; leaving its twin
+// one screen later would have been fixing a spelling rather than a class.
 func submitButton(hint, label string, kind buttonKind, p theme.Palette) string {
 	var style lipgloss.Style
 	switch kind {
 	case buttonPrimary:
 		style = lipgloss.NewStyle().Foreground(panelContrastFG(p)).Background(p.Accent).Bold(true)
 	case buttonSecondary:
-		style = lipgloss.NewStyle().Foreground(p.Text).Background(p.Surface)
+		style = lipgloss.NewStyle().Foreground(p.Text).Background(p.SurfaceFill(p.PanelBG))
 	default:
-		style = lipgloss.NewStyle().Foreground(p.DimText).Background(p.Surface)
+		style = lipgloss.NewStyle().Foreground(p.DimText).Background(p.SurfaceFill(p.PanelBG))
 		hint = ""
 	}
 	return style.Inline(true).Render(actionButtonText(hint, label))

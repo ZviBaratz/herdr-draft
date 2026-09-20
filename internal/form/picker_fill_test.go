@@ -113,9 +113,14 @@ func TestFrame_SelectedRowFillSurvivesTheFrameRepaint(t *testing.T) {
 	if !ok {
 		t.Fatal("theme.Builtin(\"catppuccin-latte\") is not a known builtin")
 	}
-	surface, panelBG, activeRow := rgbKey(palette.Surface), rgbKey(palette.PanelBG), rgbKey(palette.ActiveRowBG)
+	// The cursor row's fill, which is SurfaceFill(PanelBG) since #149 and
+	// not the Surface field -- on latte the two are the same #ccd0da
+	// (1.37:1 on its panel clears the floor unaided), but naming the
+	// expression the picker actually paints is what keeps this fixture
+	// pointing at the right bytes on a theme where they diverge.
+	surface, panelBG, activeRow := rgbKey(palette.SurfaceFill(palette.PanelBG)), rgbKey(palette.PanelBG), rgbKey(palette.ActiveRowBG)
 	if surface == panelBG || surface == activeRow {
-		t.Fatalf("Surface %s must differ from PanelBG %s and ActiveRowBG %s, or this fixture cannot tell the passes apart",
+		t.Fatalf("the cursor fill %s must differ from PanelBG %s and ActiveRowBG %s, or this fixture cannot tell the passes apart",
 			surface, panelBG, activeRow)
 	}
 
@@ -173,7 +178,7 @@ func TestFrame_SelectedRowFillSurvivesAMatchSpan(t *testing.T) {
 	if !ok {
 		t.Fatal("theme.Builtin(\"catppuccin-latte\") is not a known builtin")
 	}
-	surface, accent := rgbKey(palette.Surface), rgbKey(palette.Accent)
+	surface, accent := rgbKey(palette.SurfaceFill(palette.PanelBG)), rgbKey(palette.Accent)
 
 	frame := buildDirFilteredForm(palette).ViewAt(80, 24)
 	line, ok := lineWithBackground(frame, surface)

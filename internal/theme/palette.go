@@ -119,6 +119,15 @@ type Color = color.Color
 // Palette is herdr-draft's small color palette, translated from a herdr
 // theme. See the package doc for the herdr-field-to-draft-field mapping.
 type Palette struct {
+	// Accent, Danger, Success, Warning and Branch are the five colors that
+	// carry a word, and every palette this package hands out has had all
+	// five raised to SemanticTextContrastFloor against every ground the
+	// form paints them on (#273, #277). The builtinPalettes table below
+	// holds the unfloored translation, as it does for ActiveRowBG.
+	//
+	// Accent is also a BACKGROUND -- the create button's fill, under a
+	// label knocked out in PanelBG. That is the same pair the floor
+	// measures, reversed, so the raise serves both uses.
 	Accent  Color
 	PanelBG Color
 	Text    Color
@@ -137,7 +146,14 @@ type Palette struct {
 	// the scrollbar track, not the rules. Reach for Overlay0 to draw a line
 	// somebody has to see.
 	Border Color
-	// Surface fills the secondary button and the selected panel row.
+	// Surface is herdr's surface0, the fill for its own secondary buttons
+	// and selected rows. Reach for it through SurfaceFill or InputFill
+	// rather than directly, because which value is correct depends on what
+	// it is composited onto and the raw field is frequently not it: it is
+	// under 1.25:1 against PanelBG on twelve of the seventeen measurable
+	// builtins (#149), and against ActiveRowBG on fifteen of them -- every
+	// one but one-dark and rose-pine, and catppuccin, the default, at
+	// 1.000:1 (#27).
 	Surface Color
 	// ActiveRowBG fills the focused row, full width (v2 spec §7) -- one of
 	// the three signals v3 spec §5.4 gives it. Every palette handed out by
@@ -483,6 +499,37 @@ const ActiveRowContrastFloor = 1.25
 // reproduced one field over. See Palette.InputFill.
 const InputFillContrastFloor = 1.25
 
+// SurfaceFillContrastFloor is the minimum WCAG contrast ratio between a
+// Surface-filled region and whatever it is drawn on top of (#149). It is a
+// third instance of the same class as the two above -- a background REGION
+// whose edge the eye has to catch -- at the same 1.25:1 and with its own
+// constant, for the reason InputFillContrastFloor gives: moving one floor
+// must never silently move another.
+//
+// Two regions are drawn this way, and both sit on PanelBG: a picker's
+// cursor row, which widgets/picker.go repaints Surface end to end, and the
+// secondary button face -- form.go's `esc cancel` and submitview.go's
+// keep/remove pair, which is deliberately the same face one screen later.
+//
+// The floor is 1.25 rather than a text figure because in both regions the
+// fill is not the only signal. A picker's cursor row keeps its marker glyph
+// and its bold text, and a button keeps its label, so a fill that goes
+// missing costs the affordance rather than the information -- which is
+// exactly what ActiveRowContrastFloor is for, one region over. The words
+// drawn ON these fills are a different question with a different answer:
+// they are Text, DimText and the picker's tones, and SemanticTextContrastFloor
+// measures the toned ones against this fill as one of its three grounds.
+//
+// Measured, Surface against PanelBG is under this floor on TWELVE of the
+// seventeen measurable builtins: one-dark and rose-pine at 1.07:1,
+// one-light 1.09, rose-pine-dawn 1.10, vesper 1.11, solarized-light 1.14,
+// solarized 1.15, kanagawa 1.16, tokyo-night 1.17, gruvbox-light 1.21,
+// kanagawa-lotus and nord 1.24. catppuccin, the default, is 1.40 -- so this
+// is v2's 1.07:1 rule for the third time: twelve themes with no band under
+// their cursor and a cancel button reading as plain text, through a green
+// golden-frame suite that could not see any of it.
+const SurfaceFillContrastFloor = 1.25
+
 // SemanticTextContrastFloor is the minimum WCAG contrast ratio between a
 // color that CARRIES A WORD and whatever that word is drawn on (#273, and
 // #277 for the three fields it grew to). Its two siblings above are both
@@ -576,15 +623,21 @@ func floorContrast(p Palette) Palette {
 	//
 	// Three grounds, and the list is exhaustive rather than representative:
 	// a stack row is filled PanelBG, or ActiveRowBG while its field is
-	// focused, and a picker repaints its cursor row Surface inside the
-	// panel. There is a FOURTH background on screen -- InputFill, which on
-	// nord is #51606c against ActiveRowBG's #40505d and would be the worst
-	// ground of the lot -- and it is left out because no word is drawn on
-	// it: an input renders its own text in Text or DimText, and the project
-	// row's validity marker is appended AFTER the input, onto the row's own
-	// fill. Checked against the screen, not assumed. A semantic word drawn
-	// inside an input would have to add it here.
-	grounds := []Color{p.PanelBG, p.ActiveRowBG, p.Surface}
+	// focused, and a picker repaints its cursor row inside the panel. There
+	// is a FOURTH background on screen -- InputFill, which on nord is
+	// #51606c against ActiveRowBG's #40505d and would be the worst ground
+	// of the lot -- and it is left out because no word is drawn on it: an
+	// input renders its own text in Text or DimText, and the project row's
+	// validity marker is appended AFTER the input, onto the row's own fill.
+	// Checked against the screen, not assumed. A semantic word drawn inside
+	// an input would have to add it here.
+	//
+	// The third ground is SurfaceFill(PanelBG) and not the Surface field,
+	// for the same reason the first is the RAISED ActiveRowBG: since #149
+	// the cursor row is painted that fill, and raw Surface is a value
+	// twelve builtins never draw. Measuring a word against it would repeat
+	// the selection_bg mistake one field over.
+	grounds := []Color{p.PanelBG, p.ActiveRowBG, p.SurfaceFill(p.PanelBG)}
 	p.Danger = raiseSemanticText(p.Danger, grounds, SemanticTextContrastFloor)
 	p.Warning = raiseSemanticText(p.Warning, grounds, SemanticTextContrastFloor)
 	p.Success = raiseSemanticText(p.Success, grounds, SemanticTextContrastFloor)
@@ -623,6 +676,35 @@ func floorContrast(p Palette) Palette {
 // it does everywhere else.
 func (p Palette) InputFill(ground Color) Color {
 	return ensureContrast(ground, p.Surface, p.Text, InputFillContrastFloor)
+}
+
+// SurfaceFill returns the background a Surface-filled region should be
+// painted with when it is drawn on top of ground (#149) -- Surface itself
+// wherever Surface is actually distinguishable from that ground, and
+// Surface raised away from the ground where it is not.
+//
+// It is InputFill's sibling and takes a ground for the same reason, even
+// though today both callers pass PanelBG: the value is only correct
+// relative to what it is composited onto, and a Surface-filled region that
+// later moves onto a focused row would need the other answer. The raise is
+// ensureContrast, the same walk §5.3 uses for ActiveRowBG, so there is one
+// clamp in this package and not three.
+//
+// It is a separate method from InputFill rather than a shared call with a
+// different constant because the two floors are allowed to diverge -- see
+// SurfaceFillContrastFloor -- and the bodies are one call each, so there is
+// no duplicated logic here to drift, only a duplicated argument list.
+//
+// Note what this deliberately does NOT do: raise the Surface FIELD. Surface
+// has two jobs, and they pull opposite ways. Measured on rose-pine, whose
+// Surface is #1f1d2e: raising it against its #191724 panel arrives at
+// #2d2b39, which is 1.17:1 against its #3b344b focused row -- under
+// InputFillContrastFloor, where the untouched #1f1d2e was 1.397:1 and
+// clears it. Flooring the field would have fixed the panel and broken the
+// row, which is the case TestInputFill_KeepsSurfaceWhereItIsAlreadyLegible
+// exists for.
+func (p Palette) SurfaceFill(ground Color) Color {
+	return ensureContrast(ground, p.Surface, p.Text, SurfaceFillContrastFloor)
 }
 
 // ensureContrast returns fg when it already meets floor against bg, and

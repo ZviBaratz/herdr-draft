@@ -1171,11 +1171,12 @@ func TestPicker_CursorlessDrawsNoCursorRow(t *testing.T) {
 	if rawWith == rawWithout {
 		t.Error("the cursorless render is byte-identical to the cursored one; nothing was suppressed")
 	}
-	if !strings.Contains(rawWith, ansiBg(testPalette().Surface)) {
-		t.Fatal("the cursored picker paints no Surface row at all; this test cannot detect its absence")
+	cursorFill := testPalette().SurfaceFill(testPalette().PanelBG)
+	if !strings.Contains(rawWith, ansiBg(cursorFill)) {
+		t.Fatal("the cursored picker paints no filled row at all; this test cannot detect its absence")
 	}
-	if strings.Contains(rawWithout, ansiBg(testPalette().Surface)) {
-		t.Error("a cursorless row is painted with the cursor row's Surface fill")
+	if strings.Contains(rawWithout, ansiBg(cursorFill)) {
+		t.Error("a cursorless row is painted with the cursor row's fill")
 	}
 	if got, want := ansi.Strip(rawWithout), ansi.Strip(rawWith); got != want {
 		t.Errorf("the cursorless text differs from the cursored one:\n got %q\nwant %q", got, want)
@@ -1187,3 +1188,44 @@ func ansiBg(c theme.Color) string {
 	rendered := lipgloss.NewStyle().Background(c).Render("x")
 	return rendered[:strings.Index(rendered, "x")]
 }
+
+// TestPicker_CursorRowFillIsFlooredAgainstThePanel pins the #149 half of
+// this file's subject that no frame and no default-theme test can see. The
+// picker's cursor row is painted palette.SurfaceFill(PanelBG), not the
+// Surface field, and on catppuccin -- testPalette, and what every golden
+// frame renders on -- those two are the same #313244 byte for byte. So the
+// call site could be reverted to a flat Surface and every other test in
+// this package would stay green.
+//
+// rose-pine is the theme that separates them, and it is the theme #149 was
+// filed on: its Surface is #1f1d2e against a #191724 panel, 1.07:1, a
+// cursor row with no visible band at all. The premise is asserted rather
+// than assumed, so this fails loudly if that theme's numbers ever move
+// instead of quietly measuring nothing.
+func TestPicker_CursorRowFillIsFlooredAgainstThePanel(t *testing.T) {
+	palette, ok := theme.Builtin("rose-pine")
+	if !ok {
+		t.Fatal("theme.Builtin(\"rose-pine\") is not a known builtin")
+	}
+	fill := palette.SurfaceFill(palette.PanelBG)
+	if colorsEqualForTest(fill, palette.Surface) {
+		t.Fatalf("rose-pine's Surface %v already clears the floor against its panel -- this fixture needs a theme where the two differ", palette.Surface)
+	}
+
+	p := NewPicker(palette)
+	p.SetItems(1, []PickerItem{{ID: "1", Cells: []string{"Alpha"}}, {ID: "2", Cells: []string{"Beta"}}})
+
+	view := p.MarkedView(20, 2, "")
+
+	if !strings.Contains(view, ansiBg(fill)) {
+		t.Errorf("the cursor row is not painted the floored fill %v:\n%q", fill, view)
+	}
+	if strings.Contains(view, ansiBg(palette.Surface)) {
+		t.Errorf("the cursor row is painted a flat Surface %v, which is 1.07:1 on this theme's panel -- a band nobody can see (#149):\n%q", palette.Surface, view)
+	}
+}
+
+// colorsEqualForTest compares two palette colors by the bytes lipgloss
+// would emit for them, which is the only comparison that matters to a
+// rendered line.
+func colorsEqualForTest(a, b theme.Color) bool { return ansiBg(a) == ansiBg(b) }

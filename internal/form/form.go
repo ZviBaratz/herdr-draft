@@ -1277,10 +1277,16 @@ func createButton(p theme.Palette, zone FocusZone) string {
 // is what lets footer.go's key ladder stop repeating `Esc cancel` on
 // every zone -- the button says it once, in the place the eye already
 // goes for an action.
+//
+// The fill is SurfaceFill(PanelBG) and not the Surface field (#149): the
+// footer is one of the lines composeRows paints PanelBG, and raw Surface
+// is under SurfaceFillContrastFloor against PanelBG on twelve of the
+// seventeen measurable builtins -- on rose-pine, at 1.07:1, this button
+// read as plain text with a label and no face at all.
 func cancelButton(p theme.Palette) string {
 	return lipgloss.NewStyle().
 		Foreground(p.Text).
-		Background(p.Surface).
+		Background(p.SurfaceFill(p.PanelBG)).
 		Inline(true).
 		Render(actionButtonText("esc", "cancel"))
 }

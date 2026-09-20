@@ -340,7 +340,7 @@ func TestTitleField_SessionListHasNoCursor(t *testing.T) {
 	}
 	// And no row carries the cursor row's Surface fill either -- the
 	// glyph is the panel's, the fill is the picker's, and both have to go.
-	if strings.Contains(panel, ansiBackground(theme.Default().Surface)) {
+	if strings.Contains(panel, ansiBackground(theme.Default().SurfaceFill(theme.Default().PanelBG))) {
 		t.Errorf("a session row is painted with the cursor row's fill:\n%q", panel)
 	}
 }

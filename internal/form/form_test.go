@@ -1917,3 +1917,55 @@ func worktreeFooterStates(t *testing.T) []struct {
 
 	return out
 }
+
+// TestSecondaryButtonFillIsFlooredAgainstThePanel is #149's other half, and
+// it exists for the reason the picker's twin in widgets does: on catppuccin
+// -- theme.Default(), and what every golden frame in this repository
+// renders on -- Surface is 1.40:1 against PanelBG and SurfaceFill returns it
+// untouched, so all three of these call sites could be reverted to a flat
+// palette.Surface with the whole suite still green.
+//
+// rose-pine is the theme #149 was filed on: Surface #1f1d2e on a #191724
+// panel is 1.07:1, and these buttons read as plain text with a label and no
+// face. All three secondary faces are asserted rather than just the cancel
+// button the issue names, because submitButton's own doc promises it wears
+// "exactly the face the Create button does one screen earlier" -- a promise
+// that is only kept if the two move together.
+func TestSecondaryButtonFillIsFlooredAgainstThePanel(t *testing.T) {
+	palette, ok := theme.Builtin("rose-pine")
+	if !ok {
+		t.Fatal("theme.Builtin(\"rose-pine\") is not a known builtin")
+	}
+	fill := palette.SurfaceFill(palette.PanelBG)
+	if ansiBackground(fill) == ansiBackground(palette.Surface) {
+		t.Fatalf("rose-pine's Surface %v already clears the floor against its panel -- this fixture needs a theme where the two differ", palette.Surface)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		rendered string
+	}{
+		{"the form's cancel button", cancelButton(palette)},
+		{"the submit view's secondary button", submitButton("↵", "keep", buttonSecondary, palette)},
+		{"the submit view's disabled button", submitButton("", "remove", buttonDisabled, palette)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Per CELL rather than by substring: a button emits its
+			// foreground and its background in one SGR run, so the
+			// standalone background sequence ansiBackground renders is
+			// never present even when the fill is right.
+			cells := backgroundPerCell(tc.rendered)
+			if len(cells) == 0 {
+				t.Fatalf("%s rendered no cells: %q", tc.name, tc.rendered)
+			}
+			for i, got := range cells {
+				if got == rgbKey(palette.Surface) {
+					t.Fatalf("%s is filled with a flat Surface %v, which is 1.07:1 on this theme's panel -- a button with no face (#149):\n%q", tc.name, palette.Surface, tc.rendered)
+				}
+				if got != rgbKey(fill) {
+					t.Fatalf("cell %d of %s is %q, want the floored fill %q:\n%q", i, tc.name, got, rgbKey(fill), tc.rendered)
+				}
+			}
+		})
+	}
+}

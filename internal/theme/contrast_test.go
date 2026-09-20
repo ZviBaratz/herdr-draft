@@ -258,6 +258,71 @@ func TestBuiltinPalettes_InputFillIsVisibleOnBothGrounds(t *testing.T) {
 	}
 }
 
+// TestBuiltinPalettes_SurfaceFillIsVisibleOnThePanel is #149, and it is a
+// REGION floor rather than a word floor -- the sibling of
+// ActiveRowContrastFloor and InputFillContrastFloor, not of
+// SemanticTextContrastFloor. Both regions it covers are a fill whose edge
+// the eye has to catch, and both carry a second signal that survives the
+// fill going missing: the picker's cursor row keeps its marker glyph and
+// its bold text, and the cancel button keeps its label. The words drawn on
+// them are Text, DimText and the picker's tones, which have floors of their
+// own. 1.25:1, for the reason InputFillContrastFloor gives, and its own
+// constant for the reason InputFillContrastFloor gives too.
+//
+// What it guards is v2's invisible-rule defect in a third field. Surface on
+// PanelBG is under 1.25:1 on TWELVE of the seventeen measurable builtins --
+// one-dark and rose-pine at 1.07, one-light 1.09, rose-pine-dawn 1.10,
+// vesper 1.11, solarized-light 1.14, solarized 1.15, kanagawa 1.16,
+// tokyo-night 1.17, gruvbox-light 1.21, kanagawa-lotus and nord 1.24 -- and
+// the default theme is not one of them (catppuccin is 1.40), which is
+// exactly how twelve themes shipped a cursor row with no band and a cancel
+// button that reads as plain text through a green suite.
+func TestBuiltinPalettes_SurfaceFillIsVisibleOnThePanel(t *testing.T) {
+	for name := range builtinPalettes {
+		t.Run(name, func(t *testing.T) {
+			palette, ok := Builtin(name)
+			if !ok {
+				t.Fatalf("Builtin(%q) not found", name)
+			}
+			// The same missing-data exemption as everywhere else in this
+			// file: terminal's Surface is herdr's Color::Reset, and
+			// widgets.PaintLine declines to paint a NoColor at all, so
+			// there is no fill on screen to measure.
+			if _, inherit := palette.Surface.(lipgloss.NoColor); inherit {
+				if name != "terminal" {
+					t.Fatalf("Surface is NoColor: only the terminal palette may be exempt")
+				}
+				return
+			}
+
+			got, ok := contrastRatio(palette.SurfaceFill(palette.PanelBG), palette.PanelBG)
+			if !ok {
+				t.Fatalf("the surface fill is unmeasurable against PanelBG")
+			}
+			if got < SurfaceFillContrastFloor-contrastAssertionEpsilon {
+				t.Errorf("a Surface-filled region on the panel is %.3f:1 against it, want >= %.2f:1 -- a band nobody can see is not a band (#149)",
+					got, SurfaceFillContrastFloor)
+			}
+		})
+	}
+}
+
+// TestSurfaceFill_KeepsSurfaceWhereItIsAlreadyLegible is the fidelity half,
+// and the reason #149 is a floor and not a repaint: herdr fills its own
+// secondary button and selected row with surface0, so where surface0 is
+// visible against the panel we use surface0 and the screen matches herdr's.
+// catppuccin is the case that matters -- it is the default and what every
+// golden frame renders on, at 1.40:1 against its own PanelBG.
+func TestSurfaceFill_KeepsSurfaceWhereItIsAlreadyLegible(t *testing.T) {
+	palette := Default()
+	if ratio, _ := contrastRatio(palette.Surface, palette.PanelBG); ratio < SurfaceFillContrastFloor {
+		t.Fatalf("catppuccin's Surface is %.3f:1 against its panel -- this fixture needs a theme that clears the floor unaided", ratio)
+	}
+	if got := palette.SurfaceFill(palette.PanelBG); !colorEqual(got, palette.Surface) {
+		t.Errorf("SurfaceFill = %v, want Surface %v unchanged where it is already legible", got, palette.Surface)
+	}
+}
+
 // TestInputFill_KeepsSurfaceWhereItIsAlreadyLegible is the fidelity half of
 // InputFill's contract, and the reason it is not simply "always mix": herdr
 // fills its own inputs with surface0, so where surface0 is visible against
@@ -304,11 +369,18 @@ func TestRGB8_RecoversChannelsExactly(t *testing.T) {
 //
 // All three grounds are asserted because a word reaches all three: a stack
 // row is filled PanelBG, or ActiveRowBG while its field is focused
-// (form.go's composeRows), and a picker's cursor row is repainted Surface
-// inside the panel (widgets/picker.go). ActiveRowBG is the one a REFUSAL
-// produces, because a refused submit moves focus to the row carrying the
-// word -- but it is not always the worst: dracula clears 3:1 on both of the
-// other two and measures 2.91:1 on Surface.
+// (form.go's composeRows), and a picker's cursor row is repainted inside
+// the panel (widgets/picker.go). ActiveRowBG is the one a REFUSAL produces,
+// because a refused submit moves focus to the row carrying the word -- but
+// it is not always the worst: dracula clears 3:1 on both of the other two
+// and measures 2.91:1 on the cursor row.
+//
+// The third ground is SurfaceFill(PanelBG) rather than the Surface field,
+// and since #149 that is what the picker actually paints. Measuring against
+// raw Surface would be measuring against a value twelve builtins never
+// draw, which is the same defect
+// TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG pins one field
+// over.
 //
 // #277 added three more fields, and each is a different argument for the
 // same floor. Success carries field_account.go's `-> <profile>` picker badge
@@ -378,7 +450,7 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 				}{
 					{"an unfocused row or the panel", palette.PanelBG},
 					{"a focused stack row", palette.ActiveRowBG},
-					{"a picker's cursor row", palette.Surface},
+					{"a picker's cursor row", palette.SurfaceFill(palette.PanelBG)},
 				} {
 					got, ok := contrastRatio(field.value, ground.value)
 					if !ok {
@@ -452,7 +524,7 @@ func TestRaiseSemanticText_RaisesAnIllegibleValue(t *testing.T) {
 	if colorEqual(palette.Warning, raw.Warning) {
 		t.Fatalf("raiseSemanticText left an illegible value alone: %v", palette.Warning)
 	}
-	for _, ground := range []Color{palette.PanelBG, palette.ActiveRowBG, palette.Surface} {
+	for _, ground := range []Color{palette.PanelBG, palette.ActiveRowBG, palette.SurfaceFill(palette.PanelBG)} {
 		ratio, ok := contrastRatio(palette.Warning, ground)
 		if !ok {
 			t.Fatalf("raised Warning is unmeasurable against %v", ground)
@@ -514,15 +586,15 @@ func TestRaiseSemanticText_UnmeasurableInputsPassThrough(t *testing.T) {
 // The fixture here is synthetic anyway, because it isolates the simpler half
 // -- a value skipped outright rather than raised short -- and states it
 // without depending on any theme's numbers staying put. Its Danger clears
-// the floor on the raw #141414 and fails on the #282828 that ensureContrast
-// raises that to.
+// the floor on the raw #242424 (3.226:1) and fails on the #363636 that
+// ensureContrast raises that to (2.512:1).
 func TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG(t *testing.T) {
 	raw := Palette{
-		PanelBG:     lipgloss.Color("#101010"),
+		PanelBG:     lipgloss.Color("#202020"),
 		Text:        lipgloss.Color("#ffffff"),
-		Surface:     lipgloss.Color("#101010"),
-		ActiveRowBG: lipgloss.Color("#141414"), // 1.05:1, well under ActiveRowContrastFloor
-		Danger:      lipgloss.Color("#cc0000"),
+		Surface:     lipgloss.Color("#000000"), // 1.29:1 on the panel: clears SurfaceFillContrastFloor unaided
+		ActiveRowBG: lipgloss.Color("#242424"), // 1.05:1, well under ActiveRowContrastFloor
+		Danger:      lipgloss.Color("#e60000"),
 		Warning:     lipgloss.Color("#ffcc00"), // comfortably legible; not the subject
 	}
 
@@ -530,6 +602,17 @@ func TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG(t *testing.T) {
 	// Danger, so assert that before asserting which one floorContrast took.
 	if ratio, _ := contrastRatio(raw.Danger, raw.ActiveRowBG); ratio < SemanticTextContrastFloor {
 		t.Fatalf("fixture Danger is %.3f:1 on the RAW fill -- it must pass there for the wrong order to be silent", ratio)
+	}
+	// And ActiveRowBG has to be the ONLY ground that can raise it, or the
+	// test would pass under the wrong order for the wrong reason. This
+	// guard is here because that is exactly what #149 did to the earlier
+	// fixture: its Surface was its PanelBG, so SurfaceFill raised it to
+	// #282828, on which the same Danger measured 2.505:1 -- a second
+	// reason, masking the first.
+	for _, ground := range []Color{raw.PanelBG, raw.SurfaceFill(raw.PanelBG)} {
+		if ratio, _ := contrastRatio(raw.Danger, ground); ratio < SemanticTextContrastFloor {
+			t.Fatalf("fixture Danger is %.3f:1 on %v -- it must clear every ground but the focused fill, or this test is not about ordering", ratio, ground)
+		}
 	}
 
 	got := floorContrast(raw)
@@ -556,7 +639,7 @@ func TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride(t *testing.T) {
 	if colorEqual(got.Danger, lipgloss.Color(illegible)) {
 		t.Fatalf("an illegible [palette] override survived unfloored: %v", got.Danger)
 	}
-	for _, ground := range []Color{got.PanelBG, got.ActiveRowBG, got.Surface} {
+	for _, ground := range []Color{got.PanelBG, got.ActiveRowBG, got.SurfaceFill(got.PanelBG)} {
 		ratio, ok := contrastRatio(got.Danger, ground)
 		if !ok {
 			t.Fatalf("floored Danger is unmeasurable against %v", ground)
@@ -736,7 +819,7 @@ func TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing(t *testing.T) {
 		t.Run(surface, func(t *testing.T) {
 			raw := Resolve(Default(), map[string]string{"surface": surface})
 			got := floorContrast(raw)
-			grounds := []Color{got.PanelBG, got.ActiveRowBG, got.Surface}
+			grounds := []Color{got.PanelBG, got.ActiveRowBG, got.SurfaceFill(got.PanelBG)}
 
 			if clearsFloor(got.Danger, grounds, SemanticTextContrastFloor) {
 				t.Skipf("this fixture no longer gives up -- it needs a Surface no walk can clear")
