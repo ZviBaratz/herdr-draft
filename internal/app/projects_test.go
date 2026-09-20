@@ -13,7 +13,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
-// This file covers spec §10's per-project defaults memory as the app layer
+// This file covers v2 spec §10's per-project defaults memory as the app layer
 // sees it: the projects.json tier reaching the form through the debounced
 // dir check, re-applying on every project change, and stopping at a field
 // the user has touched.
@@ -66,7 +66,7 @@ func switchProject(t *testing.T, m Model, from, to string) Model {
 	return m
 }
 
-// TestDirResult_AppliesProjectMemory is the read side of spec §10: what
+// TestDirResult_AppliesProjectMemory is the read side of v2 spec §10: what
 // you last chose in THIS project is what the form opens on.
 func TestDirResult_AppliesProjectMemory(t *testing.T) {
 	// main exists: a remembered base that names no commit is dropped (#194),
@@ -195,7 +195,7 @@ func TestDirResult_MemoryReAppliesAcrossASecondProjectChange(t *testing.T) {
 	assertMemory("the third project", "claude", false, plan.PlacementTabHere)
 }
 
-// TestDirResult_UserEditsSurviveAProjectChange is the touched half of spec
+// TestDirResult_UserEditsSurviveAProjectChange is the touched half of v2 spec
 // §10's rule: memory re-applies "unless the user has already touched that
 // field". The worktree toggle is driven through the real key path (a
 // right-arrow into the focused chip row) so the whole chain is exercised,
@@ -238,7 +238,7 @@ func TestDirResult_UserEditsSurviveAProjectChange(t *testing.T) {
 	}
 }
 
-// TestDirResult_MemoryKeyIsTheRepoRootNotTheCheckout pins spec §10's key
+// TestDirResult_MemoryKeyIsTheRepoRootNotTheCheckout pins v2 spec §10's key
 // rule at the app layer: a linked worktree resolves to its origin's root,
 // so both share ONE entry. gitx's own test proves RepoRoot really answers
 // that against a real repository; this one proves the app asks it and keys
@@ -317,7 +317,7 @@ func TestDirResult_AFailedRepoRootFallsBackToThePathKey(t *testing.T) {
 	}
 }
 
-// TestClearRequested_DoesNotReApplyProjectMemory pins spec §10's "⌃R⌃R
+// TestClearRequested_DoesNotReApplyProjectMemory pins v2 spec §10's "⌃R⌃R
 // clears back to the repository default" -- explicitly not back to what you
 // last did in this project. Without the suppression the dir check the
 // rebuilt form immediately schedules would put the memory straight back and
@@ -347,7 +347,7 @@ func TestClearRequested_DoesNotReApplyProjectMemory(t *testing.T) {
 	}
 }
 
-// TestSubmit_RecordsProjectMemory is the write side of spec §10: a
+// TestSubmit_RecordsProjectMemory is the write side of v2 spec §10: a
 // successful submit records what it launched with under this project's key,
 // and last-used.json keeps being written alongside it as the global
 // fallback tier.

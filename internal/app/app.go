@@ -136,7 +136,7 @@ type gitSource interface {
 	DirExists(path string) bool
 	IsGitRepo(dir string) bool
 	// RepoRoot resolves the ORIGIN repository root behind dir -- the key
-	// spec §10's per-project memory is stored under, so every worktree of
+	// v2 spec §10's per-project memory is stored under, so every worktree of
 	// one repository shares a single entry. ("", nil) for a plain
 	// directory; see gitx.RepoRoot.
 	RepoRoot(ctx context.Context, dir string) (string, error)
@@ -214,7 +214,7 @@ type Setup struct {
 	Config  config.Config
 	State   config.State
 	Palette theme.Palette
-	// Projects is projects.json (spec §10's per-project memory), loaded
+	// Projects is projects.json (v2 spec §10's per-project memory), loaded
 	// once at startup. Its zero value means "no memory yet", which is what
 	// a first run, an unreadable file and an unknown schema version all
 	// look like -- see config.LoadProjects.
@@ -856,7 +856,7 @@ type Model struct {
 	// again even if the user navigates away and back.
 	fetchedRepos map[string]bool
 
-	// resolved is spec §10's layered default resolution -- every tier
+	// resolved is v2 spec §10's layered default resolution -- every tier
 	// (config.toml, last-used.json, .herdr-draft.toml, projects.json)
 	// collapsed into one value per field, plus the tier each came from.
 	// Recomputed by applyProjectDefaults whenever the project row changes,
@@ -890,7 +890,7 @@ type Model struct {
 	// applyProjectDefaults re-resolves long after New has returned.
 	agentKinds []string
 
-	// worktreeTouched/placementTouched/agentTouched implement spec §10's
+	// worktreeTouched/placementTouched/agentTouched implement v2 spec §10's
 	// "per-project memory re-applies when the project row changes, unless
 	// the user has already touched that field" -- the same
 	// touched-versus-preselected rule the Linear seeding uses, expressed
@@ -1455,7 +1455,7 @@ func (m Model) branchSuggestion() string {
 // run through the resolved prefix otherwise.
 //
 // Exported, and extracted from the method above rather than copied, for
-// spec §13's sake: the headless `create` command derives its branch from
+// v2 spec §13's sake: the headless `create` command derives its branch from
 // the same resolved defaults, and "the command and the form produce the
 // same session from the same inputs" is a promise a second implementation
 // of this rule would quietly break -- branch_prefix and linear_branch_name
@@ -1937,7 +1937,7 @@ func (m Model) accountAuthBlocked() (pin string, blocked bool) {
 }
 
 // PlanInput is the plan.Input this form would submit as it currently
-// stands -- buildPlanInput's own answer, exported because spec §13's
+// stands -- buildPlanInput's own answer, exported because v2 spec §13's
 // headless `create` has to produce the SAME one from the same inputs and
 // that equivalence is worth an assertion rather than a comment. Nothing in
 // production calls it; internal/create's equivalence test does, comparing
@@ -2111,7 +2111,7 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	var cmds []tea.Cmd
 
 	// Touched-versus-preselected for the three fields per-project memory
-	// re-applies to (spec §10). This runs FIRST, before anything below can
+	// re-applies to (v2 spec §10). This runs FIRST, before anything below can
 	// move a value itself: every one of these three getters is compared
 	// against what the app last put there (snapshotAppliedDefaults), so a
 	// value that moved without the app moving it moved because the user
@@ -2199,7 +2199,7 @@ func (m *Model) reactToChanges() []tea.Cmd {
 
 // noteUserEdits marks the worktree toggle, placement and agent kind as
 // touched when their current value differs from what the app itself last
-// put there -- spec §10's touched-versus-preselected rule, for the three
+// put there -- v2 spec §10's touched-versus-preselected rule, for the three
 // fields per-project memory re-applies to. None of them carries a touched
 // flag of its own, and the form deliberately exposes no "section X
 // changed" signal, so this is the same one-level-up diff reactToChanges
@@ -2314,7 +2314,7 @@ func (m *Model) snapshotAppliedDefaults() {
 	m.appliedBaseRef = m.worktree.RequestedBase()
 }
 
-// applyProjectDefaults re-resolves spec §10's layered defaults for the
+// applyProjectDefaults re-resolves v2 spec §10's layered defaults for the
 // project the form now points at (key and repo, both from the debounced
 // dir check) and applies each resolved value to the field that shows it --
 // unless the user has already touched that field, in which case their
@@ -2466,7 +2466,7 @@ func (m Model) repoConfigNotes() []string { return m.repoConfig.Notes }
 // the field that SHOWS a value the file supplied -- never on the row, which
 // stays quiet -- and only while the app's own application of that value
 // still stands. A field the user has since moved is theirs; the touched
-// flags spec §10 already keeps are exactly that question, so this consults
+// flags v2 spec §10 already keeps are exactly that question, so this consults
 // them rather than inventing a second answer.
 //
 // Two fields can carry it, and that is the complete set. The file's five
@@ -2908,7 +2908,7 @@ func (m Model) View() tea.View {
 // already sets Agents.Favorites to ["claude"] when the user's config omits
 // it entirely, so this is never called with an empty list in practice.
 //
-// Exported for the headless `create` command (spec §13), which needs the
+// Exported for the headless `create` command (v2 spec §13), which needs the
 // IDENTICAL list rather than a similar one: it is what
 // defaults.Sources.KnownAgentKinds validates each tier's remembered kind
 // against, so a command resolving against a different list would silently
@@ -2997,7 +2997,7 @@ func buildDirCandidates(ctx herdrc.Context, workspaces []herdrc.WorkspaceInfo, r
 // (spec §10), using tmpl (config.Config.Linear.PromptTemplate) when
 // non-empty, or defaultPromptTemplate otherwise.
 //
-// Exported for spec §13's headless `create`: `create --issue` seeds its
+// Exported for v2 spec §13's headless `create`: `create --issue` seeds its
 // prompt from the same template through the same substitutions, and a
 // second copy of them would be a second answer to "what does a
 // Linear-seeded session start with".

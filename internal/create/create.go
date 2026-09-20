@@ -2,7 +2,7 @@
 // non-interactive path a script -- or an agent already running inside a
 // herdr session -- uses to create the next session without the popup.
 //
-// The contract that shapes every decision here is spec §13's own sentence:
+// The contract that shapes every decision here is v2 spec §13's own sentence:
 // "unset flags resolve through §10's resolver, so the command and the form
 // produce the same session from the same inputs". This package therefore
 // owns no precedence of its own. It loads the same tiers internal/app
@@ -46,7 +46,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
-// Exit codes, spec §13's table as #192 amended it.
+// Exit codes, v2 spec §13's table as #192 amended it.
 //
 // ExitUsage covers every pre-flight refusal, not only a malformed command
 // line: a config.toml that will not parse, a project directory that does
@@ -97,7 +97,7 @@ const (
 // ContextJSON is normally EMPTY for this command: run from a plain shell
 // inside a herdr pane there is no plugin invocation, so the three
 // HERDR_*_ID variables herdr exports into every pane are the only context
-// there is (spec §13). It is still read, and still wins where it carries a
+// there is (v2 spec §13). It is still read, and still wins where it carries a
 // value, so that `herdr-draft create` invoked as a plugin -- with a real
 // $HERDR_PLUGIN_CONTEXT_JSON -- uses the richer context rather than
 // ignoring it.
@@ -135,7 +135,7 @@ const pluginID = herdrc.PluginID
 
 // GitSource is the git/filesystem access this command needs: whether the
 // project directory exists, whether it is a repository, and which
-// repository root it belongs to (the key spec §10's per-project memory
+// repository root it belongs to (the key v2 spec §10's per-project memory
 // hangs on). It is a deliberate SUBSET of internal/app's own gitSource, so
 // app.NewGitSource satisfies it directly and production has one
 // implementation rather than two.
@@ -331,7 +331,7 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 		return refuse(deps.stderr(), err)
 	}
 
-	// The reachability probe (spec §13's exit 3) comes after every check
+	// The reachability probe (v2 spec §13's exit 3) comes after every check
 	// that needs no herdr -- a typo in a flag should not need a running
 	// herdr to be reported -- and `workspace list` is the same call
 	// app.Bootstrap uses for the same purpose.
@@ -642,7 +642,7 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 	return ExitFailed
 }
 
-// applyOnFailure runs spec §13's `--on-failure` decision over the topology
+// applyOnFailure runs v2 spec §13's `--on-failure` decision over the topology
 // the failed run did create. `keep` does nothing, deliberately and
 // visibly: it is the default because a half-built session a human can look
 // at is worth more than a tidy machine.
@@ -688,7 +688,7 @@ func applyOnFailure(ctx context.Context, deps Deps, rep *report) {
 }
 
 // remember writes the choices this create was made with back to the plugin
-// state directory: recents.json, last-used.json and (spec §10) this
+// state directory: recents.json, last-used.json and (v2 spec §10) this
 // project's projects.json entry -- the same three app.persistStateCmd
 // writes, with the same values, because the tiers they feed are shared.
 //

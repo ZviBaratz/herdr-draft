@@ -1,4 +1,4 @@
-// report.go writes what happened: spec §13's "progress to stderr, one
+// report.go writes what happened: v2 spec §13's "progress to stderr, one
 // line per step; result to stdout, or a single object with --json".
 package create
 
@@ -350,7 +350,7 @@ type jsonReport struct {
 	KeptBranch       string `json:"kept_branch,omitempty"`
 	KeptBranchReason string `json:"kept_branch_reason,omitempty"`
 
-	// Provenance is spec §10's tier attribution, one entry per resolved
+	// Provenance is v2 spec §10's tier attribution, one entry per resolved
 	// value: which file supplied it, or "flag" when the caller did,
 	// "worktree" for the placement a worktree decides, "checkout" for the
 	// commit a linked checkout supplies as an unset base, and "extra_args"

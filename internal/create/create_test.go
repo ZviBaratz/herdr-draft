@@ -495,7 +495,7 @@ func (h *harness) runCtx(ctx context.Context, args ...string) int {
 
 // --- exit codes -----------------------------------------------------------
 
-// TestExitZero_CreatesASession is spec §13's exit 0: a session created
+// TestExitZero_CreatesASession is v2 spec §13's exit 0: a session created
 // from nothing but a title, with the project directory defaulting to the
 // working directory.
 func TestExitZero_CreatesASession(t *testing.T) {
@@ -575,7 +575,7 @@ func TestExitZero_ATabThatKeptHerdrsNameIsStillACreate(t *testing.T) {
 	}
 }
 
-// TestExitOne_PlanFailsAfterTheTopologyExists is spec §13's exit 1: the
+// TestExitOne_PlanFailsAfterTheTopologyExists is v2 spec §13's exit 1: the
 // agent could not start, so the workspace that was already created is
 // reported and -- with the default --on-failure keep -- left alone.
 func TestExitOne_PlanFailsAfterTheTopologyExists(t *testing.T) {
@@ -729,7 +729,7 @@ func TestExitOne_OnFailureCleanRefusesAReusedSpace(t *testing.T) {
 	}
 }
 
-// TestExitTwo_UnknownFlag is spec §13's exit 2 for a malformed command
+// TestExitTwo_UnknownFlag is v2 spec §13's exit 2 for a malformed command
 // line, and pins that the usage comes with it.
 func TestExitTwo_UnknownFlag(t *testing.T) {
 	h := newHarness(t)
@@ -809,7 +809,7 @@ func TestExitTwo_WorktreeOutsideARepository(t *testing.T) {
 	}
 }
 
-// TestExitThree_HerdrUnreachable is spec §13's exit 3, and pins that the
+// TestExitThree_HerdrUnreachable is v2 spec §13's exit 3, and pins that the
 // probe is what produces it.
 func TestExitThree_HerdrUnreachable(t *testing.T) {
 	h := newHarness(t)
@@ -826,7 +826,7 @@ func TestExitThree_HerdrUnreachable(t *testing.T) {
 	}
 }
 
-// --- lazy context (spec §13) ----------------------------------------------
+// --- lazy context (v2 spec §13) ------------------------------------------
 
 // TestLazyContext_OnlyTheHerePlacementsNeedIt is the requirement in one
 // table: only tab-here and split-here need the herdr environment -- a new
@@ -945,7 +945,7 @@ func TestRequireContext_WorktreeNewSpaceStillNeedsNoContext(t *testing.T) {
 
 // --- prompt ---------------------------------------------------------------
 
-// TestPromptFromStdin is spec §13's `--prompt -`.
+// TestPromptFromStdin is v2 spec §13's `--prompt -`.
 func TestPromptFromStdin(t *testing.T) {
 	h := newHarness(t)
 	h.deps.Stdin = strings.NewReader("look at the login redirect loop\n")
@@ -1439,7 +1439,7 @@ func TestAFirstSendTheCheckRejectsIsUnconfirmed(t *testing.T) {
 
 // --- --json ---------------------------------------------------------------
 
-// TestJSONShape pins the success object, including spec §10's provenance.
+// TestJSONShape pins the success object, including v2 spec §10's provenance.
 func TestJSONShape(t *testing.T) {
 	h := newHarness(t)
 	writeConfig(t, h.env.ConfigDir, `
@@ -1662,7 +1662,7 @@ func (r *refusingRunner) WorktreeCreate(ctx context.Context, req herdrc.Worktree
 
 // TestSuccessRecordsPerProjectMemory: a headless create feeds the same
 // tiers the form reads, so the next form-open defaults to what actually
-// ran (spec §10).
+// ran (v2 spec §10).
 func TestSuccessRecordsPerProjectMemory(t *testing.T) {
 	h := newHarness(t)
 

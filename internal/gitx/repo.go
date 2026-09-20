@@ -253,7 +253,7 @@ func shellQuote(s string) string {
 // RepoRoot returns the root of the repository containing dir -- the ORIGIN
 // repository's root, not a linked worktree's own checkout, so every
 // worktree of one repository shares a single per-project memory entry
-// (spec §10).
+// (v2 spec §10).
 //
 // The distinction is the whole point of this function. `rev-parse
 // --show-toplevel` names the CHECKOUT: inside ~/repo/.worktrees/feature it

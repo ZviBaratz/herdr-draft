@@ -497,7 +497,7 @@ func TestDirResult_AppliesWorktreeDefaultOnceAndReChecksTitle(t *testing.T) {
 
 	// A SECOND git-repo result for a different path resolves the same
 	// default (no per-project memory here), so the toggle does not move and
-	// there is nothing to re-check. Before spec §10's per-project memory
+	// there is nothing to re-check. Before v2 spec §10's per-project memory
 	// this was enforced by a one-shot worktreeDefaultApplied flag; now it
 	// falls out of the value being unchanged, which is the behavior that
 	// actually mattered -- see

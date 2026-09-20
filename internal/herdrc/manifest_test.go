@@ -46,7 +46,7 @@ func readManifest(t *testing.T) manifest {
 // state dir and the invocation context, prints a line about a foreign
 // plugin naming itself on both sides, and resolves from built-in defaults.
 // The session still gets created, just not the one the form would have
-// built -- which is precisely the equivalence spec §13 exists to hold.
+// built -- which is precisely the equivalence v2 spec §13 exists to hold.
 func TestPluginIDMatchesManifest(t *testing.T) {
 	m := readManifest(t)
 	if m.ID == "" {

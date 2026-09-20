@@ -385,7 +385,7 @@ func reraise(s os.Signal) {
 	}
 }
 
-// runCreate is spec §13's headless verb. The plugin context is read here
+// runCreate is v2 spec §13's headless verb. The plugin context is read here
 // exactly as runPopup reads it -- it is normally absent for this path,
 // which is why the three per-pane variables are read alongside it.
 func runCreate(args []string) int {

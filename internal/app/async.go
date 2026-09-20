@@ -244,7 +244,7 @@ type dirResultMsg struct {
 	req       request
 	dirExists bool
 	isGitRepo bool
-	// memoryKey is the projects.json key for this directory (spec §10):
+	// memoryKey is the projects.json key for this directory (v2 spec §10):
 	// the repository root when it is a repo, so a linked worktree and its
 	// origin share one memory, and the canonical absolute path otherwise.
 	// "" when the directory does not exist -- there is nothing to remember
@@ -318,9 +318,9 @@ func (m Model) runDirCheck(req request) tea.Cmd {
 		res, ok := awaitCheck(lt, deadline, func(ctx context.Context) dirResultMsg {
 			exists := git.DirExists(path)
 			isRepo := exists && git.IsGitRepo(path)
-			// Resolved ONCE and used twice: it is a `git rev-parse`, and both
-			// spec §10's memory key and v2 spec §11's committed config are
-			// questions about the same repository.
+			// Resolved ONCE and used twice: it is a `git rev-parse`, and
+			// both v2 spec §10's memory key and v2 spec §11's committed
+			// config are questions about the same repository.
 			root := projectRepoRoot(ctx, git, path, exists, isRepo)
 			return dirResultMsg{
 				req:        req,
@@ -377,7 +377,7 @@ func projectRepoRoot(ctx context.Context, git gitSource, path string, exists, is
 	return root
 }
 
-// projectMemoryKey resolves spec §10's per-project memory key for path,
+// projectMemoryKey resolves v2 spec §10's per-project memory key for path,
 // which must already be tilde-expanded: the ORIGIN repository root when
 // one resolved (projectRepoRoot -- so every worktree of one repository
 // shares a single entry rather than accumulating one each), the canonical
@@ -409,7 +409,7 @@ func (m Model) handleDirDebounce(msg dirDebounceMsg) (Model, tea.Cmd) {
 
 // handleDirResult applies a directory-validity result: DirField's own
 // inline (invalid)/(direct) marker, WorktreeField's git-target gate, and
-// spec §10's layered defaults re-resolved for the project this directory
+// v2 spec §10's layered defaults re-resolved for the project this directory
 // belongs to (applyProjectDefaults, which also owns the worktree on/off
 // toggle -- see WorktreeField.SetOn's own doc comment on why that can only
 // be applied once the target is known to be a usable git repo).
@@ -429,7 +429,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	if msg.timedOut {
 		// Unknown, not invalid (#202). Nothing else here runs: every
 		// answer this handler applies -- the worktree row's git target,
-		// the lane, spec §10's per-project defaults -- would be applying
+		// the lane, v2 spec §10's per-project defaults -- would be applying
 		// a zero value as though it were a verdict, and the point of the
 		// refusal below is that nothing is decided on a guess. The
 		// PREVIOUS project's answers stay where they are for the same
@@ -2033,12 +2033,12 @@ type statePersistedMsg struct{}
 // plugin state dir (spec §12): the project directory into recents.json's
 // most-recently-used list, the agent kind/placement/worktree toggle into
 // last-used.json, and the same three plus the base ref into projects.json
-// under THIS project's key (spec §10), so the next form-open defaults to
+// under THIS project's key (v2 spec §10), so the next form-open defaults to
 // what the user actually launched with last time -- globally, and more
 // specifically here. Called only on a fully successful submit -- a failed
 // one says nothing about what the user wants next.
 //
-// last-used.json keeps being written exactly as before: it is now spec
+// last-used.json keeps being written exactly as before: it is now v2 spec
 // §10's global fallback tier rather than the only memory, which is what
 // makes per-project memory a pure addition with no migration step and no
 // data loss for anyone upgrading.

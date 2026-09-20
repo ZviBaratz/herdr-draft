@@ -28,7 +28,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
 )
 
-// TestFormAndCommandProduceTheSamePlan is spec §13's whole promise, stated
+// TestFormAndCommandProduceTheSamePlan is v2 spec §13's whole promise, stated
 // as an assertion instead of a comment: "unset flags resolve through §10's
 // resolver, so the command and the form produce the same session from the
 // same inputs".
@@ -866,7 +866,7 @@ func formModel(t *testing.T, c formCase) app.Model {
 	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	// Then the form's own startup work -- the debounced directory check
 	// that resolves the project's repository root, reads its
-	// .herdr-draft.toml and applies spec §10's per-project memory, and the
+	// .herdr-draft.toml and applies v2 spec §10's per-project memory, and the
 	// base-branch listing the remembered base needs in order to land.
 	m = pump(t, m, m.Init())
 	// A chosen issue arrives as the message IssueField sends on a pick,
@@ -956,7 +956,7 @@ func pump(t *testing.T, m app.Model, cmd tea.Cmd) app.Model {
 	return m
 }
 
-// TestFlagsBeatEveryTier is the other half of spec §13's precedence: an
+// TestFlagsBeatEveryTier is the other half of v2 spec §13's precedence: an
 // explicitly given flag wins over every configured and remembered value,
 // and says so in --json's provenance. It runs on the command side alone --
 // see formCase's own comment.
@@ -1140,7 +1140,7 @@ func showInput(in plan.Input) string {
 	return string(b)
 }
 
-// TestFormAndCommandRefuseTheSameBranches is #199's half of spec §13's
+// TestFormAndCommandRefuseTheSameBranches is #199's half of v2 spec §13's
 // promise. A refusal is not a plan.Input field, so the table above cannot
 // see the two paths disagree about one; this drives both to the point of
 // creating a session and compares which branches each refuses.
@@ -1536,7 +1536,7 @@ func pinAccount(t *testing.T, m app.Model, row int, want string) app.Model {
 	return m
 }
 
-// TestFormAndCommandRefuseTheSameAuthStatuses is the auth half of spec
+// TestFormAndCommandRefuseTheSameAuthStatuses is the auth half of v2 spec
 // §13's promise, and it did not exist until #243/#245 -- which is how the
 // two paths came to be compared on branches, labels and every plan.Input
 // field while nothing at all held them to the same answer about a clauth

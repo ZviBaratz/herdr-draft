@@ -160,7 +160,7 @@ func TestRepoConfig_ALowerTierIsNotAttributedToTheRepo(t *testing.T) {
 
 // TestRepoConfig_TouchingAValueRetiresItsProvenance: once the user moves a
 // chip, what the panel shows is theirs, and a line still crediting the
-// repository would be false. The touched flags spec §10 already keeps are
+// repository would be false. The touched flags v2 spec §10 already keeps are
 // what this rides -- the same ones that stop per-project memory re-applying.
 func TestRepoConfig_TouchingAValueRetiresItsProvenance(t *testing.T) {
 	m, _ := repoConfigModel(t, "/repo-a", testSetup{}, map[string]config.RepoConfig{
@@ -231,7 +231,7 @@ func TestRepoConfig_ReachesTheFormThroughTheDirCheck(t *testing.T) {
 	}
 }
 
-// TestRepoConfig_SitsBetweenProjectMemoryAndLastUsed is spec §10's
+// TestRepoConfig_SitsBetweenProjectMemoryAndLastUsed is v2 spec §10's
 // ordering, exercised through the real form rather than through Resolve:
 // the team's committed default outranks what you last did in some OTHER
 // repository, and loses to what you last did in THIS one.
