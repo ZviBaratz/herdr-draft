@@ -2,14 +2,17 @@ package create
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
+	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/skill"
 )
 
@@ -407,16 +410,30 @@ func TestSkillRecommendsOnlyAcceptedValues(t *testing.T) {
 // key, and of nothing else the document writes in backticks.
 var snakeToken = regexp.MustCompile("`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`")
 
-// jsonKeys is every key --json can print, from jsonReport's own tags.
+// jsonKeys is every key --json can print, from jsonReport's own tags and
+// those of every object nested in it -- account_usage's windows carry
+// utilization_pct and resets_at (#215), and a key inside an object is one
+// an agent reads as surely as a top-level one.
 func jsonKeys() map[string]bool {
 	keys := map[string]bool{}
-	rt := reflect.TypeOf(jsonReport{})
-	for i := 0; i < rt.NumField(); i++ {
-		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
-		if name != "" && name != "-" {
-			keys[name] = true
+	var walk func(rt reflect.Type)
+	walk = func(rt reflect.Type) {
+		for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice {
+			rt = rt.Elem()
+		}
+		// time.Time is a struct, but it marshals as a string.
+		if rt.Kind() != reflect.Struct || rt == reflect.TypeOf(time.Time{}) {
+			return
+		}
+		for i := 0; i < rt.NumField(); i++ {
+			name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+			if name != "" && name != "-" {
+				keys[name] = true
+				walk(rt.Field(i).Type)
+			}
 		}
 	}
+	walk(reflect.TypeOf(jsonReport{}))
 	return keys
 }
 
@@ -470,6 +487,60 @@ func TestSkillShowsTheWholeArgumentList(t *testing.T) {
 		{"the check after the create", "## 8. Read the result", "**The ids name the agent, not the space.**", []string{"`agent_args`"}},
 	} {
 		text := strings.Join(linesBetween(t, lines, where.from, where.to), "\n")
+		for _, w := range where.want {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s never says %q", where.name, w)
+			}
+		}
+	}
+}
+
+// thresholdPattern is the skill stating a usage threshold: "at or above
+// 95%", or a bare "above 95%" that has lost its "at or".
+var thresholdPattern = regexp.MustCompile(`(at or )?above (\d+(?:\.\d+)?%)`)
+
+// TestSkillStatesTheUsageThreshold holds the skill's "nearly out" to the
+// popup's (#215): clauth.WarnThreshold, the one constant the account row
+// warns at, and warns AT -- the row's comparison is >=. So every threshold
+// the skill states is "at or above" that number: a skill that tells a
+// spawning agent to worry at 90% while the popup says nothing until 95%,
+// or that lets a window sitting at exactly 95% pass, fails here instead
+// of in front of a user.
+func TestSkillStatesTheUsageThreshold(t *testing.T) {
+	want := fmt.Sprintf("%g%%", clauth.WarnThreshold)
+	found := thresholdPattern.FindAllStringSubmatch(renderedSkill(), -1)
+	if len(found) == 0 {
+		t.Fatalf("the skill never states the usage threshold (at or above %s)", want)
+	}
+	for _, m := range found {
+		if m[1] == "" || m[2] != want {
+			t.Errorf("the skill says %q; the popup warns at or above %s", m[0], want)
+		}
+	}
+}
+
+// TestSkillWeighsTheAccountUsage holds the skill to #215's rule: the first
+// dry run's account_usage is read, it feeds section 5's cost judgement, and
+// a window at the threshold reaches the question the user answers.
+func TestSkillWeighsTheAccountUsage(t *testing.T) {
+	lines := strings.Split(renderedSkill(), "\n")
+	for _, where := range []struct {
+		name, from, to string
+		want           []string
+	}{
+		{"the first dry run's reading list", "**1. Dry-run it without the option flags.**", "**2. Choose the three options**", []string{"`account_usage`"}},
+		{"section 5's cost judgement", "**Model and effort follow the shape of the task:**", "**Keep the user's own model id.**", []string{"`account_usage`", "limits the model"}},
+		// Its own paragraph, not the whole of "Then ask": that section also
+		// says "once, in the question" about the exports.
+		// "a row up": section 5's table gets dearer going down, and this
+		// paragraph once sent the agent down it for the cheaper option.
+		{"the rule for a window at the threshold", "**If a window in `account_usage`", "A label is not reviewable.", []string{
+			"say so in the question", "when it resets", "cheaper configuration", "a row up",
+			"what you would have picked otherwise", "limits that model only", "every model",
+		}},
+	} {
+		// One line, so a phrase the prose wraps still matches.
+		text := strings.Join(strings.Fields(strings.Join(linesBetween(t, lines, where.from, where.to), " ")), " ")
 		for _, w := range where.want {
 			if !strings.Contains(text, w) {
 				t.Errorf("%s never says %q", where.name, w)

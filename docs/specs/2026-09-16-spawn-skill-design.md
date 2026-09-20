@@ -343,6 +343,15 @@ observed failure modes.
    spawner's ceiling binds the flags it passes. When the user named every
    choice and there is no question to ask, the agent still dry-runs the
    command and asks before creating if `agent_args` holds anything else.)
+   (Amended, #215: the first dry run's `account_usage` feeds item 5's
+   cost judgement. A window at or above
+   `clauth.WarnThreshold`, 95%, that limits the model in play (a window
+   labelled with a model limits that model only) counts as tight, so the
+   cheaper configuration comes first. The question says which window, how
+   full and when it resets, and offers what would otherwise have been
+   picked beside it. With nothing pinned, it also says the session may
+   bill another account, since clauth's auto-switch acts there. It never
+   picks another account itself.)
 
 8. **Read the result; the exit code is not the whole story.** Exit codes
    0/1/2/3; that under `--json`, exits 2 and 3 print nothing on stdout, so

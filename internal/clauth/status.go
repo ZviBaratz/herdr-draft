@@ -17,6 +17,18 @@ import (
 	"time"
 )
 
+// WarnThreshold is the utilization percentage at or past which herdr-draft
+// counts a usage window as rate-limited: the popup's account row warns
+// there, and the spawn skill tells a spawning agent to raise it in its
+// confirmation (#215). One constant, because the popup and the skill giving
+// a person two different numbers for "nearly out" would be worse than
+// either.
+//
+// 95, not v2's 100 (v3 spec §10.2): it is clauth's own default auto-switch
+// trip point, and at 100 a profile sitting at 98% -- a real, observed live
+// value -- warned nowhere, in the popup's row or its panel.
+const WarnThreshold = 95.0
+
 // Window is one rate-limit window reported for a profile (e.g. "5h", "7d"),
 // mirroring clauth's per-profile `windows[]` entries. ResetsAt is a pointer
 // because clauth reports it as JSON null for a window that has no reset

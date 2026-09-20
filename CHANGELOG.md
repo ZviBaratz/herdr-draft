@@ -174,7 +174,10 @@ without the popup. It drives herdr exclusively through the public CLI
   reports and stops. It creates nothing and remembers nothing, and an
   `auto` account goes to the picker's own `--dry-run`, so no pick is spent.
   Under `--json` it prints the create's object with `dry_run: true` and no
-  ids (#209).
+  ids (#209). It also carries `account_usage`, which a real create's object
+  does not: the usage windows of the account the session would bill, from
+  clauth's status. The spawn skill weighs the model and effort against
+  it, and puts a window at or above 95% in its confirmation (#215).
 - **`--placement tab-in` and `--workspace <id>`** place the agent's tab in a
   workspace other than the invoking one — the one already holding the
   project (the default when there is one), or any open workspace by id —

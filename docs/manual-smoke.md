@@ -1449,6 +1449,11 @@ under test, so answer it with "Other: don't create" once you have read it.
   agent asks for permission, the question itself says so. The owner's
   `extra_args` passes only `--model` and `--effort`, so this needs a
   scratch config to see.
+- With a window of the session's account at or above 95% that limits the
+  model it picks (#215), the question names the window, how full it is and
+  when it resets. It offers the cheaper configuration beside what it would
+  have picked otherwise. With no such window it says nothing about usage.
+  With `account_usage` absent it says usage is unknown.
 - The wording fix gets a small configuration: `sonnet` at `low` or
   `medium`.
 - The second gets `--permission-mode plan`, and `--no-reap` when
@@ -1458,7 +1463,10 @@ under test, so answer it with "Other: don't create" once you have read it.
 **Run on 2026-09-19** (Recorded runs), twice. The first pass covered step
 2's positive half and steps 3 and 4. The second, on the numbered section 7
 (#226), repeated step 4's miss case and ran step 2's negative half. Step 1
-was the owner's own install.
+was the owner's own install. Step 4's two newest items came later than
+both passes and have not been run live: the extra argument in
+`[agents.extra_args]` (#219) and the usage window (#215). Tabletop runs of
+the skill covered them.
 
 **`herdr agent prompt` sends its text as a bracketed paste.** One session
 read that paste as text the user had pasted rather than asked for, and
@@ -1703,6 +1711,47 @@ arg or merely followed it.
   alongside the release.
 
 ## Recorded runs
+
+### `account_usage` on a dry run (#215) — 2026-09-19
+
+herdr 0.9.0. `zvi/215-account-usage` at `972a2a2`, not merged, built with
+`go build`. Route A0 with its own `XDG_CONFIG_HOME` and `XDG_STATE_HOME`
+under `/var/tmp`, a throwaway repository, a scratch plugin state dir, and
+this plugin config:
+
+```toml
+[agents]
+favorites = ["claude"]
+[clauth]
+launcher = ["<scratch>/fake-claude", "{account}", "--"]
+picker = "<scratch>/picker"
+[timeouts]
+detection_ms = 3000
+```
+
+Each `create` ran headlessly with `--no-worktree --placement new-space`,
+the three plugin variables and no pane ids. `HOME` pointed at a scratch
+directory for the create process only, so its clauth status came from a
+fixture `.clauth/status.json` written fresh before each case. The
+`HERDR_BIN_PATH` wrapper restored the real `HOME`. `PATH` held no
+`clauth`, except in the one case that put a failing stub first. The
+fixture had three profiles: `beta` active, `alpha-1` with a `7d` window at
+96% and a `7d fable` window with no reset time, and `alpha-2`. The picker
+stub answered `alpha-2`. No claude started and no quota was spent.
+
+| Case | Result |
+|---|---|
+| `--dry-run --json`, nothing pinned | exit 0. No `account`. `account_usage`: `profile: beta`, its `5h` and `7d` windows with their reset times. |
+| the same with `--account alpha-1` | exit 0. `account_usage`: `alpha-1`, all three windows. `7d fable` has no `resets_at` key rather than a null. |
+| the same with `--account auto` | exit 0, `account: alpha-2`, and `account_usage` for `alpha-2`. The picker's argv was `--dir <repo> --json --strict --dry-run`. |
+| a schema-99 fixture | exit 0, no `account_usage`, nothing on stderr. |
+| no status file, no `clauth` on `PATH` | exit 0, no `account_usage`, nothing on stderr. |
+| no status file, a `clauth` that exits 1 | exit 0, no `account_usage`, and one stderr line: `herdr-draft create: could not read clauth's usage windows: clauth status --json: exit status 1: daemon not reachable`. |
+| a real create with `--account alpha-1` | It typed the launch and stopped at detection, as it must with a stub (exit 1, kept). Its `--json` had `account: alpha-1` and no `account_usage`. |
+
+None of the dry runs made a workspace or wrote to the state dir.
+Teardown: I stopped and deleted the disposable session and removed the
+tree. No process from the pass was left.
 
 ### `/spawn` again: the numbered section 7, and the negative trigger (Cell 13, #226) — 2026-09-19
 

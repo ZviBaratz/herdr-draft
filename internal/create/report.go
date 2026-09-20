@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
+	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
@@ -39,6 +41,9 @@ type report struct {
 	// dryRun marks a --dry-run's report (#209): input and provenance are
 	// set, and nothing ran, so result is the zero value and means nothing.
 	dryRun bool
+	// usage is a dry run's account_usage (#215), nil for a real create and
+	// whenever there is nothing to report.
+	usage *accountUsage
 }
 
 // write emits the result: one JSON object on stdout under --json, a human
@@ -229,10 +234,16 @@ type jsonReport struct {
 	ProjectDir string `json:"project_dir"`
 	AgentKind  string `json:"agent_kind"`
 	Account    string `json:"account,omitempty"`
-	Placement  string `json:"placement"`
-	Worktree   bool   `json:"worktree"`
-	Branch     string `json:"branch,omitempty"`
-	Base       string `json:"base,omitempty"`
+	// AccountUsage is how full the account the session would bill is: a
+	// dry run's only (#215), because it is there to be weighed before a
+	// person approves the session, and a real create neither needs it nor
+	// reads clauth to get it. Absent whenever it cannot be said -- see
+	// dryRunUsage and usageFor -- so absent means unknown, never room.
+	AccountUsage *accountUsage `json:"account_usage,omitempty"`
+	Placement    string        `json:"placement"`
+	Worktree     bool          `json:"worktree"`
+	Branch       string        `json:"branch,omitempty"`
+	Base         string        `json:"base,omitempty"`
 
 	// WorkspaceID/TabID/PaneID name where the AGENT ended up
 	// (ExecResult.AgentAt) -- the ids a caller asks a create for, since
@@ -348,6 +359,54 @@ type jsonReport struct {
 	Provenance map[string]string `json:"provenance"`
 }
 
+// accountUsage is jsonReport.AccountUsage (#215). Profile names the account
+// because Account cannot: Account is the pin, and absent when nothing is
+// pinned, which is exactly when the windows belong to whichever profile
+// clauth has active. Windows are every window clauth reports for it, in
+// clauth's order -- the popup draws only `5h` and `7d` for want of width,
+// but `7d fable` is the one that matters when a spawner picks fable.
+//
+// It is this report's own type rather than clauth.Window, so the --json
+// contract does not grow a key because the parser did. There is no verdict
+// in it, only numbers: a window that limits one model would mark a session
+// on another model as limited.
+type accountUsage struct {
+	Profile string        `json:"profile"`
+	Windows []usageWindow `json:"windows"`
+}
+
+// usageWindow is one of accountUsage's windows, in clauth's own field names.
+// ResetsAt is absent when clauth reports none scheduled.
+type usageWindow struct {
+	Label          string     `json:"label"`
+	UtilizationPct float64    `json:"utilization_pct"`
+	ResetsAt       *time.Time `json:"resets_at,omitempty"`
+}
+
+// usageFor is the account_usage of a session pinned to pin: that profile's
+// windows, or with nothing pinned those of clauth's active profile, which is
+// what the form's unpinned account row reads. nil for a degraded status,
+// whose fields past a profile's name are not to be trusted (the row shows
+// names only), for a profile clauth does not report, and for one with no
+// windows.
+func usageFor(status clauth.Status, pin string) *accountUsage {
+	if status.Degraded {
+		return nil
+	}
+	name := cmp.Or(pin, status.ActiveProfile)
+	for _, p := range status.Profiles {
+		if name == "" || p.Name != name || len(p.Windows) == 0 {
+			continue
+		}
+		u := &accountUsage{Profile: p.Name}
+		for _, w := range p.Windows {
+			u.Windows = append(u.Windows, usageWindow{Label: w.Label, UtilizationPct: w.UtilizationPct, ResetsAt: w.ResetsAt})
+		}
+		return u
+	}
+	return nil
+}
+
 func (r report) writeJSON(w io.Writer) {
 	out := jsonReport{
 		OK:         r.ok(),
@@ -364,6 +423,7 @@ func (r report) writeJSON(w io.Writer) {
 		AgentOptions:  r.input.AgentOptions,
 		LaunchOptions: launchOptions(r.input),
 		AgentArgs:     plan.AgentArgs(r.input),
+		AccountUsage:  r.usage,
 	}
 	if r.input.UseWorktree {
 		out.Branch = r.input.Branch
