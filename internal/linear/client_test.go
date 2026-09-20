@@ -193,7 +193,7 @@ func writeConfigWithPerm(t *testing.T, perm os.FileMode) string {
 func TestResolveAPIKeyPrefersCmdOverEnvAndLiteral(t *testing.T) {
 	t.Setenv("LINEAR_API_KEY", "from-env")
 	cmd := fakeAPIKeyCmd(t, "from-cmd")
-	key, err := ResolveAPIKey(cmd, "from-literal", t.TempDir())
+	key, err := ResolveAPIKey(context.Background(), cmd, "from-literal", t.TempDir())
 	if err != nil {
 		t.Fatalf("ResolveAPIKey: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestResolveAPIKeyPrefersCmdOverEnvAndLiteral(t *testing.T) {
 
 func TestResolveAPIKeyFallsBackToEnvWhenNoCmd(t *testing.T) {
 	t.Setenv("LINEAR_API_KEY", "from-env")
-	key, err := ResolveAPIKey(nil, "from-literal", t.TempDir())
+	key, err := ResolveAPIKey(context.Background(), nil, "from-literal", t.TempDir())
 	if err != nil {
 		t.Fatalf("ResolveAPIKey: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestResolveAPIKeyFallsBackToEnvWhenNoCmd(t *testing.T) {
 func TestResolveAPIKeyFallsBackToLiteralWhenNoCmdOrEnv(t *testing.T) {
 	t.Setenv("LINEAR_API_KEY", "")
 	dir := writeConfigWithPerm(t, 0o600)
-	key, err := ResolveAPIKey(nil, "from-literal", dir)
+	key, err := ResolveAPIKey(context.Background(), nil, "from-literal", dir)
 	if err != nil {
 		t.Fatalf("ResolveAPIKey: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestResolveAPIKeyFallsBackToLiteralWhenNoCmdOrEnv(t *testing.T) {
 func TestResolveAPIKeyEmptyCmdOutputFallsThroughToEnv(t *testing.T) {
 	t.Setenv("LINEAR_API_KEY", "from-env")
 	cmd := fakeAPIKeyCmd(t, "")
-	key, err := ResolveAPIKey(cmd, "from-literal", t.TempDir())
+	key, err := ResolveAPIKey(context.Background(), cmd, "from-literal", t.TempDir())
 	if err != nil {
 		t.Fatalf("ResolveAPIKey: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestResolveAPIKeyEmptyCmdOutputFallsThroughToEnv(t *testing.T) {
 
 func TestResolveAPIKeyCmdFailureIsAnError(t *testing.T) {
 	cmd := fakeFailingAPIKeyCmd(t, "pass: not in the password store")
-	_, err := ResolveAPIKey(cmd, "from-literal", t.TempDir())
+	_, err := ResolveAPIKey(context.Background(), cmd, "from-literal", t.TempDir())
 	if err == nil {
 		t.Fatal("ResolveAPIKey: got nil error, want error when api_key_cmd fails")
 	}
@@ -248,7 +248,7 @@ func TestResolveAPIKeyCmdFailureIsAnError(t *testing.T) {
 func TestResolveAPIKeyLiteralRejectsWidePerms(t *testing.T) {
 	t.Setenv("LINEAR_API_KEY", "")
 	dir := writeConfigWithPerm(t, 0o644)
-	_, err := ResolveAPIKey(nil, "from-literal", dir)
+	_, err := ResolveAPIKey(context.Background(), nil, "from-literal", dir)
 	if err == nil {
 		t.Fatal("ResolveAPIKey: got nil error, want error for config.toml perms wider than 0600")
 	}
@@ -256,7 +256,7 @@ func TestResolveAPIKeyLiteralRejectsWidePerms(t *testing.T) {
 
 func TestResolveAPIKeyAllAbsentReturnsEmptyNoError(t *testing.T) {
 	t.Setenv("LINEAR_API_KEY", "")
-	key, err := ResolveAPIKey(nil, "", t.TempDir())
+	key, err := ResolveAPIKey(context.Background(), nil, "", t.TempDir())
 	if err != nil {
 		t.Fatalf("ResolveAPIKey: %v", err)
 	}

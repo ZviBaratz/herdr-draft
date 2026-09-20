@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -180,11 +181,53 @@ func (opts LoadOpts) now() time.Time {
 	return time.Now()
 }
 
+// cliTimeout bounds `clauth status --json` (#141). Before it the call had a
+// context but no deadline: both callers handed it context.Background(), so
+// `exec.CommandContext` had nothing to act on.
+//
+// It protects the same thing picker.pickerTimeout does. app.Bootstrap reads
+// clauth synchronously BEFORE the popup is drawn, so a clauth that never
+// answers meant the form never appeared and never said why.
+//
+// THIRTY seconds, the number this repository already uses for "slow but not
+// hung" -- app.fetchPruneTimeout, picker.pickerTimeout,
+// create.preflightCheckDeadline. Nothing here waits on a person: this is a
+// local daemon being asked for its status, which may refresh usage windows
+// over the network first, so the budget sits above a cold cache and well
+// below a hang. Deliberately shorter than linear.keyCmdTimeout beside it,
+// which is longer precisely because a credential helper CAN be waiting on
+// someone to approve a prompt.
+//
+// A constant rather than a [timeouts] key: a safety bound is not a tuning
+// knob, and a key would inherit #143 -- [timeouts] values are not validated
+// at all -- so one typo would make the account row vanish for a reason
+// nobody would connect to the config.
+//
+// A var, not a const, only so the tests can shrink it -- picker.pickerTimeout's
+// shape.
+var cliTimeout = 30 * time.Second
+
+// cliWaitDelay is how long cmd.Wait may keep waiting on clauth's PIPES after
+// the deadline has already killed clauth itself, and without it the deadline
+// above bounds nothing that matters: the kill reaches the process
+// herdr-draft started, while a grandchild holding the inherited write end of
+// the stdout pipe keeps Wait's copying goroutine blocked. gitx.waitDelay,
+// picker.pickerWaitDelay and linear.keyCmdWaitDelay are the same two seconds
+// for the same reason.
+var cliWaitDelay = 2 * time.Second
+
 // Load returns clauth's current status, preferring StatusFile when it is
 // fresh -- generated_at + 2×refresh_interval_ms is after Now() -- and
 // falling back to invoking `CLIBin status --json` otherwise. It returns an
 // error only when neither source is usable: StatusFile is absent, unreadable,
 // unparseable, or stale, and CLIBin is empty or its invocation fails.
+//
+// ctx bounds the CLI fallback only, and the budget (cliTimeout) is applied
+// on top of whatever ctx already carries, so a caller's cancellation still
+// reaches clauth. The status file is a plain os.ReadFile and is NOT bounded
+// -- it is in clauth's own directory rather than the project's, which is the
+// grouping create/checks.go makes of the unbounded reads and the reason a
+// stalled project never reaches it (#280).
 func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 	now := opts.now()
 
@@ -198,20 +241,75 @@ func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 		return Status{}, fmt.Errorf("clauth status: no fresh status file at %q and no CLI binary configured", opts.StatusFile)
 	}
 
-	cmd := exec.CommandContext(ctx, opts.CLIBin, "status", "--json")
+	return loadFromCLI(ctx, opts.CLIBin)
+}
+
+// loadFromCLI runs `clauth status --json` under cliTimeout and parses what
+// it printed.
+//
+// WHAT THE BOUND IS, stated because the obvious reading is wrong. This is a
+// KILL bound, not an answer bound. cmd.Wait calls Process.Wait first and
+// unconditionally, and only then consults the WaitDelay timer (go1.26.4
+// src/os/exec/exec.go, Cmd.Wait), so a clauth that cannot be reaped -- one
+// in uninterruptible sleep on a stalled home directory -- never returns from
+// cmd.Run and this function waits with it. That class is #280's, not #141's,
+// and bounding the ANSWER instead would mean app.AwaitCheck, which lives in
+// internal/app and which this package must not import. picker.CLI.run made
+// the same trade for the same shape.
+//
+// THREE ARMS, and the middle one is a working-config regression if it is
+// left out.
+//
+// The DEADLINE is read first, which is load-bearing rather than tidy:
+// exec.CommandContext kills the process and cmd.Run then reports an ordinary
+// *exec.ExitError, so exit-code-first would put `clauth status --json:
+// signal: killed` on the account row -- a deadlock presented as a verdict
+// about the user's credentials, which is picker.CLI.run's own documented
+// hazard.
+//
+// It is read as DeadlineExceeded specifically and never as `ctx.Err() != nil`:
+// a caller that was CANCELLED reports context.Canceled, and calling that a
+// timeout would be false (#272).
+//
+// exec.ErrWaitDelay means clauth SUCCEEDED -- its doc is explicit that it is
+// returned only when "no Cancel call has occurred, and the command has
+// otherwise exited with a successful status" -- so the buffered stdout is
+// parsed rather than reported as a failure. The two budgets are not two
+// timers on one deadline: a run the deadline ended has had its Cancel
+// called, so it cannot come back as ErrWaitDelay, and the arms are mutually
+// exclusive by exec's own contract.
+func loadFromCLI(ctx context.Context, bin string) (Status, error) {
+	ctx, cancel := context.WithTimeout(ctx, cliTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "status", "--json")
+	cmd.WaitDelay = cliWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return Status{}, fmt.Errorf("clauth status --json: no answer within %s", cliTimeout)
+	case ctx.Err() != nil:
+		return Status{}, fmt.Errorf("clauth status --json: %w", ctx.Err())
+	case errors.Is(runErr, exec.ErrWaitDelay):
+		// clauth worked; only its grandchildren overstayed.
+	case runErr != nil:
 		// The wrapping keeps exec.ErrNotFound reachable through
 		// errors.Is, which the app layer needs: "clauth is not installed"
 		// and "clauth is installed and broken" are the same error value
 		// here but must produce opposite UI. Not installed is the normal
 		// case for most people and shows nothing; broken is worth saying.
+		//
+		// A timeout is neither, and lands in "broken" above by falling
+		// through this arm -- which is right: clauth IS installed, and a
+		// row that said nothing would be the silence #141 is about.
 		if s := strings.TrimSpace(stderr.String()); s != "" {
-			return Status{}, fmt.Errorf("clauth status --json: %w: %s", err, s)
+			return Status{}, fmt.Errorf("clauth status --json: %w: %s", runErr, s)
 		}
-		return Status{}, fmt.Errorf("clauth status --json: %w", err)
+		return Status{}, fmt.Errorf("clauth status --json: %w", runErr)
 	}
 	return ParseStatus(stdout.Bytes())
 }

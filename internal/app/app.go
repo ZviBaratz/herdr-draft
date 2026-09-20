@@ -340,7 +340,7 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 	var linearSrc linearSource
 	var linearCache []linear.Issue
 	var linearUnavailable string
-	key, kerr := linear.ResolveAPIKey(cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, env.ConfigDir)
+	key, kerr := linear.ResolveAPIKey(bg, cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, env.ConfigDir)
 	switch {
 	case kerr != nil:
 		linearUnavailable = linearUnavailableReason(kerr)

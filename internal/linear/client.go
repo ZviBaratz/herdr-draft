@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // assignedIssuesQuery is the Linear GraphQL query for the personal
@@ -125,6 +127,41 @@ type issueNode struct {
 	} `json:"cycle"`
 }
 
+// httpTimeout bounds one assignedIssues exchange (#141). Before it there was
+// no bound at all: httpClient() defaults to http.DefaultClient, whose
+// Timeout is zero, so a proxy that accepted the connection and never
+// answered left `create --issue` with no output and no exit code, and the
+// popup's background refresh waiting for the life of the process.
+//
+// THIRTY seconds, the number this repository already uses for "slow but not
+// hung" -- app.fetchPruneTimeout, picker.pickerTimeout,
+// create.preflightCheckDeadline. Unlike api_key_cmd beside it, nothing here
+// can be waiting on a person: this is one GraphQL POST to a public API, and
+// a Linear that has not answered in thirty seconds is not about to.
+//
+// A constant rather than a [timeouts] key, for keyCmdTimeout's reason.
+//
+// A var, not a const, only so the tests can shrink it.
+var httpTimeout = 30 * time.Second
+
+// assignedIssuesPrefix is this package's own error prefix for the fetch,
+// which app.linearRefreshReason strips before putting the reason on the
+// issue panel's status row.
+const assignedIssuesPrefix = "linear assigned issues"
+
+// wireError classifies a failed exchange. The DEADLINE is read before the
+// error itself, and from the CONTEXT rather than from the error's chain:
+// an http.Client reports a cancelled request and an expired one through the
+// same *url.Error, and only the context can say which of the two happened.
+// A caller that was cancelled is not a call that timed out (#272), so
+// DeadlineExceeded specifically, never `ctx.Err() != nil`.
+func wireError(ctx context.Context, stage string, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return timeout{prefix: assignedIssuesPrefix, what: "no answer", deadline: httpTimeout}
+	}
+	return fmt.Errorf("%s: %s: %w", assignedIssuesPrefix, stage, err)
+}
+
 // AssignedIssues runs assignedIssuesQuery against c.Endpoint and returns the
 // caller's currently assigned, not-yet-done issues (spec §10: state type in
 // ["unstarted", "started"], ordered by updatedAt, capped at 50). It never
@@ -134,6 +171,20 @@ func (c *Client) AssignedIssues(ctx context.Context) ([]Issue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("linear assigned issues: encode request: %w", err)
 	}
+
+	// The deadline rides on the REQUEST, and http.Client.Timeout is
+	// deliberately not set as well. The request context already "controls the
+	// entire lifetime of a request and its response: obtaining a connection,
+	// sending the request, and reading the response headers and body"
+	// (go1.26.4 src/net/http/request.go, NewRequestWithContext), so it covers
+	// the io.ReadAll below too. Setting both would put two timers on one
+	// deadline, and which fired first would decide whether the caller saw
+	// this package's clause or net/http's "Client.Timeout exceeded while
+	// awaiting headers" -- the shape #272's review caught, arriving by
+	// another door. Riding on the request is also what stops an injected
+	// Client.HTTP from escaping the bound.
+	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
+	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 	if err != nil {
@@ -145,13 +196,13 @@ func (c *Client) AssignedIssues(ctx context.Context) ([]Issue, error) {
 
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("linear assigned issues: request: %w", err)
+		return nil, wireError(ctx, "request", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("linear assigned issues: read response: %w", err)
+		return nil, wireError(ctx, "read response", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("linear assigned issues: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
@@ -195,6 +246,39 @@ func (c *Client) AssignedIssues(ctx context.Context) ([]Issue, error) {
 	return issues, nil
 }
 
+// ErrTimeout is what a Linear call that did not answer inside its budget
+// reports through, so a caller that has to branch can find it with a single
+// errors.Is through however the call site wrapped the error.
+//
+// One sentinel for both budgets below, because the only caller that branches
+// -- internal/create's refuse -- makes the same decision for either: a
+// question it cannot answer refuses the run.
+var ErrTimeout = errors.New("linear: no answer within the deadline")
+
+// timeout is one Linear call that did not answer: the sentence a caller
+// reads, and ErrTimeout to the code that has to branch.
+//
+// A type with its own Is rather than an fmt.Errorf wrap of the sentinel, so
+// the message stays one clause instead of ending in the sentinel's own text
+// repeating what the clause already said. internal/create's checkTimeout and
+// herdrc's cliError do the same.
+//
+// The clause carries this package's own error prefix, because the app layer
+// strips exactly those prefixes before putting a reason on a one-line row
+// (app.linearUnavailableReason, app.linearRefreshReason) -- a message without
+// one renders raw.
+type timeout struct {
+	prefix   string
+	what     string
+	deadline time.Duration
+}
+
+func (e timeout) Error() string {
+	return fmt.Sprintf("%s: %s within %s", e.prefix, e.what, e.deadline)
+}
+
+func (timeout) Is(target error) bool { return target == ErrTimeout }
+
 // configFileName is the plugin config file whose permissions ResolveAPIKey
 // checks before trusting an inline api_key literal (spec §12: "discouraged;
 // file perms checked (0600)").
@@ -221,16 +305,22 @@ const configFileName = "config.toml"
 // When all three sources are absent, ResolveAPIKey returns ("", nil) --
 // per spec §10, an absent key means the Linear field is simply not
 // rendered, not an error.
-func ResolveAPIKey(apiKeyCmd []string, apiKeyLiteral, configDir string) (string, error) {
+//
+// ctx bounds source 1 only, and both halves of that are deliberate. The
+// command is the part that can hang -- it used to reach plain exec.Command
+// and have no deadline at all (#141) -- and runKeyCmd puts keyCmdTimeout on
+// top of whatever ctx already carries, so a caller's cancellation still
+// reaches it. The permission check on source 3 stays outside: it reads the
+// PLUGIN's config directory, which create/checks.go's own grouping of
+// unbounded reads classifies as not on the project, and bounding it here
+// would make the two comments disagree about the same file.
+func ResolveAPIKey(ctx context.Context, apiKeyCmd []string, apiKeyLiteral, configDir string) (string, error) {
 	if len(apiKeyCmd) > 0 {
-		var stdout, stderr bytes.Buffer
-		cmd := exec.Command(apiKeyCmd[0], apiKeyCmd[1:]...) //nolint:gosec // user-configured command, run intentionally
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("resolve linear api key: run api_key_cmd: %w: %s", err, strings.TrimSpace(stderr.String()))
+		key, err := runKeyCmd(ctx, apiKeyCmd)
+		if err != nil {
+			return "", err
 		}
-		if key := strings.TrimSpace(stdout.String()); key != "" {
+		if key != "" {
 			return key, nil
 		}
 	}
@@ -247,6 +337,141 @@ func ResolveAPIKey(apiKeyCmd []string, apiKeyLiteral, configDir string) (string,
 		return "", err
 	}
 	return apiKeyLiteral, nil
+}
+
+// keyCmdTimeout bounds api_key_cmd (#141). Without it the command had no
+// deadline at all -- not a long one, none: ResolveAPIKey reached plain
+// exec.Command, which takes no context.
+//
+// It is a deadlock breaker rather than a responsiveness budget, and it
+// protects the same thing picker.pickerTimeout does, for the same reason:
+// app.Bootstrap runs this synchronously BEFORE the popup is drawn, so a
+// helper that never answers means the form never appears and never says why.
+//
+// SIXTY seconds, and deliberately longer than the thirty every other bound
+// in this repository uses, because this is the only call herdr-draft makes
+// that can legitimately be waiting on a PERSON. The documented shape is
+// `pass show ...` or `op read ...`; the second of those raises a desktop
+// approval, and answering it means finding the window, unlocking and
+// touching a sensor. The number is chosen to sit above the slowest
+// legitimate approval rather than near a comfortable one -- cutting a
+// working helper off at thirty would report it as broken, which is wrong,
+// permanent until someone re-reads the config, and indistinguishable from a
+// genuinely broken command.
+//
+// Both paths take the same number, and the popup's blank pane is the price.
+// A shorter budget before the draw would be the failure above; what the
+// popup already does while a working helper waits for approval is exactly
+// what it does while a hung one does not, so the bound only decides when to
+// give up. Drawing the form first and resolving Linear asynchronously is the
+// real fix for that and is a change to Bootstrap's shape, not a deadline.
+//
+// A constant rather than a [timeouts] key, for fetchPruneTimeout's and
+// preflightCheckDeadline's reason: a safety bound is not a tuning knob, and
+// a key would inherit #143 -- [timeouts] values are not validated at all --
+// so one typo would turn this into "give up immediately" and make Linear
+// vanish with a reason nobody would connect to the config.
+//
+// A var, not a const, only so the tests can shrink it -- picker.pickerTimeout's
+// shape.
+var keyCmdTimeout = 60 * time.Second
+
+// keyCmdWaitDelay is how long cmd.Wait may keep waiting on the command's
+// PIPES after the deadline has already killed the command itself.
+//
+// Measured for the picker and the same here: exec.CommandContext kills the
+// process it started, but a grandchild holding the inherited write end of
+// the stdout pipe keeps Wait's copying goroutine blocked, so the deadline
+// above would bound nothing. A credential helper is exactly that shape --
+// `pass` shells out to `gpg`, which talks to a `gpg-agent` it may have
+// started -- so this is the ordinary case rather than a contrived one.
+// gitx.waitDelay and picker.pickerWaitDelay are the same two seconds for the
+// same reason.
+var keyCmdWaitDelay = 2 * time.Second
+
+// keyCmdPrefix is this package's own error prefix for key resolution, which
+// app.linearUnavailableReason strips before putting the reason on a row.
+const keyCmdPrefix = "resolve linear api key"
+
+// runKeyCmd executes api_key_cmd under keyCmdTimeout and returns its trimmed
+// stdout. An empty answer is not an error: ResolveAPIKey's contract is that a
+// command which runs and prints nothing falls through to the next source.
+//
+// WHAT THE BOUND IS, stated because the obvious reading is wrong. This is a
+// KILL bound, not an answer bound. cmd.Wait calls Process.Wait first and
+// unconditionally and only then consults the WaitDelay timer (go1.26.4
+// src/os/exec/exec.go, Cmd.Wait), so a child that cannot be reaped -- one in
+// uninterruptible sleep on a stalled $HOME -- never returns from cmd.Run and
+// this function waits with it. That class is #280's, not #141's: every
+// scenario #141 names is a killable wait, and bounding the ANSWER instead
+// would mean app.AwaitCheck, which lives in internal/app and which this
+// package must not import. picker.CLI.run made the same trade for the same
+// shape.
+//
+// THREE ARMS, and the middle one is a working-config regression if it is
+// left out.
+//
+// The DEADLINE is read before the exit code, which is load-bearing rather
+// than tidy: exec.CommandContext kills the process and cmd.Run then reports
+// an ordinary *exec.ExitError carrying -1, so exit-code-first would turn a
+// deadlock into `run api_key_cmd: signal: killed` -- a deadlock reported as
+// a decision, which is precisely what picker.CLI.run's own ordering comment
+// exists to prevent.
+//
+// It is read as DeadlineExceeded specifically and never as `ctx.Err() != nil`.
+// A caller that was CANCELLED reports context.Canceled, and calling a ⌃C a
+// timeout would be false -- #272's hardest-won lesson, and not hypothetical:
+// `create`'s pre-flight context is cancelled on a signal (main.watchSignals).
+// The contract that goes with it, as #272's bounded states its own: a caller
+// whose context carries a DEADLINE shorter than this one would have it
+// reported as though it were ours. Neither caller does -- app.Bootstrap
+// passes context.Background and create's passes context.WithCancel of it --
+// and this package cannot be imported from outside the module.
+//
+// exec.ErrWaitDelay means the command SUCCEEDED. Its doc is explicit that it
+// is returned only when "no Cancel call has occurred, and the command has
+// otherwise exited with a successful status" -- i.e. api_key_cmd printed the
+// key, exited 0, and a grandchild held the pipe past keyCmdWaitDelay. Read
+// as an ordinary failure it would turn a working `pass show` into "your
+// api_key_cmd is broken" after two seconds of dead time, so the buffered
+// stdout is used and the run counts as the success it was.
+//
+// The obvious objection to those two budgets is that they are two timers on
+// one deadline, which is what #272 was bitten by. They are not: they measure
+// different things -- the deadline runs from the start of the command, the
+// grace from the moment Wait observes it exited -- and the clause above is
+// what keeps them from ever being confused. A run the deadline ended has had
+// its Cancel called, so it can NOT come back as ErrWaitDelay, and a run that
+// comes back as ErrWaitDelay had no deadline fire. The two arms are mutually
+// exclusive by exec's own contract rather than by which timer was read
+// first, which is the property that makes the order between them irrelevant.
+// What it does require is that the two numbers stay in their shipped
+// RELATIONSHIP, sixty to two: shrinking both to the same value makes a
+// command that exits instantly expire the deadline first, which is a
+// timeout, correctly reported and about nothing. That is stated because the
+// test that pins this arm reproduced exactly that, 4 runs in 5.
+func runKeyCmd(ctx context.Context, apiKeyCmd []string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, keyCmdTimeout)
+	defer cancel()
+
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, apiKeyCmd[0], apiKeyCmd[1:]...) //nolint:gosec // user-configured command, run intentionally
+	cmd.WaitDelay = keyCmdWaitDelay
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return "", timeout{prefix: keyCmdPrefix, what: "api_key_cmd gave no answer", deadline: keyCmdTimeout}
+	case ctx.Err() != nil:
+		return "", fmt.Errorf("%s: run api_key_cmd: %w", keyCmdPrefix, ctx.Err())
+	case errors.Is(runErr, exec.ErrWaitDelay):
+		// The command worked; only its grandchildren overstayed.
+	case runErr != nil:
+		return "", fmt.Errorf("%s: run api_key_cmd: %w: %s", keyCmdPrefix, runErr, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // checkConfigPerm rejects an inline api_key literal when
