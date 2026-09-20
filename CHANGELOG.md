@@ -200,7 +200,7 @@ without the popup. It drives herdr exclusively through the public CLI
   file reads beside them are not bounded, and only two are on the project
   at all: the repository's `.herdr-draft.toml`, read after the git
   questions, and `os.Getwd`, which runs before them whenever `--project` is
-  left off. `config.toml` and the two state files are in the plugin's own
+  absent or relative. `config.toml` and the two state files are in the plugin's own
   directories.
 
   It is its own exit code because the answer is unknown rather than

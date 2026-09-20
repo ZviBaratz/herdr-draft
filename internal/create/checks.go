@@ -2,30 +2,43 @@
 // mount refuses the create instead of swallowing it (#272).
 //
 // Read that scope literally, because an earlier draft of this comment did
-// not and said "the filesystem or git", which is false. Four plain file
-// reads beside these are NOT bounded, and what separates them is WHICH
-// filesystem each one is on, not whether it could hang:
+// not and said "the filesystem or git", which is false. Plain file reads
+// beside these are NOT bounded, and what separates them is WHICH
+// filesystem each one is on rather than whether it could hang. Grouped
+// that way and not counted, because the count has already been wrong once:
 //
-//   - os.Getwd, in resolveProjectDir, is on the project's mount whenever
-//     --project is absent -- and it runs BEFORE the first bounded question.
-//     It is the one read a stalled project mount could reach first, though
-//     "could" is doing real work there: getcwd(2) is answered from the
-//     dentry cache and is unlikely to block on a stalled mount at all. The
-//     ordering is the accurate part; the hang is not the one to go looking
-//     for.
+//   - os.Getwd, in resolveProjectDir, is on the project's mount, and it
+//     runs BEFORE the first bounded question. It is not the bare getcwd(2)
+//     it looks like: with $PWD set and absolute, which every shell does,
+//     Go's os.Getwd stats "." and then $PWD before it reaches the syscall
+//     (go1.26 src/os/getwd.go), so it is a real read on that mount and can
+//     block there. With $PWD unset or relative it falls straight through
+//     and does no path I/O, so the hazard is conditional on the
+//     environment rather than on this code. Reached whenever --project is
+//     absent OR relative: pathx.Resolve calls filepath.Abs, which calls
+//     os.Getwd for any non-absolute path.
 //   - The repository's own .herdr-draft.toml (config.LoadRepoConfig, an
 //     os.ReadFile) is on that mount too, but loadTiers reads it after the
-//     three git questions, so on a stalled mount git runs out first.
-//   - config.Load and the two state files are in the plugin's own config
-//     and state directories, not the project's, so a stalled project does
-//     not reach them at all. config.Load is nonetheless the very first
-//     read the pre-flight makes.
+//     three git questions -- g.IsGitRepo is its first statement and
+//     unconditional -- so on a stalled project git runs out first.
+//   - config.Load, the two state files and clauth's status cache
+//     (clauth.loadFreshStatusFile) are in the plugin's and clauth's own
+//     directories, not the project's, so a stalled project never reaches
+//     them. config.Load is nonetheless the very first read the pre-flight
+//     makes.
+//
+// Not file reads, unbounded, and likewise not on the project: `clauth
+// status --json` and every herdr CLI call, both exec.CommandContext on the
+// caller's context with no timeout of their own. The account pick is the
+// one subprocess that does have a bound (picker.pickerTimeout).
 //
 // Bounding a bare os.ReadFile is a larger change than this one wants. The
 // point of writing it down is that "unlikely to be reached" is not
 // "bounded", and the ordering that makes it unlikely is not obvious from
-// any one function. Found in review; the ordering above was checked
-// against resolveRequest rather than assumed.
+// any one function. Found in review; every claim above was checked against
+// resolveRequest and against go1.26's src/os/getwd.go rather than assumed
+// -- including one caveat that arrived from the review, was taken on
+// trust, and was wrong.
 //
 // #202 bounded the four checks that hold a submit in the popup. The same
 // questions in headless `create` were still unbounded, and `create` is the

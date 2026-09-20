@@ -430,7 +430,7 @@ run. The plain file reads beside them are not bounded — but only two are on
 the project at all, and of those, the repository's `.herdr-draft.toml` is
 read after the git questions, so on a stalled project it is git that runs
 out. The exception is `os.Getwd`, which runs first and is on the project
-whenever you leave `--project` off. Your `config.toml` and the two state
+whenever `--project` is absent or relative. Your `config.toml` and the two state
 files are in the plugin's own directories, not the project's.
 
 It is not exit 2: that one means "fix the command and re-run", and there is
