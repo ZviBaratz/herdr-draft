@@ -1187,9 +1187,10 @@ reading `sign in again` in red.
 
 **Tested with clauth 0.14.1+.** This is the empirically-confirmed floor
 from this plugin's own live validation (`clauth status --json` schema `1`
-parsing, and `clauth start <profile> --` launching correctly under
-`herdr pane run`) — no older clauth 0.x release was available to test, so
-treat it as "known to work at 0.14.1," not a verified absolute minimum.
+parsing, schema `2` from clauth 0.15.2, and `clauth start <profile> --`
+launching correctly under `herdr pane run`) — no older clauth 0.x release
+was available to test, so treat it as "known to work at 0.14.1," not a
+verified absolute minimum.
 
 **Known gap, accepted for v1**: on herdr session restore, herdr resumes
 `claude --resume <id>` without the clauth wrapper, dropping the account

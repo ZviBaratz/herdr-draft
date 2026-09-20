@@ -393,6 +393,21 @@ it.)
   Prefer reading the daemon's `~/.clauth/status.json` when fresh (clauth
   documents it as a feed for other apps); fall back to invoking the CLI.
   `schema != 1` → degrade to name-only entries, never crash.
+
+  > **Amended, #238 (2026-09-19): schema 2 is known too.** clauth 0.15.2
+  > writes `schema: 2`. Its one change is the `auth_status` value
+  > `expiring`, renamed `expired`
+  > ([clauth v0.15.2](https://github.com/uwuclxdy/clauth/blob/v0.15.2/src/daemon/status_json.rs#L33-L36)).
+  > Nothing here keys on either word: every reader asks only whether the
+  > status is `ok`, and shows any other value as it stands. So schema 2 is
+  > parsed in full like 1. Read as degraded, it cost the account row every
+  > profile's plan, usage windows and auth state. Any other schema still
+  > degrades. clauth bumps the schema only on a breaking change
+  > ([wiki/Daemon.md](https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L143)),
+  > so a payload whose fields keep their types proves nothing about the
+  > next one. A schema joins the known set only after reading clauth's
+  > stated reason for the bump, at its release tag, and confirming nothing
+  > here depends on what changed.
 - **Launch**: `clauth start <profile> -- <claude args>` via `pane run`
   (§9 Path B). clauth owns the per-profile `CLAUDE_CONFIG_DIR` mirror; herdr-draft
   never touches `~/.clauth` internals beyond the documented status feed.

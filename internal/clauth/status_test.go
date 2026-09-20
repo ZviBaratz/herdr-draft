@@ -169,6 +169,68 @@ func TestParseStatusNullResetsAtDoesNotFailParse(t *testing.T) {
 	}
 }
 
+// TestParseStatusSchema2 is #238: clauth 0.15.2 writes schema 2, whose one
+// change is the auth_status value `expiring` renamed to `expired` (see
+// knownSchemas for why nothing here minds). Read as degraded, the account
+// row lost every profile's plan, windows and auth state on a machine
+// running the current clauth. The fixture is a live schema-2 file, cut to
+// two profiles and renamed, with alpha's auth_status set to `expired` so
+// the one value the bump was about is in it.
+func TestParseStatusSchema2(t *testing.T) {
+	st, err := ParseStatus(readFixture(t, filepath.Join("testdata", "status_schema2.json")))
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+	if st.Schema != 2 {
+		t.Fatalf("Schema = %d, want 2 -- the fixture is not the schema this test is about", st.Schema)
+	}
+	if st.Degraded {
+		t.Error("Degraded = true, want false for schema 2")
+	}
+	if st.ActiveProfile != "beta" {
+		t.Errorf("ActiveProfile = %q, want beta", st.ActiveProfile)
+	}
+	if len(st.Profiles) != 2 {
+		t.Fatalf("len(Profiles) = %d, want 2", len(st.Profiles))
+	}
+	beta := st.Profiles[1]
+	if beta.Name != "beta" || !beta.Active || beta.Tier != "Max 20x" || beta.AuthStatus != "ok" {
+		t.Errorf("beta = %+v, want name beta, active, tier Max 20x, auth ok", beta)
+	}
+	if len(beta.Windows) != 3 {
+		t.Fatalf("len(beta.Windows) = %d, want 3", len(beta.Windows))
+	}
+	if w := beta.Windows[1]; w.Label != "7d" || w.UtilizationPct != 62 || w.ResetsAt == nil {
+		t.Errorf("beta's 7d window = %+v, want 62%% with a reset time", w)
+	}
+	if w := st.Profiles[0].Windows[0]; w.Label != "5h" || w.ResetsAt != nil {
+		t.Errorf("alpha's 5h window = %+v, want a null reset time kept as nil", w)
+	}
+	// Kept as clauth wrote it: the consumers show it verbatim.
+	if got := st.Profiles[0].AuthStatus; got != "expired" {
+		t.Errorf("alpha's auth_status = %q, want expired", got)
+	}
+}
+
+// TestParseStatusSchema3Degrades holds the other side of #238's line: the
+// schema after the ones this package has checked still degrades. clauth
+// bumps one step at a time, so 3 is the next number it will write, and the
+// first a range check (`> 0`, `< 4`) would wave through unread.
+func TestParseStatusSchema3Degrades(t *testing.T) {
+	raw := readFixture(t, filepath.Join("testdata", "status_schema2.json"))
+	mutated := bytes.Replace(raw, []byte(`"schema": 2,`), []byte(`"schema": 3,`), 1)
+	if bytes.Equal(mutated, raw) {
+		t.Fatal("fixture does not contain the expected schema field; test setup is broken")
+	}
+	st, err := ParseStatus(mutated)
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+	if !st.Degraded {
+		t.Error("Degraded = false, want true for schema 3: nobody has read clauth's reason for it")
+	}
+}
+
 func TestParseStatusUnknownSchemaDegrades(t *testing.T) {
 	raw := fixtureBytes(t)
 	mutated := bytes.Replace(raw, []byte(`"schema": 1,`), []byte(`"schema": 99,`), 1)
@@ -209,7 +271,7 @@ func TestParseStatusMissingSchemaDegrades(t *testing.T) {
 		t.Errorf("Schema = %d, want 0 (zero value for an absent field)", st.Schema)
 	}
 	if !st.Degraded {
-		t.Error("Degraded = false, want true when schema is entirely absent (0 != 1)")
+		t.Error("Degraded = false, want true when schema is entirely absent (0 is not a known schema)")
 	}
 	if len(st.Profiles) != 4 {
 		t.Fatalf("len(Profiles) = %d, want 4", len(st.Profiles))

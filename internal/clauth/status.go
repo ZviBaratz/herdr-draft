@@ -49,15 +49,15 @@ type Profile struct {
 // Status is clauth's status feed, as reported by `clauth status --json` or
 // mirrored to its on-disk status file.
 type Status struct {
-	Schema            int       `json:"schema"` // JSON number; verified live: "schema": 1
+	Schema            int       `json:"schema"` // JSON number; verified live: "schema": 1, and 2 from clauth 0.15.2
 	ActiveProfile     string    `json:"active_profile"`
 	GeneratedAt       time.Time `json:"generated_at"`
 	RefreshIntervalMS int       `json:"refresh_interval_ms"`
 	Profiles          []Profile `json:"profiles"`
 
-	// Degraded is set when Schema is not the schema this package was built
-	// against (1) -- including a payload that omits the schema field
-	// entirely, which decodes Schema to its zero value (0), also != 1. A
+	// Degraded is set when Schema is not one this package was built
+	// against (knownSchemas) -- including a payload that omits the schema
+	// field entirely, which decodes Schema to its zero value (0). A
 	// degraded Status still carries whatever the full parse recovered
 	// (which, since clauth versions its schema for backward compatibility
 	// with additive changes, is typically the complete Profiles set) --
@@ -65,6 +65,30 @@ type Status struct {
 	// and render name-only entries.
 	Degraded bool `json:"-"`
 }
+
+// knownSchemas are the status schemas this package has read clauth's reason
+// for, and found nothing it depends on in: 1, and 2, which clauth 0.15.2
+// writes (#238).
+//
+// Schema 2 renamed one auth_status value, `expiring` to `expired`
+// (https://github.com/uwuclxdy/clauth/blob/v0.15.2/src/daemon/status_json.rs#L33-L36).
+// Nothing here keys on either word. Every reader of Profile.AuthStatus
+// asks only whether it is "ok" (or empty) -- internal/form's
+// accountWarning and row, internal/app's accountAuthBlocked, and
+// internal/create's refuseSignedOutProfile -- and shows any other value as
+// it stands. So a full parse of schema 2 is as trustworthy as
+// one of schema 1, and reading it as degraded cost the account row every
+// profile's plan, usage windows and auth state for nothing.
+//
+// Checking field presence and JSON type would not have found that, and
+// cannot admit the next schema either: clauth bumps the schema "ONLY on a
+// breaking change; additive fields do not bump it"
+// (https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L143), so
+// a bump that keeps every field's type changed some field's meaning. A new
+// schema goes here only after reading clauth's stated reason for the bump,
+// at the release tag, and confirming nothing here depends on what changed
+// -- and the reason is cited here beside the others.
+var knownSchemas = map[int]bool{1: true, 2: true}
 
 // minimalStatus is the required subset ParseStatus falls back to when the
 // full Status shape fails to parse -- i.e. a future schema changed a field's
@@ -80,7 +104,7 @@ type minimalStatus struct {
 //
 // clauth's schema field lets it evolve the payload: ParseStatus first
 // attempts a full parse into Status. If that succeeds, Degraded is set
-// whenever Schema != 1 (the schema this package was built against), but no
+// whenever Schema is not in knownSchemas, but no
 // error is returned -- the full parse already recovered everything Status
 // models. If the full parse fails outright (a structurally incompatible
 // future schema), ParseStatus falls back to decoding only the required
@@ -89,7 +113,7 @@ type minimalStatus struct {
 func ParseStatus(b []byte) (Status, error) {
 	var st Status
 	if err := json.Unmarshal(b, &st); err == nil {
-		if st.Schema != 1 {
+		if !knownSchemas[st.Schema] {
 			st.Degraded = true
 		}
 		return st, nil

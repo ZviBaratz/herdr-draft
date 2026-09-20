@@ -1142,9 +1142,10 @@ func TestAccountField_RowWarnsAtNinetyFive(t *testing.T) {
 	}
 }
 
-// TestAccountField_RowDegradesToNamesOnly pins spec §11's "schema != 1 ->
-// degrade to name-only entries" on the row, where v1 only ever applied it
-// to the picker's items.
+// TestAccountField_RowDegradesToNamesOnly pins spec §11's "degrade to
+// name-only entries" for a schema clauth.ParseStatus does not know (#238
+// amended which ones) on the row, where v1 only ever applied it to the
+// picker's items.
 func TestAccountField_RowDegradesToNamesOnly(t *testing.T) {
 	status := sampleStatus()
 	status.Schema = 7

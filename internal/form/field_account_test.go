@@ -391,8 +391,9 @@ func TestAccountField_SetProfilesRefreshPreservesPinByName(t *testing.T) {
 	}
 }
 
-// TestAccountField_DegradedRendersNameOnly pins spec §11's own contract:
-// schema != 1 must degrade every row beyond Name.
+// TestAccountField_DegradedRendersNameOnly pins spec §11's own contract: a
+// schema clauth.ParseStatus does not know must degrade every row beyond
+// Name.
 func TestAccountField_DegradedRendersNameOnly(t *testing.T) {
 	f := NewAccountField(theme.Default())
 	f.SetAgentIsClaude(true)
