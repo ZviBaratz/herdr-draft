@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -895,7 +896,7 @@ func TestDegradation_FooterAndFocusedRowSurvive(t *testing.T) {
 			t.Fatalf("ViewAt(%d, %d) produced %d rows, want exactly %d", size.w, size.h, len(lines), size.h)
 		}
 		last := ansi.Strip(lines[len(lines)-1])
-		if !strings.Contains(last, "↵ create") {
+		if !strings.Contains(last, stubCreateButton) {
 			t.Fatalf("at %dx%d the last row does not carry the Create button: %q", size.w, size.h, last)
 		}
 		if !strings.Contains(ansi.Strip(strings.Join(lines, "\n")), "field-0 value") {
@@ -1008,7 +1009,7 @@ func TestRowStack_FrameMatchesLayoutFrame(t *testing.T) {
 	if rule3 := footerRow(f, h) - 1; !isRuleLine(lines[rule3]) {
 		t.Errorf("line %d is not rule 3: %q", rule3, lines[rule3])
 	}
-	if ftr := footerRow(f, h); !strings.Contains(lines[ftr], "↵ create") {
+	if ftr := footerRow(f, h); !strings.Contains(lines[ftr], stubCreateButton) {
 		t.Errorf("line %d is not the footer: %q", ftr, lines[ftr])
 	}
 	// The margins are blank, and there is nothing below the bottom one.
@@ -1147,7 +1148,7 @@ func TestRowStack_FocusedRowAndFooterSurviveEveryHeight(t *testing.T) {
 			t.Fatalf("ViewAt(%d, %d) produced %d lines, want %d", w, h, len(lines), h)
 		}
 		ftr := footerRow(layoutFrame(h, len(stubs)), h)
-		if !strings.Contains(lines[ftr], "↵ create") {
+		if !strings.Contains(lines[ftr], stubCreateButton) {
 			t.Fatalf("at h=%d line %d does not carry the Create button: %q", h, ftr, lines[ftr])
 		}
 		for i := ftr + 1; i < h; i++ {
@@ -1197,7 +1198,7 @@ func TestRowStack_SmallPanelDoesNotMoveTheFooter(t *testing.T) {
 		if !isRuleLine(lines[rule2]) {
 			t.Fatalf("with %q focused, line %d is not rule 2: %q", s.id, rule2, lines[rule2])
 		}
-		if !strings.Contains(lines[ftr], "↵ create") {
+		if !strings.Contains(lines[ftr], stubCreateButton) {
 			t.Fatalf("with %q focused, line %d is not the footer: %q", s.id, ftr, lines[ftr])
 		}
 		// The region is blank-filled below whatever the field had to
@@ -1391,7 +1392,7 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 	// the width.
 	for _, width := range []int{120, 80, 64, 40, 24, 12} {
 		line := ansi.Strip(strings.Split(m.ViewAt(width, h), "\n")[ftr])
-		if !strings.Contains(line, "↵ create") {
+		if !strings.Contains(line, stubCreateButton) {
 			t.Errorf("at w=%d the footer lost the Create button: %q", width, line)
 		}
 	}
@@ -1407,27 +1408,40 @@ func TestRowStack_FooterIsContextual(t *testing.T) {
 // It is a direct call rather than a width in one of the loops above
 // because the branch is not reachable through a real frame at any width
 // a user can produce: v3 spec §6.2's box is edge-to-edge, so boxWidth is
-// w-2, and the exact fit lands on a 26-column terminal. Unreachable
-// through the front door is exactly the condition under which a branch
-// quietly stops being covered.
+// w-2, and the exact fit lands on a 26- or 27-column terminal.
+// Unreachable through the front door is exactly the condition under
+// which a branch quietly stops being covered.
+//
+// BOTH button faces, because #281 gave the primary two of them and they
+// are different widths: `⌃S create` is one cell wider than `↵ create`
+// (createButtonFace), so each face has its own exact fit and pinning one
+// says nothing about the other. `exact` is measured from the face rather
+// than written down, so the boundary follows the button instead of
+// needing an edit whenever it moves.
 func TestRenderFooter_ExactFitKeepsCancel(t *testing.T) {
 	palette := theme.Default()
-	exact := lipgloss.Width(createButton(palette)) + footerButtonGap + lipgloss.Width(cancelButton(palette))
-
-	for _, c := range []struct {
-		width      int
-		wantCancel bool
-	}{
-		{exact + 1, true},
-		{exact, true},
-		{exact - 1, false},
+	for _, zone := range []FocusZone{
+		{Kind: ZoneCreate},    // ↵ create, the narrower face
+		{Kind: ZonePlacement}, /* ⌃S create, the wider one */
 	} {
-		line := ansi.Strip(widgets.Zones.Scan(renderFooter(c.width, nil, palette)))
-		if got := strings.Contains(line, "esc cancel"); got != c.wantCancel {
-			t.Errorf("renderFooter(%d) carries cancel = %v, want %v: %q", c.width, got, c.wantCancel, line)
-		}
-		if !strings.Contains(line, "↵ create") {
-			t.Errorf("renderFooter(%d) lost the Create button: %q", c.width, line)
+		exact := lipgloss.Width(createButton(palette, zone)) + footerButtonGap + lipgloss.Width(cancelButton(palette))
+		face, _ := createButtonFace(palette, zone)
+
+		for _, c := range []struct {
+			width      int
+			wantCancel bool
+		}{
+			{exact + 1, true},
+			{exact, true},
+			{exact - 1, false},
+		} {
+			line := ansi.Strip(widgets.Zones.Scan(renderFooter(c.width, zone, nil, palette)))
+			if got := strings.Contains(line, "esc cancel"); got != c.wantCancel {
+				t.Errorf("renderFooter(%d, %v) carries cancel = %v, want %v: %q", c.width, zone.Kind, got, c.wantCancel, line)
+			}
+			if !strings.Contains(line, strings.TrimSpace(face)) {
+				t.Errorf("renderFooter(%d, %v) lost the Create button: %q", c.width, zone.Kind, line)
+			}
 		}
 	}
 }
@@ -1465,22 +1479,28 @@ func TestFooterRungs_PerZone(t *testing.T) {
 		if !strings.Contains(rungs[0], "⌃R clear") {
 			t.Errorf("zone %v's widest rung = %q, want the constant tail appended", kind, rungs[0])
 		}
-		// The footer's own buttons say ↵ and esc (form.go's
-		// renderFooter). No rung may say them again: at 64 columns the
+		// The footer's own buttons say esc and ONE create key, and no
+		// rung may say the same thing again: at 64 columns the
 		// pre-polish ladder plus the button spelled "create" three times
 		// on one line.
 		//
-		// ZoneAccount is the one exception and it is a deliberate one.
-		// v3 spec §10.3 made pinning a DELIBERATE commit rather than
-		// wherever the cursor was resting, and the key that commits is ↵
-		// -- a gesture nobody can discover is no better than the defect
-		// it replaced. The cost is that ↵ appears twice on that line
-		// meaning two different things, which is recorded here rather
-		// than waived: the same reason the Title zone's own rung is
-		// allowed to correct the button below.
-		dups := []string{"↵", "esc cancel", "Esc"}
-		if kind == ZoneAccount {
-			dups = dups[1:]
+		// ↵ is now a RULE rather than a waiver (#281). It used to be a
+		// flat ban with ZoneAccount hand-waved through, because v3 spec
+		// §10.3 made pinning a deliberate commit on ↵ and a gesture
+		// nobody can discover is no better than the defect it replaced --
+		// and the cost, recorded in this very comment, was that ↵ then
+		// appeared twice on that line meaning two different things. The
+		// button no longer claims ↵ in a zone that has taken it
+		// (form.go's createKey), so the question is not "which zone is
+		// excused" but "does the button still own ↵ here": a rung may
+		// name it exactly when enterSubmits is false. The list grew a
+		// second member for the same reason -- a rung must not restate
+		// ⌃S where the button is wearing it.
+		dups := []string{"esc cancel", "Esc"}
+		if enterSubmits(FocusZone{Kind: kind}) {
+			dups = append(dups, "↵")
+		} else {
+			dups = append(dups, "⌃S")
 		}
 		for _, dup := range dups {
 			if strings.Contains(rungs[0], dup) {
@@ -1617,4 +1637,228 @@ func TestHandleKey_CtrlXTogglesTheReapWithoutTyping(t *testing.T) {
 	if f.MarkReady() {
 		t.Error("MarkReady() = true after a second ⌃X, want keep again")
 	}
+}
+
+// stubCreateButton is the primary footer button's face on any frame
+// driven by STUB sections, which is most of the layout tests in this
+// file and in sizes_test.go.
+//
+// Since #281 the button names the key that creates from the zone in
+// view, so there is no one literal to look for. zoneFor maps an ID
+// outside zoneKindByID -- every stub's -- onto ZonePlacement (form.go),
+// where ↵ advances rather than creating, so these frames all wear the
+// ⌃S face. A test that starts driving a REAL section has to ask
+// createKey for the face instead of reaching for this.
+const stubCreateButton = "⌃S create"
+
+// everyFocusableZone is every FocusZone a real section can put the form
+// in: zoneKindByID's values (the closed set form.go documents), with
+// ZoneTitle expanded into the two states its own zone carries.
+//
+// ZoneBranch and ZoneBase are deliberately absent. They survive in
+// keys.go's vocabulary with no section mapped onto them (the v2 worktree
+// collapse), so zoneFor can never yield one and no footer line can be
+// rendered for one -- iterating them would be testing a screen that
+// cannot exist.
+func everyFocusableZone() []FocusZone {
+	seen := map[ZoneKind]bool{}
+	zones := []FocusZone{
+		{Kind: ZoneTitle, TitleEmpty: true},
+		{Kind: ZoneTitle, TitleEmpty: false},
+	}
+	seen[ZoneTitle] = true
+	for _, kind := range zoneKindByID {
+		if seen[kind] {
+			continue
+		}
+		seen[kind] = true
+		zones = append(zones, FocusZone{Kind: kind})
+	}
+	sort.Slice(zones, func(i, j int) bool {
+		if zones[i].Kind != zones[j].Kind {
+			return zones[i].Kind < zones[j].Kind
+		}
+		return zones[i].TitleEmpty && !zones[j].TitleEmpty
+	})
+	return zones
+}
+
+// buttonKeyOf returns the key glyph the primary button is wearing on a
+// rendered footer line -- the token immediately before "create" inside
+// the button's own text.
+func buttonKeyOf(t *testing.T, line string) string {
+	t.Helper()
+	i := strings.LastIndex(line, " create ")
+	if i < 0 {
+		t.Fatalf("no create button on the footer line: %q", line)
+	}
+	fields := strings.Fields(line[:i])
+	if len(fields) == 0 {
+		t.Fatalf("the create button carries no key glyph: %q", line)
+	}
+	return fields[len(fields)-1]
+}
+
+// TestFooterButton_NamesAKeyThatActuallyCreates is #281's fix stated
+// against the GRAMMAR rather than against a string: whatever key glyph
+// the primary button wears in a zone, MapKey must turn that key into
+// ActionSubmit from that same zone.
+//
+// This is the assertion worth having, and "the line never shows ↵ twice"
+// (below) is not a substitute for it. That one holds by construction the
+// moment enterSubmits stops claiming ZoneAccount and ZoneWorktree, and
+// would go on holding if enterSubmits were wrong about ZonePrompt,
+// ZoneCreate or ZoneTitle in either direction -- none of those zones'
+// rungs mention ↵ at all, so there is nothing for a second ↵ to collide
+// with. Reading the glyph back off the rendered button and asking the
+// grammar about it is what fails loudly when the two drift.
+func TestFooterButton_NamesAKeyThatActuallyCreates(t *testing.T) {
+	palette := theme.Default()
+	keys := map[string]tea.KeyPressMsg{"↵": keyEnter, "⌃S": keyCtrlS}
+
+	for _, zone := range everyFocusableZone() {
+		line := ansi.Strip(widgets.Zones.Scan(renderFooter(120, zone, footerRungs(zone, false), palette)))
+		glyph := buttonKeyOf(t, line)
+		msg, known := keys[glyph]
+		if !known {
+			t.Errorf("zone %+v: the button wears %q, which is not a key this form maps: %q", zone, glyph, line)
+			continue
+		}
+		if got, _ := MapKey(msg, zone, false); got != ActionSubmit {
+			t.Errorf("zone %+v: the button says %q creates, but MapKey(%s) = %v: %q", zone, glyph, glyph, got, line)
+		}
+	}
+}
+
+// TestFooter_NeverAdvertisesEnterTwice is #281 itself, as an invariant:
+// the footer's two halves are read at once, so ↵ may appear on the line
+// once or not at all -- never twice meaning two different things.
+//
+// Before the fix the base part rendered `↵ use HEAD … ↵ create` and the
+// account row `↵ pin … ↵ create` (v3 spec §10.3, #269), and the rule in
+// footer.go's zoneRungs named one exception where three situations
+// needed it.
+//
+// The WorktreeField goes through its real parts and base-list states
+// rather than the zone table, because that is where its ↵ rungs actually
+// come from (field_worktree.go's FooterRungs, not zoneRungs).
+func TestFooter_NeverAdvertisesEnterTwice(t *testing.T) {
+	palette := theme.Default()
+	count := func(t *testing.T, zone FocusZone, rungs []string, width int, what string) {
+		t.Helper()
+		line := ansi.Strip(widgets.Zones.Scan(renderFooter(width, zone, rungs, palette)))
+		if n := strings.Count(line, "↵"); n > 1 {
+			t.Errorf("%s at w=%d says ↵ %d times: %q", what, width, n, line)
+		}
+	}
+
+	for _, width := range []int{150, 101, 77, 57} {
+		for _, zone := range everyFocusableZone() {
+			count(t, zone, footerRungs(zone, false), width, fmt.Sprintf("zone %+v", zone))
+			count(t, zone, footerRungs(zone, true), width, fmt.Sprintf("zone %+v armed", zone))
+		}
+
+		zone := FocusZone{Kind: ZoneWorktree}
+		for _, c := range worktreeFooterStates(t) {
+			count(t, zone, crossRungs(c.rungs, tailRungs(false)), width, "the worktree row, "+c.what)
+		}
+	}
+}
+
+// worktreeFooterStates drives a real WorktreeField through every state
+// whose FooterRungs differ, so the invariant above covers the field that
+// owns the collision #269 added -- three of these say ↵ and the rest
+// deliberately do not.
+//
+// Two pieces of setup are load-bearing and both were missing first time
+// round, with the test still green and exercising nothing. SetOn(true):
+// with the worktree off, FooterRungs short-circuits to "←→ turn it on"
+// and every state below collapses onto that one rung. Real refs: with an
+// empty list the base cursor cannot leave the HEAD row, so every
+// off-the-top branch is unreachable.
+//
+// Note how the cursor gets off the top, because there are two ways and
+// only one of them reaches the "↵ keep this base" rung. An ARROW sets
+// basePicked on its way past (moveBaseCursor), so an arrowed row is
+// already decided and ↵ has nothing left to commit. SetBase is the app
+// putting a remembered ref under the cursor without the user having
+// touched it (#262's second path) -- which is exactly the state #269's
+// key exists for.
+func worktreeFooterStates(t *testing.T) []struct {
+	what  string
+	rungs []string
+} {
+	t.Helper()
+	var out []struct {
+		what  string
+		rungs []string
+	}
+	add := func(what string, w *WorktreeField) {
+		out = append(out, struct {
+			what  string
+			rungs []string
+		}{what, w.FooterRungs()})
+	}
+
+	base := func(part worktreePart) *WorktreeField {
+		w := NewWorktreeField(theme.Default())
+		w.SetGitTarget(true)
+		w.SetOn(true)
+		w.SetBaseItems(2, []string{"main", "origin/main"})
+		w.Focus()
+		w.setPart(part)
+		return w
+	}
+	// The app applied a remembered base the list names: off the top, and
+	// nobody has decided anything yet.
+	remembered := func() *WorktreeField {
+		w := base(partBase)
+		w.SetBase("main")
+		if w.baseAtTop() {
+			t.Fatalf("setup: SetBase left the cursor on the HEAD row")
+		}
+		if w.BasePicked() {
+			t.Fatalf("setup: SetBase counted as the user picking")
+		}
+		return w
+	}
+
+	add("the chips part", base(partChips))
+	add("the branch part", base(partBranch))
+	add("the base part, at the top, nothing picked", base(partBase))
+
+	pickedTop := base(partBase)
+	if !pickedTop.Complete() {
+		t.Fatalf("setup: \u21b5 did not commit the HEAD row")
+	}
+	add("the base part, at the top, picked", pickedTop)
+
+	add("the base part, off the top, nothing picked", remembered())
+
+	pickedOff := remembered()
+	if !pickedOff.Complete() {
+		t.Fatalf("setup: \u21b5 did not commit the row under the cursor")
+	}
+	add("the base part, off the top, picked", pickedOff)
+
+	arrowed := base(partBase)
+	arrowed.moveBaseCursor(arrowed.base.CursorNext)
+	if !arrowed.BasePicked() {
+		t.Fatalf("setup: the arrow never moved the base cursor")
+	}
+	add("the base part, arrowed off the top", arrowed)
+
+	refusedTop := base(partBase)
+	refusedTop.SetBaseStatus("pick a base", true)
+	add("the base part, at the top, under a refusal", refusedTop)
+
+	refusedOff := remembered()
+	refusedOff.SetBaseStatus("pick a base", true)
+	add("the base part, off the top, under a refusal", refusedOff)
+
+	off := NewWorktreeField(theme.Default())
+	off.SetGitTarget(false)
+	add("not a git repository", off)
+
+	return out
 }

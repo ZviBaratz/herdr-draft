@@ -86,10 +86,28 @@ func footerRungsFor(s Section, zone FocusZone, armed bool) []string {
 // Both halves of the footer are read at once, so `↵ create` in a rung
 // beside a `↵ create` button, or `Esc cancel` beside an `esc cancel`
 // button, spends the scarcest line on the screen saying one thing twice
-// (the 64-column render said "create" three times). The buttons own ↵
-// and esc; the rungs own everything else. The exception is an EMPTY
-// title, where Enter does not create and the rung has to correct the
-// button rather than echo it.
+// (the 64-column render said "create" three times).
+//
+// The buttons own esc and ONE create key, and which key that is depends
+// on the zone (form.go's createKey): ↵ where a bare Enter really
+// submits, ⌃S in the seven zones where it does not. So the rule is not
+// "the rungs may never say ↵" but "the rungs own whatever the button
+// is not wearing here" -- a rung may teach ↵ exactly where the button
+// has left it alone, which is how `↵ pin` (ZoneAccount below) and
+// `↵ use HEAD` (field_worktree.go, #269) say what they say without
+// contradicting the button two inches to their right.
+//
+// Until #281 this paragraph read "the buttons own ↵ and esc" with one
+// written exception, and the tree had three situations needing it: the
+// button said `↵ create` on every row while ↵ created on three of
+// ten, and on two of those a rung said ↵ meant something else on the
+// same line. The fix was the button, because a rung is per-zone by
+// construction and a constant legend cannot be.
+//
+// ONE exception survives, and it is the one the clause was written for:
+// an EMPTY title, where neither key creates yet -- ⌃S reaches a submit
+// that checkSubmitValidation refuses with "title required" -- so the
+// rung corrects the button rather than echoing it.
 //
 // ZoneBranch and ZoneBase still appear here, with no section currently
 // mapped onto them: the worktree collapse took form.go's zoneKindByID
@@ -110,7 +128,18 @@ func zoneRungs(zone FocusZone) []string {
 		// stops the footer lying about what Enter does -- and, with an
 		// empty title, what stops the `↵ create` BUTTON lying about it.
 		if zone.TitleEmpty {
-			return []string{"name it to create · ⇥ for the prompt", "⇥ for the prompt"}
+			// Three rungs, not two, and the middle one is what keeps
+			// this zone teaching itself under pressure. crossRungs
+			// trades the CONSTANT tail away first, but it can only do
+			// that down to the narrowest LEAD it is given: with just
+			// the pair, the step below "name it to create · ⇥ for the
+			// prompt" (36 cells) was "⇥ for the prompt · ⌃R clear"
+			// (27), so one cell of pressure dropped the only words on
+			// the line about creating -- the inversion crossRungs'
+			// own doc comment says must not happen, on the OPENING
+			// screen. #281's button is one cell wider while it says
+			// ⌃S, which put a 64-column popup exactly there.
+			return []string{"name it to create · ⇥ for the prompt", "name it to create", "⇥ for the prompt"}
 		}
 		return []string{"⌃S create now · ⇥ for the prompt", "⇥ for the prompt"}
 	case ZonePrompt:
@@ -134,11 +163,16 @@ func zoneRungs(zone FocusZone) []string {
 		// chip-part answer, for a caller that asks the zone alone.
 		return []string{"↑↓ option · ←→ value", "←→ value"}
 	case ZoneAccount:
-		// The one rung that has to name ↵ despite the button beside it
-		// already carrying the glyph, because here ↵ does something else
-		// entirely (v3 spec §10.3: it pins). A row where browsing and
-		// choosing are different gestures has to say which key chooses,
-		// or the distinction is invisible.
+		// ↵ is this row's to name: it pins (v3 spec §10.3) rather than
+		// creating, so the button beside it wears ⌃S and leaves the
+		// glyph free. A row where browsing and choosing are different
+		// gestures has to say which key chooses, or the distinction is
+		// invisible.
+		//
+		// This rung is where #281 was found. It said exactly this before
+		// the fix too, beside a button that also said ↵ -- the same
+		// glyph twice on one line meaning two different things, in the
+		// very function whose doc comment forbade it.
 		return []string{"↑↓ browse · ↵ pin", "↵ pin"}
 	case ZoneCreate:
 		return []string{"⇧⇥ back to the form", "⇧⇥ back"}

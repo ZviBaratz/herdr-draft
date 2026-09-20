@@ -226,9 +226,12 @@ func resolveDirCheck(t *testing.T, m Model) Model {
 // v1 needed a per-field rule here because three of its sections were bare
 // chip rows with no label at all.
 //
-// It lost "branch" and "base" with the worktree collapse, and "create"
-// keeps its button text: Create is the one section that renders on the
-// footer rather than in the stack.
+// It lost "branch" and "base" with the worktree collapse. "create" is
+// the one section that renders on the FOOTER rather than in the stack,
+// and since #281 its button has no single literal at all -- the legend
+// names the key that creates from the zone in view, `↵ create` in three
+// of them and `⌃S create` in the other seven. createButtonMarker
+// answers for it; the map is the nine stack rows.
 var sectionMarkers = map[string]string{
 	"issue":     "issue",
 	"dir":       "project",
@@ -239,7 +242,30 @@ var sectionMarkers = map[string]string{
 	"options":   "options",
 	"account":   "account",
 	"prompt":    "prompt",
-	"create":    "↵ create",
+}
+
+// createButtonMarker is the text the primary footer button is wearing
+// while focusedID holds focus -- sectionMarkers' missing tenth entry,
+// which has to be computed because #281 made the legend per-zone.
+//
+// It mirrors internal/form's enterSubmits rather than importing it (the
+// rule is unexported, and this package asserts on rendered frames, not
+// on the form's internals). That duplication is deliberate and bounded:
+// what this test is for is spec §6 field 9's "never clipped", and the
+// face is only how it recognises the button. The RULE is pinned where it
+// lives, by internal/form's TestFooterButton_NamesAKeyThatActuallyCreates,
+// which reads the glyph back off the rendered button and asks MapKey
+// whether that key really submits.
+func createButtonMarker(m Model, focusedID string) string {
+	switch focusedID {
+	case "create", "prompt":
+		return "↵ create"
+	case "title":
+		if strings.TrimSpace(m.title.Value()) != "" {
+			return "↵ create"
+		}
+	}
+	return "⌃S create"
 }
 
 // TestAssembledForm_FocusedSectionVisibleAt80x24 is the assertion whose
@@ -275,17 +301,17 @@ func TestAssembledForm_FocusedSectionVisibleAt80x24(t *testing.T) {
 
 			for _, id := range ids {
 				marker, ok := sectionMarkers[id]
-				if !ok {
+				if !ok && id != "create" {
 					t.Fatalf("section %q has no marker in sectionMarkers -- add one when adding a field", id)
 				}
 				m.form.FocusByID(id)
 				frame := ansi.Strip(m.form.ViewAt(80, 24))
 
-				if !strings.Contains(frame, marker) {
+				if ok && !strings.Contains(frame, marker) {
 					t.Errorf("with %q focused, the render at 80x24 does not contain %q:\n%s", id, marker, frame)
 				}
-				if !strings.Contains(frame, "↵ create") {
-					t.Errorf("with %q focused, the render at 80x24 lost the Create button:\n%s", id, frame)
+				if button := createButtonMarker(m, id); !strings.Contains(frame, button) {
+					t.Errorf("with %q focused, the render at 80x24 lost the %q button:\n%s", id, button, frame)
 				}
 				if !strings.Contains(frame, "esc cancel") {
 					t.Errorf("with %q focused, the render at 80x24 lost the cancel button:\n%s", id, frame)
@@ -315,14 +341,19 @@ func TestAssembledForm_EverySectionVisibleDownToItsFloor(t *testing.T) {
 		for _, id := range ids {
 			m.form.FocusByID(id)
 			frame := ansi.Strip(m.form.ViewAt(80, h))
-			if !strings.Contains(frame, "↵ create") {
-				t.Errorf("at 80x%d with %q focused, the Create button was clipped", h, id)
+			button := createButtonMarker(m, id)
+			if !strings.Contains(frame, button) {
+				t.Errorf("at 80x%d with %q focused, the %q button was clipped", h, id, button)
 			}
-			if !strings.Contains(frame, sectionMarkers[id]) {
+			if marker, ok := sectionMarkers[id]; ok && !strings.Contains(frame, marker) {
 				t.Errorf("at 80x%d, the FOCUSED section %q is not rendered", h, id)
 			}
 			for _, other := range ids {
-				if !strings.Contains(frame, sectionMarkers[other]) {
+				want := button
+				if marker, ok := sectionMarkers[other]; ok {
+					want = marker
+				}
+				if !strings.Contains(frame, want) {
 					fits = false
 				}
 			}
