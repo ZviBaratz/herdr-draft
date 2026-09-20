@@ -1,7 +1,10 @@
 # herdr-draft v3 — fill the card, and make the structure visible
 
 - **Date:** 2026-09-02
-- **Status:** in progress
+- **Status:** implemented. The v3 program is #17-#33, all closed.
+  §5.5 records one cost accepted rather than fixed -- an unconditional
+  face for `↵ create` gives up v2's fill-versus-text signal for whether
+  the focus ring is on it -- and §14 lists what was offered and declined.
 - **Supersedes:** §4 (the screen), §7 (skin, palette, mouse) and §9
   (degradation) of `docs/specs/2026-09-02-herdr-draft-v2-design.md`, plus
   §6's `account` row. Every other v2 section, and every v1 section v2 did not

@@ -1113,6 +1113,13 @@ the exception**: it is not a taste call, it is the unanswered diagnostic
 question §2.7 opens, and problem 2 should not be called fixed until someone
 answers it.
 
+> **Closed out, 2026-09-20 (#64).** Nothing here is open any more. Item 6
+> was answered on 2026-09-03 and says so in place. Every other
+> recommendation was accepted, and two of them were then overtaken by §14's
+> reversal rather than by a decision against them. Each item below now ends
+> with what happened; the questions themselves are left standing, because a
+> recommendation reads differently once you know it was taken.
+
 1. **Is the leftover idle shell acceptable?** §4 proves it is irreducible at
    v0.8.2 and §8.4 removes it. The alternative is to keep `placement` inert
    under a worktree until herdr grows `--no-open`, which is the earlier
@@ -1121,12 +1128,22 @@ answers it.
    git in that checkout, and it is what carries the membership herdr needs.
    Waiting means the row stays dead in the default configuration for an
    unbounded time, which is the reported defect.
+
+   > **Accepted, then reversed.** §5.3 shipped as recommended. §14
+   > (2026-09-17) reverses it: a worktree session runs in its own space
+   > again and the `placement` row is inert under one, which is the
+   > alternative this item names. Read §14 before §5.3.
 2. **Should the row state the extra space, or only the panel?** §6.1 puts the
    chip label on the row and the disclosure in the panel, arguing the
    `worktree` row one line up already says a worktree exists. A reader who
    never focuses `placement` therefore never sees the disclosure.
    *Recommendation: as specified.* If review disagrees, `tab here · plus its
    own space` fits the value column and is the smaller change.
+
+   > **Accepted as specified, then superseded.** §14 makes the row inert
+   > under a worktree, so §6.1's disclosure line is gone (§14's itemised
+   > table) and the row states the consequence itself --
+   > `the worktree's own space` (`internal/form/field_placement.go:61`).
 3. **`split here`'s direction.** `defaultSplitDirection` is `"right"`
    (`build.go:121-125`), inherited from task 2/2b's live checkpoints. Under a
    worktree the split is a *long-lived agent pane* rather than a scratch
@@ -1134,12 +1151,19 @@ answers it.
    at `right`.* One default, one place, and no evidence either way; a
    `split_direction` config key is a new key for a taste question and §10
    keeps `internal/config` out.
+
+   > **Accepted.** `defaultSplitDirection` is still `"right"`
+   > (`internal/plan/build.go:301`) and no `split_direction` key was added.
 4. **Does the reuse refusal in `CleanCheck` need an escape hatch?** §5.4
    refuses to clean a reused space and names the checkout so the user can act
    — but `herdr worktree remove` on that workspace will close it (§8.2), so
    the honest instruction is `git worktree remove <path>` from the origin
    repo. *Recommendation: put that exact command in the reason string.* It is
    longer than any reason the gate currently shows and worth the width.
+
+   > **Accepted.** The reason names the command verbatim -- "remove it
+   > yourself with `git worktree remove <path>` from the origin repository"
+   > (`internal/plan/exec.go:1841`).
 5. **Is §5.2 worth building at all, given §2.7?** The reuse branch has never
    fired here, so §5.2 closes a latent hazard rather than a live one. It is
    cheap — one CLI call and ~20 lines on top of the space/agent-pane
@@ -1149,6 +1173,10 @@ answers it.
    space/agent-pane split (§5.1) is load-bearing for §5.3 on its own and
    must land either way; §5.2 is the twenty lines that ride on it. If it is
    dropped, §8.2 becomes the only defence and it is a herdr change.
+
+   > **Accepted, and built.** `plan.Execute` carries the reuse verdict
+   > (`reused`/`reusedLabel`, `internal/plan/exec.go:1330-1331`) and
+   > `CleanCheck` refuses to clean a reused space.
 6. **RESOLVED, 2026-09-03, by asking the author.** *Was the diff in a
    distinct pane, or in the agent's own?* A distinct one — it outlived
    closing the agent's pane and closed only when the workspace did. That
@@ -1167,6 +1195,9 @@ answers it.
    guarantee herdr's API contract states in so many words. *Recommendation:
    proceed, and cite `workspace.rs:179` at the call site* — the failure mode
    if it ever changed is one extra tab, and §8.3 retires the technique.
+
+   > **Accepted.** The call site cites herdr's workspace-id stability
+   > (`internal/plan/exec.go:1382`).
 
 ## 12. Superseded text, itemised
 
