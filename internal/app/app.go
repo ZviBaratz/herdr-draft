@@ -622,6 +622,12 @@ type Model struct {
 	baseSettleLanded  int
 	baseNote          string
 
+	// checkDeadline overrides blockingCheckDeadline, the bound on every
+	// check a submit waits for (#202). Zero -- which is what production
+	// leaves it, since there is nothing to tune -- means the constant. See
+	// checkBudget, the one place either is read.
+	checkDeadline time.Duration
+
 	// submitHeld is a submit waiting for the project row's check (#195), the
 	// base check (#194) or the title-duplicate check (#137): set by
 	// handleSubmit while any of them is out. The handler that lands one --
@@ -855,6 +861,31 @@ type Model struct {
 	// they're already exactly what the form is currently SHOWING the user.
 	dirInvalid      bool
 	titleDupBlocked bool
+
+	// dirUnknown/titleDupUnknown/baseUnknown are the same three verdicts'
+	// absence: the check did not answer inside blockingCheckDeadline, so
+	// there is no verdict at all (#202). checkSubmitValidation refuses on
+	// each of them exactly as it refuses on the verdict beside it, and
+	// deliberately NOT by folding them into it -- "we could not check" and
+	// "we checked, and no" are different things to be told, only one of
+	// which the user fixes by typing something else. Each field says which
+	// on its own surface, and each is cleared by the next answer that does
+	// land.
+	dirUnknown      bool
+	titleDupUnknown bool
+
+	// uncheckedBaseRef is the base ref whose check gave up, and "" when
+	// none did -- baseUnknown reads it. See that method on why the base's
+	// unknown is a ref rather than a flag.
+	//
+	// baseListNote is what the base LIST check last had to say about the
+	// worktree panel's status line ("couldn't list", or "" for a list that
+	// came back), and lastBaseShown the base that line was last composed
+	// for. Both exist because that one line has more than one source and
+	// only refreshBaseStatus may write it -- see there.
+	uncheckedBaseRef string
+	baseListNote     string
+	lastBaseShown    string
 
 	// width/height are this Model's own copy of the last tea.WindowSizeMsg
 	// (form.Model keeps its own copy internally, unreachable from here) --
@@ -1587,7 +1618,11 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 		m.title.SetVerdict(m.title.Value(), "title required")
 		return m.form.FocusByID("title"), true
 	}
-	if m.dirInvalid {
+	if m.dirInvalid || m.dirUnknown {
+		// One refusal, two reasons, and the row is already showing which:
+		// `invalid` for a path that is not there, `check timed out` for
+		// one nobody could answer for (#202). Nothing is created on the
+		// second either -- an unknown is not a pass.
 		return m.form.FocusByID("dir"), true
 	}
 	// Before the duplicate refusal, which is about whether a branch of this
@@ -1599,7 +1634,15 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 		m.worktree.SetBranchVerdict(branch, branchVerdictText(err))
 		return tea.Batch(m.form.FocusByID("worktree"), m.worktree.FocusBranch()), true
 	}
-	if m.titleDupBlocked {
+	if m.baseUnknown() {
+		// The other half of the worktree row's refusals, and it lands on
+		// the same row for the same reason: the base is one keystroke away
+		// there, and the panel this focus opens names the ref (#202).
+		return m.form.FocusByID("worktree"), true
+	}
+	if m.titleDupBlocked || m.titleDupUnknown {
+		// As with the project row: one refusal, and the panel this focus
+		// opens already says which of the two it is (#202).
 		return m.form.FocusByID("title"), true
 	}
 	if pin, status, blocked := m.accountAuthBlocked(); blocked {
@@ -1751,12 +1794,32 @@ func (m Model) linkedBaseRef() string { return cmp.Or(m.worktree.Base(), "HEAD")
 // equivalence test drives the form to a comparable plan.Input through it and
 // WithLinkedCommit.
 func (m Model) ResolveLinkedCommit(ctx context.Context) (string, error) {
-	if !m.needsLinkedCommit() {
+	dir, ref, ask := m.linkedCommitReq()
+	if !ask {
 		return "", nil
 	}
-	// Expanded as buildPlanInput expands ProjectDir; the dir check keyed
-	// its answer on the raw project value.
-	return m.deps.Git.ResolveCommit(ctx, pathx.ExpandTilde(m.linked.dir), m.linkedBaseRef())
+	return m.deps.Git.ResolveCommit(ctx, dir, ref)
+}
+
+// linkedCommitReq is the question ResolveLinkedCommit asks, read off the
+// form, with ask false when there is none (needsLinkedCommit).
+//
+// It is split out so linkedCommitCmd can do the READING somewhere the
+// answer's own goroutine is not. Since #202 that goroutine can outlive the
+// answer -- the deadline can produce the message without it -- and the
+// message unfreezes the form, so a field read left over there would be
+// racing the next edit rather than sitting safely inside the freeze. Every
+// other bounded check already captures its inputs at scheduling time
+// (scheduleTitleCheck's own doc comment names the discipline); this is the
+// one that read them from a Model it had carried along.
+//
+// The dir is expanded as buildPlanInput expands ProjectDir; the dir check
+// keyed its answer on the raw project value.
+func (m Model) linkedCommitReq() (dir, ref string, ask bool) {
+	if !m.needsLinkedCommit() {
+		return "", "", false
+	}
+	return pathx.ExpandTilde(m.linked.dir), m.linkedBaseRef(), true
 }
 
 // WithLinkedCommit records a ResolveLinkedCommit answer so buildPlanInput
@@ -2057,6 +2120,17 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	// candidate row). Its branch half is refreshed separately, by the base
 	// check that learns it (async.go's handleBaseResult).
 	m.refreshFormContext()
+	// The base status line follows the base, because what it says is about
+	// one: an unknown whose ref the user has replaced stops applying
+	// (baseUnknown), and the line saying it has to go with it, exactly as
+	// spec §11's provenance goes with a value the user moved. Its own
+	// snapshot rather than appliedBaseRef, which syncDerivedInertness
+	// resyncs for a different question -- sharing one is the shape the
+	// CLAUDE.md convention warns about.
+	if base := m.worktree.RequestedBase(); base != m.lastBaseShown {
+		m.lastBaseShown = base
+		m.refreshBaseStatus()
+	}
 	m.snapshotAppliedDefaults()
 	return cmds
 }

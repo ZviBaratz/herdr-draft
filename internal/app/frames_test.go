@@ -470,6 +470,99 @@ func TestAssembledForm_OpeningState(t *testing.T) {
 	}
 }
 
+// TestAssembledForm_WhileTheProjectCheckIsOut pins #202's two new project
+// rows: one whose check is still out, and one whose check never answered.
+//
+// They are the only states this row has that are not a verdict about the
+// path, and they exist because a submit waits for that check (#195) with
+// nothing on screen to say so -- on a stalled mount ⌃S looked like a dead
+// key. Frames, because "anything drawn needs a golden frame" and because
+// the settled rows beside them must not move to make room: every other
+// frame in this file lands the check first (resolveDirCheck), and a
+// regeneration that touched one of those would be the change worth
+// catching.
+//
+// The focused row is the project's own, which is where the refusal puts
+// it and so where the user reads the word.
+func TestAssembledForm_WhileTheProjectCheckIsOut(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// land is the answer to deliver, or nil to leave the check out.
+		land  *dirResultMsg
+		focus string
+	}{
+		// The genuine first paint of every popup: New schedules the
+		// check, so the row reads `checking…` with the TITLE focused and
+		// the project row unfocused, which is a different render of that
+		// row (focused, it draws its input instead of the path). Nothing
+		// pinned it, and an unfixtured opening state is this repository's
+		// own war story.
+		{"opening-checking", nil, "title"},
+		{"checking", nil, "dir"},
+		// Note what the worktree row says one line below `check timed
+		// out`: `not a git repository`. The timeout path deliberately
+		// applies nothing, so that row is still on SetGitTarget's
+		// conservative "not a repo until told otherwise" default -- the
+		// safe answer while nothing is known, and the same one every form
+		// shows before its first check lands. The frame pins the pair so
+		// a change that starts asserting something else has to say so.
+		{"check-timed-out", &dirResultMsg{timedOut: true}, "dir"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// NOT newAssembledModel: that one lands the check, which is
+			// the whole of what these frames are about not having
+			// happened.
+			m := newTestModel(t, frameSetup(true))
+			if tc.land != nil {
+				land := *tc.land
+				land.req = request{version: m.dirReqVersion, key: m.dir.Value()}
+				next, _ := m.handleDirResult(land)
+				m = next
+			}
+			m.form.FocusByID(tc.focus)
+
+			assertAppFrame(t, fmt.Sprintf("assembled-%s-%dx%d", tc.name, framePopupW, framePopupH), m, framePopupW, framePopupH)
+		})
+	}
+}
+
+// TestAssembledForm_WhenTheOtherChecksTimeOut pins the two panels the
+// remaining unknowns speak on. They are panel lines rather than row markers
+// by design (v2 spec §6 keeps verdicts off the rows), so the frame is taken
+// with the row focused, which is where the refusal puts the user.
+//
+// A review found the reason these are worth bytes rather than a
+// strings.Contains: the worktree line has two sources, and the base LIST
+// check used to clear it out from under the unknown, leaving ⌃S refused
+// with nothing on screen behind it.
+func TestAssembledForm_WhenTheOtherChecksTimeOut(t *testing.T) {
+	t.Run("base", func(t *testing.T) {
+		m := fillFrameModel(newAssembledModel(t, true), true)
+		m.resolved.BaseRef = "release/1.2"
+		m.worktree.OfferBase("release/1.2")
+		m.worktree.SetBase("release/1.2")
+		m.baseSettleVersion++
+		next, _ := m.handleBaseSettled(baseSettledMsg{version: m.baseSettleVersion, timedOut: true})
+		m = next
+		m.form.FocusByID("worktree")
+
+		assertAppFrame(t, fmt.Sprintf("assembled-base-unchecked-%dx%d", framePopupW, framePopupH), m, framePopupW, framePopupH)
+	})
+
+	t.Run("title", func(t *testing.T) {
+		m := fillFrameModel(newAssembledModel(t, true), true)
+		next, _ := m.handleTitleResult(titleResultMsg{
+			req:      request{version: m.titleReqVersion, key: m.title.Value()},
+			branch:   m.worktree.Branch(),
+			timedOut: true,
+		})
+		m = next
+		m.form.FocusByID("title")
+
+		assertAppFrame(t, fmt.Sprintf("assembled-title-unchecked-%dx%d", framePopupW, framePopupH), m, framePopupW, framePopupH)
+	})
+}
+
 // TestAssembledForm_OpenedFromALane pins the popup opened in a linked
 // worktree's own space -- a lane, where the spawn skill's agents and their
 // owners work (#171). It opens on the lane's checkout, which is what

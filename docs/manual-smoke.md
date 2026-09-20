@@ -1719,6 +1719,66 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### A check that never answers (#202) — 2026-09-20
+
+herdr 0.9.0. `main` at `517c5a8` and `zvi/fix-202-check-deadline` on top of
+it, both built with `go build` into `/var/tmp/hd202-{base,fixed}`.
+**Route B** in a sibling pane of an ordinary session, with a scratch plugin
+config dir (`[agents] favorites = ["nosuchkind"]`, so nothing could ever
+launch), a scratch plugin state dir, and a throwaway `git init` repository
+at `/var/tmp/hd202/repo`.
+
+**The hang was arranged rather than waited for.** `internal/gitx` runs
+`exec.Command("git", ...)`, so `git` resolves through `PATH` and a wrapper
+ahead of the real binary can stall whichever call you name on argv. One
+lever was enough here, matched narrowly:
+
+```sh
+# /var/tmp/hd202/bin/git -- gitx.IsGitRepo and nothing else
+case " $* " in
+  *' --is-inside-work-tree '*) [ -n "$D_IIWT" ] && sleep "$D_IIWT" ;;
+esac
+exec /usr/bin/git "$@"
+```
+
+`--is-inside-work-tree` is `gitx.IsGitRepo`, the second call the project
+row's check makes and the first one that could stall for real. 600s, so
+the check is still out for the whole sequence and the deadline is the only
+thing that can end it. A first pass used 30s and the stall had expired
+before the keys were sent — it created a real session, which the form's
+own `c remove it` then removed. Size the stall past the whole sequence,
+not past the deadline.
+
+Each pass: launch, read at t=2s, type a title a key at a time
+(`pane run`'s bracketed paste did not land in the title input), `ctrl+s`,
+read at +1s and +10s, `esc`.
+
+| | `main` at `517c5a8` | the fix |
+|---|---|---|
+| t=2s, check out | `project  /var/tmp/hd202/repo` — **no marker at all** | `project  /var/tmp/hd202/repo  checking…` |
+| +1s after `⌃S` | unchanged, nothing on screen | unchanged, still `checking…` — held |
+| +10s after `⌃S` | **unchanged.** No marker, no refusal, no focus move. `esc` was the only way out | focus moved to the `project` row and it reads `check timed out`. Nothing created |
+
+The before is the issue's own sentence on screen: `⌃S` is indistinguishable
+from a key that does nothing, for as long as the mount stays stalled.
+
+Note what the focused row shows: `project` focused renders its input, so
+the path is replaced by the `type to search…` placeholder and the marker
+sits alone at the right. That is `DirField.Row`'s pre-existing
+focused-row behaviour and the same thing `invalid` does after a #195
+refusal, not something this change introduced.
+
+**Control, on the fixed binary with the lever removed** — the ordinary
+open, to confirm the settled path did not move. The project row shows no
+marker (the check answers in the milliseconds it should) and the worktree
+row picks up the repository: `worktree  on · from main`, header
+`repo · main`.
+
+Teardown: the form escaped each time, the pane closed, the orphaned
+`sleep 600` children killed, `/var/tmp/hd202*` removed, and `pgrep -x
+herdr-draft` confirmed 0. No account quota spent — no agent was ever
+started.
+
 ### A signalled `create` takes the picker with it (#252) — 2026-09-20
 
 herdr 0.9.0. `main` at `65f14db` and `zvi/fix-252-create-signals`, both built

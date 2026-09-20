@@ -80,6 +80,26 @@ const debounceDelay = 150 * time.Millisecond
 // group, which is a change to how gitx starts git and is not this.
 const fetchPruneTimeout = 30 * time.Second
 
+// blockingCheckDeadline bounds every check a submit waits for (#202): the
+// project row's directory check, the title-duplicate check, the base
+// settle and the lane's commit read. Nothing in any of them could time out
+// before -- DirExists is os.Stat, gitx.IsGitRepo runs git with no context,
+// and the rest were handed context.Background() -- so on a stalled mount
+// ⌃S waited silently and for good, with nothing on screen to say why.
+//
+// Five seconds. Every one of these is an os.Stat plus one or two `git
+// rev-parse` calls against the selected project: single-digit milliseconds
+// on a filesystem that is working, and seconds only on one that is not, so
+// the bound sits far above the working case and still inside the time a
+// person will hold a key combination and wonder.
+//
+// A constant rather than a [timeouts] key, for fetchPruneTimeout's reason:
+// it is a safety bound, not a tuning knob, and nothing a user could set it
+// to would make a hung mount answer. A key would also inherit #143 --
+// [timeouts] values are not validated at all -- which would let a typo
+// turn the bound into "immediately" for every check at once.
+const blockingCheckDeadline = 5 * time.Second
+
 // maxBaseRefs is spec §6 field 4's "capped at 50" bound on the base-ref
 // picker's candidate list.
 const maxBaseRefs = 50
@@ -89,6 +109,103 @@ const maxBaseRefs = 50
 // subdirectories than this stays reachable by typing the target out --
 // DirField's literal-path fallback row.
 const maxBrowseEntries = 500
+
+// errCheckTimedOut is what a check that did not answer reports where the
+// answer is an error rather than a flag on a message -- the lane's base
+// read, whose refusal path already existed and now has two reasons to
+// take. It says the check did not finish, never that the thing checked
+// was bad.
+var errCheckTimedOut = errors.New("the check did not answer in time")
+
+// checkBudget is what every check a submit waits for runs under: the
+// popup's own Lifetime, so quitting the popup ends it (#249), and the
+// deadline on top of that (#202). Read on the update loop and handed to
+// awaitCheck, which is where both are applied.
+//
+// Model.checkDeadline overrides blockingCheckDeadline, which is what lets a
+// test wait out a deadline it would otherwise have to sit through; a Model
+// that never went through New has none, and gets the constant rather than
+// a zero that would time every check out at once.
+func (m Model) checkBudget() (*Lifetime, time.Duration) {
+	d := m.checkDeadline
+	if d <= 0 {
+		d = blockingCheckDeadline
+	}
+	return m.deps.Lifetime, d
+}
+
+// awaitCheck runs answer on its own goroutine and returns what it
+// answered, or (zero, false) when ctx runs out first -- the deadline, or
+// the popup quitting.
+//
+// It bounds the ANSWER, not the calls, and that is the half that matters:
+// the deadline on awaitCheck's context reaches only the calls that take
+// one, and the two that start every directory check -- os.Stat and
+// gitx.IsGitRepo -- take none. Nor would giving them one help on the hang
+// #202 is about: a process blocked on a stalled network mount is in
+// uninterruptible sleep, where a cancelled context (and the KILL behind
+// it) returns nothing any sooner than no context at all. Bounding what the
+// form waits for is the only bound that releases the form.
+//
+// The price is deliberate and stated: the goroutine is left running on a
+// call that may never come back, holding whatever that call holds for the
+// life of the popup. It answers into a buffered channel nobody reads, so
+// it costs one goroutine and no late message -- the Cmd has already
+// returned the one message it will ever return, and a stale answer can
+// therefore not reach handleDirResult behind the guard's back.
+//
+// The Lifetime region is held by the ANSWER's goroutine rather than by this
+// call, and that is the difference between bounding a check and breaking
+// #211. Shutdown's wait exists so a cancelled child is actually dead before
+// the process exits -- exec.CommandContext kills it from a watcher
+// goroutine that has to be scheduled first -- and this call returns the
+// moment the deadline fires, with the child still there. Releasing the
+// region here would leave Shutdown nothing to wait for, which is that bug
+// with an extra step, for all four checks at once. Found in review.
+func awaitCheck[T any](lt *Lifetime, deadline time.Duration, answer func(context.Context) T) (T, bool) {
+	ctx, done := lt.Begin()
+	ctx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
+	answered := make(chan T, 1)
+	go func() {
+		defer done()
+		answered <- answer(ctx)
+	}()
+	select {
+	case v := <-answered:
+		return v, true
+	case <-ctx.Done():
+		// An answer in hand beats a context that is done, and this peek is
+		// what says so. `select` chooses uniformly at random among the
+		// cases that are ready, so an answer sitting in the channel while
+		// the context is also done is a coin flip -- and a check that
+		// reports a deadline over an answer it already has refuses a
+		// submit for nothing.
+		//
+		// The peek is what makes the property hold, and it holds
+		// unconditionally: the send above happens before anything that
+		// could cancel this context from the same goroutine, so a
+		// cancellation that has happened implies a value already buffered.
+		// `defer cancel()` sitting on THIS function rather than in the
+		// goroutine is hygiene on top -- it stops every answer expiring
+		// its own context on the way out, which is what turned the
+		// coin flip from a boundary case into the common one and shipped
+		// once: three unrelated tests failed in their SETUP, on the Linux
+		// runner and not the macOS one, at about one run in four. Note
+		// what could not find it. `go test -race` is blind to two ready
+		// channel operations, and each half of the fix masks the other, so
+		// neither is observable alone -- the mutation that reproduces it
+		// is both at once, which is what
+		// TestAwaitCheck_AnAnswerThatArrivedIsNeverCalledATimeout pins.
+		select {
+		case v := <-answered:
+			return v, true
+		default:
+		}
+		var zero T
+		return zero, false
+	}
+}
 
 // request is the single (version, key) staleness guard every debounced
 // source in this file shares -- see the file doc comment. version is what
@@ -132,6 +249,10 @@ type dirResultMsg struct {
 	// Zero value for a project that is not a repository, whose root could
 	// not be resolved, or that has no such file.
 	repoConfig config.RepoConfig
+	// timedOut is a check that did not answer inside the deadline (#202):
+	// unknown, not a verdict. Every other field is then zero and means
+	// nothing -- the check never finished to fill them.
+	timedOut bool
 	// linkedRoot is the repository's primary checkout when the directory is
 	// inside a linked worktree checkout -- a lane -- and "" otherwise (#171). A
 	// worktree session from one is created from this root, since herdr
@@ -146,6 +267,12 @@ type dirResultMsg struct {
 func (m *Model) scheduleDirCheck(path string) tea.Cmd {
 	m.dirReqVersion++
 	v := m.dirReqVersion
+	// The row says so from here rather than from where the check actually
+	// starts (handleDirDebounce), because the hold starts here too: a ⌃S
+	// inside the debounce window is held by dirCheckPending just as one
+	// during the check itself is, and a row that went quiet for the first
+	// 150ms of every wait would be saying the wrong thing about it (#202).
+	m.dir.SetValidity(path, form.ValidityChecking)
 	clock := m.deps.Clock
 	return func() tea.Msg {
 		clock.sleep(debounceDelay)
@@ -168,21 +295,31 @@ func (m Model) runDirCheck(req request) tea.Cmd {
 	// create`, does no tilde expansion of its own) would have rooted a
 	// workspace at a directory literally named "~".
 	path := pathx.ExpandTilde(req.key)
+	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
-		exists := git.DirExists(path)
-		isRepo := exists && git.IsGitRepo(path)
-		// Resolved ONCE and used twice: it is a `git rev-parse`, and both
-		// spec §10's memory key and spec §11's committed config are
-		// questions about the same repository.
-		root := projectRepoRoot(git, path, exists, isRepo)
-		return dirResultMsg{
-			req:        req,
-			dirExists:  exists,
-			isGitRepo:  isRepo,
-			memoryKey:  projectMemoryKey(path, exists, root),
-			repoConfig: loadRepoConfig(root),
-			linkedRoot: projectLinkedRoot(git, path, root),
+		res, ok := awaitCheck(lt, deadline, func(ctx context.Context) dirResultMsg {
+			exists := git.DirExists(path)
+			isRepo := exists && git.IsGitRepo(path)
+			// Resolved ONCE and used twice: it is a `git rev-parse`, and both
+			// spec §10's memory key and spec §11's committed config are
+			// questions about the same repository.
+			root := projectRepoRoot(ctx, git, path, exists, isRepo)
+			return dirResultMsg{
+				req:        req,
+				dirExists:  exists,
+				isGitRepo:  isRepo,
+				memoryKey:  projectMemoryKey(path, exists, root),
+				repoConfig: loadRepoConfig(root),
+				linkedRoot: projectLinkedRoot(ctx, git, path, root),
+			}
+		})
+		if !ok {
+			// Nothing else is filled in: the check never got far enough to
+			// know any of it, and an unknown that carried a zeroed verdict
+			// would be indistinguishable from a settled one.
+			return dirResultMsg{req: req, timedOut: true}
 		}
+		return res
 	}
 }
 
@@ -192,11 +329,11 @@ func (m Model) runDirCheck(req request) tea.Cmd {
 // which leaves the checkout as the source: herdr then refuses it by name
 // (linked_worktree_source), loud, and no worse than before #171. root gates
 // it only as "this is a repository at all".
-func projectLinkedRoot(git gitSource, path, root string) string {
+func projectLinkedRoot(ctx context.Context, git gitSource, path, root string) string {
 	if root == "" {
 		return ""
 	}
-	primary, err := git.PrimaryCheckout(context.Background(), path)
+	primary, err := git.PrimaryCheckout(ctx, path)
 	if err != nil {
 		return ""
 	}
@@ -211,11 +348,11 @@ func projectLinkedRoot(git gitSource, path, root string) string {
 // "" for a directory that does not exist, for a plain non-repository
 // (which RepoRoot itself reports as ("", nil) rather than as a failure),
 // and for a repository whose root could not be read at all.
-func projectRepoRoot(git gitSource, path string, exists, isRepo bool) string {
+func projectRepoRoot(ctx context.Context, git gitSource, path string, exists, isRepo bool) string {
 	if !exists || !isRepo {
 		return ""
 	}
-	root, err := git.RepoRoot(context.Background(), path)
+	root, err := git.RepoRoot(ctx, path)
 	if err != nil {
 		return ""
 	}
@@ -270,6 +407,28 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		return m, nil // a newer request landed while this one was in flight
 	}
 	m.dirLandedVersion = msg.req.version
+
+	if msg.timedOut {
+		// Unknown, not invalid (#202). Nothing else here runs: every
+		// answer this handler applies -- the worktree row's git target,
+		// the lane, spec §10's per-project defaults -- would be applying
+		// a zero value as though it were a verdict, and the point of the
+		// refusal below is that nothing is decided on a guess. The
+		// PREVIOUS project's answers stay where they are for the same
+		// reason they would after any refusal: they are not used, because
+		// checkSubmitValidation stops the submit before they can be.
+		m.dirUnknown = true
+		m.dir.SetValidity(msg.req.key, form.ValidityUnknown)
+		if m.submitHeld {
+			// It counts as landed, so the wait is over -- and what the
+			// submit finds when it comes back through is its own refusal.
+			// Holding on for an answer that already gave up is the
+			// forever-wait this issue is about, one layer in.
+			return m.handleSubmit()
+		}
+		return m, nil
+	}
+	m.dirUnknown = false
 
 	validity := form.ValidityRepo
 	switch {
@@ -481,7 +640,8 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 		m.relistAfterFetch = 0
 	}
 	if msg.err {
-		m.worktree.SetBaseStatus("couldn't list")
+		m.baseListNote = "couldn't list"
+		m.refreshBaseStatus()
 		m.worktree.SetHeadBranch("")
 		m.refreshFormContext()
 		return m, nil
@@ -501,7 +661,8 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 		settle = m.keepChosenBaseAcrossRelist()
 	}
 	m.worktree.SetBaseItems(m.baseItemsVersion, msg.refs)
-	m.worktree.SetBaseStatus("")
+	m.baseListNote = ""
+	m.refreshBaseStatus()
 	m.refreshFormContext()
 
 	path := msg.req.key
@@ -590,8 +751,15 @@ func (m *Model) keepChosenBaseAcrossRelist() tea.Cmd {
 	m.baseSettleVersion++
 	v := m.baseSettleVersion
 	git, dir := m.deps.Git, pathx.ExpandTilde(m.dir.Value())
+	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
-		return baseSettledMsg{version: v, chosen: chosen, note: settleChosenBase(context.Background(), git, dir, chosen)}
+		msg, ok := awaitCheck(lt, deadline, func(ctx context.Context) baseSettledMsg {
+			return baseSettledMsg{version: v, chosen: chosen, note: settleChosenBase(ctx, git, dir, chosen)}
+		})
+		if !ok {
+			return baseSettledMsg{version: v, chosen: chosen, timedOut: true}
+		}
+		return msg
 	}
 }
 
@@ -613,6 +781,12 @@ type baseSettledMsg struct {
 	// It is kept when note is "" and falls back to the HEAD row when it is
 	// not, which is the same rule read off the same field.
 	chosen string
+
+	// timedOut is the `git rev-parse` behind either question failing to
+	// answer inside the deadline (#202). resolved and note are then zero
+	// and mean nothing: the base is neither kept nor dropped, because
+	// nobody found out which.
+	timedOut bool
 }
 
 // scheduleBaseSettle asks, off the update loop, whether the base the current
@@ -635,13 +809,30 @@ func (m *Model) scheduleBaseSettle() tea.Cmd {
 	m.baseSettleVersion++
 	if m.resolved.BaseRef == "" || m.baseTouched {
 		m.baseSettleLanded = m.baseSettleVersion
+		// Nothing to ask is also nothing outstanding, so any unknown from
+		// the last project's base is over (#202). This decline is the one
+		// that latched it: a project change comes through here, and a
+		// project whose resolution supplies no base -- or a user who has
+		// picked their own -- reaches neither an answer nor a comparison
+		// that moves. Found in review.
+		m.uncheckedBaseRef = ""
+		m.refreshBaseStatus()
 		return nil
 	}
 	v := m.baseSettleVersion
 	git, dir, res := m.deps.Git, pathx.ExpandTilde(m.dir.Value()), m.resolved
+	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
-		settled, note := SettleBase(context.Background(), git, dir, res)
-		return baseSettledMsg{version: v, resolved: settled, note: note}
+		msg, ok := awaitCheck(lt, deadline, func(ctx context.Context) baseSettledMsg {
+			settled, note := SettleBase(ctx, git, dir, res)
+			return baseSettledMsg{version: v, resolved: settled, note: note}
+		})
+		if !ok {
+			// No resolution and no note, deliberately: both would say the
+			// base was dropped for a reason nobody established (#202).
+			return baseSettledMsg{version: v, timedOut: true}
+		}
+		return msg
 	}
 }
 
@@ -667,6 +858,20 @@ func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.baseSettleLanded = msg.version
+	if m.baseUnknown() {
+		// Any answer that lands for the current question ends whatever
+		// unknown the last one left (#202) -- including an answer this
+		// switch then drops, since what makes it droppable is that the
+		// base it was about is no longer the one on screen.
+		//
+		// The status line goes with it, and only from here: it is shared
+		// with the base LIST check ("couldn't list"), so clearing it on
+		// every landing answer would take back a refusal this one knows
+		// nothing about. Only the answer that replaces our own unknown
+		// owns the line we wrote.
+		m.uncheckedBaseRef = ""
+		m.refreshBaseStatus()
+	}
 	switch {
 	case msg.chosen != "" && msg.chosen != m.worktree.Base():
 		// The user moved the base while the question about the old one was
@@ -681,6 +886,19 @@ func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
 		// The window is a `git rev-parse` wide and #195's hold parks the
 		// user inside it, which is what makes this the likely case rather
 		// than the rare one.
+	case msg.chosen == "" && m.baseTouched:
+		// A tier's answer reaching a user who has since picked their own
+		// base: dropped, exactly as the !m.baseTouched guard below always
+		// dropped it. It is spelled out as its own case only so the
+		// timed-out one underneath inherits it -- an unknown reported
+		// about a base the form no longer offers would refuse a submit
+		// over a ref nobody can see.
+	case msg.timedOut:
+		// Unknown, not dropped. The base stays exactly as it is and the
+		// submit is refused (checkSubmitValidation) rather than sent to
+		// branch from a ref that may name nothing.
+		m.uncheckedBaseRef = cmp.Or(msg.chosen, m.resolved.BaseRef)
+		m.refreshBaseStatus()
 	case msg.chosen != "":
 		// Their own base, so the resolution and its provenance are left
 		// exactly as they are: no tier supplies what is on screen either
@@ -701,7 +919,9 @@ func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
 		m.showRepoConfig()
 		// The app moved the base, not the user -- see snapshotAppliedDefaults.
 		m.snapshotAppliedDefaults()
-	case !m.baseTouched:
+	default:
+		// A tier's base, with the user's own choice not in play -- the
+		// case the two above have already excluded between them.
 		m.resolved = msg.resolved
 		m.baseNote = msg.note
 		m.worktree.OfferBase(m.resolved.BaseRef)
@@ -714,6 +934,47 @@ func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
 		return m.handleSubmit()
 	}
 	return m, nil
+}
+
+// baseUnknown reports whether the base a submit would use is one whose
+// check gave up (#202).
+//
+// A REF compared against the base in play, rather than a flag someone
+// clears, and that is the whole of the fix for what an independent review
+// found: the base is the one check of the four that can decline to ask.
+// scheduleBaseSettle returns no message at all when the resolution
+// supplies no base or the user has chosen their own, so an unknown cleared
+// only where an ANSWER lands had no way back -- and the line it writes
+// says "pick a base", which sets baseTouched, which is exactly the
+// condition under which no answer is ever coming. A submit was then
+// refused for the life of the popup, which is #202's own defect one layer
+// up. Read as a comparison instead, the verdict simply stops applying the
+// moment the value moves, which is DirField.SetValidity's own rule for the
+// same problem (validityPath against Value()).
+//
+// RequestedBase, not Base: the app's own answer to "which base", which
+// reads "" while a deferred selection is held (#253) and would make an
+// unknown about the ref being held look like an unknown about HEAD.
+func (m Model) baseUnknown() bool {
+	return m.uncheckedBaseRef != "" && m.uncheckedBaseRef == m.worktree.RequestedBase()
+}
+
+// refreshBaseStatus recomposes the worktree panel's base status line: the
+// ONE place it is written, because it has two sources that know nothing of
+// each other. The base LIST check speaks there ("couldn't list", cleared on
+// every success) and so does #202's unknown, and the list's unconditional
+// clear used to wipe the unknown's line -- leaving ⌃S refused with nothing
+// on screen behind it, the review's second finding.
+//
+// The unknown wins when both have something to say. It is the one refusing
+// the submit: a list that could not be read leaves the picker where it was,
+// and a base nobody could check stops the create.
+func (m *Model) refreshBaseStatus() {
+	if m.baseUnknown() {
+		m.worktree.SetBaseStatus("couldn't check " + m.uncheckedBaseRef + ": pick a base")
+		return
+	}
+	m.worktree.SetBaseStatus(m.baseListNote)
 }
 
 // baseSettlePending reports whether a base check is out: scheduled for the
@@ -738,6 +999,11 @@ type titleResultMsg struct {
 	// for none at all.
 	branch        string
 	branchInvalid error
+	// timedOut is the git half of this check -- BranchExists -- failing to
+	// answer inside the deadline (#202). branchExists then means nothing;
+	// every other field is still filled, since the rest of the check asks
+	// nobody anything.
+	timedOut bool
 }
 
 // scheduleTitleCheck bumps the title-duplicate source's own request
@@ -787,6 +1053,7 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 	workspaces := m.workspaces
 	req := msg.req
 	branch, dir, worktreeOn := msg.branch, msg.dir, msg.worktreeOn
+	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
 		labelTaken := workspaceLabelTaken(workspaces, req.key)
 
@@ -794,12 +1061,24 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 		if branch != "" {
 			invalid = BranchRefusal(worktreeOn, branch)
 		}
-		branchExists := false
-		if invalid == nil && worktreeOn && branch != "" && dir != "" {
-			exists, err := git.BranchExists(context.Background(), pathx.ExpandTilde(dir), branch)
-			branchExists = err == nil && exists
+		// Composed before the one question that leaves this process, so a
+		// git that hangs costs only the half it was asked about (#202):
+		// the label collision and the branch's own name are answered from
+		// what the check was handed, and stay answered either way.
+		res := titleResultMsg{req: req, labelTaken: labelTaken, branch: branch, branchInvalid: invalid}
+		if invalid != nil || !worktreeOn || branch == "" || dir == "" {
+			return res
 		}
-		return titleResultMsg{req: req, branchExists: branchExists, labelTaken: labelTaken, branch: branch, branchInvalid: invalid}
+		exists, ok := awaitCheck(lt, deadline, func(ctx context.Context) bool {
+			found, err := git.BranchExists(ctx, pathx.ExpandTilde(dir), branch)
+			return err == nil && found
+		})
+		if !ok {
+			res.timedOut = true
+			return res
+		}
+		res.branchExists = exists
+		return res
 	}
 }
 
@@ -848,12 +1127,16 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 	}
 	m.titleLandedVersion = msg.req.version
 	m.worktree.SetBranchVerdict(msg.branch, branchVerdictText(msg.branchInvalid))
-	m.title.SetVerdict(msg.req.key, m.titleNote(titleVerdictText(msg.branchExists, msg.labelTaken)))
+	m.title.SetVerdict(msg.req.key, m.titleNote(titleVerdictText(msg.branchExists, msg.labelTaken, msg.timedOut)))
 	// titleDupBlocked mirrors the SAME verdict just pushed above --
 	// checkSubmitValidation (app.go, spec §9) reads this directly rather
 	// than re-deriving it from TitleField's own (unexported) verdict
-	// state.
+	// state. titleDupUnknown is the third state that verdict now has
+	// (#202): a check that never answered blocks like a duplicate does,
+	// and says something else while doing it. A label collision still
+	// counts on a timed-out check -- that half never asked git.
 	m.titleDupBlocked = msg.branchExists || msg.labelTaken
+	m.titleDupUnknown = msg.timedOut
 	if m.submitHeld {
 		// The submit this check was holding goes on from the top, so the
 		// duplicate refusal it waited for reads this verdict (#137).
@@ -912,8 +1195,14 @@ func branchVerdictText(invalid error) string {
 	return "invalid branch name  " + invalid.Error()
 }
 
-func titleVerdictText(branchExists, labelTaken bool) string {
+func titleVerdictText(branchExists, labelTaken, timedOut bool) string {
 	switch {
+	// First: a check that did not answer knows nothing about the branch,
+	// so "branch exists" is not a thing it could also be saying. The label
+	// half is still true and still blocks, but this is the more surprising
+	// of the two and the one the user has no way to guess at.
+	case timedOut:
+		return "couldn't check"
 	case branchExists && labelTaken:
 		return "branch & label in use"
 	case branchExists:
@@ -1131,17 +1420,29 @@ type linkedCommitMsg struct {
 // linkedCommitCmd runs Model.ResolveLinkedCommit off-model: it is a `git
 // rev-parse`, and Update does no I/O.
 func (m Model) linkedCommitCmd() tea.Cmd {
-	src := m
-	lt := m.deps.Lifetime
+	// Read here, on the update loop, rather than inside the closure: see
+	// linkedCommitReq on why the answer's goroutine is the wrong place for
+	// it since the deadline existed.
+	git := m.deps.Git
+	dir, ref, ask := m.linkedCommitReq()
+	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
+		if !ask {
+			return linkedCommitMsg{}
+		}
 		// On the app's context, so everything a submit is waiting for dies
 		// with the popup rather than only the pick that motivated the rule
-		// (#211). It writes nothing either way; cancelling it only means a
-		// `git rev-parse` exits a moment sooner.
-		ctx, done := lt.Begin()
-		defer done()
-		commit, err := src.ResolveLinkedCommit(ctx)
-		return linkedCommitMsg{commit: commit, err: err}
+		// (#211), and gives up rather than waiting for good (#202). It
+		// writes nothing either way; cancelling it only means a `git
+		// rev-parse` exits a moment sooner.
+		msg, ok := awaitCheck(lt, deadline, func(ctx context.Context) linkedCommitMsg {
+			commit, err := git.ResolveCommit(ctx, dir, ref)
+			return linkedCommitMsg{commit: commit, err: err}
+		})
+		if !ok {
+			return linkedCommitMsg{err: errCheckTimedOut}
+		}
+		return msg
 	}
 }
 
@@ -1158,7 +1459,15 @@ func (m Model) handleLinkedCommit(msg linkedCommitMsg) (Model, tea.Cmd) {
 	// `auto` pick follows (#136).
 	m.submitResolving = false
 	if msg.err != nil {
-		m.worktree.SetBaseStatus("couldn't resolve " + m.linkedBaseRef() + ": pick a base")
+		// Two reasons, one refusal. "couldn't resolve" is a ref git
+		// answered about and rejected; "couldn't check" is git not
+		// answering at all (#202), and saying the first of those for the
+		// second would name the ref as the problem when the mount is.
+		reason := "couldn't resolve "
+		if errors.Is(msg.err, errCheckTimedOut) {
+			reason = "couldn't check "
+		}
+		m.worktree.SetBaseStatus(reason + m.linkedBaseRef() + ": pick a base")
 		return m, m.form.FocusByID("worktree")
 	}
 	return m.WithLinkedCommit(msg.commit).continueSubmit()
