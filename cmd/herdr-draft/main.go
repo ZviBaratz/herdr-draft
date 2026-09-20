@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -196,24 +197,67 @@ func runPopup() int {
 	})
 	gitSrc := app.NewGitSource()
 
-	model, err := app.Bootstrap(env, herdrRunner(), clauthSrc, gitSrc, app.Clock{})
+	// The popup's own Lifetime: the context the form's off-model work runs
+	// on, and the thing runProgram tears down on the way out (#211).
+	lt := app.NewLifetime()
+
+	model, err := app.Bootstrap(env, herdrRunner(), clauthSrc, gitSrc, app.Clock{}, lt)
 	if err != nil {
 		// spec §9's pre-open refusal: plain-text error to stderr, exit 1,
-		// before the form ever renders.
+		// before the form ever renders. Nothing has begun on the Lifetime
+		// yet -- Bootstrap's own startup calls do not use it -- so this
+		// releases its context rather than stopping anything.
+		lt.Shutdown(0)
 		fmt.Fprintln(os.Stderr, "herdr-draft:", err)
 		return 1
 	}
 
-	// bubbletea v2.0.8 has no tea.WithAltScreen()/mouse-enabling
-	// tea.NewProgram option at all (verified against
-	// charm.land/bubbletea/v2@v2.0.8's options.go: WithContext/WithOutput/
-	// WithInput/WithEnvironment/WithoutSignalHandler/WithoutCatchPanics/
-	// WithoutSignals/WithoutRenderer/WithFilter/WithFPS/WithColorProfile/
-	// WithWindowSize is the complete list) -- AltScreen and MouseMode are
-	// both set on the tea.View app.Model.View() returns instead; see its
-	// own doc comment.
-	if _, err := tea.NewProgram(model).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "herdr-draft:", err)
+	return runProgram(os.Stderr, lt, func() error {
+		// bubbletea v2.0.8 has no tea.WithAltScreen()/mouse-enabling
+		// tea.NewProgram option at all (verified against
+		// charm.land/bubbletea/v2@v2.0.8's options.go: WithContext/WithOutput/
+		// WithInput/WithEnvironment/WithoutSignalHandler/WithoutCatchPanics/
+		// WithoutSignals/WithoutRenderer/WithFilter/WithFPS/WithColorProfile/
+		// WithWindowSize is the complete list) -- AltScreen and MouseMode are
+		// both set on the tea.View app.Model.View() returns instead; see its
+		// own doc comment.
+		_, err := tea.NewProgram(model).Run()
+		return err
+	})
+}
+
+// shutdownGrace is how long the process stays alive, after the form is gone,
+// for the cancellation of its own background work to be delivered (#211).
+//
+// It is sized for the KILL, not for the call that is being killed. Measured
+// on 2026-09-20 over fifty runs against a `#!/bin/sh` + `sleep` stub: from
+// cancel to a dead picker, 3.8ms worst case (4.8ms on a second pass, so the
+// claim is the order of magnitude); from cancel to exec.Cmd.Wait returning,
+// 2.00s, because the picker's orphaned `sleep` inherits the stdout pipe and
+// holds Wait open for the whole of picker.pickerWaitDelay. A real
+// picker shells out per account, so that slow shape is the ordinary one --
+// and waiting it out would hold the popup on screen for two seconds after the
+// form is gone, waiting on a process that has already been dead for all but
+// the first millisecond of it. A quarter of a second is two orders of
+// magnitude above what the kill needs and imperceptible when it is spent.
+const shutdownGrace = 250 * time.Millisecond
+
+// runProgram runs the popup and then, ALWAYS, tears down the work it started:
+// cancel, then wait (bounded) for the cancellation to land before this returns
+// and the process exits.
+//
+// The wait is the half that is easy to leave out and does not work without --
+// see app.Lifetime.Shutdown. It happens before the error is reported, and on
+// the failure path too, because a popup that died still must not leave a
+// picker behind to write a ledger entry for the session it did not create.
+//
+// run and the writer are parameters so this is testable without a real
+// tea.Program and a real terminal, the way dispatch and runSkill are.
+func runProgram(stderr io.Writer, lt *app.Lifetime, run func() error) int {
+	err := run()
+	lt.Shutdown(shutdownGrace)
+	if err != nil {
+		fmt.Fprintln(stderr, "herdr-draft:", err)
 		return 1
 	}
 	return 0

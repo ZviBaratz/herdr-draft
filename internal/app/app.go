@@ -170,6 +170,13 @@ type Deps struct {
 	Picker pickerSource
 	Git    gitSource
 	Clock  Clock
+	// Lifetime bounds the off-model work this Model starts against the
+	// PROCESS's own life: the account picks and the lane's base run on its
+	// context, so quitting the popup kills a picker mid-pick rather than
+	// leaving it to write a ledger entry for a session nobody created
+	// (#211). nil -- every Model a test builds without one -- means
+	// context.Background(), exactly as this behaved before.
+	Lifetime *Lifetime
 	// RepoConfig reads spec §11's committed .herdr-draft.toml from a
 	// repository root. nil means config.LoadRepoConfig, the production
 	// reader -- it is a func rather than an interface for the same reason
@@ -287,7 +294,14 @@ type Setup struct {
 // per spec §13 ("Linear/clauth/network failures degrade the respective
 // field to inert with a reason; they never block manual-mode creation")
 // rather than refusing.
-func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc gitSource, clock Clock) (Model, error) {
+//
+// lt is the process's Lifetime (#211), threaded into Deps so the commands
+// the form starts later run on a context quitting cancels. Bootstrap's own
+// startup calls deliberately do not: nothing can quit before the form is on
+// screen, and a refusal here is reported and returned rather than waited on.
+// nil is accepted and means uncancellable, which is what this package's own
+// tests want.
+func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc gitSource, clock Clock, lt *Lifetime) (Model, error) {
 	ctx, err := herdrc.ParseContext(env.ContextJSON)
 	if err != nil {
 		return Model{}, refusalContext(err)
@@ -390,7 +404,7 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		}
 	}
 
-	deps := Deps{Runner: runner, Linear: linearSrc, Clauth: clauthSrc, Picker: pickerSrc, Git: gitSrc, Clock: clock}
+	deps := Deps{Runner: runner, Linear: linearSrc, Clauth: clauthSrc, Picker: pickerSrc, Git: gitSrc, Clock: clock, Lifetime: lt}
 	return New(Setup{
 		Deps:              deps,
 		Ctx:               ctx,

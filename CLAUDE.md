@@ -418,6 +418,37 @@ Layering, outermost to innermost:
   section at two window heights and compares the bytes. Reaching for the
   height inside a `Row` is the shape of the bug that convention exists to
   catch.
+- **Quitting the popup kills the work it started, and cancelling is only
+  half of that.** The commit-time account pick is the one picker call that
+  is not a dry run, so it is the one that writes the picker's ledger, and
+  `esc` used to quit while leaving it running — an account recorded for a
+  session that never existed (#211). It, the `--dry-run` preview and the
+  lane's `git rev-parse` therefore run on `app.Lifetime`'s context
+  (`lt.Begin()`, not `context.Background()`), which `cmd/herdr-draft`'s
+  `runProgram` cancels once the `tea.Program` has returned. The half that
+  is easy to leave out is the wait after it: `exec.CommandContext` kills
+  the child from a watcher goroutine, so a process that cancels and exits
+  in the same breath can exit first and leave the picker running anyway.
+  `Lifetime.Shutdown` waits, bounded, and the bound is sized for the KILL
+  rather than for the call — measured 2026-09-20, cancel to a dead picker
+  is single-digit milliseconds (worst of fifty runs 3.8ms, and 4.8ms on a
+  second pass, so read it as an order of magnitude rather than a number),
+  while cancel to `exec.Cmd.Wait` returning is `picker.pickerWaitDelay`
+  almost exactly, ~2s, because the picker's orphaned children inherit its
+  stdout pipe. `Begin` and `Shutdown` are mutex-guarded, and that is not
+  tidiness: bubbletea does not wait for its `Cmd` goroutines before `Run`
+  returns, so a late `Begin` is ordinary, and a `sync.WaitGroup` `Add`
+  overlapping a `Wait` is misuse — it panicked the quit path in review.
+  Anything new that shells out from a `tea.Cmd` belongs on the same
+  context. What is still on `context.Background()` is nine more sites in
+  `internal/app`, and they are not one kind: the dir check's `RepoRoot`/
+  `PrimaryCheckout`, the base settle, `fetch --prune`, the title-dup
+  `BranchExists`, the branch list, clauth and Linear are simply reads
+  nobody has needed cancelled; `runSubmitCmd`, `plan.CleanCheck` and
+  `plan.Clean` are the creation and teardown pipeline, and abandoning one
+  of those halfway is a worse outcome than letting it finish. Headless
+  `create` is on `Background` end to end — #211's decision was about the
+  popup.
 - **App-layer state is diffed, not event-driven.** `form.Model` exposes no
   "section X changed" signal; `Model.reactToChanges` (in `app.go`) compares
   each relevant getter against a last-observed snapshot after every routed
