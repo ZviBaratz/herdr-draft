@@ -1042,7 +1042,11 @@ func (f *AccountField) SetPin(pin string) {
 	}
 	// Naming a profile is a stronger statement than configuring a picker, so
 	// a `[clauth] default` that names one beats the auto row SetPickerAvailable
-	// may have just selected. New calls the two in that order for this reason.
+	// may have just selected. THIS line is that precedence, whichever order
+	// the two setters are called in: SetPickerAvailable selects auto only
+	// while nothing is pinned. (It used to say the caller's order was what
+	// decided it, which was never true and is measured false -- see
+	// internal/app's populateAccountRow.)
 	f.auto = false
 	f.pinned = pin
 	f.refreshItems()

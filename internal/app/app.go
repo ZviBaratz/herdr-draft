@@ -505,6 +505,11 @@ const readmeURL = "https://github.com/ZviBaratz/herdr-draft#readme"
 // (the auto row, the configured default, the notes) is a piece a fix that
 // only re-fed the profiles would have left behind.
 //
+// Note what that costs: with both callers sharing this body, no test can
+// catch a change made INSIDE it by comparing the two rows -- they move
+// together. The golden frames are what pin the contents; the comparison
+// pins the caller. See TestClauthReload_TheRecoveredRowIsTheOneOpenWouldHaveBuilt.
+//
 // It reads Model rather than Setup deliberately, since only one of the two
 // callers has a Setup; New has already copied every field it needs
 // (m.cfg/m.deps/m.clauthStatus/m.pickerUnavailable) into the Model by the
@@ -518,11 +523,15 @@ func (m *Model) populateAccountRow() {
 	// are relative (v3 spec §10.2) and internal/form has no clock of
 	// its own -- see Clock.Now.
 	m.account.SetProfiles(m.clauthStatus, m.deps.Clock.now())
-	// The auto row, and it goes on BEFORE SetPin below: SetPickerAvailable
-	// makes auto the resting selection when nothing else is pinned, and a
-	// `[clauth] default` naming a real profile has to be able to beat it
-	// (AccountField.SetPin clears auto). Swapping these two lines silently
-	// makes the configured default lose to the picker.
+	// The auto row: SetPickerAvailable makes auto the resting selection
+	// when nothing else is pinned, since someone who configured a picker
+	// configured it to be used. A `[clauth] default` naming a real profile
+	// beats it, and that precedence is SetPin's own (it clears auto) rather
+	// than this order's -- SetPickerAvailable only selects auto while
+	// nothing is pinned, so the two lines commute. This comment used to
+	// claim swapping them "silently makes the configured default lose to
+	// the picker"; swapping them changes nothing, which is measured -- the
+	// whole suite is green either way (independent review of #200).
 	if m.deps.Picker != nil {
 		m.account.SetPickerAvailable(true)
 	}

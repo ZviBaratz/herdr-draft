@@ -112,16 +112,26 @@ func TestClauthReload_TwoProfilesMakeTheRowLive(t *testing.T) {
 }
 
 // TestClauthReload_TheRecoveredRowIsTheOneOpenWouldHaveBuilt is the
-// decision's own wording asserted as bytes: "the row becomes live and can
-// be pinned, as it would have been had clauth answered at open."
+// decision's own wording: "the row becomes live and can be pinned, as it
+// would have been had clauth answered at open."
 //
 // Everything New does for a live row beyond loading the profiles has to
-// happen here too -- the auto row, `[clauth] default`, and the standing
-// notes -- and the only way to be sure of that is to render the row the
-// reload rebuilt beside the row a working clauth would have produced and
-// compare them. A picker that failed its probe is in the fixture because
-// its reason is a note rather than a profile: it is the piece most easily
-// left behind by a fix that only re-feeds the profile list.
+// happen here too -- the auto row, `[clauth] default` and the standing
+// notes -- so the recovered row is rendered beside the row a working
+// clauth would have opened on and compared byte for byte. A picker that
+// failed its probe is in the fixture because its reason is a note rather
+// than a profile: it is the piece most easily left behind by a fix that
+// only re-feeds the profile list.
+//
+// Be clear about what that comparison can and cannot catch, because it
+// reads stronger than it is (independent review of #200). Both sides go
+// through populateAccountRow, so a change INSIDE that function moves both
+// frames together and this assertion stays silent; what it catches is the
+// recovery path ceasing to call it, or calling it differently. The golden
+// frame below is what pins the contents, and the assertions beside it --
+// the configured default, the note, and the auto row with a working
+// picker -- are deliberately about the row's own state rather than about
+// the two rows agreeing.
 func TestClauthReload_TheRecoveredRowIsTheOneOpenWouldHaveBuilt(t *testing.T) {
 	reloaded := &fakeClauth{status: frameClauthStatus()}
 	recovering := unavailableAccountSetup(reloaded)
@@ -144,8 +154,24 @@ func TestClauthReload_TheRecoveredRowIsTheOneOpenWouldHaveBuilt(t *testing.T) {
 	if got := m.account.Pin(); got != "work" {
 		t.Errorf("Pin() on the recovered row = %q, want the configured default %q", got, "work")
 	}
+	if frame := focusedFrame(t, m, "account"); !strings.Contains(frame, pickerProbeHead) {
+		t.Errorf("the recovered row does not carry the note saying why there is no auto row:\n%s", frame)
+	}
 
 	assertAppFrame(t, "assembled-clauth-recovered-101x30", m, framePopupW, framePopupH)
+
+	// And the auto row, which the fixture above cannot show because its
+	// picker failed its probe. A working one makes auto the resting
+	// selection, and a recovered row has to get that too.
+	withPicker := unavailableAccountSetup(&fakeClauth{status: frameClauthStatus()})
+	withPicker.Picker = &fakePicker{}
+	p := resolveDirCheck(t, newTestModel(t, withPicker))
+	p, pres := clickAccountRow(t, p)
+	pnext, _ := p.Update(pres)
+	p = pnext.(Model)
+	if !p.account.IsAuto() {
+		t.Error("the recovered row has no auto row, with a picker configured and probed")
+	}
 }
 
 // TestClauthReload_FewerThanTwoKeepsItUnavailableWithANewReason: a reload
