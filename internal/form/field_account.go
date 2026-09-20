@@ -478,6 +478,24 @@ func (f *AccountField) SetUnavailable(reason string) { f.unavailable = reason }
 // currently selected agent kind is not claude -- see SetAgentIsClaude.
 func (f *AccountField) Enabled() bool { return f.agentIsClaude && f.unavailable == "" }
 
+// RetryOnFocus asks the focus ring for a stop on a row Enabled() has just
+// refused -- form.go's optional retryOnFocus interface, and the one state
+// that uses it: inert because clauth failed, with claude selected.
+//
+// The row would otherwise be reachable by MOUSE ALONE (#200). Focusing it
+// is what re-reads clauth (spec §11: "load at open and on account focus"),
+// and a ring that skips every disabled section leaves that retry -- and
+// the full reason, which only the panel shows once the row elides it --
+// behind a click. This does not soften Enabled(): Update and Complete
+// still refuse input (#191), the panel still draws no list, and the footer
+// still says there is nothing to set here. It buys the stop and nothing
+// else.
+//
+// Deliberately silent for the other inert state. A non-claude agent has
+// nothing to retry and nothing to pin, so a stop there would be a row you
+// tab onto to be told it does not apply to you.
+func (f *AccountField) RetryOnFocus() bool { return f.agentIsClaude && f.unavailable != "" }
+
 // Focus gives the field input focus. widgets.Picker has no Focus/Blur of
 // its own (see its package doc); focused is tracked only for
 // Section-interface completeness, matching field_worktree.go's

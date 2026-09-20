@@ -143,11 +143,28 @@ func (r *focusRing) nextEnabled(delta int) int {
 	i := r.index
 	for range r.sections {
 		i = (i + delta + n) % n
-		if r.sections[i].Enabled() {
+		if focusable(r.sections[i]) {
 			return i
 		}
 	}
 	return r.index
+}
+
+// focusable reports whether the ring may stop on s: enabled, or disabled
+// and asking for the stop anyway through form.go's optional retryOnFocus
+// interface (#200 -- a row whose integration failed re-reads it on focus,
+// so skipping it leaves the retry reachable by mouse alone).
+//
+// newFocusRing deliberately does NOT use this. A section that only wants
+// the stop so focusing it can retry something is not where the form should
+// OPEN -- the resting index stays Enabled()-only, so the first row a user
+// sees is one they can use.
+func focusable(s Section) bool {
+	if s.Enabled() {
+		return true
+	}
+	r, ok := s.(retryOnFocus)
+	return ok && r.RetryOnFocus()
 }
 
 // move steps the cursor to the next enabled section in direction delta

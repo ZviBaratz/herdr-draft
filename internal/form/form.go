@@ -225,6 +225,25 @@ type (
 	// section that does not implement it falls back to footer.go's own
 	// per-zone table.
 	footerHinter interface{ FooterRungs() []string }
+
+	// retryOnFocus lets a Section that Enabled() has refused ask the focus
+	// ring for a stop anyway (focus.go's focusable) -- the fifth optional
+	// capability, added for #200.
+	//
+	// It exists because "inert" covers two different situations. A row
+	// inert because the choice it offers is made elsewhere (placement
+	// under a worktree) has nothing to gain from a stop. A row inert
+	// because the integration BEHIND it failed does: the app layer
+	// re-reads that integration when the row takes focus, so a ring that
+	// skips it leaves the retry reachable by mouse alone (form.go's click
+	// path focuses regardless of Enabled()), and leaves a reason too long
+	// for one row readable only in a panel the keyboard cannot open.
+	//
+	// It buys the stop and nothing else: Update, Complete, the panel and
+	// the footer all still key off Enabled(), so a section reached this
+	// way is still inert in every other respect. The retry itself is the
+	// app layer's -- this package knows nothing about what failed.
+	retryOnFocus interface{ RetryOnFocus() bool }
 )
 
 // zoneKindByID maps a Section's canonical ID() (see Section's own doc

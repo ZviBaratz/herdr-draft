@@ -575,11 +575,12 @@ without the popup. It drives herdr exclusively through the public CLI
   shows profile names only. Schemas 1 and 2 are checked; 2 is what clauth
   0.15.2 writes, and it read as unchecked until #238.
 - **A clauth that starts working while the popup is open gives the account
-  row back** (#200). Focusing the row asks clauth again — and while the row
-  is unavailable it is inert, so the focus ring skips it and **a click is
-  the gesture that reaches it**, not `⇥`. A reload that
-  finds at least two profiles clears the "unavailable" state: the row goes
-  live and can be pinned, carrying the auto row, `[clauth] default` and its
+  row back** (#200). Focusing the row asks clauth again, by `⇥` or by
+  click: an unavailable row takes no input, but it is still a stop on the
+  focus ring, because focusing it is the retry — and because its panel is
+  the only place a reason too long for one row can be read in full. A
+  reload that finds at least two profiles clears the "unavailable" state:
+  the row goes live and can be pinned, carrying the auto row, `[clauth] default` and its
   notes, exactly as a row that opened working. A reload that fails, or that
   finds fewer than two profiles, replaces the reason — the row says why
   clauth is unusable *now*, not why it was when the popup opened, and the

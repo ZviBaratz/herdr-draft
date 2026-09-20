@@ -1118,3 +1118,34 @@ func TestAccountPanelDropsTheMachineLineOnARefusal(t *testing.T) {
 		t.Fatalf("a refusal must not keep the previous machine line:\n%s", got)
 	}
 }
+
+// TestAccountField_RetryOnFocus is the row's half of #200's ring
+// exception. The row asks for a stop in exactly one state: inert because
+// clauth failed, with the agent kind that could use it. It is deliberately
+// silent for the OTHER inert state -- a non-claude agent has nothing to
+// retry and nothing to pin, so a stop there would be a row you tab onto to
+// be told it does not apply to you.
+func TestAccountField_RetryOnFocus(t *testing.T) {
+	f := NewAccountField(theme.Default())
+	f.SetAgentIsClaude(true)
+	f.SetProfiles(sampleStatus(), sampleNow())
+	if f.RetryOnFocus() {
+		t.Error("RetryOnFocus() = true on a working row, want false -- Enabled() already makes it a stop")
+	}
+
+	f.SetUnavailable("exit status 1: clauth crashed")
+	if !f.RetryOnFocus() {
+		t.Error("RetryOnFocus() = false while clauth is unavailable, want true -- focusing the row is what reloads clauth")
+	}
+
+	f.SetAgentIsClaude(false)
+	if f.RetryOnFocus() {
+		t.Error("RetryOnFocus() = true with a non-claude agent, want false -- nothing there to pin even once clauth answers")
+	}
+
+	f.SetAgentIsClaude(true)
+	f.SetUnavailable("")
+	if f.RetryOnFocus() {
+		t.Error("RetryOnFocus() = true after the reason cleared, want false")
+	}
+}

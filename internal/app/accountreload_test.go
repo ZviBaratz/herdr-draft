@@ -31,16 +31,17 @@ func unavailableAccountSetup(reload *fakeClauth) testSetup {
 	return setup
 }
 
-// clickAccountRow focuses the account row the only way a user can while it
-// is unavailable, and runs whatever that focus change scheduled.
+// clickAccountRow focuses the account row with the mouse and runs whatever
+// that focus change scheduled. tabToAccountRow below is its keyboard half,
+// and both are real user gestures rather than a FocusByID that would pass
+// over a form nobody can drive.
 //
-// The mouse is not a stylistic choice here. Enabled() is false while the
-// row is unavailable, so the focus ring skips it (focus.go's nextEnabled)
-// and no amount of ⇥ ever lands there; form.Model's click path focuses a
-// row "regardless of that section's Enabled() state" (form.go's
-// handleMouseClick), which is what makes spec §11's reload-on-account-focus
-// reachable at all for the one row that needs it. A test that reached for
-// FocusByID instead would pass over a form no user can drive.
+// The mouse came first and is worth keeping for itself. form.Model's click
+// path focuses a row "regardless of that section's Enabled() state"
+// (form.go's handleMouseClick), so a click reached this row even while
+// nothing else did; ⇥ reaches it only because of the ring exception
+// AccountField.RetryOnFocus asks for (#200), and a test that drove only
+// the keyboard would stop covering the gesture that worked first.
 func clickAccountRow(t *testing.T, m Model) (Model, clauthResultMsg) {
 	t.Helper()
 	_ = m.form.ViewAt(framePopupW, framePopupH)
@@ -350,5 +351,95 @@ func TestClauthReload_ALiveRowIsLeftAloneByAFailure(t *testing.T) {
 	}
 	if got := accountRow(t, m); got != before {
 		t.Errorf("a failed reload moved a working account row:\n got: %s\nwant: %s", got, before)
+	}
+}
+
+// tabToAccountRow is clickAccountRow's keyboard half: it walks the focus
+// ring with ⇥ and returns whatever reload landing there scheduled.
+//
+// Until #200's ring exception this could not work at all -- an unavailable
+// account row is not Enabled(), and the ring skipped it, so the whole
+// recovery was reachable by mouse alone.
+func tabToAccountRow(t *testing.T, m Model) (Model, clauthResultMsg) {
+	t.Helper()
+	for i := 0; i < 16; i++ {
+		next, cmd := m.Update(keyTab)
+		m = next.(Model)
+		for _, msg := range flatten(cmd) {
+			if res, ok := msg.(clauthResultMsg); ok {
+				return m, res
+			}
+		}
+		if m.form.FocusedID() == "account" {
+			t.Fatalf("⇥ reached the account row but scheduled no clauth reload")
+		}
+	}
+	t.Fatalf("⇥ never reached the account row (sections: %v)", m.form.SectionIDs())
+	return m, clauthResultMsg{}
+}
+
+// TestClauthReload_TabReachesTheUnavailableRow is the owner's decision of
+// 2026-09-20 on the review's first finding: the recovery may not be
+// mouse-only. The same walk a user makes with ⇥ has to reach the row,
+// reload clauth, and give the row back.
+//
+// The second half is the half that keeps #191 intact. Reaching the row is
+// not the same as making it live: until the reload lands the row still
+// refuses every key, so the ↵ below pins nothing.
+func TestClauthReload_TabReachesTheUnavailableRow(t *testing.T) {
+	m := resolveDirCheck(t, newTestModel(t, unavailableAccountSetup(&fakeClauth{status: frameClauthStatus()})))
+
+	m, res := tabToAccountRow(t, m)
+	if got := m.form.FocusedID(); got != "account" {
+		t.Fatalf("the clauth reload was scheduled with focus on %q, want the account row", got)
+	}
+
+	press := func(k tea.KeyPressMsg) {
+		next, _ := m.Update(k)
+		m = next.(Model)
+	}
+	// ↓ ↓ and nothing moves: the row is a ring STOP now, not a live
+	// chooser. (↵ is left out on purpose -- with no Complete() to make,
+	// the grammar falls back to advancing the ring, which is form.go's
+	// own rule and would just move focus off the row mid-test.
+	// internal/form's TestAccountField_UnavailableIgnoresInput pins the
+	// refusal itself, ↵ included.)
+	press(key(tea.KeyDown, 0))
+	press(key(tea.KeyDown, 0))
+	if got := m.PlanInput().AccountPin; got != "" {
+		t.Errorf("AccountPin = %q after ↓ ↓ on a row still waiting for its reload, want \"\"", got)
+	}
+
+	next, _ := m.Update(res)
+	m = next.(Model)
+	if !m.account.Enabled() {
+		t.Fatal("the account row is still inert after a reload reached by ⇥")
+	}
+	press(key(tea.KeyDown, 0))
+	press(key(tea.KeyDown, 0))
+	press(key(tea.KeyEnter, 0))
+	if got, want := m.PlanInput().AccountPin, "work"; got != want {
+		t.Errorf("AccountPin after ↓ ↓ ↵ on the recovered row = %q, want %q", got, want)
+	}
+}
+
+// TestClauthReload_TabSkipsTheRowForANonClaudeAgent is the other side of
+// the exception. clauth only wraps claude launches, so for any other agent
+// kind the row is inert with nothing to retry and nothing to pin -- a stop
+// there would be a row you tab onto to be told it does not apply to you.
+func TestClauthReload_TabSkipsTheRowForANonClaudeAgent(t *testing.T) {
+	setup := unavailableAccountSetup(&fakeClauth{status: frameClauthStatus()})
+	setup.Config.Agents.Default = "codex"
+	m := resolveDirCheck(t, newTestModel(t, setup))
+	if got := m.agent.Value(); got != "codex" {
+		t.Fatalf("setup: agent = %q, want codex", got)
+	}
+
+	for i := 0; i < 16; i++ {
+		next, _ := m.Update(keyTab)
+		m = next.(Model)
+		if got := m.form.FocusedID(); got == "account" {
+			t.Fatalf("⇥ stopped on the account row with a %s agent", m.agent.Value())
+		}
 	}
 }
