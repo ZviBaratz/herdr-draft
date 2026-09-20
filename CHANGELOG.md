@@ -350,6 +350,16 @@ without the popup. It drives herdr exclusively through the public CLI
   base. The form now compares against the base it asked for rather than
   the one the row happens to be showing. A base you pick yourself inside
   that same window is still yours.
+- **A base you pick yourself is never overwritten by the one the form was
+  still holding** (#256). A remembered or configured base the branch list
+  does not name yet is held and re-applied on every later refresh, which is
+  what puts it on screen once the list does name it. It used to survive
+  your own decision too: pick a base out of the list you can see, and the
+  next refresh that happened to name the held ref — the once-per-repository
+  `git fetch --prune`, say — selected it over your choice, with the
+  `worktree` row naming it and the plan built from it, without a word.
+  Choosing a base for yourself now ends the hold, whether you choose it
+  with the arrows, the wheel or a click.
 - The resolver is pure and is the only place the precedence chain exists.
 
 ### Repository-level config (`.herdr-draft.toml`)

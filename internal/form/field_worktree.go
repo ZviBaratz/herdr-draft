@@ -303,9 +303,9 @@ func (w *WorktreeField) Update(msg tea.Msg) tea.Cmd {
 		if w.part == partBase {
 			switch wheelDelta(msg) {
 			case -1:
-				w.base.CursorPrev()
+				w.moveBaseCursor(w.base.CursorPrev)
 			case 1:
-				w.base.CursorNext()
+				w.moveBaseCursor(w.base.CursorNext)
 			}
 		}
 		return nil
@@ -313,13 +313,13 @@ func (w *WorktreeField) Update(msg tea.Msg) tea.Cmd {
 		switch msg.String() {
 		case "up":
 			if w.part == partBase && !w.baseAtTop() {
-				w.base.CursorPrev()
+				w.moveBaseCursor(w.base.CursorPrev)
 				return nil
 			}
 			return w.setPart(w.part - 1)
 		case "down":
 			if w.part == partBase {
-				w.base.CursorNext()
+				w.moveBaseCursor(w.base.CursorNext)
 				return nil
 			}
 			return w.setPart(w.part + 1)
@@ -358,6 +358,11 @@ func (w *WorktreeField) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 	}
 	if w.baseRowsShown > 0 {
 		if _, ok := w.base.SelectAt(msg, w.baseRowsShown, worktreeBaseZonePrefix); ok {
+			// On the click itself, rather than on the cursor moving as
+			// moveBaseCursor does: a held ref shows the HEAD row, so a user
+			// clicking HEAD is choosing the row that is already selected.
+			// Nothing moves, and they have still decided (#256).
+			w.retireHeldBase()
 			return w.setPart(partBase)
 		}
 	}
@@ -377,6 +382,47 @@ func (w *WorktreeField) updateBranch(msg tea.Msg) tea.Cmd {
 		w.branchTouched = true
 	}
 	return cmd
+}
+
+// moveBaseCursor runs a user-driven move of the base picker's cursor and
+// retires a held SetBase ref when the move actually lands somewhere else
+// (#256): a hold is the app layer's own deferred selection, and the user
+// choosing a base for themselves ends it exactly as a landing does.
+//
+// Keyed on the selection MOVING rather than on the key arriving -- the
+// same before/after comparison updateBranch makes above, and here it is
+// load-bearing rather than tidy. A hold exists precisely because the
+// branch list has not arrived, so until it does the picker holds the HEAD
+// row alone and every arrow key on it is clamped to nothing. Retiring on
+// the keystroke would drop per-project base memory (#194) for a key the
+// user could not see land.
+func (w *WorktreeField) moveBaseCursor(move func()) {
+	before := w.baseSelectionID()
+	move()
+	if w.baseSelectionID() != before {
+		w.retireHeldBase()
+	}
+}
+
+// baseSelectionID is the selected row's own PickerItem.ID, HEAD sentinel
+// and all -- Base() without its "" translation, because what
+// moveBaseCursor compares is identity rather than meaning.
+func (w *WorktreeField) baseSelectionID() string {
+	sel, _ := w.base.Selected()
+	return sel.ID
+}
+
+// retireHeldBase drops a SetBase hold because the user has picked a base
+// of their own (#256 -- see SetBase for what is being held and why).
+//
+// Silent, deliberately: the held ref was never on screen, so nothing
+// visible changes at the moment it is retired, and a note here would be
+// the only one in the form that fires on an ordinary, intentional action
+// rather than on something having gone wrong. It is what every other
+// touched field already does -- the app layer's applyProjectDefaults
+// skips a field the user has touched without a word.
+func (w *WorktreeField) retireHeldBase() {
+	w.pendingBase, w.havePendingBase = "", false
 }
 
 // setPart moves the sub-focus cursor, clamped to the parts that currently
@@ -512,9 +558,15 @@ func (w *WorktreeField) SetBaseItems(version int, refs []string) {
 // re-applied on the next list refresh, not dropped: the app layer
 // resolves the remembered base from projects.json the moment the project
 // row changes, which is one debounce plus one `git for-each-ref` before
-// the list naming it exists. It is forgotten the moment it lands, so a
+// the list naming it exists. It is forgotten the moment it lands, and the
+// moment the user picks a base of their own (retireHeldBase) -- so a
 // later refresh cannot re-apply it over a selection the user has since
 // moved.
+//
+// Only the landing retired it until #256, which is exactly what made the
+// sentence above false of a hold the user had already decided against:
+// the next refresh naming the held ref applied it over their choice,
+// silently, since the ref had never been on screen to be seen going.
 //
 // Meanwhile the field reads as the HEAD row, not as whatever it held
 // before: after a project change that would be the previous project's base,
