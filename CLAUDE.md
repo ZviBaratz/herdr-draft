@@ -574,6 +574,24 @@ Layering, outermost to innermost:
   focused, so it sits on `ActiveRowBG`, not `PanelBG` — and on the default
   theme those two happen to be byte-identical to `Surface`, which is how a
   flat-`Surface` input fill would have shipped invisible a second time.
+  **A colour that carries a word needs the same thing, and it is a second
+  class rather than the same one** (#273). Those three floors are 1.25:1
+  and 1.6:1, which is right for an edge the eye has to catch and nowhere
+  near legible; `SemanticTextContrastFloor` is 3:1 because `Danger` and
+  `Warning` are the *only* rendering of the words a refusal is made of, so
+  "the words already say what they mean" is true and does not help. A word
+  reaches **three** grounds, not two — `PanelBG`, `ActiveRowBG`, and the
+  `Surface` a picker repaints its cursor row with — and which of them is
+  worst is the theme's business, not the form's: `ActiveRowBG` is worst on
+  most builtins and dracula clears 3:1 on both of the others while
+  measuring 2.91:1 on `Surface`. Two things follow for a clamp on a
+  foreground. It walks toward **black or white**, not toward `Text` the way
+  `ensureContrast` does: a theme's `Text` is often a desaturated grey, and
+  walking solarized's red and orange toward its `#839496` arrived at two
+  browns 24 apart, which is the convergence such a clamp is accused of.
+  And `floorContrast` raises `ActiveRowBG` **before** it uses it as a
+  ground, because a word measured against the raw `selection_bg` is
+  measured against a fill four builtins never draw.
 - **A test-only symbol is kept by a `//lint:ignore`, not by hope.**
   `just unused` runs with `-tests=false`, so anything only a test calls
   reads as dead. Two symbols are kept that way on purpose and each carries

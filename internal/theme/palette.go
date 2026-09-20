@@ -483,6 +483,33 @@ const ActiveRowContrastFloor = 1.25
 // reproduced one field over. See Palette.InputFill.
 const InputFillContrastFloor = 1.25
 
+// SemanticTextContrastFloor is the minimum WCAG contrast ratio between a
+// color that CARRIES A WORD and whatever that word is drawn on (#273). Its
+// two siblings above are both about a background region whose edge the eye
+// has to catch, and 1.25:1 is right for that and nowhere near legible; this
+// one is about text somebody has to read, so it is a different number for a
+// different job and its own constant for the reason InputFillContrastFloor
+// gives -- moving one floor must never silently move another.
+//
+// Danger and Warning are not emphasis laid over a word that is legible
+// anyway. They are the ONLY rendering of that word: `invalid` and
+// `check timed out` on the project row, `sign in again` and `expired` on
+// the account row, every repo-config note. "The words already say what they
+// mean" is true and does not help when the words are what is hard to read.
+//
+// 3:1 rather than 4.5:1, and the choice is a judgement rather than a
+// standard. 4.5:1 is WCAG's figure for body text and 3:1 its figure for
+// large text; a one-word marker in a terminal is neither, and measured
+// across the eighteen builtins 4.5:1 would raise nearly all of them far
+// enough that a clamped Danger stops reading as red. At 3:1 the split is
+// ten raised, seven already clear, and terminal exempt -- and catppuccin,
+// the default and what every golden frame in this repository renders on, is
+// one of the seven, so the clamp moves no frame.
+//
+// A theme that cannot meet it gets a better value, not a waiver, exactly as
+// ActiveRowContrastFloor says. Do not lower this to make something pass.
+const SemanticTextContrastFloor = 3.0
+
 // contrastMixStep is how coarsely ensureContrast walks away from the
 // background. It is deliberately coarse: a fine search would land a clamped
 // theme a hair over the floor, which is compliant but still marginal, and
@@ -497,10 +524,35 @@ const contrastMixStep = 0.05
 //
 // Overlay0 is not floored, and does not need to be: its worst case across
 // the builtins is 1.69:1 (nord), so contrast_test.go asserts the 1.6:1 floor
-// against the table directly rather than repairing it here. Nothing else has
-// a floor -- Border is a deliberately near-invisible fill.
+// against the table directly rather than repairing it here. Border has no
+// floor either -- it is a deliberately near-invisible fill.
+//
+// Danger and Warning are floored for a different reason from ActiveRowBG's,
+// and against three grounds rather than one: they are the only rendering of
+// the words a refusal is made of, and a word reaches every ground this form
+// paints (#273). See SemanticTextContrastFloor and raiseSemanticText.
 func floorContrast(p Palette) Palette {
 	p.ActiveRowBG = ensureContrast(p.PanelBG, p.ActiveRowBG, p.Text, ActiveRowContrastFloor)
+
+	// ORDER IS LOAD-BEARING: ActiveRowBG is one of the grounds a word is
+	// measured against, so it has to have been raised before it is used as
+	// one. Flooring the semantics first would measure them against the raw
+	// selection_bg -- a value four builtins never actually draw -- and pass
+	// a word that is illegible on the fill the user really sees.
+	//
+	// Three grounds, and the list is exhaustive rather than representative:
+	// a stack row is filled PanelBG, or ActiveRowBG while its field is
+	// focused, and a picker repaints its cursor row Surface inside the
+	// panel. There is a FOURTH background on screen -- InputFill, which on
+	// nord is #51606c against ActiveRowBG's #40505d and would be the worst
+	// ground of the lot -- and it is left out because no word is drawn on
+	// it: an input renders its own text in Text or DimText, and the project
+	// row's validity marker is appended AFTER the input, onto the row's own
+	// fill. Checked against the screen, not assumed. A semantic word drawn
+	// inside an input would have to add it here.
+	grounds := []Color{p.PanelBG, p.ActiveRowBG, p.Surface}
+	p.Danger = raiseSemanticText(p.Danger, grounds, SemanticTextContrastFloor)
+	p.Warning = raiseSemanticText(p.Warning, grounds, SemanticTextContrastFloor)
 	return p
 }
 
@@ -556,8 +608,8 @@ func (p Palette) InputFill(ground Color) Color {
 // "inherit the host terminal's background" is a value this process cannot
 // know, so there is no ratio to compute and nothing honest to raise it to.
 func ensureContrast(bg, fg, toward Color, floor float64) Color {
-	bgR, bgG, bgB, bgOK := rgb8(bg)
-	towardR, towardG, towardB, towardOK := rgb8(toward)
+	_, _, _, bgOK := rgb8(bg)
+	_, _, _, towardOK := rgb8(toward)
 	if _, _, _, fgOK := rgb8(fg); !bgOK || !towardOK || !fgOK {
 		return fg
 	}
@@ -565,19 +617,135 @@ func ensureContrast(bg, fg, toward Color, floor float64) Color {
 	if ratio, ok := contrastRatio(fg, bg); ok && ratio >= floor {
 		return fg
 	}
+	return walkToward(bg, toward, []Color{bg}, floor)
+}
 
+// raiseSemanticText returns fg when it already clears floor against every
+// ground it can be drawn on, and otherwise fg walked toward black or white
+// until it does (#273). It is ensureContrast's mirror image and shares its
+// walk: that one raises a BACKGROUND away from the panel behind it, this one
+// raises a FOREGROUND away from the backgrounds it is drawn on, and there is
+// still one clamp in this package rather than two.
+//
+// Which end moves is the whole difference, and it is not a detail. Walking
+// the ground would repaint the row, so the word's own color would survive
+// and every other word on that row would change; walking the word leaves the
+// row alone.
+//
+// It walks toward an END OF THE RAMP rather than toward Text, which is what
+// ensureContrast walks toward and what an earlier draft of this used. Text
+// is right for a background -- a fill has no business being brighter than
+// the text on it, and a 100% mix lands somewhere the theme already goes.
+// For a word it is wrong, and measurably so: a theme's Text is often a
+// desaturated mid grey, so walking toward it drains the hue that carried
+// the meaning long before it adds the luminance that carries the reading.
+// Measured on solarized, whose text is #839496: #dc322f and #cb4b16 --
+// unmistakably a red and an orange -- arrived as #b07573 and #af765b, two
+// muddy browns 24 units apart in sRGB, having started 39 apart. That is
+// exactly the convergence #273 predicted for a clamp of this kind. Walking
+// toward black or white instead is the ordinary shade-or-tint a theme
+// author would reach for, and it moves lightness while leaving hue where it
+// was.
+//
+// farthestEnd picks which. Note it is measured against the grounds rather
+// than assumed from the theme being "dark" or "light": what matters is
+// which direction has contrast left to spend against the fills this
+// particular word lands on.
+//
+// EVERY ground, not the worst one, because which ground is worst is a
+// property of the theme and not of the form: ActiveRowBG is worst on most of
+// the builtins this raises, and dracula clears 3:1 on both PanelBG and
+// ActiveRowBG while measuring 2.91:1 on Surface. Picking one in advance
+// would have missed it.
+//
+// The result is ONE value per palette, not a value per ground, so a word
+// does not change color when its row takes focus. The price is a raise the
+// panel did not need; a flicker on every focus move is the worse trade.
+//
+// An unmeasurable fg, or ANY unmeasurable ground, returns fg untouched. The
+// second half is what exempts the terminal palette, and the reason is worth
+// stating because the defect it leaves behind is real: herdr gives that
+// theme Color::Reset for panel_bg and surface0 -- "inherit the host
+// terminal's background", a value this process cannot know -- while its
+// active_row_bg is a plain #7f7f7f, against which its #ff0000 Danger
+// measures 1.00:1. One value serves all three grounds, so raising it to
+// clear the one ground we can see is a bet about the two we cannot: darken
+// it for that grey and it disappears on a black terminal instead. The fix
+// that theme needs is to its own values, not to this clamp.
+func raiseSemanticText(fg Color, grounds []Color, floor float64) Color {
+	if _, _, _, ok := rgb8(fg); !ok {
+		return fg
+	}
+	for _, g := range grounds {
+		if _, _, _, ok := rgb8(g); !ok {
+			return fg
+		}
+	}
+	if clearsFloor(fg, grounds, floor) {
+		return fg
+	}
+	return walkToward(fg, farthestEnd(grounds), grounds, floor)
+}
+
+// farthestEnd returns whichever of black and white has more contrast to
+// spend against the worst of grounds -- the direction a word can be walked
+// furthest before it runs out of ramp.
+//
+// It compares the two minimums rather than thresholding a single luminance
+// because the grounds in one palette need not agree, and the one that
+// decides the walk is the one the word is hardest to read on.
+func farthestEnd(grounds []Color) Color {
+	white, black := hex("#ffffff"), hex("#000000")
+	minWhite, minBlack := math.Inf(1), math.Inf(1)
+	for _, g := range grounds {
+		if r, ok := contrastRatio(white, g); ok && r < minWhite {
+			minWhite = r
+		}
+		if r, ok := contrastRatio(black, g); ok && r < minBlack {
+			minBlack = r
+		}
+	}
+	if minBlack > minWhite {
+		return black
+	}
+	return white
+}
+
+// walkToward is the single mix both clamps above are made of: it steps from
+// toward toward in contrastMixStep increments and returns the first mix that
+// clears floor against every ground, or toward when none does.
+//
+// It starts at contrastMixStep rather than at zero because both callers have
+// already established that from itself does not clear the floor.
+func walkToward(from, toward Color, grounds []Color, floor float64) Color {
+	fromR, fromG, fromB, _ := rgb8(from)
+	towardR, towardG, towardB, _ := rgb8(toward)
 	for f := contrastMixStep; f < 1; f += contrastMixStep {
 		mixed := color.RGBA{
-			R: mixChannel(bgR, towardR, f),
-			G: mixChannel(bgG, towardG, f),
-			B: mixChannel(bgB, towardB, f),
+			R: mixChannel(fromR, towardR, f),
+			G: mixChannel(fromG, towardG, f),
+			B: mixChannel(fromB, towardB, f),
 			A: 0xff,
 		}
-		if ratio, ok := contrastRatio(mixed, bg); ok && ratio >= floor {
+		if clearsFloor(mixed, grounds, floor) {
 			return mixed
 		}
 	}
 	return toward
+}
+
+// clearsFloor reports whether c meets floor against every one of grounds. An
+// unmeasurable ground answers false: walkToward's callers filter those out
+// first, so reaching one here means a ratio nobody can compute, and "it
+// passes" is not the safe answer to that.
+func clearsFloor(c Color, grounds []Color, floor float64) bool {
+	for _, g := range grounds {
+		ratio, ok := contrastRatio(c, g)
+		if !ok || ratio < floor {
+			return false
+		}
+	}
+	return true
 }
 
 // mixChannel interpolates one sRGB channel, in sRGB space rather than linear

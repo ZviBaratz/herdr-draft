@@ -510,6 +510,19 @@ without the popup. It drives herdr exclusively through the public CLI
   **measured** contrast floor against the ground it is actually drawn on,
   over all eighteen builtin herdr themes.
 
+  So does every colour that **carries a word**. `Danger` and `Warning` are
+  not emphasis over a legible word; they are the only rendering of the
+  words a refusal is made of — `invalid`, `check timed out`,
+  `sign in again`, `expired`, every repo-config note — and a word reaches
+  all three grounds this form paints: the panel, the focused row's fill,
+  and a picker's cursor row. Both are raised to 3:1 against all three at
+  load time, which reaches a custom herdr theme and a `[palette]` override
+  as well as the builtins. The raise moves lightness and leaves hue where
+  it was, so a clamped red stays a red. Ten of the eighteen needed a raise,
+  seven already cleared the floor and the `terminal` theme is exempt for
+  want of a ground this process can measure; the default theme is one of
+  the seven, so nothing on most screens changes at all.
+
 ### Robustness
 
 - **Degradation over refusal.** Only an unparseable plugin context, an
