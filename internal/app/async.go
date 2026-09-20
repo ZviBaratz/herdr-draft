@@ -662,9 +662,14 @@ func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
 		m.baseNote = msg.note
 		if msg.note != "" {
 			m.worktree.SetBase("")
-			// Withdrawn after the selection has moved off it, so the
-			// refresh that takes the row away finds the HEAD row selected
-			// and keeps it by ID rather than by index.
+			// And the row goes with it: the ref names nothing, so there is
+			// nothing left for that row to select. Withdrawn after the
+			// selection has moved rather than before, which is a tidiness
+			// and measured not to matter -- SetBase("") already holds the
+			// HEAD sentinel and every refresh keeps that by ID -- but the
+			// reverse order passes through widgets.Picker's index fallback
+			// on its way, and this file should not be the one leaning on
+			// where that lands.
 			m.worktree.OfferBase("")
 		}
 		m.showRepoConfig()

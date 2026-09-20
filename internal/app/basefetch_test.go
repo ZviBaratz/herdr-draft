@@ -315,3 +315,57 @@ func TestPopup_TheRelistKeepsAnOfferTheUserMovedOffOf(t *testing.T) {
 		t.Errorf("the re-list withdrew a candidate the user had only moved off:\n%s", panel)
 	}
 }
+
+// TestPopup_TheAnswerAndTheNewListLandInEitherOrder: handleFetchPruneDone
+// batches the check with the re-list, and nothing decides which of the two
+// Cmds answers first. Both orders have to end in the same place, and they
+// reach it by different means -- the offer is what holds the selection when
+// the new list lands first, and the HEAD row is what the refresh preserves
+// by ID when the check's answer lands first -- so one order passing says
+// nothing about the other.
+func TestPopup_TheAnswerAndTheNewListLandInEitherOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		listFirst bool
+	}{
+		{"the new list first", true},
+		{"the check's answer first", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			git := newFakeGit()
+			m := chosenBaseModel(t, git)
+			git.listBranchesResult = []string{"main", "origin/next"}
+
+			next, cmd := m.Update(fetchPruneDoneMsg{path: "/repo-a"})
+			m = next.(Model)
+			var settled, listed tea.Msg
+			for _, c := range cmd().(tea.BatchMsg) {
+				switch msg := c().(type) {
+				case baseSettledMsg:
+					settled = msg
+				case baseResultMsg:
+					listed = msg
+				}
+			}
+			if settled == nil || listed == nil {
+				t.Fatalf("the re-list produced settled=%v listed=%v, want one of each", settled, listed)
+			}
+
+			order := []tea.Msg{settled, listed}
+			if tc.listFirst {
+				order = []tea.Msg{listed, settled}
+			}
+			for _, msg := range order {
+				next, _ := m.Update(msg)
+				m = next.(Model)
+			}
+
+			if got := m.worktree.Base(); got != "" {
+				t.Errorf("Base() = %q, want the HEAD row", got)
+			}
+			if panel := worktreePanel(t, m); !strings.Contains(panel, `ignoring base "origin/gone"`) {
+				t.Errorf("the worktree panel does not say which base went:\n%s", panel)
+			}
+		})
+	}
+}
