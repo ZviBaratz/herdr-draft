@@ -1719,34 +1719,50 @@ arg or merely followed it.
 
 ### A signalled `create` takes the picker with it (#252) — 2026-09-20
 
-herdr 0.9.0. `main` at `65f14db` and `zvi/fix-252-create-signals`, both
-built with `go build`. **Route A0**: a disposable headless `herdr server`
-under `/var/tmp/x252` with its own `XDG_CONFIG_HOME`/`XDG_STATE_HOME`,
+herdr 0.9.0. `main` at `65f14db` and `zvi/fix-252-create-signals`, both built
+with `go build`. Two rounds, and the second is the one to read: **the first
+round's stub was the wrong shape and its headline number was an artifact.**
+
+**Round 1, Route A0.** A disposable headless `herdr server` under
+`/var/tmp/x252` with its own `XDG_CONFIG_HOME`/`XDG_STATE_HOME`,
 `onboarding = false` and `[worktrees] directory` under the same path, an
 `HERDR_BIN_PATH` wrapper pinning `HERDR_SESSION`, a throwaway `git init`
-repository, and a scratch plugin config/state dir. All four plugin
-variables were set on every run, `HERDR_PLUGIN_ID` included.
-
-The stub picker answered a `--dry-run` at once and, on the commit pick,
-logged `start`, slept **5s**, and only then logged the line standing in
-for a real picker's ledger write — then refused with exit 2, so a run that
-was not interrupted could not reach the plan either. Each case ran
-`create --title "fix 252" --account auto --no-worktree --placement
-new-space` in a process group of its own, so the `SIGTERM` reached
-`create` **alone** and not the picker with it. That is the whole point:
-a signal to the group is already covered, by the terminal.
+repository and a scratch plugin config/state dir; all four plugin variables
+set, `HERDR_PLUGIN_ID` included. The stub picker logged `start`, slept 5s,
+logged the line standing in for a real picker's ledger write, then refused
+with exit 2. Each case ran `create --title … --account auto --no-worktree
+--placement new-space` in a process group of its own, so `SIGTERM` reached
+`create` **alone** — a signal to the group is already covered, by the
+terminal.
 
 | Case | Result |
 |---|---|
 | `main`, `SIGTERM` 2s in | **Reproduced.** `create` died instantly (`rc=-15`, 0.00s) and the picker went on to log its ledger line 3s later. |
-| the fix, `SIGTERM` 2s in | `create` exited after **0.25s** — the grace — still with `rc=-15`, so a shell still sees 143. The ledger line never appeared, then or five seconds later. |
-| the fix, not signalled | Unchanged: 5.04s (the picker's own sleep, no grace added), the refusal reported as `picker refused: stub refuses after the sleep`, exit 2, and `workspace list` still empty. |
+| the fix, `SIGTERM` 2s in | `create` exited after 0.25s and the ledger line never appeared. |
+| the fix, not signalled | Unchanged: 5.04s, refusal reported normally, exit 2, `workspace list` still empty. |
 
-The re-raise is what keeps the third column of that table honest: `rc=-15`
-on both rows rather than one of `create`'s own exit codes, where 2 already
-means "fix your invocation".
+**What that round got wrong.** It recorded `rc=-15` for the signalled fix and
+concluded the re-raise was working. It was not. The stub was `#!/bin/sh` plus
+a **forked** `sleep 5`, and the orphan inherits the picker's stdout pipe, so
+`exec.Cmd.Wait` is held open for `picker.pickerWaitDelay` (2s) — longer than
+the 250ms grace, so the re-raise won a race it normally loses. This is
+CLAUDE.md's "a fake that cannot fail the way the real thing does", one layer
+out: the stub could not exhibit the fast return that the real failure needs.
 
-Teardown: the disposable session was stopped and deleted, the tree
+**Round 2**, after the review, with a picker that is a **single process**
+(`exec sleep 10`, so the kill closes the pipe at once) and a fake `herdr`
+answering `workspace list`:
+
+| Case | Before the handshake | After |
+|---|---|---|
+| `SIGTERM` during the commit pick | `rc=2` after **0.003s** — "fix your invocation" for a kill, and the grace never spent | `rc=143` after **0.252s** |
+| `SIGINT` inherited as `SIG_IGN` (`sh -c 'trap "" INT; exec …'`, a background job) | caught anyway: pre-flight abandoned, `rc=2` at 0.003s | ignored, as the shell asked: ran on to 9.0s, matching the unsignalled control |
+| not signalled (control) | — | unchanged, 9.8s |
+
+The picker itself died in 3/3 runs even before the fix — the kill usually
+lands — but nothing waited for it, which is #211's own wrinkle unguarded.
+
+Teardown: the disposable session was stopped and deleted, both scratch trees
 removed, and the picker process count confirmed 0.
 
 ### the extra argument and the usage window, live (Cell 13 step 4, #219/#215) — 2026-09-20

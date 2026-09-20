@@ -346,10 +346,12 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	// package already draws twice over: --dry-run stops exactly here, and
 	// the popup's app.Lifetime covers the picks and not runSubmitCmd.
 	//
-	// A signal arriving from here on therefore does what it always did:
-	// main's handler still re-raises it, and the process dies mid-plan
-	// rather than unwinding through a cancellation nothing below is
-	// prepared for.
+	// A signal arriving from here on therefore does what it always did,
+	// near enough: main's handler re-raises it after its grace, and the
+	// process dies mid-plan rather than unwinding through a cancellation
+	// nothing below is prepared for. It is the one window main's own
+	// handshake cannot cover, because main is inside this call for as long
+	// as the plan takes.
 	return execute(context.WithoutCancel(ctx), resolved, req, deps, ops)
 }
 
