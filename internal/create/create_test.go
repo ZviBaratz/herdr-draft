@@ -2079,6 +2079,29 @@ func TestUsageListsEveryFlag(t *testing.T) {
 	}
 }
 
+// TestUsageListsEveryExitCode is its sibling, for the other half of the
+// block a caller reads before it reads anything else. It was unpinned
+// until #272 added a code and nothing noticed: deleting the new lines left
+// the suite green, and so did deleting exit 4's.
+//
+// The skill document's own list is held to these constants separately
+// (TestSkillNamesEveryExitCode). This is the human-facing copy, and the
+// two drifting apart is exactly the shape that makes a `--help` worth less
+// than no `--help`.
+func TestUsageListsEveryExitCode(t *testing.T) {
+	codes := []int{ExitOK, ExitFailed, ExitUsage, ExitUnreachable, ExitNothingCreated, ExitCheckTimedOut}
+	for _, c := range codes {
+		// Anchored on the block's own two-space indent, so a bare digit
+		// somewhere in the prose cannot stand in for a row.
+		if !strings.Contains(createUsage, fmt.Sprintf("\n  %d  ", c)) {
+			t.Errorf("createUsage's exit-code list does not have a row for %d", c)
+		}
+	}
+	if ExitCheckTimedOut != 5 {
+		t.Fatal("create's exit codes moved; this test's literals must move with them")
+	}
+}
+
 // TestHelpExitsZero: asking for help is not a usage error.
 func TestHelpExitsZero(t *testing.T) {
 	h := newHarness(t)

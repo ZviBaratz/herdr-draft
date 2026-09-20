@@ -2,6 +2,7 @@ package create
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -28,9 +29,10 @@ import (
 // ever reached: a test that stalled everything would pin the first
 // question's bound six times over and the other five not at all.
 //
-// The blocked goroutine touches none of fakeGit's counters, so a test that
-// asserts on those while a call is still hung is not reading them as they
-// are written.
+// hang() runs BEFORE the delegate, so fakeGit's own counters
+// (branchAsks, resolveCalls) are not written while a call is hung, and a
+// test may read them. It does not leave them alone altogether -- the
+// delegate appends to them once the call is released at cleanup.
 type hangingGit struct {
 	*fakeGit
 	release chan struct{}
@@ -441,5 +443,71 @@ func TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout(t *testing.T) {
 	}
 	if got := h.stderr.String(); strings.Contains(got, "names no commit") {
 		t.Errorf("stderr = %q, want no claim about the ref: nobody established anything about it", got)
+	}
+}
+
+// --- the helper itself ----------------------------------------------------
+
+// TestBounded_ACallThatAnswersItsOwnContextIsStillATimeout is the direct
+// form of the test above, and it is a LOOP for a measured reason: with one
+// timer the property holds every time, and with two it held about 24 runs
+// in 25, so a single iteration proves almost nothing. An independent review
+// put numbers on the two-timer version -- 3.4% misclassified over 2000
+// runs with an ask that returns the instant its context is done, and 1.0%
+// over 300 with a real `exec.CommandContext` subprocess shaped like
+// gitx.runGit, on a mean gap between the two deadlines of 388ns.
+//
+// What the percentage costs is the thing to keep in view: one run in a
+// hundred where a branch check comes back "the branch is free" and the
+// create starts a session on old work.
+func TestBounded_ACallThatAnswersItsOwnContextIsStillATimeout(t *testing.T) {
+	const runs = 300
+	for i := range runs {
+		_, err := boundedErr(context.Background(), time.Millisecond, "asking git something",
+			func(ctx context.Context) (string, error) {
+				<-ctx.Done()
+				return "", ctx.Err()
+			})
+		if !errors.Is(err, errCheckTimedOut) {
+			t.Fatalf("run %d of %d: err = %v, want the bound's own verdict -- a call the deadline "+
+				"killed came back as its own error, which every call site reads as the verdict's negative", i, runs, err)
+		}
+	}
+}
+
+// TestBounded_TheCallGetsTheCallersContext pins what carries a signal to
+// git (#252), which since the bound became the call's only cancellation is
+// the one thing keeping `create` killable mid-question.
+//
+// An hour's bound, so the ONLY way this returns is the caller's own cancel
+// reaching the call. Handing the call context.Background() instead hangs it
+// -- which is what a `⌃C` on a slow `git rev-parse` would do.
+func TestBounded_TheCallGetsTheCallersContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started, done := make(chan struct{}), make(chan error, 1)
+	go func() {
+		_, err := boundedErr(ctx, time.Hour, "asking git something",
+			func(c context.Context) (string, error) {
+				close(started)
+				<-c.Done()
+				return "", c.Err()
+			})
+		done <- err
+	}()
+
+	<-started
+	cancel()
+
+	select {
+	case err := <-done:
+		if errors.Is(err, errCheckTimedOut) {
+			t.Errorf("err = %v, want the caller's cancellation and not this bound's verdict: "+
+				"an hour has not passed, and a signal is not a timeout", err)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the caller never reached the call: a signal cannot kill git (#252)")
 	}
 }

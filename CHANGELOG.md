@@ -187,17 +187,19 @@ without the popup. It drives herdr exclusively through the public CLI
   reaching the agent unseen. The spawn skill shows those arguments before
   the user approves, even when no question would otherwise be asked, and
   checks the list afterwards (#219).
-- **Every question the pre-flight asks the filesystem or git gives up
-  after thirty seconds** rather than waiting for good, and reports `5`
-  (#272). Without it, a `create` on a stalled network mount sat there with
-  no output and no exit code for as long as the mount stayed stalled --
-  fine for a person, who can press `⌃C`, and useless for the script or
-  agent that is the usual caller. All six of them are bounded: does this
-  directory exist, is it a repository, what is its root and its primary
-  checkout, does this branch already exist, what commit does this base
-  name. Each check gets its own thirty seconds, and a create spends at most
-  one of them, because the questions are asked in order and a timeout
-  refuses the run.
+- **Every question the pre-flight asks git gives up after thirty seconds**
+  rather than waiting for good, and reports `5` (#272). Without it, a
+  `create` on a stalled network mount sat there with no output and no exit
+  code for as long as the mount stayed stalled -- fine for a person, who
+  can press `⌃C`, and useless for the script or agent that is the usual
+  caller. All six are bounded: does this directory exist, is it a
+  repository, what is its root and its primary checkout, does this branch
+  already exist, what commit does this base name. Each check gets its own
+  thirty seconds, and a create spends at most one of them, because the
+  questions are asked in order and a timeout refuses the run. The plain
+  file reads beside them -- the repository's `.herdr-draft.toml`, your
+  `config.toml`, the two state files -- are not bounded; git is asked first
+  and answers first, so in practice it is git that runs out.
 
   It is its own exit code because the answer is unknown rather than
   negative: `2` means "fix the command and re-run", and nothing in the

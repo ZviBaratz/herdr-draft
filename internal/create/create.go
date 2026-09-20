@@ -218,7 +218,7 @@ type Deps struct {
 	Now func() time.Time
 
 	// CheckDeadline overrides preflightCheckDeadline, the bound on every
-	// question the pre-flight asks the filesystem or git (#272). Zero --
+	// question the pre-flight asks git (#272). Zero --
 	// which is what production leaves it, since there is nothing to tune --
 	// means the constant. See Deps.checks, the one place either is read.
 	//

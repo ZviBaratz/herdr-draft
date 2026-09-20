@@ -725,10 +725,11 @@ prompts.
 > **Amended, #272 (2026-09-20): exit 5, a check that did not answer.** The
 > sentence above, and #192's amendment with it, assumed every pre-flight
 > refusal was the caller's to fix. One is not. Every question the pre-flight
-> asks the filesystem or git -- does this directory exist, is it a
-> repository, what is its root and its primary checkout, does this branch
-> already exist, what commit does this base name -- now gives up after
-> thirty seconds instead of waiting for good, and reports **5**. Nothing was
+> asks git -- does this directory exist, is it a repository, what is its
+> root and its primary checkout, does this branch already exist, what commit
+> does this base name -- now gives up after thirty seconds instead of
+> waiting for good, and reports **5**. The plain file reads beside them are
+> not bounded; git is asked first and answers first. Nothing was
 > created, and nothing on stdout, as for 2 and 3.
 >
 > It is not 2, whose documented remedy is "fix the command and re-run":

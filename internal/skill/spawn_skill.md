@@ -534,12 +534,12 @@ prints the object with `ok: false`, `failed_step` and `error`, and no ids
 at all.
 
 **Exit 5 is the one that is not yours to fix.** Every question the command
-asks the filesystem or git — does this directory exist, is it a repository,
-does this branch already exist — gives up after thirty seconds rather than
-waiting for good, which is what stops a create on a stalled network mount
-from sitting there with no output and no exit code while you wait for it.
-Nothing was created. Re-running with a different flag will not help; say
-which check timed out and leave the mount to whoever owns it.
+asks git — does this directory exist, is it a repository, does this branch
+already exist — gives up after thirty seconds rather than waiting for good,
+which is what stops a create on a stalled network mount from sitting there
+with no output and no exit code while you wait for it. Nothing was created.
+Re-running with a different flag will not help; say which check timed out
+and leave the mount to whoever owns it.
 
 **Check `launch_options` and `agent_args` against what the user
 approved.** `launch_options` is what the agent was started with for each

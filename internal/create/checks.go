@@ -1,6 +1,16 @@
-// checks.go bounds every question the pre-flight asks the filesystem
-// or git, so a stalled mount refuses the create instead of swallowing it
-// (#272).
+// checks.go bounds every question the pre-flight asks GIT, so a stalled
+// mount refuses the create instead of swallowing it (#272).
+//
+// Read that scope literally, because an earlier draft of this comment did
+// not and said "the filesystem or git", which is false. The plain file
+// reads beside these are NOT bounded: the repository's own
+// .herdr-draft.toml (config.LoadRepoConfig, an os.ReadFile, on the same
+// mount and two lines after the three git questions in loadTiers),
+// os.Getwd, config.Load and the two state files. Bounding a bare
+// os.ReadFile is a larger change than this, and git answering first makes
+// them unlikely to be reached at all -- but "unlikely to be reached" is
+// not "bounded", and the difference belongs in the comment rather than in
+// whoever next reads it. Found in review.
 //
 // #202 bounded the four checks that hold a submit in the popup. The same
 // questions in headless `create` were still unbounded, and `create` is the
@@ -36,8 +46,10 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 )
 
-// preflightCheckDeadline bounds every question the pre-flight asks the
-// filesystem or git (#272).
+// preflightCheckDeadline bounds every question the pre-flight asks git
+// (#272) -- the six GitSource methods and the two composites built from
+// them, and nothing else. See the file comment on what is beside them and
+// still unbounded.
 //
 // Thirty seconds, and deliberately NOT the popup's five
 // (app.blockingCheckDeadline): that number is sized by its own comment for
@@ -63,7 +75,14 @@ import (
 // offers this.
 const preflightCheckDeadline = 30 * time.Second
 
-// errCheckTimedOut is what every timed-out question reports through, so
+// errCheckTimedOut is deliberately this package's own and NOT
+// internal/app's identically-worded one (async.go's errCheckTimedOut).
+// Nothing crosses between them today and neither is exported, so the two
+// cannot be confused -- but an exported app helper that ever returned
+// app's would be errors.Is-invisible to everything below, silently, which
+// is worth a sentence here rather than a debugging session later.
+//
+// It is what every timed-out question reports through, so
 // run() can tell one from the usage errors it travels among with a single
 // errors.Is. It says the check did not finish, never that the thing
 // checked was bad -- which is the whole distinction #202 named "unknown is
@@ -130,6 +149,20 @@ func (checkTimeout) Is(target error) bool { return target == errCheckTimedOut }
 // branch is free". TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout
 // pins it; giving callCtx a deadline shorter than the wait's fails it
 // three times out of three.
+//
+// What ctx must NOT carry, for the same reason, is a deadline of its own.
+// callCtx inherits it and the wait does not (context.WithoutCancel drops
+// it), so a caller-imposed deadline shorter than the bound kills the call
+// while the wait goes on waiting, and the call's own
+// context.DeadlineExceeded comes back as an ordinary error -- 100% of the
+// time, not 1%. That is the same posture a cancelled caller already has,
+// and it is deliberate for a cancel, so this is a contract rather than a
+// defect: `create`'s one caller passes context.WithCancel of Background
+// (cmd/herdr-draft's runCreate) and this package cannot be imported from
+// outside the module. Anything that starts passing a deadline here wants
+// the bound to be the smaller of the two, which needs a cancel-only child
+// that ignores its parent's deadline, and that is not what any of this is.
+// Found in review.
 //
 // Nothing is lost by dropping that timer. git is still told to stop a few
 // microseconds later, when this returns -- and unlike #211's account pick

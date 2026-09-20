@@ -405,26 +405,6 @@ report. It never prompts. Exit codes:
 | 4 | the plan started, and its first step failed before making anything: nothing exists |
 | 5 | a check did not answer in time: nothing was created |
 
-**Exit 5 is the refusal that is not the caller's to fix.** Every question
-the pre-flight asks the filesystem or git — does this directory exist, is
-it a repository, what is its root, does this branch already exist, what
-does this base name — gives up after thirty seconds instead of waiting for
-good. Without that, a `create` on a stalled network mount sat there with no
-output and no exit code for as long as the mount stayed stalled, which is
-fine for a person who can press `⌃C` and useless for the script or agent
-that is the usual caller. The line on stderr names which check ran out, and
-nothing was created.
-
-It is not exit 2: that one means "fix the command and re-run", and there is
-nothing in the command to fix. It is not exit 3 either, which would send
-you to look at a herdr that is fine. The popup makes the same distinction
-on screen, with a shorter budget, since there is someone holding the key.
-
-The budget is not configurable, by design. It is a safety bound rather than
-a tuning knob — nothing you could set it to would make a hung mount answer
-— and `[timeouts]` values are not validated, so one typo would turn it into
-"give up immediately" instead.
-
 Exit 4 needs evidence, not just a failed first step: herdr refused that
 step before acting, or it was never asked. A worktree step that herdr
 fails *after* git has run can leave the branch, its checkout and even a
@@ -433,6 +413,32 @@ workspace on it, and that is exit 1, with no space reported for
 exit 4 still prints the object — `ok: false`, `failed_step` and `error` —
 with no `workspace_id`/`space_*` ids, since there is nothing for them to
 name.
+
+**Exit 5 is the refusal that is not yours to fix.** Every question the
+pre-flight asks **git** — does this directory exist, is it a repository,
+what is its root and its primary checkout, does this branch already exist,
+what commit does this base name — gives up after thirty seconds instead of
+waiting for good. Without that, a `create` on a stalled network mount sat
+there with no output and no exit code for as long as the mount stayed
+stalled: fine for a person, who can press `⌃C`, and useless for the script
+or agent that is the usual caller. The line on stderr names which check ran
+out, and nothing was created.
+
+Each check gets its own thirty seconds, and one create spends at most one
+of them, because the questions are asked in order and a timeout refuses the
+run. The plain file reads beside them — the repository's `.herdr-draft.toml`,
+your `config.toml`, the two state files — are not bounded; git is asked
+first and answers first, so in practice it is git that runs out.
+
+It is not exit 2: that one means "fix the command and re-run", and there is
+nothing in the command to fix. It is not exit 3 either, which would send you
+to look at a herdr that is fine. The popup makes the same distinction on
+screen, with a shorter budget, since there is someone holding the key.
+
+The budget is not configurable, by design. It is a safety bound rather than
+a tuning knob — nothing you could set it to would make a hung mount answer —
+and `[timeouts]` values are not validated, so one typo would turn it into
+"give up immediately" instead.
 
 **`--dry-run` shows what a create would make, and makes nothing.** It
 runs every check a create runs before it starts, with the same exit 2,
