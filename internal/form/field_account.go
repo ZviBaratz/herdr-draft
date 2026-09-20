@@ -483,7 +483,7 @@ func (f *AccountField) Enabled() bool { return f.agentIsClaude && f.unavailable 
 // that uses it: inert because clauth failed, with claude selected.
 //
 // The row would otherwise be reachable by MOUSE ALONE (#200). Focusing it
-// is what re-reads clauth (spec §11: "load at open and on account focus"),
+// is what re-reads clauth (spec §8: "form-open + on account focus"),
 // and a ring that skips every disabled section leaves that retry -- and
 // the full reason, which only the panel shows once the row elides it --
 // behind a click. This does not soften Enabled(): Update and Complete

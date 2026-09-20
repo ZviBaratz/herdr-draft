@@ -1544,7 +1544,7 @@ func (m Model) handlePickerCommit(msg pickerCommitMsg) (Model, tea.Cmd) {
 	return m.WithAccount(msg.res).beginSubmit()
 }
 
-// --- clauth: reload on account focus (spec §11) ---------------------------
+// --- clauth: reload on account focus (spec §8) ----------------------------
 
 // clauthResultMsg is versioned like every other async source in this file
 // (fix round 1: rapid re-focus of Account could otherwise let a slow
@@ -1558,11 +1558,12 @@ type clauthResultMsg struct {
 	err     error
 }
 
-// reloadClauthCmd re-loads clauth's status feed -- spec §11: "load at open
-// and on account focus." The open-time load happens synchronously in
-// Bootstrap/New (it gates whether AccountField is even constructed, a
-// static precondition that must be known before the form renders); this
-// is the focus-triggered reload (see reactToChanges' own FocusedID diff).
+// reloadClauthCmd re-loads clauth's status feed -- spec §8 reads clauth
+// "form-open + on account focus". The open-time load happens
+// synchronously in Bootstrap/New (it gates whether AccountField is even
+// constructed, a static precondition that must be known before the form
+// renders); this is the focus-triggered reload (see reactToChanges' own
+// FocusedID diff).
 //
 // Returns nil when m.deps.Clauth is nil -- defense in depth alongside
 // New's own Deps.Clauth != nil gate on constructing AccountField at all
@@ -1622,7 +1623,7 @@ func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
 
 // recoverAccountRow applies a reload to a row that is currently
 // unavailable: clauth was installed and broken when the popup opened, the
-// row said so, and focusing it (spec §11) has just asked clauth again.
+// row said so, and focusing it (spec §8) has just asked clauth again.
 //
 // Until #200 the answer went nowhere. handleClauthResult loaded the
 // profiles and nothing cleared the state, so the row kept reading

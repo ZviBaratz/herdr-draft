@@ -1181,19 +1181,20 @@ func New(s Setup) Model {
 
 	// Account (spec §6 field 7): rendered only when clauth is enabled AND
 	// >= 2 profiles exist. Bootstrap folds "enabled" into ClauthStatus.
-	// Profiles (a disabled clauth simply never populates it), but a caller
-	// constructing Setup directly (as this package's own tests do) could
-	// still hand in a non-empty ClauthStatus with Deps.Clauth == nil --
-	// gating on BOTH, mirroring the Deps.Linear != nil gate above, is what
-	// keeps reloadClauthCmd (spec §11: "load ... on account focus") from
-	// ever being scheduled against a nil clauthSource in the first place
-	// (reloadClauthCmd/handleClauthResult are also defensively guarded on
-	// their own -- see async.go -- but this is the gate that matters: with
-	// it, m.account is simply never non-nil when Deps.Clauth is nil).
-	// A broken clauth gets a row even though it has no profiles to offer,
-	// which is the whole point: without one there is nowhere to say that
-	// clauth is installed and unreadable, and the user sees exactly what
-	// they would see if they had never installed it.
+	// Profiles (a disabled clauth simply never populates it), but a
+	// caller constructing Setup directly (as this package's own tests do)
+	// could still hand in a non-empty ClauthStatus with Deps.Clauth ==
+	// nil -- gating on BOTH, mirroring the Deps.Linear != nil gate above,
+	// is what keeps reloadClauthCmd (spec §8: "form-open + on account
+	// focus") from ever being scheduled against a nil clauthSource in the
+	// first place (reloadClauthCmd/handleClauthResult are also
+	// defensively guarded on their own -- see async.go -- but this is the
+	// gate that matters: with it, m.account is simply never non-nil when
+	// Deps.Clauth is nil). A broken clauth gets a row even though it has
+	// no profiles to offer, which is the whole point: without one there
+	// is nowhere to say that clauth is installed and unreadable, and the
+	// user sees exactly what they would see if they had never installed
+	// it.
 	//
 	// That row is not stuck in that state for the life of the popup:
 	// focusing it asks clauth again, and a reload that works clears the

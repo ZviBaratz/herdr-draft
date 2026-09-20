@@ -1466,8 +1466,8 @@ func TestLinearResult_SuccessClearsAPreviousError(t *testing.T) {
 	}
 }
 
-// TestReactToChanges_AccountFocusReloadsClauth pins spec §11's own "load
-// at open and on account focus": focusing AccountField must schedule a
+// TestReactToChanges_AccountFocusReloadsClauth pins spec §8's own
+// "form-open + on account focus": focusing AccountField must schedule a
 // fresh clauth reload, and its result must reach AccountField.SetProfiles.
 func TestReactToChanges_AccountFocusReloadsClauth(t *testing.T) {
 	initial := clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}, {Name: "b"}}}
