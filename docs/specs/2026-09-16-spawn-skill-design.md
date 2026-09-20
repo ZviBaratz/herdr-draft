@@ -361,7 +361,19 @@ observed failure modes.
    Offering an account is allowed there; swapping one in silently is not.
    `clauth status --json` is how the candidates are found, an absent
    `account_usage` makes one unknown rather than free, and a signed-out
-   one is refused with exit 2 and is simply not a candidate.)
+   one is refused with exit 2 and is simply not a candidate.) (Amended,
+   #258: the two cheaper moves are ranked. The effort step down comes
+   before the row up item 5's table, because a row up changes what the
+   session can do and so is the move that risks the redo item 5 calls
+   dearer than a stronger first attempt. It stays inside the row's own two
+   efforts. The row up is taken only where the row above names a smaller
+   model for that task, read with that row's own conditional where it has
+   one — so it is available from the `fable` row, and not from the
+   `judgement` row in a repository whose conventions are heavy. Where the
+   table offers neither move, and the mechanical row at `low` is one, the
+   confirmation says so instead of inventing a move; `haiku` is in no row
+   of the table, so neither move reaches it. A model and effort the user
+   named are not lowered for them.)
 
 8. **Read the result; the exit code is not the whole story.** Exit codes
    0/1/2/3; that under `--json`, exits 2 and 3 print nothing on stdout, so
