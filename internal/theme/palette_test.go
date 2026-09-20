@@ -268,6 +268,14 @@ panel_bg = "#101010"
 // repointed in place, because the key that reaches the field is now a v3
 // concern and the value has to clear the contrast floor to stay a pure
 // routing assertion.
+//
+// peach carries the same requirement since #273: it reaches Warning, which
+// floorContrast now raises, so a value chosen only for being distinctive
+// would come back a different color and this would stop being a statement
+// about routing. #cccccc is 6.14:1 against the worst of dracula's three
+// grounds -- including the Surface this same file overrides to #111111 --
+// so it survives untouched. floorContrast raising an illegible one is
+// TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride's job.
 func TestLoadHerdrPaletteFrom_V2CustomKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -277,7 +285,7 @@ name = "dracula"
 
 [theme.custom]
 surface0 = "#111111"
-peach = "#333333"
+peach = "#cccccc"
 mauve = "#444444"
 `)
 
@@ -290,7 +298,7 @@ mauve = "#444444"
 		got       Color
 	}{
 		{"surface0", "Surface", "#111111", got.Surface},
-		{"peach", "Warning", "#333333", got.Warning},
+		{"peach", "Warning", "#cccccc", got.Warning},
 		{"mauve", "Branch", "#444444", got.Branch},
 	}
 	for _, tc := range cases {

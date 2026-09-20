@@ -248,3 +248,59 @@ func TestPromptArea_UnfilledRendersExactlyAsBefore(t *testing.T) {
 		}
 	}
 }
+
+// TestDirRow_TheValidityMarkerIsNotInsideTheInputFill pins the geometry the
+// semantic-text contrast floor rests on (#273).
+//
+// internal/theme floors Danger and Warning against three grounds -- PanelBG,
+// ActiveRowBG and the Surface a picker repaints its cursor row with -- and
+// deliberately leaves out a fourth background that exists on screen and is
+// the worst of the lot: the input's own fill. On nord that fill is #51606c
+// against ActiveRowBG's #40505d, and post-clamp Danger or Warning is under
+// 3:1 against InputFill on most builtins. The exclusion is sound only while
+// no semantic word is drawn on it.
+//
+// One row puts a word and an input on the same line, and it is the row the
+// whole issue is about: DirField.Row computes its input's width as
+// `w - width(marker)` and renders `input.View(budget) + marker`, so the
+// fill stops and the verdict lands on the row's own background. That is one
+// arithmetic expression away from being false, in a file no one editing
+// internal/theme would think to open, and nothing else asserts it.
+//
+// Bytes rather than characters, like everything else here: the marker looks
+// identical in a stripped frame whichever background it sits on.
+func TestDirRow_TheValidityMarkerIsNotInsideTheInputFill(t *testing.T) {
+	const path = "/home/zvi/Projects/herdr-draft"
+	const width = 60
+
+	palette := theme.Default()
+	fill := rgbKey(palette.InputFill(palette.ActiveRowBG))
+
+	for _, tc := range []struct {
+		validity Validity
+		word     string
+	}{
+		{ValidityInvalid, dirRowInvalid}, // Danger
+		{ValidityUnknown, dirRowUnknown}, // Warning
+	} {
+		t.Run(tc.word, func(t *testing.T) {
+			d := NewDirField(palette)
+			d.SetCandidates(1, []string{path})
+			d.Focus() // the marker only shares a line with an input while focused
+			d.SetValidity(path, tc.validity)
+
+			line := d.Row(width)
+			cells := backgroundPerCell(line)
+			at := strings.Index(rowText(line), tc.word)
+			if at < 0 {
+				t.Fatalf("the row does not carry %q at all:\n%q", tc.word, line)
+			}
+			for i := at; i < at+len([]rune(tc.word)) && i < len(cells); i++ {
+				if cells[i] == fill {
+					t.Fatalf("%q is drawn on the input fill %s at cell %d -- internal/theme does not floor Danger or Warning against that ground (#273):\n%q",
+						tc.word, fill, i, line)
+				}
+			}
+		})
+	}
+}
