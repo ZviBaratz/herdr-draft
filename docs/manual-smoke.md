@@ -1770,6 +1770,59 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### Cell 6's missing attribution, re-run (#93) — 2026-09-20
+
+`zvi/93-repo-config-provenance` on `7479d95`, built with `just build`.
+**#93 does not reproduce.** The original finding was 2026-09-08; #248 was
+found and fixed after it, and that fix is what closed this.
+
+Route B in a `pty.fork()`, read with `pyte` rather than by stripping ANSI —
+Bubble Tea repaints partially, so a regex over the tail invents screens.
+Backed by a real herdr, Route A0, with the whole session inside the scratch
+tree: `HOME`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` all under
+`/var/tmp/hd93`, and `$HERDR_BIN_PATH` a wrapper carrying that environment
+plus `HERDR_SESSION`. Worth writing down, because the first attempt did not
+work: the form's own scratch `XDG_CONFIG_HOME` is inherited by the `herdr`
+the wrapper runs, so a server started under the **real** config home is
+invisible to it and the plugin refuses to open with `server_not_running`
+naming the scratch socket. The two have to agree.
+
+Nothing was created: `[agents] favorites = ["nosuchkind"]` in the scratch
+plugin `config.toml`, and every run left by `esc`.
+
+The `.herdr-draft.toml` was the issue's own, byte for byte — `default_base`,
+a `branch_prefix` with a space in it, and an `[agents.extra_args]` table —
+because the unit-level probe that nearly closed the issue injected a
+`config.RepoConfig` and so exercised neither the refused prefix nor the
+forbidden table.
+
+The worktree panel, with a title typed, which is #93's own screen:
+
+```
+▌ worktree   on · zvi/smoke-six ← develop
+──────────────────────────────────────────
+▸ worktree   off · on
+  branch     zvi/smoke-six
+  base
+  from .herdr-draft.toml
+               HEAD (main)
+               develop
+               main
+```
+
+The line #93 reported missing is on it. Three paths, all the same: the form
+opening on the repository, the same with a title typed, and the project row
+moved to it from another repository (`applyProjectDefaults`, which is the
+path #248's defect lived on). The project panel carried both rejections,
+and `branch_prefix` fell back to the user's own `zvi/` rather than to the
+built-in — the rest of Cell 6, unchanged.
+
+**The negative control is the part worth keeping.** A rig that always reads
+"present" proves nothing, so the same run moved the base selection by hand:
+the row became `← main` and the line went, which is `fromRepoConfig`'s
+`baseTouched` guard doing its job. The absence is observable, so the
+presences are real.
+
 ### A headless check that never answers (#272) — 2026-09-20
 
 `origin/main` at `381fde8` and `zvi/fix-272-create-deadline` on top of it,

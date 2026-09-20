@@ -75,25 +75,64 @@ func focusedFrame(t *testing.T, m Model, id string) string {
 	return ansi.Strip(m.form.ViewAt(80, 24))
 }
 
-// TestRepoConfig_ProvenanceShowsInTheFocusedRowsPanel is spec §11's
+// TestRepoConfig_EachAttributedKeyEarnsItsOwnPanelsLine is spec §11's
 // display half: a value the repository's committed file chose says so, in
 // the panel of the field that shows it, and nowhere else.
-func TestRepoConfig_ProvenanceShowsInTheFocusedRowsPanel(t *testing.T) {
-	m, _ := repoConfigModel(t, "/repo-a", testSetup{}, map[string]config.RepoConfig{
-		// Worktree off so PlacementField stays live (spec §6 field 5); the
-		// toggle and the base still carry the repo tier, which is what the
-		// worktree panel attributes.
-		"/repo-a": {DefaultWorktree: ptrBool(false), DefaultPlacement: "split-here", DefaultBase: "trunk"},
-	})
+//
+// ONE KEY PER CASE, and that is the whole difference from what this used
+// to be. It set default_worktree, default_placement and default_base at
+// once and asserted the line on both panels, which three keys can satisfy
+// between them: the worktree toggle's attribution alone earned the
+// worktree panel's line, so deleting the base from repoProvenance's
+// arguments left the test green. That is #93's exact symptom, and this
+// test was the one that should have caught it.
+//
+// The two unattributed keys are cases here too, because "nowhere else" is
+// a claim about them specifically: branch_prefix and linear_branch_name
+// shape the branch this package DERIVES rather than a value of their own,
+// and showRepoConfig's doc comment says why neither may be credited.
+func TestRepoConfig_EachAttributedKeyEarnsItsOwnPanelsLine(t *testing.T) {
+	// Every case keeps the worktree OFF, which is what keeps PlacementField
+	// live and therefore focusable (placement spec §14). A default_worktree
+	// of false is also a value the file supplied, so the one case that sets
+	// it is not a special arrangement -- it is that case's subject.
+	for _, tc := range []struct {
+		key string
+		rc  config.RepoConfig
+		// panel is the section id whose panel must carry the line. "" is
+		// "no panel may", which is the claim for the two derived keys.
+		panel string
+	}{
+		{key: "default_worktree", rc: config.RepoConfig{DefaultWorktree: ptrBool(false)}, panel: "worktree"},
+		{key: "default_base", rc: config.RepoConfig{DefaultBase: "trunk"}, panel: "worktree"},
+		{key: "default_placement", rc: config.RepoConfig{DefaultPlacement: "split-here"}, panel: "placement"},
+		{key: "branch_prefix", rc: config.RepoConfig{BranchPrefix: "team/"}},
+		{key: "linear_branch_name", rc: config.RepoConfig{LinearBranchName: ptrBool(false)}},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			// #194's settle keeps a tier's base only when git names a commit
+			// for it. Harmless for the cases that set no base.
+			git := newFakeGit()
+			git.commits = map[string]string{"/repo-a trunk": "4e5f607"}
+			m, _ := repoConfigModel(t, "/repo-a", testSetup{Git: git},
+				map[string]config.RepoConfig{"/repo-a": tc.rc})
 
-	for _, id := range []string{"placement", "worktree"} {
-		if frame := focusedFrame(t, m, id); !strings.Contains(frame, provenanceLine) {
-			t.Errorf("with %q focused the frame does not say %q:\n%s", id, provenanceLine, frame)
-		}
-	}
-	// Not every panel: a field the file cannot set says nothing about it.
-	if frame := focusedFrame(t, m, "title"); strings.Contains(frame, provenanceLine) {
-		t.Errorf("with title focused the frame claims %q:\n%s", provenanceLine, frame)
+			// Never only the panel under test: a "render it whenever there
+			// is a repo config" implementation passes the positive half and
+			// fails here. The title panel shows nothing the file can set and
+			// stands in for every row that is not one of the three.
+			for _, id := range []string{"worktree", "placement", "title"} {
+				frame := focusedFrame(t, m, id)
+				switch {
+				case id == tc.panel && !strings.Contains(frame, provenanceLine):
+					t.Errorf("%s: with %q focused the frame does not say %q:\n%s",
+						tc.key, id, provenanceLine, frame)
+				case id != tc.panel && strings.Contains(frame, provenanceLine):
+					t.Errorf("%s: with %q focused the frame claims %q, which belongs to %q:\n%s",
+						tc.key, id, provenanceLine, tc.panel, frame)
+				}
+			}
+		})
 	}
 }
 
@@ -584,5 +623,217 @@ func TestRepoConfig_ProductionLoaderReadsTheFile(t *testing.T) {
 	notes := m.repoConfigNotes()
 	if len(notes) != 1 || !strings.Contains(notes[0], "palette") {
 		t.Errorf("notes = %q, want the forbidden [palette] table reported", notes)
+	}
+}
+
+// issue93RepoConfig is the committed file #93 was found against, byte for
+// byte, and keeping it verbatim is this test's whole point. The probe that
+// nearly closed the issue injected a config.RepoConfig struct directly, so
+// it exercised neither of the two things the live file also did: a
+// branch_prefix gitx.ValidateBranchPrefix REFUSES, which reaches the form
+// only through LoadRepoConfig, and a forbidden table. Both produce a note,
+// and an unexercised path that puts text on a panel was a live reason not
+// to close the issue on a probe that skipped it.
+//
+// What the check ESTABLISHED, rather than assumed, is that neither can
+// reach this panel: both notes go to the PROJECT panel (showRepoConfig ->
+// m.dir.SetNotes), and the worktree panel's own notes are
+// branchPrefixNotes -- about the user's config.toml, not this file -- plus
+// baseNote. Read the two halves in that order: the fixture stays verbatim
+// because the path had not been run, not because the mechanism was ever
+// likely.
+const issue93RepoConfig = `default_base = "develop"
+branch_prefix = "a b/"
+
+[agents.extra_args]
+claude = ["--dangerously-skip-permissions"]
+`
+
+// TestRepoConfig_OnlyTheBaseEarnsTheWorktreePanelsLine is #93: a committed
+// file whose ONLY applied value is default_base still says so, on the
+// worktree panel, through the production loader.
+//
+// Three things it does that the existing coverage does not, each of which
+// is a way the issue survived:
+//
+//   - It goes through config.LoadRepoConfig on a real file rather than a
+//     fake, so the refused branch_prefix and the forbidden table travel
+//     with the base the way they did live; a struct injected straight into
+//     Deps.RepoConfig carries neither.
+//   - The base is the only value the file supplies, so no other
+//     attribution can satisfy the assertion on its behalf -- which is what
+//     TestRepoConfig_EachAttributedKeyEarnsItsOwnPanelsLine's predecessor,
+//     with its three keys at once, could not rule out.
+//   - It reads the panel one routed message AFTER the pipelines settle,
+//     because noteUserEdits runs on the next message rather than at the end
+//     of a pipeline. Live, the line was there at open and gone one
+//     keystroke later.
+//
+// The mechanism it guards is #248's: a held base landing from the branch
+// list read as a user edit, setting baseTouched with nobody having touched
+// anything, which is exactly what fromRepoConfig withdraws the line on.
+//
+// FOUR ORDERINGS, and only the third can fail. They are not decoration:
+// which of them a real form takes is not this package's choice, and three
+// of the four were measured rather than reasoned about, because the first
+// draft of this table described one of them wrongly. Every state below was
+// printed from the real Model, message by message.
+func TestRepoConfig_OnlyTheBaseEarnsTheWorktreePanelsLine(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		branches []string
+		// holdSettle keeps #194's base settle OUT, which is the window #248
+		// lived in: the settle is the OTHER path that calls
+		// snapshotAppliedDefaults, so letting it answer re-records the base
+		// and hides the defect. With it held, the snapshot taken at the end
+		// of applyProjectDefaults is the only one there is -- and whether
+		// that one recorded the ref the app asked for or the HEAD row the
+		// picker was showing is the whole of the fix.
+		holdSettle bool
+		// viaSwitch opens the form on a DIFFERENT repository and moves the
+		// project row to this one, which is the only way to reach
+		// applyProjectDefaults with a branch list already installed.
+		viaSwitch bool
+	}{
+		// At OPEN the picker is empty, so SetBase holds the ref whatever
+		// the list will say, and the list landing is what selects it.
+		// Measured: after dirResultMsg, Base()="" with
+		// RequestedBase()="develop"; after baseResultMsg, both "develop".
+		// The settle then re-records it, which is what makes this case
+		// unable to catch #248 and makes the third case necessary.
+		{name: "the branch list lands the held base", branches: []string{"main", "develop"}},
+		// No list at all, so nothing lands it there and #194's SETTLE does
+		// instead -- handleBaseSettled's tier branch puts it on offer and
+		// selects it. A genuinely different landing path, and the one a
+		// base that is real but older than the 50 refs the picker lists
+		// arrives by. Measured: Base() stays "" until the settle answers.
+		{name: "the settle offers a base the list never names"},
+		// #248's own window, and the ordering this test would otherwise be
+		// unable to fail in: the list lands the held ref with the settle,
+		// the other snapshotter, still out. The list has to name the base.
+		// With the case above's empty list the settle is the only thing
+		// that could land the ref, so holding it holds the landing too and
+		// there is nothing to misread.
+		{
+			name:       "the list lands the held base while the settle is still out",
+			branches:   []string{"main", "develop"},
+			holdSettle: true,
+		},
+		// The one ordering where the ref is never held: a project SWITCH
+		// runs applyProjectDefaults while the previous project's list is
+		// still in the picker, so SetBase selects outright. Measured:
+		// Base()="develop" already at dirResultMsg. Worth its own case
+		// because it is the path #248's defect lived on, and because "the
+		// ref is always held at first" is true only of a form OPEN -- which
+		// is exactly the assumption that made this table's first draft
+		// describe the case above wrongly.
+		{
+			name:      "a project switch selects the base outright",
+			branches:  []string{"main", "develop"},
+			viaSwitch: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, config.RepoConfigFileName),
+				[]byte(issue93RepoConfig), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+
+			git := newFakeGit()
+			git.listBranchesResult = tc.branches
+			git.currentBranchResult = "main"
+			// #194's settle keeps a tier's base only when git names a commit
+			// for it; without this the base falls back to HEAD and there is
+			// no attribution left to assert. The switch case is asked the
+			// same question about the repository it starts in.
+			git.commits = map[string]string{root + " develop": "9f8e7d6"}
+
+			// Where the form OPENS. For the switch case that is a second
+			// repository with no committed file of its own, so the base
+			// under test can only have come from this one.
+			opensOn := root
+			if tc.viaSwitch {
+				opensOn = t.TempDir()
+				git.commits[opensOn+" develop"] = "9f8e7d6"
+			}
+
+			// RepoConfig left nil, so Deps falls through to the production
+			// config.LoadRepoConfig -- the whole reason this fixture is a
+			// file rather than a struct.
+			m := newTestModel(t, testSetup{
+				Git: git,
+				Ctx: herdrc.Context{WorkspaceCwd: opensOn},
+				// The user's own prefix, so the refused one has somewhere to
+				// fall back TO that is not the built-in; and the worktree on,
+				// which config.defaults() gives every real config.toml and a
+				// literal here does not. Without it the panel renders its
+				// off shape, which is not the screen #93 reported.
+				Config: config.Config{BranchPrefix: "zvi/", DefaultWorktree: true},
+			})
+			switch {
+			case tc.holdSettle:
+				var held []tea.Msg
+				m, held = pumpHoldingBaseChecks(t, m, m.initCmds)
+				if len(held) != 1 {
+					t.Fatalf("base settles held = %d, want this project's one", len(held))
+				}
+			case tc.viaSwitch:
+				m = pumpAsync(t, m, m.initCmds)
+				if m.worktree.Base() != "" {
+					t.Fatalf("setup: the form opened with Base() = %q, want the other repository to supply none",
+						m.worktree.Base())
+				}
+				m = switchProject(t, m, opensOn, root)
+			default:
+				m = pumpAsync(t, m, m.initCmds)
+			}
+
+			// One real keystroke through the real routing, which is where
+			// noteUserEdits runs. The title is focused at open.
+			next, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+			m = pumpAsync(t, next.(Model), []tea.Cmd{cmd})
+
+			if got := m.resolved.BaseRef; got != "develop" {
+				t.Fatalf("resolved BaseRef = %q, want the committed %q", got, "develop")
+			}
+			if got := m.resolved.From[defaults.FieldBaseRef]; got != defaults.TierRepoConfig {
+				t.Fatalf("From[base_ref] = %v, want %v", got, defaults.TierRepoConfig)
+			}
+			if got := m.worktree.Base(); got != "develop" {
+				t.Errorf("worktree Base() = %q, want the committed %q on the row", got, "develop")
+			}
+			// The flag the line hangs off, asserted in its own right: a
+			// failure here names the mechanism, where the frame assertion
+			// below only names the symptom.
+			if m.baseTouched {
+				t.Error("baseTouched is set with nobody having touched the base (#248's shape)")
+			}
+			if frame := focusedFrame(t, m, "worktree"); !strings.Contains(frame, provenanceLine) {
+				t.Errorf("the worktree panel does not say %q for a base only the committed file supplied:\n%s",
+					provenanceLine, frame)
+			}
+
+			// The rest of the live file, so a future change that keeps the
+			// line by dropping one of its neighbours is not green here. The
+			// refused prefix falls back to the USER's own rather than to the
+			// built-in, and both rejections are reported on the project
+			// panel.
+			if got := m.resolved.BranchPrefix; got != "zvi/" {
+				t.Errorf("resolved BranchPrefix = %q, want the user's own %q", got, "zvi/")
+			}
+			if got := m.resolved.From[defaults.FieldBranchPrefix]; got != defaults.TierUserConfig {
+				t.Errorf("From[branch_prefix] = %v, want %v", got, defaults.TierUserConfig)
+			}
+			dirFrame := focusedFrame(t, m, "dir")
+			for _, want := range []string{
+				"ignoring agents.extra_args",
+				`ignoring branch_prefix "a b/"`,
+			} {
+				if !strings.Contains(dirFrame, want) {
+					t.Errorf("the project panel does not report %q:\n%s", want, dirFrame)
+				}
+			}
+		})
 	}
 }
