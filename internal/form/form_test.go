@@ -1557,12 +1557,22 @@ func TestFooterRungs_PerZone(t *testing.T) {
 // test fail on correct behaviour. "A lead always wins" is false: below
 // the narrowest lead a zone owns, NOTHING of that zone fits, and falling
 // to the constant tail is the right answer rather than an inversion.
-// Written naively this test reports exactly the six accepted floor
-// losses createKey's doc comment records, plus every width below them,
-// as defects. So the rule is "WHEN a lead fits, a lead wins", and the
-// second branch is what says the floor is a floor: no rung of the zone's
-// own fits in that many cells, so the line is the narrowest constant and
-// carries nothing else.
+// Written naively -- the first branch at every width -- this test reports
+// EVERY zone's own floor as a defect: measured, 10 of the 11 entries
+// everyFocusableZone returns, all but ZoneAccount, whose "↵ pin" is a
+// cell narrower than the floor itself and so never reaches it. The band
+// is widest where the zone's narrowest lead is longest, which is the
+// title in both states (10 widths), and #281's six floor losses are not
+// the whole of it or even most of it. So the rule is "WHEN a lead fits, a
+// lead wins", and the second branch is what says the floor is a floor: no
+// rung of the zone's own fits in that many cells, so the line is the
+// narrowest constant and carries nothing else.
+//
+// One thing it cannot catch, by construction: `floor` is read from
+// tailRungs, so a tailRungs that LOSES its floor moves this test's
+// expectation with it and passes. The six narrow frames and
+// TestFooter_TheFloorIsACliffAtTheMeasuredWidth are what hold that,
+// because a fixture is bytes and cannot follow.
 //
 // The two branches meet at each zone's narrowest lead, computed from
 // zoneRungs rather than written down, so a reworded rung moves the

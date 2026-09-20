@@ -625,6 +625,17 @@ func TestFrames_OptionsInert(t *testing.T) {
 // and "←→ value". So these two frames pin a coincidence of wording as
 // well as a width, and if either override is reworded the boundary below
 // will say so rather than the frame quietly moving.
+//
+// Neither of those two overrides ever returns an empty slice, so
+// footerRungsFor never falls back for them and production never renders
+// zoneRungs(ZoneWorktree) or zoneRungs(ZoneOptions) at all. Their table
+// entries are duplicates of the override's strings held to nothing but
+// TestFooterRungs_PerZone's rungs[0]: rewording the TABLE's narrowest
+// worktree rung leaves the whole repo green, where rewording the
+// override's -- or the table's for a zone with no override, such as
+// issue -- is caught here within one column. Reported by the review of
+// #289 and deliberately left: pinning a table to the override that
+// shadows it is a different change from the three #289 asks for.
 var narrowFloorCases = []struct {
 	name  string
 	build func(theme.Palette) Model
@@ -646,10 +657,17 @@ var narrowFloorCases = []struct {
 // 33-44 band, and not one of the six widths #281 moved.
 //
 // One frame each, at the width where the field's own footer falls to the
-// constant tail. They are fixtures of the WHOLE screen at a width nothing
-// else here reaches, so what they pin is not only the footer: the label
-// column collapsing, the panel's own shrink ladder and the row values'
-// ellipsis are all in the band these frames cover and nowhere else.
+// constant tail. They are fixtures of the WHOLE screen, so what they pin
+// is not only the footer: each panel's own clipping at 35-37 columns is
+// pinned nowhere else, and the worktree row's value ellipsis gets a
+// second fixture beside account-panel-44x12's.
+//
+// What they do NOT reach, contrary to an earlier draft of this comment:
+// the label column, which holds its full labelColWidth until inner drops
+// below labelColWidth+minValueWidth -- terminal width 23, far below this
+// band, and pinned by no fixture in the suite. 40 columns is not new
+// either; degraded-40x8 is there already, with stub sections and four
+// fewer lines.
 //
 // The footer they show is the accepted answer, not a defect -- see
 // narrowFloorCases, and createKey's doc comment for why a shorter lead
