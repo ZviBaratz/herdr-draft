@@ -2,6 +2,10 @@ bin/
 coverage.out
 .superpowers/
 
+# hack/live/drive.py is run, never imported, so a __pycache__ here is a
+# by-product of someone running py_compile on it and nothing else.
+__pycache__/
+
 # local scratch (upstream comment drafts, notes)
 .local/
 # Working notes: implementation plans and the execution decisions log.

@@ -229,6 +229,14 @@ real session there.
 the half of the matrix you can drive yourself. The popup path needs a human:
 the real popup has no pane id of its own, so nothing can send keys to it.
 
+`just live` is the cheaper cousin and not part of the matrix at all: the same
+binary under a pty, every input stubbed under a scratch `HOME`, screen to
+stdout. It creates nothing and needs no herdr, so it is the fast way to answer
+"what does this look like at that width" before reaching for a real session.
+See [`hack/live/README.md`](hack/live/README.md). It needs Python and installs
+`pyte` into a scratch venv on first use; nothing about it is on the `[[build]]`
+path, and the version is pinned beside staticcheck's in the justfile.
+
 ## Security
 
 See [`SECURITY.md`](SECURITY.md). Report anything exploitable privately
