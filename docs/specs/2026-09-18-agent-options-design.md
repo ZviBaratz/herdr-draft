@@ -352,6 +352,25 @@ The rules:
 > included, and an `sh -c` launcher's loss of the arguments (§5.1) is
 > invisible to it.
 
+> **Amended, #219 (2026-09-19): the whole argument list.** `--json`, real
+> or `--dry-run`, also gains `agent_args`: the argument list both launch
+> paths hand the agent's command, which is §5.1's `agentopts.Launch`
+> (`plan.AgentArgs`). It is a JSON array, not a shell string. Both paths
+> are typed into the pane's shell in the end, but herdr and `PaneRun` each
+> quote the list for that shell themselves, and a string here would be one
+> shell's spelling of it. So the argument the paragraph above says goes
+> unreported is now reported, and the spawn skill's confirmation shows
+> every element beyond the three option flags before the user approves,
+> even when the user named every choice and no question was otherwise
+> asked. An argument that changes how the agent asks for permission is
+> shown, not refused: it is the user's own configuration. `agent_args` is
+> what this plugin passes after the agent's command, and the pane's shell
+> resolves that command, so a function of that name can still change what
+> arrives. So can a pinned account's launcher, which can add arguments of
+> its own, and an `sh -c` one drops these. Recognising an `sh -c` launcher
+> would take a heuristic that is wrong in both directions, and none is
+> attempted.
+
 ### 8.3 The spawn skill
 
 Section 5 of `spawn_skill.md` names the three flags, which

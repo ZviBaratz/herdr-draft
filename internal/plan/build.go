@@ -596,7 +596,7 @@ func launchOps(in Input) []Op {
 			Agent: &herdrc.AgentStartReq{
 				Name:      AgentName(in.Title),
 				Kind:      in.AgentKind,
-				ExtraArgs: agentArgs(in),
+				ExtraArgs: AgentArgs(in),
 			},
 			// Path A does its detection waiting server-side, so this
 			// budget is unused unless the start comes back BLOCKED and
@@ -641,7 +641,7 @@ func launchOps(in Input) []Op {
 // is the layer that knows herdr types this rather than execing it, and it
 // quotes there (#72).
 func clauthLaunchCommand(in Input) (argv []string, env []herdrc.EnvVar, downgraded bool) {
-	args := agentArgs(in)
+	args := AgentArgs(in)
 	if in.AccountLaunch == LaunchWrapper && in.AccountConfigDir != "" {
 		return append([]string{"claude"}, args...),
 			[]herdrc.EnvVar{{Name: ClaudeConfigDirVar, Value: in.AccountConfigDir}}, false
@@ -650,11 +650,23 @@ func clauthLaunchCommand(in Input) (argv []string, env []herdrc.EnvVar, downgrad
 		nil, in.AccountLaunch == LaunchWrapper
 }
 
-// agentArgs is what the agent is started with after its own command:
+// AgentArgs is what the agent is started with after its own command:
 // extra_args with the chosen options applied (agent-options spec §5.1).
 // Both launch paths take it from here and nowhere else, so an option can
-// never reach one path and not the other.
-func agentArgs(in Input) []string {
+// never reach one path and not the other -- and `create --json` reports it
+// from here too (#219), so the report cannot describe a list the launch did
+// not use.
+//
+// It is everything herdr-draft passes, which is not quite everything the
+// agent receives. `herdr agent start` adds no argument of its own: herdr
+// v0.9.0 quotes the kind's executable and exactly these, and types the
+// line into the pane's shell
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/agents.rs#L197-L200).
+// But that shell resolves the command, so an alias or function named
+// `claude` stands between this list and the agent, on both paths. On the
+// pinned path a `[clauth] launcher` does too, and can drop the list
+// entirely (see resolveLauncher on `sh -c`).
+func AgentArgs(in Input) []string {
 	return agentopts.Launch(in.AgentKind, in.ExtraArgs, in.AgentOptions)
 }
 

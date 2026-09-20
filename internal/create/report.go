@@ -295,13 +295,29 @@ type jsonReport struct {
 	// agent's own settings decide; provenance's option.<name> says which
 	// source supplied each, "extra_args" included.
 	//
-	// It reads the declared flags and nothing else. Any other argument in
-	// extra_args reaches the agent as written and unreported, one that
-	// skips its permission prompts included, whatever permission_mode says
-	// here. And a `[clauth] launcher` of the form `sh -c "..."` drops every
-	// argument after it (agent-options spec §5.1), which nothing in this
-	// report can see.
+	// It reads the declared flags and nothing else, which is why AgentArgs
+	// exists beside it.
 	LaunchOptions agentopts.Values `json:"launch_options,omitempty"`
+	// AgentArgs is the agent's whole argument list (#219), plan.AgentArgs:
+	// the list both launch paths hand the agent's command, so the three
+	// option flags and their values are in it, and so is every other
+	// argument [agents.extra_args] passes. Before it, such an argument --
+	// one that skips the agent's permission prompts, say -- reached the
+	// agent unreported, and launch_options could say plan mode for a
+	// session that asked nobody anything. An array, not a shell string:
+	// both paths do end up typed into the pane's shell, but each is quoted
+	// there by the layer that types it -- herdr for `agent start`, PaneRun
+	// for a launcher -- and quoting depends on the shell, so a string here
+	// would be one shell's spelling of the list. Its elements are what a
+	// consumer compares. Absent when the agent starts with no arguments.
+	//
+	// It is what this command passes, after the agent's own command. The
+	// pane's shell resolves that command, so an alias or function named
+	// after the agent stands in between, and a pinned account's
+	// `[clauth] launcher` does too. A launcher can add arguments of its own,
+	// and one of the form `sh -c "..."` drops every argument after it
+	// (agent-options spec §5.1). Nothing in this report can see either.
+	AgentArgs []string `json:"agent_args,omitempty"`
 
 	OnFailure    string `json:"on_failure,omitempty"`
 	Cleaned      bool   `json:"cleaned,omitempty"`
@@ -343,6 +359,7 @@ func (r report) writeJSON(w io.Writer) {
 
 		AgentOptions:  r.input.AgentOptions,
 		LaunchOptions: launchOptions(r.input),
+		AgentArgs:     plan.AgentArgs(r.input),
 	}
 	if r.input.UseWorktree {
 		out.Branch = r.input.Branch
@@ -391,7 +408,8 @@ func (r report) writeJSON(w io.Writer) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	// The only way this fails is an unencodable value, and every field
-	// above is a string, bool or map[string]string.
+	// above is a string, a bool, a slice or map of strings, or a pointer to
+	// a bool.
 	_ = enc.Encode(out)
 }
 
@@ -400,7 +418,7 @@ func (r report) writeJSON(w io.Writer) {
 // way the form reads what extra_args pins, so the report and the launch
 // cannot disagree about what displaced what.
 func launchOptions(in plan.Input) agentopts.Values {
-	return agentopts.Pinned(in.AgentKind, agentopts.Launch(in.AgentKind, in.ExtraArgs, in.AgentOptions))
+	return agentopts.Pinned(in.AgentKind, plan.AgentArgs(in))
 }
 
 // shortCommit is the first seven characters of a full commit id, git's own

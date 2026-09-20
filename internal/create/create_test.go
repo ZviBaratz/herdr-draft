@@ -106,6 +106,14 @@ type fakeRunner struct {
 	// names whatever was asked for: the reply git's guess produced (#198),
 	// which internal/plan refuses.
 	replyBranch string
+
+	// startArgs and runArgv are the argument lists the two launch paths
+	// were handed: `agent start`'s ExtraArgs, and the command line `pane
+	// run` typed. calls flattens both into one string, which cannot tell
+	// an element with a comma in it from two elements, and #219's report
+	// is held to these element for element.
+	startArgs []string
+	runArgv   []string
 }
 
 var _ herdrc.Runner = (*fakeRunner)(nil)
@@ -248,6 +256,7 @@ func (r *fakeRunner) PaneSplit(_ context.Context, req herdrc.PaneSplitReq) (herd
 }
 
 func (r *fakeRunner) AgentStart(_ context.Context, req herdrc.AgentStartReq) error {
+	r.startArgs = req.ExtraArgs
 	return r.record("AgentStart", req.Name, req.Kind, req.PaneID)
 }
 
@@ -288,6 +297,7 @@ func (r *fakeRunner) AwaitDetection(_ context.Context, paneID string, _, blocked
 }
 
 func (r *fakeRunner) PaneRun(_ context.Context, paneID string, env []herdrc.EnvVar, argv []string) error {
+	r.runArgv = argv
 	rec := []string{paneID}
 	for _, e := range env {
 		rec = append(rec, e.Name+"="+e.Value)
