@@ -480,9 +480,17 @@ func TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone(t *testing.T) {
 // and pins the arm exactly as well, because the code under test knows
 // nothing about the numbers. But this test's whole job is to say the
 // combinations are REAL, and a reader takes the configuration with the
-// claim; one that cannot occur at 60s/2s would teach the wrong thing. The
-// price is three orderings to satisfy instead of one, paid in skips rather
-// than in reds.
+// claim; one that cannot occur at 60s/2s would teach the wrong thing.
+//
+// The price is three orderings to satisfy instead of one, and it is paid in
+// skips rather than in reds -- but it IS a price and the numbers are worth
+// having. Keeping the direction costs case 2 its margins: 200ms on "the
+// drain ends after the deadline" and 300ms on "the drain fits inside the
+// grace", against the 500ms its inverted predecessor had. Measured in
+// review at 12 counts per model: quiet, 0 skips; 32 CPU-bound processes
+// sharing one cgroup quota, 5 skips in 144; 48 of them, 3 in 144. No red at
+// any rate, in either direction -- a machine too fast skips on the first
+// guard and one too slow on the second.
 func TestBothAnsweredCombinationsAreObservable(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
