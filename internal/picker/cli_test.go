@@ -290,3 +290,52 @@ func TestPickKeepsEveryDocumentedCodeARefusal(t *testing.T) {
 		}
 	}
 }
+
+// --- cancellation: the picker dies with its caller (#211) -------------------
+
+// The commit-time pick is the one call that is NOT a dry run: it writes the
+// picker's ledger, which is what stops two sessions being handed the same
+// account. So a caller that goes away mid-pick -- `esc` quitting the popup --
+// must take the picker with it, or an account is recorded for a session that
+// will never exist.
+//
+// The stub is the shape of the measurement on the issue: it sleeps, and only
+// THEN writes where a real picker writes its ledger. The file's absence
+// afterwards is the whole assertion; the error is checked too, because a
+// cancellation is a malfunction and must never reach the user as a refusal.
+func TestACancelledPickKillsThePicker(t *testing.T) {
+	ledger := filepath.Join(t.TempDir(), "ledger")
+	bin := scriptPicker(t, "sleep 1\ntouch "+ledger+"\nexit 2\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := CLI{Bin: bin}.Pick(ctx, "/p/thing", Options{})
+	if elapsed := time.Since(start); elapsed > 25*time.Second {
+		t.Fatalf("Pick took %s -- the cancellation did not reach the picker at all", elapsed)
+	}
+	if err == nil {
+		t.Fatal("a cancelled Pick returned nil, want the cancellation")
+	}
+	var refusal *RefusalError
+	if errors.As(err, &refusal) {
+		t.Fatalf("a cancelled pick was reported as a refusal (%v) -- it refused nothing", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Pick error = %v, want context.Canceled", err)
+	}
+
+	// A picker that was merely ABANDONED rather than killed reaches its
+	// ledger write one second in, so the assertion below has to happen
+	// after that moment rather than after Pick returns -- Pick returns as
+	// soon as the child is killed, which is exactly the window the bug
+	// lived in.
+	time.Sleep(time.Until(start.Add(1600 * time.Millisecond)))
+	if _, statErr := os.Stat(ledger); statErr == nil {
+		t.Fatal("the picker wrote its ledger after its caller was cancelled -- an account recorded for a session nobody created")
+	}
+}

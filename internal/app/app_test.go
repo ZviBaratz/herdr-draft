@@ -111,6 +111,9 @@ type fakeGit struct {
 	commits      map[string]string
 	resolveErr   error
 	resolveCalls []string
+	// resolveCtxs is fakePicker.ctxs' counterpart for the lane's base: the
+	// other call a submit blocks on, and the other one quitting cancels.
+	resolveCtxs []context.Context
 
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
@@ -201,9 +204,10 @@ func (g *fakeGit) PrimaryCheckout(_ context.Context, dir string) (string, error)
 	g.dirsSeen = append(g.dirsSeen, dir)
 	return g.primary[dir], nil
 }
-func (g *fakeGit) ResolveCommit(_ context.Context, dir, ref string) (string, error) {
+func (g *fakeGit) ResolveCommit(ctx context.Context, dir, ref string) (string, error) {
 	key := dir + " " + ref
 	g.resolveCalls = append(g.resolveCalls, key)
+	g.resolveCtxs = append(g.resolveCtxs, ctx)
 	g.dirsSeen = append(g.dirsSeen, dir)
 	if g.resolveErr != nil {
 		return "", g.resolveErr
@@ -852,7 +856,7 @@ func validContextJSON() string {
 func TestBootstrap_InvalidContext_Refuses(t *testing.T) {
 	env := Env{ContextJSON: "", ConfigDir: t.TempDir(), StateDir: t.TempDir()}
 	runner := &fakeRunner{}
-	_, err := Bootstrap(env, runner, nil, nil, noSleep)
+	_, err := Bootstrap(env, runner, nil, nil, noSleep, nil)
 	if err == nil {
 		t.Fatalf("Bootstrap with an empty $HERDR_PLUGIN_CONTEXT_JSON returned a nil error, want the pre-open refusal")
 	}
@@ -864,7 +868,7 @@ func TestBootstrap_InvalidContext_Refuses(t *testing.T) {
 func TestBootstrap_UnreachableHerdr_Refuses(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
 	runner := &fakeRunner{listErr: context.DeadlineExceeded}
-	_, err := Bootstrap(env, runner, nil, nil, noSleep)
+	_, err := Bootstrap(env, runner, nil, nil, noSleep, nil)
 	if err == nil {
 		t.Fatalf("Bootstrap with an unreachable herdr returned a nil error, want the pre-open refusal")
 	}
@@ -873,7 +877,7 @@ func TestBootstrap_UnreachableHerdr_Refuses(t *testing.T) {
 func TestBootstrap_Success(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
 	runner := &fakeRunner{workspaces: []herdrc.WorkspaceInfo{{WorkspaceID: "w1", Label: "main"}}}
-	m, err := Bootstrap(env, runner, nil, newFakeGit(), noSleep)
+	m, err := Bootstrap(env, runner, nil, newFakeGit(), noSleep, nil)
 	if err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -898,7 +902,7 @@ func TestBootstrap_ClauthFailureDegrades(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
 	runner := &fakeRunner{}
 	cl := &fakeClauth{err: context.DeadlineExceeded}
-	m, err := Bootstrap(env, runner, cl, newFakeGit(), noSleep)
+	m, err := Bootstrap(env, runner, cl, newFakeGit(), noSleep, nil)
 	if err != nil {
 		t.Fatalf("Bootstrap with a failing clauth source returned an error, want it to degrade: %v", err)
 	}
@@ -928,7 +932,7 @@ func TestBootstrap_ClauthNotInstalledShowsNothing(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
 	cl := &fakeClauth{err: fmt.Errorf("clauth status --json: %w", &exec.Error{Name: "clauth", Err: exec.ErrNotFound})}
 
-	m, err := Bootstrap(env, &fakeRunner{}, cl, newFakeGit(), noSleep)
+	m, err := Bootstrap(env, &fakeRunner{}, cl, newFakeGit(), noSleep, nil)
 	if err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -1531,7 +1535,7 @@ func TestBootstrap_BrokenLinearKeyDegradesWithAReason(t *testing.T) {
 	}
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: configDir, StateDir: t.TempDir()}
 
-	m, err := Bootstrap(env, &fakeRunner{}, nil, newFakeGit(), noSleep)
+	m, err := Bootstrap(env, &fakeRunner{}, nil, newFakeGit(), noSleep, nil)
 	if err != nil {
 		t.Fatalf("Bootstrap with a broken api_key_cmd refused outright, want it to degrade: %v", err)
 	}
@@ -2405,7 +2409,7 @@ func TestBootstrap_UnsetPluginDirsIgnoreTheWorkingDirectory(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON()} // ConfigDir and StateDir both ""
 	runner := &fakeRunner{workspaces: []herdrc.WorkspaceInfo{{WorkspaceID: "w1", Label: "main"}}}
 
-	m, err := Bootstrap(env, runner, nil, newFakeGit(), noSleep)
+	m, err := Bootstrap(env, runner, nil, newFakeGit(), noSleep, nil)
 	if err != nil {
 		t.Fatalf("Bootstrap with unset plugin dirs = %v, want it to open on built-in defaults", err)
 	}
@@ -2432,7 +2436,7 @@ func TestBootstrap_UnsetPluginDirsIgnoreTheWorkingDirectory(t *testing.T) {
 // question the old message left unanswered, not a spelling.
 func TestBootstrap_UnsetContextRefusalIsInstructive(t *testing.T) {
 	env := Env{ContextJSON: "", ConfigDir: t.TempDir(), StateDir: t.TempDir()}
-	_, err := Bootstrap(env, &fakeRunner{}, nil, nil, noSleep)
+	_, err := Bootstrap(env, &fakeRunner{}, nil, nil, noSleep, nil)
 	if err == nil {
 		t.Fatal("Bootstrap with an unset context returned nil, want the pre-open refusal")
 	}
@@ -2459,7 +2463,7 @@ func TestBootstrap_UnsetContextRefusalIsInstructive(t *testing.T) {
 // and burying the actual parse failure under it.
 func TestBootstrap_MalformedContextStaysShort(t *testing.T) {
 	env := Env{ContextJSON: `{"workspace_id":`, ConfigDir: t.TempDir(), StateDir: t.TempDir()}
-	_, err := Bootstrap(env, &fakeRunner{}, nil, nil, noSleep)
+	_, err := Bootstrap(env, &fakeRunner{}, nil, nil, noSleep, nil)
 	if err == nil {
 		t.Fatal("Bootstrap with a malformed context returned nil, want the pre-open refusal")
 	}
@@ -2482,7 +2486,7 @@ func TestBootstrap_MalformedContextStaysShort(t *testing.T) {
 // restarting the server rather than by anything in this plugin.
 func TestBootstrap_UnreachableHerdrRefusalNamesWhatToCheck(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
-	_, err := Bootstrap(env, &fakeRunner{listErr: context.DeadlineExceeded}, nil, nil, noSleep)
+	_, err := Bootstrap(env, &fakeRunner{listErr: context.DeadlineExceeded}, nil, nil, noSleep, nil)
 	if err == nil {
 		t.Fatal("Bootstrap with an unreachable herdr returned nil, want the pre-open refusal")
 	}
@@ -2525,11 +2529,15 @@ type fakePicker struct {
 	err   error
 	calls []picker.Options
 	dirs  []string
+	// ctxs is what each call was given to run on, kept because a picker
+	// outliving the popup is #211 and the context is the whole of the fix.
+	ctxs []context.Context
 }
 
-func (p *fakePicker) Pick(_ context.Context, dir string, opts picker.Options) (picker.Result, error) {
+func (p *fakePicker) Pick(ctx context.Context, dir string, opts picker.Options) (picker.Result, error) {
 	p.calls = append(p.calls, opts)
 	p.dirs = append(p.dirs, dir)
+	p.ctxs = append(p.ctxs, ctx)
 	return p.res, p.err
 }
 
@@ -2593,7 +2601,7 @@ func TestBootstrapDegradesAnUnprobeablePicker(t *testing.T) {
 
 	env := Env{ConfigDir: configDir, StateDir: t.TempDir(), ContextJSON: `{"workspace_cwd":"/repo"}`}
 	cl := &fakeClauth{status: twoProfileStatus()}
-	m, err := Bootstrap(env, &fakeRunner{}, cl, newFakeGit(), noSleep)
+	m, err := Bootstrap(env, &fakeRunner{}, cl, newFakeGit(), noSleep, nil)
 	if err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}

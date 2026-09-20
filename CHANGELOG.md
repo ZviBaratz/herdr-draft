@@ -373,7 +373,16 @@ without the popup. It drives herdr exclusively through the public CLI
   before it is trusted. Every call is bounded by a 30-second deadline, a
   refusal is always shown rather than silently downgraded to an unpinned
   launch, and an exit code outside the documented set is reported as a
-  malfunction rather than obeyed as a decision. With it configured, the
+  malfunction rather than obeyed as a decision. **Quitting the popup takes
+  the picker with it** (#211): the commit-time pick is the one call that is
+  not a dry run, so it is the one that writes the picker's ledger, and it
+  now runs on a context cancelled at quit — the process stays up only long
+  enough for that cancellation to be delivered. `esc` used to leave it
+  running, so a pick the user had cancelled could still record an account
+  for a session that never existed. A pick that had ALREADY written is
+  unchanged, because the protocol has no verb for handing an account back.
+  The `--dry-run` preview dies with the popup too, and so does the `git
+  rev-parse` a lane's base is resolved with. With it configured, the
   `account` row grows an `auto` selection and `create` accepts
   `--account auto`. The picker's `warnings` and `machine` figures (load,
   cpus, swap) are shown on the `account` panel, with an unmeasured figure

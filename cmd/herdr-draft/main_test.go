@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
+	"time"
 
+	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"testing"
 )
@@ -216,5 +221,58 @@ func TestRunSkillStampsTheBuildersVersion(t *testing.T) {
 	if !strings.Contains(stdout.String(), herdrc.Version) {
 		t.Errorf("the rendered skill does not carry herdrc.Version (%q) -- "+
 			"an installed copy would never look stale", herdrc.Version)
+	}
+}
+
+// --- quitting takes the picker with it (#211) -------------------------------
+
+// The popup's LAST act is to cancel the work it started and wait for that
+// cancellation to be delivered. Cancelling alone is not enough and this is the
+// test that says so: exec.CommandContext kills the picker from a watcher
+// goroutine, so a process that cancels and exits in the same breath can exit
+// first -- and a picker that survives its caller goes on to write the ledger
+// entry #211 is about.
+func TestQuittingWaitsForTheCancellationToLand(t *testing.T) {
+	lt := app.NewLifetime()
+	started, returned := make(chan struct{}), make(chan struct{})
+	go func() {
+		ctx, done := lt.Begin()
+		defer done()
+		close(started)
+		<-ctx.Done()
+		// Stands in for the kill: work that happens after the cancellation
+		// and before the call returns. Well inside the shutdown grace.
+		time.Sleep(80 * time.Millisecond)
+		close(returned)
+	}()
+	<-started
+
+	var stderr bytes.Buffer
+	if code := runProgram(&stderr, lt, func() error { return nil }); code != 0 {
+		t.Fatalf("runProgram of a clean popup returned %d, want 0 (stderr: %s)", code, stderr.String())
+	}
+	select {
+	case <-returned:
+	default:
+		t.Fatal("the process was ready to exit while the cancelled pick was still running -- the picker would outlive the popup")
+	}
+}
+
+// And a popup that fails is still a popup that quit: the exit code is the
+// program's, but the work it started is cancelled either way.
+func TestAFailedRunStillCancelsTheWork(t *testing.T) {
+	lt := app.NewLifetime()
+	ctx, done := lt.Begin()
+	defer done()
+
+	var stderr bytes.Buffer
+	if code := runProgram(&stderr, lt, func() error { return errors.New("terminal is not a terminal") }); code != 1 {
+		t.Fatalf("runProgram of a failed popup returned %d, want 1", code)
+	}
+	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("after a failed run the work's context reported %v, want context.Canceled", err)
+	}
+	if !strings.Contains(stderr.String(), "terminal is not a terminal") {
+		t.Fatalf("stderr = %q, want the program's own error", stderr.String())
 	}
 }

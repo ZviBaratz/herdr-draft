@@ -1712,6 +1712,49 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### Quitting mid-pick takes the picker with it (#211) — 2026-09-20
+
+herdr 0.9.0. `main` at `2ffdd3e` and `zvi/fix-211-picker-on-quit` at the
+same base, both built with `go build` into `/var/tmp/d211/bin/{main,fix}/`
+so `pgrep -x herdr-draft` matched either one. **Route B** in a sibling pane
+of an ordinary session, with a scratch plugin config dir, a scratch plugin
+state dir (so nothing of the user's was written) and a throwaway
+`git init` repository. The plugin config was:
+
+```toml
+[agents]
+favorites = ["claude"]
+
+[clauth]
+default = "auto"
+picker = "/var/tmp/d211/picker"
+launcher = ["echo", "LAUNCHED", "{account}"]
+```
+
+The stub picker answered a `--dry-run` at once — the startup probe and the
+row's preview both need one — and on the commit pick logged `start`, slept
+3s, logged the line standing in for a real picker's ledger write, then
+refused with exit 2. clauth was the machine's real one (six profiles), so
+the `account` row existed and read `auto → personal-0`. Nothing could
+launch: the pick refuses, and `launcher` was `echo`.
+
+Each case typed a title, pressed `ctrl+s`, and sent `Escape` 0.5s later.
+
+| Case | Result |
+|---|---|
+| `main`, `esc` mid-pick | **Reproduced.** Pick started `10:22:32.98`; `esc` `10:22:33.50`; `pgrep -x herdr-draft` was 0 by `10:22:33.80`; the stub logged its ledger line at `10:22:35.99` — 2.2s after the popup was gone. |
+| the fix, `esc` mid-pick | Pick started `10:22:54.94`; `esc` `10:22:55.46`; by `10:22:55.81` both `pgrep -x herdr-draft` and the picker's own process count were 0. The ledger line never appeared, then or four seconds later. |
+| the fix, pick allowed to finish | Unchanged. The row read `auto · asking the picker…` for the three seconds, the stub logged its ledger line, and the refusal landed on the `account` row (`auto · stub refuses, after the sleep`) with focus moved there. No session was created. |
+
+The quit was not perceptibly slower: `shutdownGrace` is 250ms and the
+process was gone within one 250ms poll of `esc` both times. The stub's own
+orphaned `sleep` outlives the kill either way — herdr-draft kills the
+picker it started, not that picker's children — but it writes nothing,
+which is the point.
+
+Teardown: the form was escaped, the pane closed, `/var/tmp/d211` removed,
+and `pgrep -x herdr-draft` and the picker count both confirmed 0.
+
 ### `account_usage` on a dry run (#215) — 2026-09-19
 
 herdr 0.9.0. `zvi/215-account-usage` at `972a2a2`, not merged, built with

@@ -930,8 +930,15 @@ func (m Model) runPickerPreview(req request) tea.Cmd {
 		return nil
 	}
 	path := pathx.ExpandTilde(req.key)
+	lt := m.deps.Lifetime
 	return func() tea.Msg {
-		res, err := src.Pick(context.Background(), path, picker.Options{DryRun: true})
+		// On the app's own context like the commit pick below, though a
+		// preview writes no ledger and so leaves nothing behind: a picker
+		// that shells out per account is not free, and there is no reason
+		// to leave one running for a form that is gone (#211).
+		ctx, done := lt.Begin()
+		defer done()
+		res, err := src.Pick(ctx, path, picker.Options{DryRun: true})
 		return pickerPreviewMsg{req: req, res: res, err: err}
 	}
 }
@@ -1005,8 +1012,15 @@ type linkedCommitMsg struct {
 // rev-parse`, and Update does no I/O.
 func (m Model) linkedCommitCmd() tea.Cmd {
 	src := m
+	lt := m.deps.Lifetime
 	return func() tea.Msg {
-		commit, err := src.ResolveLinkedCommit(context.Background())
+		// On the app's context, so everything a submit is waiting for dies
+		// with the popup rather than only the pick that motivated the rule
+		// (#211). It writes nothing either way; cancelling it only means a
+		// `git rev-parse` exits a moment sooner.
+		ctx, done := lt.Begin()
+		defer done()
+		commit, err := src.ResolveLinkedCommit(ctx)
 		return linkedCommitMsg{commit: commit, err: err}
 	}
 }
@@ -1042,10 +1056,20 @@ type pickerCommitMsg struct {
 
 // pickerCommitCmd runs Model.ResolveAccount off-model, which is the only place
 // the real (non---dry-run) pick may happen: it writes the picker's ledger.
+//
+// And which is why it runs on the process's Lifetime (#211). The ledger write
+// is what stops two sessions being handed the same account, so a pick the user
+// cancelled with `esc` must not reach it: the context dies with the popup, and
+// picker.CLI runs the picker through exec.CommandContext, so the picker dies
+// with the context. A pick that had ALREADY written is unchanged -- the
+// protocol has no verb for handing an account back.
 func (m Model) pickerCommitCmd() tea.Cmd {
 	src := m
+	lt := m.deps.Lifetime
 	return func() tea.Msg {
-		res, err := src.ResolveAccount(context.Background())
+		ctx, done := lt.Begin()
+		defer done()
+		res, err := src.ResolveAccount(ctx)
 		return pickerCommitMsg{res: res, err: err}
 	}
 }
