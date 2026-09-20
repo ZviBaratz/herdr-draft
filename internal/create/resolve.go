@@ -1017,6 +1017,11 @@ func findIssue(ctx context.Context, req request, cfg config.Config, env Env, dep
 // caller supplied one, otherwise a real client built from the user's own
 // configured API key. (nil, nil) means Linear is not configured at all,
 // which is the same distinction app.Bootstrap draws.
+//
+// ctx reaches api_key_cmd, which bounds itself on top of it
+// (linear.keyCmdTimeout) -- so a signal still stops the helper and a
+// timeout arrives here as an error carrying linear.ErrTimeout, which
+// refuse sorts to ExitCheckTimedOut.
 func (d Deps) linear(ctx context.Context, cfg config.Config, configDir string) (IssueSource, error) {
 	if d.Linear != nil {
 		return d.Linear, nil

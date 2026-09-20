@@ -309,9 +309,13 @@ func loadFromCLI(ctx context.Context, bin string) (Status, error) {
 		// here but must produce opposite UI. Not installed is the normal
 		// case for most people and shows nothing; broken is worth saying.
 		//
-		// A timeout is neither, and lands in "broken" above by falling
-		// through this arm -- which is right: clauth IS installed, and a
-		// row that said nothing would be the silence #141 is about.
+		// A timeout does not reach this arm at all -- it returns above --
+		// and it is neither of those two things. What matters is what it
+		// is NOT: the error it returns wraps nothing, so exec.ErrNotFound
+		// does not match it, and app.Bootstrap therefore classifies it as
+		// "installed and broken" and puts the reason on the row. That is
+		// right: clauth IS installed, and a row that said nothing would be
+		// the silence #141 is about.
 		if s := strings.TrimSpace(stderr.String()); s != "" {
 			return Status{}, fmt.Errorf("clauth status --json: %w: %s", runErr, s)
 		}
