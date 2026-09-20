@@ -461,21 +461,34 @@ func TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone(t *testing.T) {
 // needs the command to exit before the deadline, and a starved shell may
 // not be scheduled to do that; a test that called the resulting kill a
 // defect would be reporting the load, not the code.
+//
+// BOTH fixtures keep the SHIPPED DIRECTION, deadline longer than the grace,
+// and that is documentary rather than mechanical. Inverting them -- a short
+// deadline under a long grace -- makes the second window far easier to hit
+// and pins the arm exactly as well, because the code under test knows
+// nothing about the numbers. But this test's whole job is to say the
+// combinations are REAL, and a reader takes the configuration with the
+// claim; one that cannot occur at 60s/2s would teach the wrong thing. The
+// price is three orderings to satisfy instead of one, paid in skips rather
+// than in reds.
 func TestBothAnsweredCombinationsAreObservable(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		body      string
+		deadline  time.Duration
 		waitDelay time.Duration
 		wantErr   error
 	}{
 		// The drain outlives the grace, so Wait closes the pipes: ErrWaitDelay.
-		{"drain longer than the grace", "sleep 30 &\nsleep 0.5\nprintf 'K\\n'\n", 800 * time.Millisecond, exec.ErrWaitDelay},
+		// Exits at 0.5s, deadline at 1s, grace ends at 1.3s.
+		{"drain longer than the grace", "sleep 30 &\nsleep 0.5\nprintf 'K\\n'\n", time.Second, 800 * time.Millisecond, exec.ErrWaitDelay},
 		// The drain finishes inside the grace, so Wait returns cleanly: nil.
-		{"drain shorter than the grace", "sleep 1.5 &\nsleep 0.5\nprintf 'K\\n'\n", 5 * time.Second, nil},
+		// Exits at 0.8s, deadline at 2s, drain ends at 2.2s, grace at 2.5s.
+		{"drain shorter than the grace", "sleep 2.2 &\nsleep 0.8\nprintf 'K\\n'\n", 2 * time.Second, 1700 * time.Millisecond, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := scriptKeyCmd(t, tc.body)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), tc.deadline)
 			defer cancel()
 
 			var stdout bytes.Buffer
