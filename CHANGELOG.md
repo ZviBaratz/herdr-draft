@@ -574,6 +574,20 @@ without the popup. It drives herdr exclusively through the public CLI
   with a reason". A clauth status of a schema this plugin has not checked
   shows profile names only. Schemas 1 and 2 are checked; 2 is what clauth
   0.15.2 writes, and it read as unchecked until #238.
+- **A clauth that starts working while the popup is open gives the account
+  row back** (#200). Focusing the row asks clauth again, by `⇥` or by
+  click: an unavailable row takes no input, but it is still a stop on the
+  focus ring, because focusing it is the retry — and because its panel is
+  the only place a reason too long for one row can be read in full. A
+  reload that finds at least two profiles clears the "unavailable" state:
+  the row goes live and can be pinned, carrying the auto row, `[clauth] default` and its
+  notes, exactly as a row that opened working. A reload that fails, or that
+  finds fewer than two profiles, replaces the reason — the row says why
+  clauth is unusable *now*, not why it was when the popup opened, and the
+  two can differ. Before this the row kept the open-time reason for the
+  life of the popup, and since it ignores input in that state, none of the
+  profiles the reload had just loaded could be pinned; only reopening
+  recovered.
 - **A report is not evidence; the pane is.** Neither direction of the
   prompt-delivery question is answered by what herdr reports: a wait that
   times out has not proved a failure, and an agent's `idle` status has not

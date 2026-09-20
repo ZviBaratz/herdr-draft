@@ -212,6 +212,70 @@ func TestModel_FocusRingSkipsDisabledAndWraps(t *testing.T) {
 	}
 }
 
+// retryStub is a stub section that is disabled but still asks for a ring
+// stop -- the shape AccountField takes while clauth is unavailable (#200):
+// focusing it is what retries the integration that failed, so a ring that
+// skips it leaves the retry reachable by mouse alone.
+type retryStub struct {
+	*stubSection
+	retry bool
+}
+
+func (s *retryStub) RetryOnFocus() bool { return s.retry }
+
+// TestModel_ARetryOnFocusSectionIsAStopWhileDisabled pins the exception
+// nextEnabled makes for #200, and pins it at the mechanism: a disabled
+// section is skipped, unless it asks for the stop.
+//
+// Both halves are asserted. "The ring reaches it" alone would also pass
+// for a ring that had stopped honouring Enabled() at all, which is the
+// rule #191 rests on.
+func TestModel_ARetryOnFocusSectionIsAStopWhileDisabled(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		retry bool
+		want  string
+	}{
+		{"asks for the stop", true, "middle"},
+		{"does not", false, "create"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := newStub("before")
+			middle := &retryStub{stubSection: newStub("middle"), retry: tc.retry}
+			middle.enabled = false
+
+			m := New(Setup{Palette: theme.Default(), Sections: []Section{before, middle}})
+			if cmd := m.Init(); cmd != nil {
+				t.Fatalf("Init() returned a non-nil cmd: %v", cmd)
+			}
+			if got := m.FocusedID(); got != "before" {
+				t.Fatalf("initial focus = %q, want %q", got, "before")
+			}
+
+			next, _ := m.Update(keyTab)
+			m = next.(Model)
+			if got := m.FocusedID(); got != tc.want {
+				t.Errorf("retry=%v: focus after one Tab = %q, want %q", tc.retry, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNewFocusRing_DoesNotOpenOnARetryOnlySection: a section that only
+// wants the stop so focusing it can retry something is not where the form
+// should OPEN. The ring's resting index stays Enabled()-only, so the first
+// thing a user sees is a row they can use.
+func TestNewFocusRing_DoesNotOpenOnARetryOnlySection(t *testing.T) {
+	first := &retryStub{stubSection: newStub("first"), retry: true}
+	first.enabled = false
+	second := newStub("second")
+
+	r := newFocusRing([]Section{first, second})
+	if got := r.current().ID(); got != "second" {
+		t.Errorf("a fresh ring opened on %q, want %q -- a retry-only section is a stop, not a resting place", got, "second")
+	}
+}
+
 // TestModel_PlacementIsAStopOnlyWithoutAWorktree pins placement spec §14
 // at the mechanism, not a rendering of it: nextEnabled (focus.go) gates
 // every ring stop on Section.Enabled(), so under a worktree Tab must walk

@@ -1519,8 +1519,14 @@ Linear.
 **The `account` row says `unavailable`.** Different situation: clauth *is*
 installed, and herdr-draft could not read it — it exited non-zero, or its
 `--json` output did not parse. The reason is on the row. The row is inert
-and the focus ring skips it; it goes back to normal, or back to being
-absent, once clauth works.
+— it takes no input — but **focusing it asks clauth again** without closing
+the form: `⇥` stops there for exactly that reason, and a click works too.
+A reload that finds at least two profiles makes the row live, exactly as if
+clauth had answered when the form opened. Its panel, which only the focused
+row draws, is also where a reason too long for one line is readable in
+full. One that fails, or that finds fewer than two profiles,
+replaces the reason with what clauth said *this* time — so the row is
+always reporting the most recent attempt, not the one from startup.
 
 **The `issue` row says `unavailable`.** Your key source is configured but
 failed; the reason is on the row itself and in its panel. See

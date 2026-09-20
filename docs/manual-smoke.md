@@ -1977,6 +1977,50 @@ Teardown: the session exited, its pane was closed, the scratch tree and
 the brief the session wrote were removed, and no process was left with a
 cwd under the tree.
 
+### A reload that works gives the account row back (#200) — 2026-09-20
+
+herdr 0.9.0. `zvi/fix-200-account-after-reload`, built with `just build`.
+**Route B**, but driven from a pty of its own rather than from a herdr
+pane, because the gesture under test is a focus change on a row that takes
+no input and `pane read` would have to be timed against it either way: the
+binary ran under `pty.fork()` at 101x30 with a scripted stdin, and the
+output was fed to a `pyte.Screen` so every dump below is the real screen
+rather than a regex over a partial repaint.
+
+Everything it touched was disposable: a headless `herdr server` with its
+own `XDG_CONFIG_HOME`/`XDG_STATE_HOME` under `/var/tmp/hd200`, a wrapper
+pinning them and `HERDR_SESSION` as `HERDR_BIN_PATH` (with herdr's
+**absolute** path — the driver hands the child a minimal `PATH`), a scratch
+plugin config and state dir, and **`HOME` under the same tree**. That last
+one is load-bearing rather than tidiness: `clauth.Load` prefers
+`$HOME/.clauth/status.json` when it is fresh and only falls back to the
+CLI, so a real home would have answered from the owner's own status file
+and the stub would never have run.
+
+The stub `clauth`, first on `PATH`, always failed its first call — that is
+the open-time failure the row is built from — and its second call was what
+each pass varied.
+
+**Two passes, one per gesture.** The first used the mouse, since a click
+focuses a row regardless of `Enabled()`: the SGR report for the row's own
+screen position (`\x1b[<0;5;12M` and its release), which bubbletea parses
+whether or not mouse tracking was asked for. The second, after the ring
+exception landed (`AccountField.RetryOnFocus`), used **`⇥` alone** — six
+stops to reach the row from the opening focus. Both gave the same results:
+
+| Second call | What the row did |
+|---|---|
+| two profiles | `unavailable  exit status 1: could not read …/state` → on focus, `▌ account  active · max · 5h 12% · 7d 40%` with the picker panel, `2 profiles` and the `↑↓ browse · ↵ pin` footer. `↓ ↓ ↵` then pinned `work`: the row read `work · team · 5h 71% · 7d 63%` with its `✓`. Before the fix that gesture did nothing at all. |
+| exit 3, a different message | `unavailable  exit status 3: daemon is not running; start it with clauth daemon` — the reason from the reload, not the one from open, on the row and in full on the panel, with `nothing to set here` on the footer. |
+| one profile | `unavailable  clauth reports one profile; this row needs two`, likewise. |
+
+The stub was called exactly twice in each pass, which is the other half of
+the first row: the reload really is the focus change's own, not a re-read
+of anything cached.
+
+Teardown: the form was escaped each time, `/var/tmp/hd200` removed, the
+disposable server stopped, and `pgrep -x herdr-draft` confirmed 0.
+
 ### Quitting mid-pick takes the picker with it (#211) — 2026-09-20
 
 herdr 0.9.0. `main` at `2ffdd3e` and `zvi/fix-211-picker-on-quit` at the
