@@ -41,10 +41,10 @@ constraint rather than restating the code.
 
 **The bare form is a trap where a topic moved to a later document, not
 where a number was merely reused** (#287). Nearly every number exists in
-both v1 and v2, and the great majority of the 351 bare citations are
-right: §6, §9 and §12 are reused numbers cited correctly well over a
-hundred times each, because whoever wrote them checked the target. Three
-went wrong, and all three went wrong the same way — the *subject* moved.
+both v1 and v2, and all 351 bare citations left in the tree resolve in v1:
+§6, §9 and §12 are reused numbers cited correctly 140, 77 and 47 times,
+because whoever wrote them checked the target. Three numbers went wrong,
+and all three went wrong the same way — the *subject* moved.
 v1 §10 is Linear and v2 §10 is defaults resolution (53 sites meant v2);
 v1 §11 is clauth and v2 §11 is `.herdr-draft.toml`'s trust boundary (46);
 v1 §13 is error handling and v2 §13 is the headless `create` (30). In each
