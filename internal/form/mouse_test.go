@@ -354,3 +354,109 @@ func TestMouseZones_ChipClickSelectsTheReap(t *testing.T) {
 		t.Fatalf("MarkReady() = false after clicking %s, want reap", zoneID)
 	}
 }
+
+// heldBaseForm builds a focused worktree field whose base picker is
+// holding ref -- the list does not name it, so the panel shows the HEAD
+// row -- rendered once at 80x24 with its zones scanned, ready to be
+// clicked. It is #256's mouse half: the wheel and a row click move this
+// picker exactly as ↑↓ do, so a retirement that only fired on a keypress
+// would leave a click-driven selection exposed to the same overwrite.
+func heldBaseForm(t *testing.T, ref string, refs []string) (Model, *WorktreeField) {
+	t.Helper()
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetHeadBranch("main")
+	w.SetBaseItems(1, refs)
+	w.SetBase(ref)
+	if got := w.Base(); got != "" {
+		t.Fatalf("setup: Base() = %q, want the HEAD row while %q is held", got, ref)
+	}
+
+	m := New(Setup{Palette: theme.Default(), Sections: []Section{w}, Name: "new session"})
+	m.Init()
+	if cmd := m.FocusByID("worktree"); cmd != nil {
+		cmd()
+	}
+	_ = m.ViewAt(80, 24)
+	syncZones()
+	return m, w
+}
+
+// TestMouseZones_ClickingABaseRowRetiresAHeldBase is #256 through the
+// mouse: a click on a "row:base:<n>" zone is the user picking a base, and
+// it ends the hold the same way ↓ does.
+func TestMouseZones_ClickingABaseRowRetiresAHeldBase(t *testing.T) {
+	m, w := heldBaseForm(t, "remote-only", []string{"develop", "release/1.4"})
+
+	const zoneID = "row:base:1" // row 0 is the HEAD sentinel
+	zi := widgets.Zones.Get(zoneID)
+	if zi.IsZero() {
+		t.Fatalf("zone %q never resolved after ViewAt(80, 24)'s own Scan", zoneID)
+	}
+	next, _ := m.Update(clickAt(zi.StartX, zi.StartY))
+	_ = next.(Model)
+	if got := w.Base(); got != "develop" {
+		t.Fatalf("setup: Base() after clicking %s = %q, want %q", zoneID, got, "develop")
+	}
+
+	w.SetBaseItems(2, []string{"develop", "release/1.4", "remote-only"})
+	if got := w.Base(); got != "develop" {
+		t.Errorf("Base() after a refresh naming the held ref = %q, want the user's own %q", got, "develop")
+	}
+}
+
+// TestMouseZones_ClickingTheHeadRowRetiresAHeldBase is the one input a
+// before/after comparison of the selection cannot recognise, which is why
+// the click path retires on the click itself rather than on the cursor
+// moving: a held ref shows the HEAD row, so a user clicking HEAD is
+// choosing the row that is already selected. Nothing moves, and they have
+// still decided.
+//
+// A claim about the FIELD, and deliberately only that: the app layer does
+// not read a base sitting on HEAD as a decision, so end to end the tier's
+// base settle puts the remembered ref back anyway. handleClick's own
+// comment carries that boundary; this test is what holds the field to its
+// half of it.
+func TestMouseZones_ClickingTheHeadRowRetiresAHeldBase(t *testing.T) {
+	m, w := heldBaseForm(t, "remote-only", []string{"develop", "release/1.4"})
+
+	const zoneID = "row:base:0" // the HEAD sentinel, already selected
+	zi := widgets.Zones.Get(zoneID)
+	if zi.IsZero() {
+		t.Fatalf("zone %q never resolved after ViewAt(80, 24)'s own Scan", zoneID)
+	}
+	next, _ := m.Update(clickAt(zi.StartX, zi.StartY))
+	_ = next.(Model)
+	if got := w.Base(); got != "" {
+		t.Fatalf("setup: Base() after clicking %s = %q, want the HEAD row", zoneID, got)
+	}
+
+	w.SetBaseItems(2, []string{"develop", "release/1.4", "remote-only"})
+	if got := w.Base(); got != "" {
+		t.Errorf("Base() after a refresh naming the held ref = %q, want the HEAD row the user clicked", got)
+	}
+}
+
+// TestMouseZones_AWheelPickRetiresAHeldBase is #256's third input. The
+// wheel scrolls the base list by moving its cursor, which IS the
+// selection here (widgets.Picker has no separate commit), so it ends a
+// hold on exactly the same terms as ↓.
+func TestMouseZones_AWheelPickRetiresAHeldBase(t *testing.T) {
+	m, w := heldBaseForm(t, "remote-only", []string{"develop", "release/1.4"})
+
+	for i := 0; i < 2; i++ { // chips -> branch -> base
+		next, _ := m.Update(key(tea.KeyDown, 0))
+		m = next.(Model)
+	}
+	next, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	_ = next.(Model)
+	if got := w.Base(); got != "develop" {
+		t.Fatalf("setup: Base() after a wheel-down over the focused base picker = %q, want %q", got, "develop")
+	}
+
+	w.SetBaseItems(2, []string{"develop", "release/1.4", "remote-only"})
+	if got := w.Base(); got != "develop" {
+		t.Errorf("Base() after a refresh naming the held ref = %q, want the user's own %q", got, "develop")
+	}
+}

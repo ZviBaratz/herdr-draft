@@ -1207,3 +1207,65 @@ func TestWorktreeField_RequestedBaseIsTheRefTheAppAskedFor(t *testing.T) {
 		t.Errorf("RequestedBase() after SetBase(\"\") = %q, want \"\" (HEAD)", got)
 	}
 }
+
+// TestWorktreeField_AUserPickRetiresAHeldBase is #256: a hold is the app's
+// own deferred move, and the user choosing a base for themselves ends it,
+// exactly as a landing does. Without that, the next refresh naming the held
+// ref applies it OVER their choice -- silently, since the ref was never on
+// screen for them to see it go.
+//
+// RequestedBase() is asserted alongside Base() because the hold surviving
+// the user's decision is the defect itself, stated as a measurement; the
+// refresh below is only what it costs.
+func TestWorktreeField_AUserPickRetiresAHeldBase(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBaseItems(1, []string{"main", "develop"})
+	w.SetBase("remote-only") // held: the list does not name it
+	if got := w.Base(); got != "" {
+		t.Fatalf("setup: Base() = %q, want the HEAD row while the ref is held", got)
+	}
+
+	focusBase(w)
+	w.Update(key(tea.KeyDown, 0)) // HEAD -> main
+	if got := w.Base(); got != "main" {
+		t.Fatalf("setup: Base() = %q, want the user's own %q", got, "main")
+	}
+	if got := w.RequestedBase(); got != "main" {
+		t.Errorf("RequestedBase() after the user picked a base = %q, want %q: the hold survived their decision", got, "main")
+	}
+
+	// The once-per-repo `git fetch --prune` re-list (#212), this time
+	// naming the ref that was being held.
+	w.SetBaseItems(2, []string{"main", "develop", "remote-only"})
+	if got := w.Base(); got != "main" {
+		t.Errorf("Base() after a refresh naming the held ref = %q, want the user's own %q", got, "main")
+	}
+}
+
+// TestWorktreeField_AClampedKeyDoesNotRetireAHeldBase is the half of
+// #256's rule that must NOT change, and the reason the retirement is keyed
+// on the selection moving rather than on the keystroke arriving.
+//
+// The branch list is async, so until it lands the picker holds the HEAD row
+// alone and every ↓ on it is clamped to nothing. Retiring there would drop
+// per-project base memory (#194) for a key the user could not see land --
+// and this is the ordinary case, not a contrived one: the hold exists
+// precisely because the list has not arrived.
+func TestWorktreeField_AClampedKeyDoesNotRetireAHeldBase(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBase("remote-only") // held: there is no list at all yet
+	focusBase(w)
+	w.Update(key(tea.KeyDown, 0)) // nothing below the HEAD row to move to
+	if got := w.Base(); got != "" {
+		t.Fatalf("setup: Base() = %q, want the HEAD row -- there was nowhere to move", got)
+	}
+
+	w.SetBaseItems(1, []string{"main", "remote-only"})
+	if got := w.Base(); got != "remote-only" {
+		t.Errorf("Base() once the list named the held ref = %q, want the remembered %q", got, "remote-only")
+	}
+}

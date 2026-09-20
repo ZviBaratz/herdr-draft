@@ -539,3 +539,74 @@ func TestPopup_TheFallbackResnapshotsWhatTheAppPutThere(t *testing.T) {
 		t.Errorf("the note stayed beside the base the user picked straight back:\n%s", panel)
 	}
 }
+
+// TestPopup_AHeldBaseNeverOverwritesTheUsersOwnPick is #256 end to end,
+// and it is the same class as the two defects above -- a base changing
+// under the user without a word -- reached from the PENDING side rather
+// than the list side. Both of those start from a base picked out of a list
+// that named it, where nothing is held.
+//
+// The remembered ref is not in the branch list, so WorktreeField.SetBase
+// holds it and the picker shows the HEAD row. The user picks `main` out of
+// the list they can actually see. Then the once-per-repo `git fetch
+// --prune` (#212) re-lists the branches, this time naming the held ref --
+// and the hold, if the user's own decision has not retired it, lands on
+// top of their choice.
+//
+// RequestedBase() is asserted at the moment of the pick because that is
+// the root cause rather than the symptom: the hold outliving the user's
+// decision. The plan is asserted at the end because that is what the
+// overwrite actually costs -- a session branched from a ref nobody chose.
+func TestPopup_AHeldBaseNeverOverwritesTheUsersOwnPick(t *testing.T) {
+	git := newFakeGit()
+	// The remembered base is NOT in the branch list, so SetBase holds it.
+	git.listBranchesResult = []string{"main", "develop"}
+	git.currentBranchResult = "main"
+	git.commits = map[string]string{"/repo-a remote-only": "3d4e5f6", "/repo-a main": "0a1b2c3"}
+	m := newTestModel(t, testSetup{
+		Git:    git,
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude"}}},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true), Base: "remote-only"},
+		}),
+	})
+	// Held: the dir check has landed and resolved the remembered base, and
+	// the check that would offer it has not answered yet.
+	m, _ = pumpHoldingBaseChecks(t, m, m.initCmds)
+	if got := m.worktree.Base(); got != "" {
+		t.Fatalf("setup: Base() = %q, want the HEAD row while the remembered ref is held", got)
+	}
+	// And the window is really the HELD one, not merely a base that never
+	// resolved: Base() == "" is equally true of a SetBase that was dropped
+	// instead of remembered, so without this the test passes with its own
+	// subject deleted.
+	if got := m.worktree.RequestedBase(); got != "remote-only" {
+		t.Fatalf("setup: RequestedBase() = %q, want the remembered ref held", got)
+	}
+
+	// The user picks a base out of the list they can actually see.
+	m.form.FocusByID("worktree")
+	for _, k := range []tea.KeyPressMsg{
+		{Code: tea.KeyDown}, {Code: tea.KeyDown}, // chips -> branch -> base
+		{Code: tea.KeyDown}, // HEAD -> main
+	} {
+		next, _ := m.Update(k)
+		m = next.(Model)
+	}
+	if got := m.worktree.Base(); got != "main" || !m.baseTouched {
+		t.Fatalf("setup: Base() = %q touched=%v, want the user's own main", got, m.baseTouched)
+	}
+	if got := m.worktree.RequestedBase(); got != "main" {
+		t.Errorf("RequestedBase() after the user picked a base = %q, want %q: the hold survived their decision", got, "main")
+	}
+
+	m = prune(t, m, git, []string{"main", "develop", "remote-only"})
+
+	if got := m.worktree.Base(); got != "main" {
+		t.Errorf("Base() after the fetch re-listed the held ref = %q, want the user's own %q", got, "main")
+	}
+	if got := m.PlanInput().BaseRef; got != "main" {
+		t.Errorf("plan.Input.BaseRef = %q, want the user's own %q", got, "main")
+	}
+}
