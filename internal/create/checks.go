@@ -107,20 +107,34 @@ func (checkTimeout) Is(target error) bool { return target == errCheckTimedOut }
 // TWO CONTEXTS, and the split is the point: the deadline is ours, the
 // cancellation is the caller's, and only the first of them is a timeout.
 //
-// The CALL gets the caller's context with the deadline on top, so a signal
-// still reaches git (#252) and the deadline still reaches the four
-// questions that take a context at all.
+// The CALL gets the caller's context and NO deadline, so a signal still
+// reaches git (#252). The WAIT gets the deadline and nothing else. A
+// caller whose context was cancelled is not a check that did not answer:
+// reporting "timed out after 30s" about a signal that arrived in the first
+// second would be false, and giving up on the pre-flight there would take
+// the account pick with it -- which #252 deliberately lets happen, because
+// that pick is the one call that writes the picker's ledger and the cancel
+// is what kills it. On a cancellation the call comes back by itself,
+// carrying its own error, exactly as it did before this bound existed.
 //
-// The WAIT gets the deadline and nothing else. A caller whose context was
-// cancelled is not a check that did not answer: reporting "timed out after
-// 30s" about a signal that arrived in the first second would be false, and
-// giving up on the pre-flight there would take the account pick with it --
-// which #252 deliberately lets happen, because that pick is the one call
-// that writes the picker's ledger and the cancel is what kills it. On a
-// cancellation the call comes back by itself, carrying its own error,
-// exactly as it did before this bound existed.
+// ONE DEADLINE, in one place, and the call is cancelled by RETURNING: the
+// deferred cancel below fires after the verdict, which is an ordering
+// rather than a race. Giving the call a timer of its own as well is the
+// tempting version and the wrong one -- both fire at once, and which is
+// observed first then decides whether the run reports "the check did not
+// answer" or the killed call's own error. This repository has twice been
+// bitten by deciding anything on two things being ready together, and the
+// second reading is the damaging one: a ResolveCommit the deadline killed
+// becomes `--base "main" names no commit in <dir>`, blaming a ref that is
+// perfectly fine, and the same shape elsewhere becomes "no root" and "the
+// branch is free". TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout
+// pins it; giving callCtx a deadline shorter than the wait's fails it
+// three times out of three.
+//
+// Nothing is lost by dropping that timer. git is still killed, a few
+// microseconds later, when this returns.
 func bounded[T any](ctx context.Context, deadline time.Duration, what string, ask func(context.Context) T) (T, error) {
-	callCtx, cancelCall := context.WithTimeout(ctx, deadline)
+	callCtx, cancelCall := context.WithCancel(ctx)
 	defer cancelCall()
 	v, ok := app.AwaitCheck(context.WithoutCancel(ctx), nil, deadline, func(context.Context) T {
 		return ask(callCtx)

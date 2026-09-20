@@ -397,3 +397,49 @@ func TestCheckDeadline_ACancelledCallerIsNotATimeout(t *testing.T) {
 		t.Fatalf("picker calls = %d, want the one commit pick still reached (#252)", len(p.calls))
 	}
 }
+
+// cancelAwareGit answers the moment its context is done, with that
+// context's own error -- a git that honours cancellation promptly, which
+// gitx.anyRefExists behind BranchExists very nearly is: it sets no
+// WaitDelay and gives exec no pipes to drain, so its call comes back as
+// soon as the kill is reaped.
+type cancelAwareGit struct{ *fakeGit }
+
+func (g *cancelAwareGit) ResolveCommit(ctx context.Context, _, _ string) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout.
+//
+// The deadline must exist in exactly ONE place. Give the call its own
+// timer as well and the two fire together, so which of them is observed
+// first decides whether the run reports "the check did not answer" or the
+// killed call's own error -- and this repository has been bitten twice by
+// deciding anything on two things being ready at once. The second reading
+// is the damaging one: a cancelled ResolveCommit becomes "--base names no
+// commit in <dir>", which blames a ref that may be perfectly fine, and the
+// same shape elsewhere becomes "no root" and "the branch is free".
+//
+// So the call is cancelled by RETURNING rather than by a timer of its own:
+// bounded's deferred cancel fires after the verdict, which is an ordering
+// and not a race. This fake makes the difference deterministic -- it comes
+// back the instant its context is done, so a call-side timer that fired
+// first would win every time instead of almost never.
+func TestCheckDeadline_ACallTheDeadlineKilledIsStillATimeout(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Git = &cancelAwareGit{fakeGit: h.git}
+	h.deps.CheckDeadline = 20 * time.Millisecond
+
+	code := runWithin(t, h, "--title", "fix login redirect", "--worktree", "--base", "main")
+
+	if code == ExitUsage {
+		t.Fatalf("exit = %d: the deadline's own kill was reported as a bad --base\nstderr: %s", code, h.stderr)
+	}
+	if code != ExitCheckTimedOut {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitCheckTimedOut, h.stderr)
+	}
+	if got := h.stderr.String(); strings.Contains(got, "names no commit") {
+		t.Errorf("stderr = %q, want no claim about the ref: nobody established anything about it", got)
+	}
+}

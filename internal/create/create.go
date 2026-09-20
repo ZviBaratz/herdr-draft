@@ -139,6 +139,14 @@ const pluginID = herdrc.PluginID
 // hangs on). It is a deliberate SUBSET of internal/app's own gitSource, so
 // app.NewGitSource satisfies it directly and production has one
 // implementation rather than two.
+//
+// Nothing in the pre-flight calls it directly, and that is enforced by the
+// compiler rather than remembered: every question goes through
+// Deps.checks() and checks.go's boundedGit, whose versions of the two
+// methods below that answer with a bare bool answer with an error as well
+// (#272). A call site added here instead would be one that can wait for
+// good on a stalled mount, and one that reads a question nobody answered
+// as its own negative.
 type GitSource interface {
 	DirExists(path string) bool
 	IsGitRepo(dir string) bool
