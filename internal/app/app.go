@@ -590,6 +590,14 @@ type Model struct {
 	linked       linkedProject
 	linkedCommit string
 
+	// relistAfterFetch is the baseReqVersion of the base check the
+	// once-per-repo `git fetch --prune` scheduled when it finished, and 0
+	// when none is out: the one re-list on which a base the user chose is
+	// kept on offer and settled (#212, keepChosenBaseAcrossRelist). Every
+	// other base check leaves a chosen base alone, a project change's
+	// above all (#197).
+	relistAfterFetch int
+
 	// baseSettleVersion is the staleness guard on scheduleBaseSettle's
 	// answers, and baseSettleLanded the version of the last one landed: the
 	// two differ exactly while a base check is out (baseSettlePending).
@@ -2071,6 +2079,12 @@ func (m *Model) noteUserEdits() {
 	// is kept on offer across a project change -- applyProjectDefaults.)
 	if b := m.worktree.Base(); b != m.appliedBaseRef && b != "" {
 		m.baseTouched = true
+		// And retires the note, which said HEAD was being used instead of
+		// some ref -- true of the base they just replaced, not of this one.
+		// This is the whole of showRepoConfig's old baseTouched guard, moved
+		// to where the move is actually observed so that a note set AFTER it,
+		// about the user's own base, survives to be shown (#212).
+		m.baseNote = ""
 	}
 }
 
@@ -2280,11 +2294,17 @@ func (m *Model) showRepoConfig() {
 	m.dir.SetNotes(m.repoConfigNotes())
 	// config.toml's own refused branch_prefix follows the resolution the same
 	// way, because a repository's .herdr-draft.toml can take the prefix over
-	// -- see BranchPrefixWarning. A dropped base's note joins it for the
-	// reason provenance follows the touched flags: it says HEAD is used, which
-	// stops being true once the user picks a base of their own.
+	// -- see BranchPrefixWarning. A dropped base's note joins it unguarded,
+	// unlike the provenance above: it is about what the row now shows and
+	// why -- the base that WENT, and HEAD in its place -- and the user is
+	// one of the two who can have lost one (#212). What used to
+	// stand here was a baseTouched guard, for the true half of that -- a note
+	// about a TIER's base says HEAD is used, which stops being true the
+	// moment the user picks their own. That is now handled where the fact is
+	// known, by noteUserEdits clearing the note on the move itself, which
+	// leaves this able to show a note about the user's own base too.
 	notes := m.branchPrefixNotes()
-	if m.baseNote != "" && !m.baseTouched {
+	if m.baseNote != "" {
 		notes = append(notes, m.baseNote)
 	}
 	m.worktree.SetNotes(notes)
@@ -2328,6 +2348,33 @@ func SettleBase(ctx context.Context, git commitResolver, dir string, res default
 		res.BaseRef = ""
 	}
 	return res, ""
+}
+
+// settleChosenBase is the same question asked of a base the USER picked
+// rather than one a tier supplied (#212), and it returns only the note: ""
+// when ref still names a commit in dir and the caller is to keep it, the
+// reason to fall back to the HEAD row otherwise.
+//
+// Two things separate it from SettleBase, and both are why it is a function
+// of its own rather than a synthesised defaults.Resolved put through that
+// one. There is no tier to name, so the note stops after the ref -- the
+// user is the source, and telling them a file supplied what they chose
+// themselves would be false. And "any more" is the whole point: this ref
+// was in the branch list when they picked it out of it, which is what makes
+// its disappearance worth a line rather than a silent fall-back.
+//
+// NamesHead is not asked either. The base picker offers exactly one HEAD,
+// its own sentinel row, and Base() reports that as ""; every other row is a
+// ref, so a ref that arrives here spelled from HEAD got there as a tier's
+// offer the user moved back onto, and keeping it as spelled is right.
+func settleChosenBase(ctx context.Context, git commitResolver, dir, ref string) string {
+	if ref == "" {
+		return ""
+	}
+	if _, err := git.ResolveCommit(ctx, dir, ref); err != nil {
+		return fmt.Sprintf("ignoring base %q: no such commit here any more; using HEAD", ref)
+	}
+	return ""
 }
 
 // NamesHead reports whether ref, which names commit in dir, is HEAD itself

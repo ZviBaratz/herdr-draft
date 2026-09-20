@@ -325,6 +325,17 @@ without the popup. It drives herdr exclusively through the public CLI
   not name, while `create` passed the same base to herdr as it was, so one
   project built two different sessions and wrote two different bases back
   to `projects.json`.
+- **A base you picked yourself keeps its meaning when the background
+  `git fetch --prune` re-lists the branches** (#212). The list that lands is
+  a new one, and a base no longer in it used to hand you whichever branch
+  moved into its row — the `worktree` row naming that branch and the plan
+  built from it, without a word. Your base now stays selected across the
+  re-list and is then asked the same question a remembered one is asked: one
+  that still names a commit is kept, which is what a base that merely fell
+  out of the 50-branch window looks like, and one that names none — a
+  remote-tracking branch the fetch deleted — falls back to `HEAD`, with the
+  worktree panel saying which base went. A submit pressed while that check
+  is out waits for it.
 - The resolver is pure and is the only place the precedence chain exists.
 
 ### Repository-level config (`.herdr-draft.toml`)
