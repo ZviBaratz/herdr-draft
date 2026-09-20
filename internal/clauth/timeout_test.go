@@ -2,6 +2,7 @@ package clauth
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -287,5 +288,42 @@ func TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone(t *testing.T) {
 				t.Errorf("classifyRun(%v, %v) = %d, want %d", tc.runErr, tc.ctxErr, got, tc.want)
 			}
 		})
+	}
+}
+
+// A timeout must NOT match exec.ErrNotFound, and that is a contract with
+// internal/app rather than a property of this package.
+//
+// app.Bootstrap branches on `errors.Is(serr, exec.ErrNotFound)` to tell two
+// situations apart that must produce opposite UI: clauth not installed,
+// which is most people and shows no account row at all, and clauth
+// installed and broken, which shows the row with the reason on it. A
+// timeout is the second, so the error it returns must not look like the
+// first.
+//
+// Nothing pinned it. Making the timeout wrap exec.ErrNotFound --
+// `fmt.Errorf("...: %w", exec.ErrNotFound)`, one plausible slip -- leaves
+// `go test ./...` entirely green while the account row silently shows
+// NOTHING on a clauth that timed out, which is the exact silence #141
+// exists to remove. Found in review, and it is the producing side that was
+// open: app's own two Bootstrap tests pin what it does with each kind of
+// error, but both hand it a fake's error, so neither can see what this
+// package actually returns.
+func TestATimeoutDoesNotLookLikeAMissingBinary(t *testing.T) {
+	bin := scriptClauth(t, "sleep 30\n")
+	shrinkCLITimeout(t, 150*time.Millisecond)
+
+	var err error
+	within(t, 5*time.Second, "Load", func() {
+		_, err = Load(context.Background(), LoadOpts{CLIBin: bin, Now: time.Now})
+	})
+
+	if err == nil {
+		t.Fatal("Load of a hanging clauth = nil error")
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		t.Errorf("Load error = %v, and it matches exec.ErrNotFound -- app.Bootstrap reads that as "+
+			"\"clauth is not installed\" and renders NO account row, so a clauth that timed out would "+
+			"say nothing at all", err)
 	}
 }

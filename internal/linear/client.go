@@ -162,10 +162,22 @@ const assignedIssuesPrefix = "linear assigned issues"
 // version of this comment's reason -- that only the context gives one
 // answer for both -- does not hold either.
 //
-// What does hold: runKeyCmd and clauth's loadFromCLI CANNOT read the chain,
-// because a killed subprocess reports `signal: killed` with no context
-// error anywhere in it. They must ask the context, so this asks the context
-// too, and the three read the same way. The one place the two differ is
+// What does hold: runKeyCmd and clauth's loadFromCLI CANNOT read the chain
+// in the shape that dominates. A subprocess killed WHILE RUNNING reports
+// `signal: killed` -- an *exec.ExitError, which has no Unwrap, so
+// errors.Is(err, context.DeadlineExceeded) is false on it and a chain-only
+// classifier would call a timeout an ordinary failure. They must ask the
+// context, so this asks the context too, and the three read the same way.
+//
+// The other shape does carry it, and naming that here is the point: a
+// child that exits 0 before Process.Wait can reap it comes back as the
+// CONTEXT error itself (classifyRun has the mechanism and the sweep).
+// Every version of this sentence in this change -- here, in runKeyCmd and
+// in classifyRun -- was first written as a universal about killed
+// subprocesses, and the zombie shape went unnamed in all of them. It
+// changes nothing about which side to read, since the dominant shape is
+// the one that cannot answer; it changes what the reader is told is
+// always true. The one place the two differ is
 // worth knowing rather than hiding: a request that failed for an unrelated
 // reason while the deadline happened to be expiring is reported here as a
 // timeout, where the chain would have named the connection error. That is
