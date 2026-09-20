@@ -12,19 +12,53 @@ account — and drives herdr exclusively through its public CLI
 (`$HERDR_BIN_PATH`), never the raw socket API. The same binary also carries
 a headless `create` verb that produces the same session without the popup.
 
-Three design documents, and the citation convention distinguishes them.
-`docs/specs/2026-08-31-herdr-draft-design.md` is v1 and is what a bare
-"spec §N" in a code comment means. `docs/specs/2026-09-02-herdr-draft-v2-design.md`
-supersedes v1's §6 (the form) and §7 (skin & mouse) and is cited as
-"v2 spec §N". `docs/specs/2026-09-02-herdr-draft-v3-design.md` supersedes
-v2's §4 (the screen), §7 (skin, palette, mouse), §9 (degradation) and §6's
-`account` row, and is cited as "v3 spec §N"; its §13 itemises every
-superseded sentence, so a reader who lands on a v2 citation can find out in
-one place whether it still holds. Everything each document did not replace
-stays authoritative, which is why plenty of live code still cites v2 §7 and
-v2 §9 correctly. Most non-trivial doc comments cite a spec section, a "fix
-round" finding, or a live-checkpoint discovery — read them; they usually
-explain a non-obvious constraint rather than restating the code.
+Nine documents in `docs/specs/`, and the citation convention distinguishes
+them. A bare "spec §N" in a code comment means v1, the 2026-08-31 design;
+every other document that code cites by section carries a prefix:
+
+| citation | document (`docs/specs/`) | what it replaces |
+|---|---|---|
+| bare `spec §N` | `2026-08-31-herdr-draft-design.md` (v1) | — |
+| `v2 spec §N` | `2026-09-02-herdr-draft-v2-design.md` | v1's §6 (the form) and §7 (skin & mouse) |
+| `v3 spec §N` | `2026-09-02-herdr-draft-v3-design.md` | v2's §4 (the screen), §7 (skin, palette, mouse), §9 (degradation) and §6's `account` row; its §13 itemises every superseded sentence |
+| `placement spec §N` | `2026-09-03-placement-and-pane-ownership-design.md` | parts of v1, v2 and v3, itemised in its §12; its own §14 then reverses its §5.3 and §6.1, and §15 names the tab a session opens |
+| `spawn-skill spec §N` | `2026-09-16-spawn-skill-design.md` | — |
+| `reap spec §N` | `2026-09-17-pane-reaper-ready-design.md` | amends v2's §6, §8, §10, §11 and §13 and v1's §12; its §12 itemises |
+| `agent-options spec §N` | `2026-09-18-agent-options-design.md` | reverses v1's §16 item 3 and v2's §16; its §12 itemises |
+
+Two more carry no section prefix because nothing cites them by section, so
+name them by filename: `2026-09-07-herdr-membership-assessment.md` is the
+evidence base for `2026-09-08-herdr-8.1-8.2-correction.md`, which retracts
+the placement spec's §2.4 and §8.1. That makes the supersession chain four
+links deep — v1 → v2 → v3, and placement → correction — rather than the two
+this paragraph claimed until 2026-09-20.
+
+Everything each document did not replace stays authoritative, which is why
+plenty of live code still cites v2 §7 and v2 §9 correctly. Most non-trivial
+doc comments cite a spec section, a "fix round" finding, or a
+live-checkpoint discovery — read them; they usually explain a non-obvious
+constraint rather than restating the code.
+
+**The bare form is a trap where a topic moved to a later document, not
+where a number was merely reused** (#287). Nearly every number exists in
+both v1 and v2, and the great majority of the 351 bare citations are
+right: §6, §9 and §12 are reused numbers cited correctly well over a
+hundred times each, because whoever wrote them checked the target. Three
+went wrong, and all three went wrong the same way — the *subject* moved.
+v1 §10 is Linear and v2 §10 is defaults resolution (53 sites meant v2);
+v1 §11 is clauth and v2 §11 is `.herdr-draft.toml`'s trust boundary (46);
+v1 §13 is error handling and v2 §13 is the headless `create` (30). In each
+case the tree already held correctly prefixed neighbours, so it disagreed
+with itself rather than being uniformly wrong. So the rule is not "avoid a
+bare citation where v2 or v3 renumbered" — that would condemn hundreds of
+correct ones — it is: **open v1 §N and check it says what your comment
+claims.** Two things that check catches and nothing else does. A citation
+can name the right document and the wrong section: seven comments quoted a
+clauth reload cadence as §11 when it is §8's data-source table, and the
+quotation marks were around a paraphrase that appears nowhere. And a
+prefix may sit on the *previous* comment line, so a line-based grep
+reports 33 correct citations in this tree as bare — join the comment
+paragraph before counting.
 
 ## Commands
 

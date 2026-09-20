@@ -83,18 +83,32 @@ never emits.
 
 ## Spec citations
 
-Four design documents, and the citation convention distinguishes them:
+Nine documents in `docs/specs/`, seven of them cited by section:
 
-| citation | document |
+| citation | document (`docs/specs/`) |
 |---|---|
-| bare `spec §N` | `docs/specs/2026-08-31-herdr-draft-design.md` (v1) |
-| `v2 spec §N` | `docs/specs/2026-09-02-herdr-draft-v2-design.md` |
-| `v3 spec §N` | `docs/specs/2026-09-02-herdr-draft-v3-design.md` |
-| `placement spec §N` | `docs/specs/2026-09-03-placement-and-pane-ownership-design.md` |
+| bare `spec §N` | `2026-08-31-herdr-draft-design.md` (v1) |
+| `v2 spec §N` | `2026-09-02-herdr-draft-v2-design.md` |
+| `v3 spec §N` | `2026-09-02-herdr-draft-v3-design.md` |
+| `placement spec §N` | `2026-09-03-placement-and-pane-ownership-design.md` |
+| `spawn-skill spec §N` | `2026-09-16-spawn-skill-design.md` |
+| `reap spec §N` | `2026-09-17-pane-reaper-ready-design.md` |
+| `agent-options spec §N` | `2026-09-18-agent-options-design.md` |
+
+The other two are named by filename, because nothing cites them by
+section: `2026-09-07-herdr-membership-assessment.md`, and
+`2026-09-08-herdr-8.1-8.2-correction.md`, which retracts the placement
+spec's §2.4 and §8.1.
 
 Each supersedes only the sections it names; everything else stays
-authoritative, which is why plenty of live code cites v2 correctly. v3 §13
-itemises every superseded sentence.
+authoritative, which is why plenty of live code cites v2 correctly. v3 §13,
+the placement spec's §12, the reap spec's §12 and the agent-options spec's
+§12 each itemise what that document replaced.
+
+**A bare `spec §N` means v1, and the check that keeps it honest is opening
+v1 §N** — not avoiding numbers that v2 reused. See CLAUDE.md's version of
+this section for why (#287): §10, §11 and §13 each name a different subject
+in v1 and in v2, and those three are where every wrong citation was.
 
 Most non-trivial doc comments cite a spec section or a live-checkpoint
 finding. **Read them before changing the code they sit on** — they usually
