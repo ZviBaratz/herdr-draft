@@ -618,9 +618,10 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 	rep.result = plan.Execute(ctx, deps.Runner, ops, plan.ExecOpts{}, onProgress)
 
 	if rep.result.FailedIndex == -1 {
-		// Spec §10/§12's memory is written only by a successful create, the
-		// same rule app.persistStateCmd follows -- a failed one says nothing
-		// about what the user wants next.
+		// v2 spec §10's per-project memory and spec §12's state dir are
+		// written only by a successful create, the same rule
+		// app.persistStateCmd follows -- a failed one says nothing about
+		// what the user wants next.
 		remember(resolved, deps.now())
 		rep.write(deps.stdout(), deps.stderr())
 		return ExitOK

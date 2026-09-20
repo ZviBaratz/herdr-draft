@@ -7,7 +7,7 @@
 // therefore carry different trust. config.toml is the user's own; this one
 // arrives with `git clone`.
 //
-// Spec §11's trust model, quoted, because it is the requirement rather
+// v2 spec §11's trust model, quoted, because it is the requirement rather
 // than a guideline:
 //
 //	A file that arrives with `git clone` may only choose among values the

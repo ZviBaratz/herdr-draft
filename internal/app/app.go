@@ -1110,7 +1110,7 @@ func New(s Setup) Model {
 	m.options.SetNotes(s.Config.Agents.OptionWarnings)
 	m.prompt = form.NewPromptField(palette)
 
-	// Spec §10's layered defaults, resolved here rather than as three
+	// v2 spec §10's layered defaults, resolved here rather than as three
 	// separate inline ladders (placement, agent kind, worktree toggle) each
 	// re-expressing "config.toml, then last-used.json" in its own idiom.
 	// The kind list is resolved first because the resolver needs it: a tier
@@ -2082,11 +2082,12 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		dirReqVersion:   m.dirReqVersion,
 		titleReqVersion: m.titleReqVersion,
 	})
-	// Spec §10: "⌃R⌃R clears back to the repository default" -- explicitly
-	// NOT back to what you last did in this project. New has already
-	// resolved without the per-project tier (it knows no project key yet),
-	// but the dir check fresh.Init() is about to schedule would resolve WITH
-	// it and put the memory straight back, undoing the clear.
+	// v2 spec §10: "⌃R ⌃R clears back to the repository default" --
+	// explicitly NOT back to what you last did in this project. New has
+	// already resolved without the per-project tier (it knows no project
+	// key yet), but the dir check fresh.Init() is about to schedule would
+	// resolve WITH it and put the memory straight back, undoing the
+	// clear.
 	//
 	// The suppression rides the touched flags rather than a second flag of
 	// its own, for the reason those flags replaced worktreeDefaultApplied:
@@ -2174,10 +2175,10 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	}
 
 	m.syncDerivedInertness()
-	// Spec §11's provenance follows the touched flags noteUserEdits set at
-	// the top of this function: a value the user has just moved is no
-	// longer the repository's, and the line saying it was has to go with
-	// it. This handler is the only place those flags ever flip.
+	// v2 spec §11's provenance follows the touched flags noteUserEdits
+	// set at the top of this function: a value the user has just moved is
+	// no longer the repository's, and the line saying it was has to go
+	// with it. This handler is the only place those flags ever flip.
 	m.showRepoConfig()
 	// Cheap and synchronous, like syncDerivedInertness above: the header's
 	// project name follows the project ROW, which can move on any routed
@@ -2434,8 +2435,8 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	// Again, because the agent kind above drives AccountField's own inert
 	// condition (spec §6 field 7, "inert while the kind is not claude").
 	m.syncDerivedInertness()
-	// Spec §11's visible half, last: it reads both the resolution above and
-	// the values the calls above just applied.
+	// v2 spec §11's visible half, last: it reads both the resolution
+	// above and the values the calls above just applied.
 	m.showRepoConfig()
 	m.snapshotAppliedDefaults()
 	return settle

@@ -220,7 +220,7 @@ func TestResolve_Precedence(t *testing.T) {
 			},
 		},
 		{
-			// Spec §11's whole allowed surface arriving at once, with
+			// v2 spec §11's whole allowed surface arriving at once, with
 			// every tier below it stacked differently, so nothing here can
 			// pass by accident. branch_prefix is the one the repo tier
 			// takes from config.toml, which no other tier can.

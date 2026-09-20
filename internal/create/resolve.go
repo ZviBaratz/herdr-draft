@@ -138,9 +138,10 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		return resolution{}, err
 	}
 	for _, note := range t.repo.Notes {
-		// Spec §11 puts these in the focused row's panel. There is no panel
-		// here, and a repository key that was refused has to be visible
-		// somewhere or the person who committed it will conclude it works.
+		// v2 spec §11 puts these in the focused row's panel. There is no
+		// panel here, and a repository key that was refused has to be
+		// visible somewhere or the person who committed it will conclude
+		// it works.
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s: %s\n", config.RepoConfigFileName, note)
 	}
 
