@@ -336,6 +336,16 @@ without the popup. It drives herdr exclusively through the public CLI
   remote-tracking branch the fetch deleted — falls back to `HEAD`, with the
   worktree panel saying which base went. A submit pressed while that check
   is out waits for it.
+- **A base a tier remembered is not mistaken for one you picked** (#248).
+  The remembered base resolves a moment before the branch list naming it
+  exists, so the form holds it and shows the `HEAD` row meanwhile. If the
+  list landed before the check confirming the base did — nothing ordered
+  the two — the form read the list applying its own held base as you
+  deciding, and per-project base memory then stopped re-applying to every
+  project you moved to afterwards: the second project got the first one's
+  base. The form now compares against the base it asked for rather than
+  the one the row happens to be showing. A base you pick yourself inside
+  that same window is still yours.
 - The resolver is pure and is the only place the precedence chain exists.
 
 ### Repository-level config (`.herdr-draft.toml`)

@@ -2106,6 +2106,25 @@ func (m *Model) noteUserEdits() {
 // as "what the app put there", so noteUserEdits' next pass only reports a
 // change the USER made.
 //
+// The base is recorded as the ref the app REQUESTED
+// (WorktreeField.RequestedBase), not the one the picker is showing, and
+// that distinction is #248. applyProjectDefaults resolves a remembered
+// base one debounce before the `git for-each-ref` that names it, so
+// SetBase holds it and the row reads HEAD meanwhile; snapshotting the row
+// recorded "" for a base the app had already asked for, and the list
+// landing it a moment later read as the user moving the base away from
+// HEAD -- setting baseTouched with nobody having touched anything, and
+// stopping per-project base memory re-applying for the rest of the
+// form-open. A deferred selection IS what the app put there; it has
+// simply not landed yet.
+//
+// The converse costs nothing: while a ref is held, a user who selects
+// that same ref by hand makes no change by this diff's reckoning. They
+// have chosen the value that was going to be applied anyway, so nothing
+// the form does differs -- and the window is narrower than that, since
+// the row they would have to click is the one whose absence is the
+// reason the ref is being held at all.
+//
 // It is called at the end of every path that can move one of them without
 // user input -- New, reactToChanges and applyProjectDefaults -- always
 // AFTER syncDerivedInertness. That ordering used to matter for Placement
@@ -2122,7 +2141,7 @@ func (m *Model) snapshotAppliedDefaults() {
 	m.appliedWorktreeOn = m.worktree.On()
 	m.appliedPlacement = m.placement.Value()
 	m.appliedAgentKind = m.agent.Value()
-	m.appliedBaseRef = m.worktree.Base()
+	m.appliedBaseRef = m.worktree.RequestedBase()
 }
 
 // applyProjectDefaults re-resolves spec §10's layered defaults for the

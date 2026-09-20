@@ -497,3 +497,94 @@ func TestPopup_APendingBaseReadsAsTheHeadRow(t *testing.T) {
 		t.Errorf("Base() with /repo-b's check still out = %q, want the HEAD row", got)
 	}
 }
+
+// TestPopup_ARememberedBaseThatLandsLateIsNotTheUsersChoice is #248, and
+// it is TestPopup_AnOfferedBaseIsNotTheUsersChoice's other half: there the
+// check answers first and snapshotAppliedDefaults runs again over the base
+// it moved, so the diff sees nothing. Here the branch list wins the race
+// and lands the ref by itself, with the check still out -- and nothing
+// ordered the two. The snapshot taken at the end of applyProjectDefaults
+// recorded what the picker was SHOWING, the HEAD row, because SetBase was
+// still holding a ref nothing named; the list applying it then read as a
+// move away from HEAD, which noteUserEdits counts as the user deciding.
+//
+// The cost is the last assertion rather than the flag: baseTouched stands
+// for the rest of the form-open, so per-project base memory stops
+// re-applying to every project visited afterwards.
+func TestPopup_ARememberedBaseThatLandsLateIsNotTheUsersChoice(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main", "remembered"}
+	git.commits = map[string]string{"/repo-a remembered": "3d4e5f6", "/repo-b other": "4e5f607"}
+	m := newTestModel(t, testSetup{
+		Git:    git,
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude"}}},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true), Base: "remembered"},
+			"/repo-b": {Worktree: ptrBool(true), Base: "other"},
+		}),
+	})
+	m, held := pumpHoldingBaseChecks(t, m, m.initCmds)
+	if len(held) != 1 {
+		t.Fatalf("base checks held = %d, want /repo-a's", len(held))
+	}
+	if got := m.worktree.Base(); got != "remembered" {
+		t.Fatalf("setup: Base() with the list landed and the check still out = %q, want the remembered %q", got, "remembered")
+	}
+
+	m.reactToChanges()
+	if m.baseTouched {
+		t.Errorf("baseTouched with nobody having touched anything: the list landing is the app's move, not the user's")
+	}
+
+	m = switchProject(t, m, "/repo-a", "/repo-b")
+	if got := m.worktree.Base(); got != "other" {
+		t.Errorf("Base() in /repo-b = %q, want its own remembered %q", got, "other")
+	}
+}
+
+// TestPopup_AUserBaseChosenBeforeTheCheckLandsIsStillTheirs is the other
+// direction of #248, and the one the fix could plausibly over-suppress:
+// the snapshot now holds a ref the app requested rather than the HEAD row
+// it was showing, so a user moving the base inside that same window has to
+// still register as a decision. No existing test enters the window with
+// user input -- they all open settled -- so the widened snapshot would
+// have gone unchallenged.
+func TestPopup_AUserBaseChosenBeforeTheCheckLandsIsStillTheirs(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"main", "remembered"}
+	git.commits = map[string]string{"/repo-a remembered": "3d4e5f6", "/repo-b other": "4e5f607"}
+	m := newTestModel(t, testSetup{
+		Git:    git,
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude"}}},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true), Base: "remembered"},
+			"/repo-b": {Worktree: ptrBool(true), Base: "other"},
+		}),
+	})
+	m, held := pumpHoldingBaseChecks(t, m, m.initCmds)
+	if len(held) != 1 || m.worktree.Base() != "remembered" {
+		t.Fatalf("setup: held = %d, Base() = %q, want /repo-a's check out over its remembered base", len(held), m.worktree.Base())
+	}
+
+	m.form.FocusByID("worktree")
+	for _, k := range []tea.KeyPressMsg{
+		{Code: tea.KeyDown}, {Code: tea.KeyDown}, // chips -> branch -> base
+		{Code: tea.KeyUp}, // remembered -> main
+	} {
+		next, _ := m.Update(k)
+		m = next.(Model)
+	}
+	if got := m.worktree.Base(); got != "main" {
+		t.Fatalf("setup: Base() = %q, want the %q the user moved to", got, "main")
+	}
+	if !m.baseTouched {
+		t.Errorf("baseTouched is false after the user moved the base themselves")
+	}
+
+	m = switchProject(t, m, "/repo-a", "/repo-b")
+	if got := m.worktree.Base(); got != "main" {
+		t.Errorf("Base() in /repo-b = %q, want the user's own %q: memory re-applies to nothing they chose", got, "main")
+	}
+}

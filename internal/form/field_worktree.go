@@ -643,6 +643,31 @@ func (w *WorktreeField) Base() string {
 	return sel.ID
 }
 
+// RequestedBase returns the base ref the app last ASKED this field to
+// select -- the deferred selection while SetBase is holding one, and
+// Base() otherwise. "" still means HEAD, on both sides.
+//
+// The two getters answer different questions, and #248 is what happens
+// when the wrong one is asked. Base() is "what is on screen", which is
+// what the row, the panel and the plan want. This one is "what the app
+// put there", which is what the app layer's touched-versus-preselected
+// diff (internal/app's snapshotAppliedDefaults) compares against: a
+// remembered base resolves one debounce before the `git for-each-ref`
+// that names it, so between the two Base() reads as the HEAD row, and
+// recording THAT made the list landing the held ref look like the user
+// moving the base away from HEAD.
+//
+// A held ref is always a real one, never the HEAD sentinel: the sentinel
+// row is seeded in the constructor and rebuilt first by every refresh, so
+// SetBase("") always lands at once and retires whatever was held. That is
+// also what keeps this getter from outliving the selection it reports.
+func (w *WorktreeField) RequestedBase() string {
+	if w.havePendingBase {
+		return w.pendingBase
+	}
+	return w.Base()
+}
+
 // baseDisplay is the base PART's value text: the selected ref, or the
 // HEAD row's own label when the cursor rests on the sentinel. The panel
 // names the row you are pointing at, so "HEAD (main)" is right there.
