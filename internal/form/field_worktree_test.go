@@ -1153,3 +1153,57 @@ func TestWorktreeField_HeadRowKeepsTheUsersSelection(t *testing.T) {
 		t.Fatalf("Base() = %q after SetHeadBranch, want the user's selection preserved", got)
 	}
 }
+
+// TestWorktreeField_RequestedBaseIsTheRefTheAppAskedFor pins the getter
+// #248 needed: the base the app last ASKED for, which is the deferred
+// selection while one is held and the live selection otherwise. Base()
+// answers "what is on screen" and reads as the HEAD row while a ref is
+// held, which is right for the row and wrong as a record of what the app
+// put there -- the app layer's touched-versus-preselected diff compares
+// against that record, so a held ref landing read as the user deciding.
+func TestWorktreeField_RequestedBaseIsTheRefTheAppAskedFor(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	if got := w.RequestedBase(); got != "" {
+		t.Fatalf("RequestedBase() on a fresh field = %q, want \"\" (HEAD)", got)
+	}
+
+	// Held: the list names nothing yet, so Base() is the HEAD row while
+	// the ref the app asked for is still very much what it asked for.
+	w.SetBase("remembered")
+	if got := w.Base(); got != "" {
+		t.Fatalf("setup: Base() while holding = %q, want the HEAD row", got)
+	}
+	if got := w.RequestedBase(); got != "remembered" {
+		t.Errorf("RequestedBase() while holding = %q, want the held %q", got, "remembered")
+	}
+
+	// Landed: the two agree again, and the getter reads the selection.
+	w.SetBaseItems(1, []string{"main", "remembered"})
+	if got := w.RequestedBase(); got != "remembered" {
+		t.Errorf("RequestedBase() once the list names it = %q, want %q", got, "remembered")
+	}
+
+	// A selection the USER moved is what the getter reports from then on:
+	// nothing is held, so there is nothing to prefer over the picker.
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	focusBase(w)
+	w.Update(key(tea.KeyUp, 0)) // remembered -> main
+	if got := w.Base(); got != "main" {
+		t.Fatalf("setup: Base() = %q, want the user's own %q", got, "main")
+	}
+	if got := w.RequestedBase(); got != "main" {
+		t.Errorf("RequestedBase() after the user moved it = %q, want %q", got, "main")
+	}
+
+	// And SetBase("") retires a held ref rather than leaving it to be
+	// reported forever: the HEAD row always exists, so it always lands.
+	w.SetBase("nothing-names-this")
+	if got := w.RequestedBase(); got != "nothing-names-this" {
+		t.Fatalf("setup: RequestedBase() = %q, want the newly held ref", got)
+	}
+	w.SetBase("")
+	if got := w.RequestedBase(); got != "" {
+		t.Errorf("RequestedBase() after SetBase(\"\") = %q, want \"\" (HEAD)", got)
+	}
+}

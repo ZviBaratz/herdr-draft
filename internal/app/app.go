@@ -2091,6 +2091,12 @@ func (m *Model) noteUserEdits() {
 	// moving, not the user. (widgets.Picker itself keeps a vanished row's
 	// index rather than going back to row 0, which is why a user's own base
 	// is kept on offer across a project change -- applyProjectDefaults.)
+	//
+	// That rule answers only one half. The other -- a held ref LANDING,
+	// which is a move away from HEAD that the app made -- is answered in
+	// snapshotAppliedDefaults instead, by recording the ref the app asked
+	// for rather than the row it was showing (#248). Read the two together
+	// before changing either.
 	if b := m.worktree.Base(); b != m.appliedBaseRef && b != "" {
 		m.baseTouched = true
 		// And retires the note, which said HEAD was being used instead of
@@ -2106,8 +2112,31 @@ func (m *Model) noteUserEdits() {
 // as "what the app put there", so noteUserEdits' next pass only reports a
 // change the USER made.
 //
+// The base is recorded as the ref the app REQUESTED
+// (WorktreeField.RequestedBase), not the one the picker is showing, and
+// that distinction is #248. applyProjectDefaults resolves a remembered
+// base one debounce before the `git for-each-ref` that names it, so
+// SetBase holds it and the row reads HEAD meanwhile; snapshotting the row
+// recorded "" for a base the app had already asked for, and the list
+// landing it a moment later read as the user moving the base away from
+// HEAD -- setting baseTouched with nobody having touched anything, and
+// stopping per-project base memory re-applying for the rest of the
+// form-open. A deferred selection IS what the app put there; it has
+// simply not landed yet.
+//
+// The converse -- a snapshot holding a ref the picker is not showing, so
+// a user who selects that same ref by hand registers as no change at all
+// -- is unreachable rather than merely harmless, and the order matters:
+// the row they would have to select is the one whose ABSENCE is the reason
+// the ref is being held, and every path that adds a row (SetBaseItems,
+// OfferBase, SetHeadBranch) goes through refreshBaseItems, which lands the
+// held ref before anyone can point at it. Were it reachable it would not
+// be free: baseTouched would stay false and the next project change would
+// re-apply memory over a choice they had made.
+//
 // It is called at the end of every path that can move one of them without
-// user input -- New, reactToChanges and applyProjectDefaults -- always
+// user input -- New, reactToChanges, applyProjectDefaults, and both of
+// handleBaseSettled's applying branches (#212, #247) -- always
 // AFTER syncDerivedInertness. That ordering used to matter for Placement
 // itself: syncDerivedInertness moved it when a worktree turned on, and
 // snapshotting before that call would have left the snapshot holding a
@@ -2122,7 +2151,7 @@ func (m *Model) snapshotAppliedDefaults() {
 	m.appliedWorktreeOn = m.worktree.On()
 	m.appliedPlacement = m.placement.Value()
 	m.appliedAgentKind = m.agent.Value()
-	m.appliedBaseRef = m.worktree.Base()
+	m.appliedBaseRef = m.worktree.RequestedBase()
 }
 
 // applyProjectDefaults re-resolves spec §10's layered defaults for the
