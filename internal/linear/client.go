@@ -150,14 +150,27 @@ var httpTimeout = 30 * time.Second
 const assignedIssuesPrefix = "linear assigned issues"
 
 // wireError classifies a failed exchange. The DEADLINE is read from the
-// CONTEXT rather than from the error's chain -- not because the chain
-// cannot answer (it can: a *url.Error from a cancelled request matches
-// context.Canceled and one from an expired request matches
-// DeadlineExceeded, and io.ReadAll on a stalled body returns the context
-// error directly -- probed, after an earlier version of this comment
-// asserted the opposite) but because the context gives ONE answer for both
-// failure points. Do and ReadAll fail differently and this has to classify
-// them the same way.
+// CONTEXT rather than from the error's chain, and the reason is uniformity
+// with this change's other two classifiers rather than necessity here.
+//
+// The chain can answer, which an earlier version of this comment denied.
+// Probed on both sides: a *url.Error from an expired request matches
+// context.DeadlineExceeded and not Canceled, one from a cancelled request
+// matches Canceled and not DeadlineExceeded, and io.ReadAll on a stalled
+// body returns context.deadlineExceededError directly. So `errors.Is` on
+// the returned error would work at both failure points, and the second
+// version of this comment's reason -- that only the context gives one
+// answer for both -- does not hold either.
+//
+// What does hold: runKeyCmd and clauth's loadFromCLI CANNOT read the chain,
+// because a killed subprocess reports `signal: killed` with no context
+// error anywhere in it. They must ask the context, so this asks the context
+// too, and the three read the same way. The one place the two differ is
+// worth knowing rather than hiding: a request that failed for an unrelated
+// reason while the deadline happened to be expiring is reported here as a
+// timeout, where the chain would have named the connection error. That is
+// the same trade picker.CLI.run makes, and at a thirty-second budget the
+// coincidence is not one to design around.
 //
 // A caller that was cancelled is not a call that timed out (#272), so
 // DeadlineExceeded specifically, never `ctx.Err() != nil`.
