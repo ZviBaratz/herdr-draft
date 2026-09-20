@@ -337,7 +337,7 @@ At the shipped 101×30, fully configured (blank panel rows elided):
    Work on ENG-101: Fix login redirect loop
 
  ───────────────────────────────────────────────────────────────────────────────────────────────────
- ⌃J newline · ⇥ move · ⌃R clear                                              ↵ create    esc cancel
+ ⌃J newline · ⌃X keep or reap · ⇥ move · ⌃R clear                            ↵ create    esc cancel
 
 ```
 

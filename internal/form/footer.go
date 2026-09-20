@@ -128,17 +128,37 @@ func zoneRungs(zone FocusZone) []string {
 		// stops the footer lying about what Enter does -- and, with an
 		// empty title, what stops the `↵ create` BUTTON lying about it.
 		if zone.TitleEmpty {
-			// Three rungs, not two, and the middle one is what keeps
-			// this zone teaching itself under pressure. crossRungs
-			// trades the CONSTANT tail away first, but it can only do
-			// that down to the narrowest LEAD it is given: with just
-			// the pair, the step below "name it to create · ⇥ for the
-			// prompt" (36 cells) was "⇥ for the prompt · ⌃R clear"
-			// (27), so one cell of pressure dropped the only words on
-			// the line about creating -- the inversion crossRungs'
-			// own doc comment says must not happen, on the OPENING
-			// screen. #281's button is one cell wider while it says
-			// ⌃S, which put a 64-column popup exactly there.
+			// Three rungs, not two: crossRungs trades the CONSTANT
+			// tail away first, but only down to the narrowest LEAD it
+			// is given, and with just the pair there was a hole. The
+			// step below "name it to create · ⇥ for the prompt" (36
+			// cells) was "⇥ for the prompt · ⌃R clear" (27) -- a
+			// NARROWER lead carrying a constant, beating a wider lead
+			// standing alone, which is the inversion crossRungs' own
+			// doc comment is about, on the OPENING screen. #281's
+			// button is one cell wider while it says ⌃S, which put a
+			// 64-column popup exactly on that edge. "name it to
+			// create" (17) fills the hole.
+			//
+			// What it buys, measured rather than asserted, because
+			// this is a TRADE and the first draft of this comment
+			// called it a fix. Against the ladder that shipped before
+			// the button widened:
+			//   - 46-63 cells: "⇥ for the prompt" becomes "name it to
+			//     create". Strictly better by v2 spec §3 rule 4 -- it
+			//     is what this zone teaches -- and the reason to keep
+			//     the rung even setting #281 aside.
+			//   - 64 cells: "name it to create · ⇥ for the prompt"
+			//     becomes "name it to create · ⌃R clear". The create
+			//     half survives; the ⇥ half does not. A swap.
+			//   - 44 cells and below: no lead fits at all and the
+			//     footer falls to the tail floor, one column earlier
+			//     than it used to. Six other zones reach that same
+			//     floor one width earlier too (worktree at 35, options
+			//     36, issue/dir/placement 37, agent 40), and they get
+			//     no rung of their own here because theirs is not this
+			//     hole: nothing in their ladder fits either way, so a
+			//     shorter lead would only move the cliff one column.
 			return []string{"name it to create · ⇥ for the prompt", "name it to create", "⇥ for the prompt"}
 		}
 		return []string{"⌃S create now · ⇥ for the prompt", "⇥ for the prompt"}

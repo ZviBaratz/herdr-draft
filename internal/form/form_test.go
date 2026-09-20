@@ -1743,13 +1743,22 @@ func TestFooterButton_NamesAKeyThatActuallyCreates(t *testing.T) {
 }
 
 // TestFooter_NeverAdvertisesEnterTwice is #281 itself, as an invariant:
-// the footer's two halves are read at once, so ↵ may appear on the line
-// once or not at all -- never twice meaning two different things.
+// the footer's two halves are read at once, so the key glyph the BUTTON
+// is wearing may appear on the line once or not at all -- never twice
+// meaning two different things.
 //
 // Before the fix the base part rendered `↵ use HEAD … ↵ create` and the
 // account row `↵ pin … ↵ create` (v3 spec §10.3, #269), and the rule in
 // footer.go's zoneRungs named one exception where three situations
 // needed it.
+//
+// It counts whichever glyph createKey chose rather than ↵ specifically,
+// because the fix made ⌃S a button glyph too and therefore made
+// "⌃S said twice meaning two things" newly possible -- a ⌃S rung on a
+// footerHinter override would collide exactly as `↵ pin` did, and
+// TestFooterRungs_PerZone cannot see it (that one reads rungs[0] from
+// the zone TABLE, so no override reaches it). Counting the button's own
+// glyph closes both, and keeps closing whatever a third face would open.
 //
 // The WorktreeField goes through its real parts and base-list states
 // rather than the zone table, because that is where its ↵ rungs actually
@@ -1759,8 +1768,9 @@ func TestFooter_NeverAdvertisesEnterTwice(t *testing.T) {
 	count := func(t *testing.T, zone FocusZone, rungs []string, width int, what string) {
 		t.Helper()
 		line := ansi.Strip(widgets.Zones.Scan(renderFooter(width, zone, rungs, palette)))
-		if n := strings.Count(line, "↵"); n > 1 {
-			t.Errorf("%s at w=%d says ↵ %d times: %q", what, width, n, line)
+		glyph := createKey(zone)
+		if n := strings.Count(line, glyph); n > 1 {
+			t.Errorf("%s at w=%d says %s %d times: %q", what, width, glyph, n, line)
 		}
 	}
 

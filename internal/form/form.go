@@ -1205,10 +1205,21 @@ func createButtonFace(p theme.Palette, zone FocusZone) (string, lipgloss.Style) 
 // label are unconditional, which is v3 spec §5.5's "ONE face, not two"
 // -- that paragraph is about spending the fill on FOCUS, and the fill is
 // still spent on nothing. What varies here is which working key the
-// button names, and it names one in every zone. It is one cell wider
-// while it says ⌃S, so the key ladder beside it has one cell less to
-// work with; the ladder degrades on its own terms (footer.go's
-// crossRungs) and three widths lose a rung to it.
+// button names, and it names one in every zone.
+//
+// It is one cell wider while it says ⌃S, so the key ladder beside it
+// has one cell less to work with, and that is not a rounding error: the
+// chosen rung differs at 71 (zone, terminal width) pairs between 24 and
+// 160 columns. Almost all of them are the ladder degrading on its own
+// terms (footer.go's crossRungs) one column earlier than before. Seven
+// are the floor -- no lead fits at all and the line falls to "⇥ move"
+// -- at terminal widths 35 (worktree), 36 (options), 37 (issue, dir,
+// placement), 40 (agent) and 44 (an empty title). Only TWO golden
+// fixtures moved their ladder text: account-panel-44x12 lost "⌃R clear"
+// for "⇥ move", and assembled-opening-57x18 gained "name it to create"
+// (see zoneRungs' ZoneTitle branch, which has the measurement). An
+// earlier draft of this paragraph said "three widths", which was a guess
+// and did not survive being measured.
 //
 // The EMPTY title is the one row where the legend is still not the whole
 // truth, and it is the exception zoneRungs already documents: ⌃S there
