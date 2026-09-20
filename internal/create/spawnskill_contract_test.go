@@ -538,7 +538,17 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 		order []string
 	}{
 		{name: "the first dry run's reading list", from: "**1. Dry-run it without the option flags.**", to: "**2. Choose the three options**", want: []string{"`account_usage`"}},
-		{name: "section 5's cost judgement", from: "**Model and effort follow the shape of the task:**", to: "**Keep the user's own model id.**", want: []string{"`account_usage`", "limits the model", "section 7 says which"}},
+		{
+			name: "section 5's cost judgement",
+			from: "**Model and effort follow the shape of the task:**",
+			to:   "**Keep the user's own model id.**",
+			// Section 5 states the ranking itself. Pointing at section 7 sent
+			// the agent to a rule nested under a window branch it is not
+			// necessarily in, and "take the lower" here means the lower ROW,
+			// which is the move section 7 ranks second (#258).
+			want:  []string{"`account_usage`", "limits the model"},
+			order: []string{"take the lower", "step the effort down", "before taking a row up"},
+		},
 		// Its own paragraph, not the whole of "Then ask": that section also
 		// says "once, in the question" about the exports.
 		{
@@ -550,13 +560,14 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 				// While a label-less window has room, cheaper spends what is
 				// left more slowly; at 100% only another account or the reset
 				// changes anything, and waiting is not something create does.
-				"row up section 5's table", "what you would have picked otherwise",
+				"what you would have picked otherwise",
 				"creates nothing",
-				// The two cheaper moves are ranked, and the row up is read
-				// with its row's own conditional, which in a conventions-heavy
-				// repository names the same model again (#258).
-				"effort step down before the row up", "only when it names a smaller model",
-				"`haiku`",
+				// A move the table does not offer is not a move: the mechanical
+				// row at `low` has neither, and `haiku` is not an escape from
+				// that (#258). Pinned as the negation, because a bare mention
+				// of the model survived inverting the rule.
+				"`haiku` is in no row of it", "keep that step inside the row's own two efforts",
+				"not yours to take lower",
 				// An agent told to offer another account needs a way to find
 				// one, and a way to tell a candidate from an unknown.
 				"`clauth status --json`", "not a candidate", "unknown rather than free",
@@ -570,6 +581,12 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 				// question at all, and only at 100% does the step down go off.
 				"no model in its label", "does not raise the cap",
 				"While there is room", "put that cheaper configuration first",
+				// The ranking belongs to the has-room branch, between the sentences
+				// above and the 100% one below: #258's review moved the whole
+				// passage into the 100% branch -- where the document says the step
+				// down is off -- and every required phrase was still present.
+				"Step the effort down before taking a row up",
+				"only when it names a smaller model", "Some configurations have neither move",
 				"At 100%", "another account and waiting for the reset",
 			},
 		},

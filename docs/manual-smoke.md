@@ -1455,8 +1455,10 @@ under test, so answer it with "Other: don't create" once you have read it.
   another model, however full it is. One that caps every model is answered
   by the cheaper configuration while it has room — the effort step before
   the model (#258) — and at 100% by another account or waiting for the
-  reset, with the task's own configuration kept (#250). With no such window it says nothing about usage. With
-  `account_usage` absent it says usage is unknown.
+  reset, with the task's own configuration kept (#250). Where the table
+  offers neither move it says so rather than inventing one. With no such
+  window it says nothing about usage. With `account_usage` absent it says
+  usage is unknown.
 - The wording fix gets a small configuration: `sonnet` at `low` or
   `medium`.
 - The second gets `--permission-mode plan`, and `--no-reap` when

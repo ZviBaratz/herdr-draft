@@ -230,9 +230,11 @@ session that fails and has to be redone costs more than a stronger first
 attempt. So step down only for work that is plainly mechanical, and
 between two neighbouring rows of real engineering, take the higher. If the
 user has said quota is tight, take the lower, and say what you would have
-picked otherwise — and section 7 says which lower to take, since the two
-cheaper moves are not equal. The first dry run's `account_usage` says how
-full the session's account is (section 7). A window there at or above 95%
+picked otherwise. Of the two ways to take the lower, step the effort down
+before taking a row up this table: a row up changes what the session can
+do, which is what risks the redo above. Section 7 says what to do when a
+usage window is what makes quota tight. The first dry run's
+`account_usage` says how full the session's account is (section 7). A window there at or above 95%
 counts as tight too, when it limits the model you would pick — except one
 with no model in its label sitting at 100%, where nothing cheaper helps
 and section 7 says what to offer instead. `haiku` is the smallest
@@ -444,23 +446,31 @@ What to offer depends on which window it is, and on what is left of it.
 
 **A window whose label names a model** is escaped by not picking that
 model, however full it is. Put the configuration that avoids it first —
-for `7d fable`, anything below the fable row — and what you would have
-picked otherwise beside it.
+for `7d fable`, any row above it — and what you would have picked
+otherwise beside it.
 
 **A window with no model in its label** caps every model, so a cheaper
 configuration only spends what is left of it more slowly; it does not
 raise the cap. While there is room, section 5 has already taken the lower
 for you: put that cheaper configuration first, and what you would have
-picked otherwise beside it, so the user sees what the quota costs. Take
-the effort step down before the row up section 5's table: the table says
-what the task needs and effort is how hard the same model works at it, so
-dropping the model is the move that risks the redo section 5 calls dearer
-than a stronger first attempt. Take the row up only when it names a
-smaller model for this task, which is the row's own conditional to
-decide, not the column: "`sonnet`, or `opus` where the repository's
-conventions are heavy" is `opus` in a repository like this one. Not
-`haiku` either way — section 5 rules it out for a session that has to
-learn a repository's conventions before it can start. At 100% there
+picked otherwise beside it, so the user sees what the quota costs.
+
+Step the effort down before taking a row up the table, for the reason
+section 5 gives, and keep that step inside the row's own two efforts: a
+judgement task at `medium` is a configuration the table does not offer.
+Take the row up only when it names a smaller model for the task — which
+its own conditional decides, where it has one. Read that conditional
+against the repository the session will run in: where its conventions are
+heavy the routine row reads `opus`, not `sonnet`, and the row up buys
+nothing.
+
+Some configurations have neither move. The mechanical row at `low` is
+already the cheapest the table offers, `haiku` is in no row of it, and
+the judgement row at `high` has only the row up. Say so rather than
+inventing a move, and offer the answers a window has instead: another
+account, or waiting for the reset. When the user named the model and the
+effort themselves, they are not yours to take lower either — say what the
+window will cost and let them choose. At 100% there
 is nothing left to spend more slowly and section 5's step down is off:
 keep the configuration the task deserves, and change what can change. The
 two answers that do are another account and waiting for the reset. Offer
