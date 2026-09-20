@@ -492,6 +492,69 @@ before either will work.`, err)
 // readmeURL is where a refusal sends someone who wants the whole picture.
 const readmeURL = "https://github.com/ZviBaratz/herdr-draft#readme"
 
+// populateAccountRow fills a LIVE account row from what this Model
+// currently holds -- the clauth status, the picker, `[clauth] default` and
+// the standing notes -- in the one order they may be applied in.
+//
+// It has two callers and they must not drift: New, for a row built live at
+// open, and async.go's recoverAccountRow, for a row whose unavailable
+// state a successful reload has just cleared (#200). "The row becomes
+// live and can be pinned, as it would have been had clauth answered at
+// open" is the whole of that decision, and one sequence in one place is
+// what makes it true of both -- everything here beyond the profile list
+// (the auto row, the configured default, the notes) is a piece a fix that
+// only re-fed the profiles would have left behind.
+//
+// It reads Model rather than Setup deliberately, since only one of the two
+// callers has a Setup; New has already copied every field it needs
+// (m.cfg/m.deps/m.clauthStatus/m.pickerUnavailable) into the Model by the
+// time it calls this.
+//
+// NOT called for a reload of an already-live row: SetPin would put the
+// configured default back over whatever the user had pinned, and that
+// reload happens every single time the row takes focus.
+func (m *Model) populateAccountRow() {
+	// The clock rides along with the status: the panel's reset times
+	// are relative (v3 spec §10.2) and internal/form has no clock of
+	// its own -- see Clock.Now.
+	m.account.SetProfiles(m.clauthStatus, m.deps.Clock.now())
+	// The auto row, and it goes on BEFORE SetPin below: SetPickerAvailable
+	// makes auto the resting selection when nothing else is pinned, and a
+	// `[clauth] default` naming a real profile has to be able to beat it
+	// (AccountField.SetPin clears auto). Swapping these two lines silently
+	// makes the configured default lose to the picker.
+	if m.deps.Picker != nil {
+		m.account.SetPickerAvailable(true)
+	}
+	// [clauth] default (spec §12), when set to a real profile name --
+	// "" and the config's own documented "active" sentinel are both
+	// no-ops (AccountField.SetPin's own doc comment): the picker
+	// already starts on the "active" row by construction.
+	m.account.SetPin(m.cfg.Clauth.Default)
+	// Everything this row has to report about how an account would be
+	// launched, as standing notes rather than a verdict: a verdict is
+	// keyed on one pin and hidden once the pin moves, and these matter
+	// most with a profile pinned -- see AccountField.SetNotes.
+	//
+	// First, why there is no auto row when a picker was named and failed
+	// its probe. Not SetUnavailable: clauth itself is fine and its profile
+	// rows still work; only the auto row is missing. This used to be a
+	// verdict keyed on the unpinned "", which a `[clauth] default` naming
+	// a profile hid -- leaving a configured, broken picker looking exactly
+	// like no picker at all. Then config.toml's refused [clauth] keys
+	// (#123). Only a live row carries any of them because only it can
+	// pin: with no working account row, nothing launches through what
+	// they are about.
+	var notes []string
+	// Only when no picker works: Bootstrap sets one of the two, never both,
+	// and a working auto row beside a failed probe would be two answers to
+	// one question. The verdict this replaced got that from an else-branch.
+	if m.pickerUnavailable != "" && m.deps.Picker == nil {
+		notes = append(notes, m.pickerUnavailable)
+	}
+	m.account.SetNotes(append(notes, m.cfg.ClauthWarnings()...))
+}
+
 // linearUnavailableReason turns a linear.ResolveAPIKey error into the
 // short line IssueField.SetUnavailable renders on its hint row. The
 // package's own "resolve linear api key: " prefix is dropped -- the field
@@ -514,6 +577,27 @@ func clauthUnavailableReason(err error) string {
 		msg = strings.TrimPrefix(msg, prefix)
 	}
 	return strings.Join(strings.Fields(msg), " ")
+}
+
+// accountTooFewProfilesReason is the account row's reason for the one
+// state a reload can produce that opening the popup never does: clauth
+// answered, and answered with fewer than the two profiles this row exists
+// to choose between (#200).
+//
+// At open that produces no row at all, deliberately -- most people who
+// install this plugin have never heard of clauth, and a row saying it has
+// one profile is noise to every one of them (see Bootstrap's own comment
+// on the four states). By the time a reload lands the row is already on
+// screen carrying the reason clauth failed WITH, and that reason is now
+// false: clauth works, there is just nothing here to choose. Which of the
+// two it is goes in the text because they are different situations --
+// profiles that went missing, against a clauth that only ever had one --
+// and this row is the only place either is reported.
+func accountTooFewProfilesReason(n int) string {
+	if n == 1 {
+		return "clauth reports one profile; this row needs two"
+	}
+	return "clauth reports no profiles; this row needs two"
 }
 
 // flattenReason collapses a multi-line failure to one line.
@@ -1100,52 +1184,22 @@ func New(s Setup) Model {
 	// A broken clauth gets a row even though it has no profiles to offer,
 	// which is the whole point: without one there is nowhere to say that
 	// clauth is installed and unreadable, and the user sees exactly what
-	// they would see if they had never installed it. The row disappears
-	// again as soon as clauth works.
+	// they would see if they had never installed it.
+	//
+	// That row is not stuck in that state for the life of the popup:
+	// focusing it asks clauth again, and a reload that works clears the
+	// state and populates the row from here (async.go's
+	// recoverAccountRow, #200). This comment used to say "the row
+	// disappears again as soon as clauth works", which was true of the
+	// NEXT open and, until #200, of nothing else -- the reload loaded the
+	// profiles into a row that went on reading `unavailable` and, since
+	// #191, went on ignoring input.
 	if s.ClauthUnavailable != "" {
 		m.account = form.NewAccountField(palette)
 		m.account.SetUnavailable(s.ClauthUnavailable)
 	} else if s.Deps.Clauth != nil && len(s.ClauthStatus.Profiles) >= 2 {
 		m.account = form.NewAccountField(palette)
-		// The clock rides along with the status: the panel's reset times
-		// are relative (v3 spec §10.2) and internal/form has no clock of
-		// its own -- see Clock.Now.
-		m.account.SetProfiles(s.ClauthStatus, s.Deps.Clock.now())
-		// The auto row, and it goes on BEFORE SetPin below: SetPickerAvailable
-		// makes auto the resting selection when nothing else is pinned, and a
-		// `[clauth] default` naming a real profile has to be able to beat it
-		// (AccountField.SetPin clears auto). Swapping these two lines silently
-		// makes the configured default lose to the picker.
-		if s.Deps.Picker != nil {
-			m.account.SetPickerAvailable(true)
-		}
-		// [clauth] default (spec §12), when set to a real profile name --
-		// "" and the config's own documented "active" sentinel are both
-		// no-ops (AccountField.SetPin's own doc comment): the picker
-		// already starts on the "active" row by construction.
-		m.account.SetPin(s.Config.Clauth.Default)
-		// Everything this row has to report about how an account would be
-		// launched, as standing notes rather than a verdict: a verdict is
-		// keyed on one pin and hidden once the pin moves, and these matter
-		// most with a profile pinned -- see AccountField.SetNotes.
-		//
-		// First, why there is no auto row when a picker was named and failed
-		// its probe. Not SetUnavailable: clauth itself is fine and its profile
-		// rows still work; only the auto row is missing. This used to be a
-		// verdict keyed on the unpinned "", which a `[clauth] default` naming
-		// a profile hid -- leaving a configured, broken picker looking exactly
-		// like no picker at all. Then config.toml's refused [clauth] keys
-		// (#123). Only this branch carries any of them because only it can
-		// pin: with no working account row, nothing launches through what
-		// they are about.
-		var notes []string
-		// Only when no picker works: Bootstrap sets one of the two, never both,
-		// and a working auto row beside a failed probe would be two answers to
-		// one question. The verdict this replaced got that from an else-branch.
-		if s.PickerUnavailable != "" && s.Deps.Picker == nil {
-			notes = append(notes, s.PickerUnavailable)
-		}
-		m.account.SetNotes(append(notes, s.Config.ClauthWarnings()...))
+		m.populateAccountRow()
 	}
 
 	// Agent (spec §6 field 6, carried requirement): favorites first, then

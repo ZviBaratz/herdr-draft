@@ -1555,7 +1555,7 @@ func (m Model) handlePickerCommit(msg pickerCommitMsg) (Model, tea.Cmd) {
 type clauthResultMsg struct {
 	version int
 	status  clauth.Status
-	err     bool
+	err     error
 }
 
 // reloadClauthCmd re-loads clauth's status feed -- spec §11: "load at open
@@ -1581,24 +1581,86 @@ func (m *Model) reloadClauthCmd() tea.Cmd {
 	return func() tea.Msg {
 		st, err := src.Status(context.Background())
 		if err != nil {
-			return clauthResultMsg{version: v, err: true}
+			return clauthResultMsg{version: v, err: err}
 		}
 		return clauthResultMsg{version: v, status: st}
 	}
 }
 
-// handleClauthResult applies a successful, current reload to AccountField
-// -- a no-op when the field wasn't constructed at all, the reload failed
-// (spec §13: clauth failures degrade, never block), or a fresher reload
-// has since been scheduled (msg.version != m.clauthReqVersion -- see
+// handleClauthResult applies a current reload to AccountField -- a no-op
+// when the field wasn't constructed at all, or when a fresher reload has
+// since been scheduled (msg.version != m.clauthReqVersion -- see
 // clauthResultMsg's own doc comment).
+//
+// What it does with the result depends on which of the two states the row
+// is in, and m.clauthUnavailable is which (New built the row from it, and
+// nothing else writes the field's own copy):
+//
+//   - A LIVE row takes a successful reload's profiles and ignores a
+//     failure entirely, which is spec §13's "clauth failures degrade,
+//     never block" and is exactly what this did before #200. A failure
+//     must not make a live row unavailable: SetUnavailable does not clear
+//     the pin and accountPin does not consult the unavailable state, so
+//     the session would launch under an account the row had stopped
+//     showing.
+//   - An UNAVAILABLE row is rebuilt from what the reload found -- #200 and
+//     its decision comment (2026-09-20). See recoverAccountRow.
 func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
-	if msg.version != m.clauthReqVersion || msg.err || m.account == nil {
+	if msg.version != m.clauthReqVersion || m.account == nil {
+		return m, nil
+	}
+	if m.clauthUnavailable != "" {
+		return m.recoverAccountRow(msg), nil
+	}
+	if msg.err != nil {
 		return m, nil
 	}
 	m.account.SetProfiles(msg.status, m.deps.Clock.now())
 	m.clauthStatus = msg.status // see Model.clauthStatus' own doc comment (accountAuthBlocked's lookup source).
 	return m, nil
+}
+
+// recoverAccountRow applies a reload to a row that is currently
+// unavailable: clauth was installed and broken when the popup opened, the
+// row said so, and focusing it (spec §11) has just asked clauth again.
+//
+// Until #200 the answer went nowhere. handleClauthResult loaded the
+// profiles and nothing cleared the state, so the row kept reading
+// `unavailable <the reason from open>` for the rest of the popup -- and
+// since #191 an unavailable row ignores input, so none of the profiles it
+// had just loaded could be pinned either. Only reopening recovered.
+//
+// The three outcomes are the owner's decision, in its own words: a
+// successful reload clears the state and the row is rebuilt from what it
+// loaded; fewer than two profiles -- a state in which the row would never
+// have been built at all -- stays unavailable, with a reason saying THAT
+// rather than the stale one from open; and a failed reload replaces the
+// reason too, because why clauth failed just now is what the user can act
+// on and the two can differ (crashed at open, missing afterwards, or the
+// reverse).
+//
+// Every write goes through m.clauthUnavailable as well as the field.
+// That is not bookkeeping: ⌃R⌃R rebuilds the whole form through New from
+// the Model's own state (handleClearRequested), so a reason written only
+// into the field would be replaced by the open-time one on the first
+// clear, and a row recovered here would go straight back to unavailable.
+// m.clauthStatus is the other half of that -- New's live-row gate is
+// `>= 2 profiles`.
+func (m Model) recoverAccountRow(msg clauthResultMsg) Model {
+	switch {
+	case msg.err != nil:
+		m.clauthUnavailable = clauthUnavailableReason(msg.err)
+	case len(msg.status.Profiles) < 2:
+		m.clauthUnavailable = accountTooFewProfilesReason(len(msg.status.Profiles))
+	default:
+		m.clauthStatus = msg.status
+		m.clauthUnavailable = ""
+		m.account.SetUnavailable("")
+		m.populateAccountRow()
+		return m
+	}
+	m.account.SetUnavailable(m.clauthUnavailable)
+	return m
 }
 
 // --- submit pipeline (spec §9) --------------------------------------------
