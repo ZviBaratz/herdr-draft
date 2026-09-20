@@ -263,8 +263,8 @@ func TestTheBudgetIsWhatTheDocumentsSay(t *testing.T) {
 // Found in review.
 func TestACLIThatAnsweredJustInsideItsBudgetKeepsItsAnswer(t *testing.T) {
 	payload := `{"schema":1,"active_profile":"alpha","generated_at":"2026-08-31T21:29:00+00:00","refresh_interval_ms":90000,"profiles":[{"name":"alpha","active":true,"tier":"Team","auth_status":"ok","windows":[]}]}`
-	bin := scriptClauth(t, "sleep 30 &\nsleep 0.98\ncat <<'JSON'\n"+payload+"\nJSON\n")
-	setCLIBudgets(t, time.Second, 33*time.Millisecond)
+	bin := scriptClauth(t, "sleep 30 &\nsleep 1.5\ncat <<'JSON'\n"+payload+"\nJSON\n")
+	setCLIBudgets(t, 2*time.Second, time.Second)
 
 	var st Status
 	var err error

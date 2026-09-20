@@ -425,14 +425,23 @@ func TestTheBudgetsAreWhatTheDocumentsSay(t *testing.T) {
 // ratio scaled to 1s:33ms: 20 runs out of 20, deterministic rather than a
 // race.
 //
+// The numbers here are NOT that ratio, deliberately. Entering the window
+// needs two orderings to hold -- the command must exit before the deadline,
+// and the pipe grace must outlast it -- and at 1s:33ms each had about 20ms
+// of margin. That held 30 runs here under eight spinners and at -cpu=1, and
+// 20ms is still the shape of a test that is green on one CI runner and red
+// on the other, which is #202's own story. 2s with a 1s grace and an exit
+// at 1.5s gives 500ms either side for the same property, and costs two and
+// a half seconds.
+//
 // So the two arms are NOT mutually exclusive and the order between them is
 // what decides the outcome. Reading the deadline first throws a working
 // helper's key away and reports a timeout; reading the answer first is what
 // this pins. Found in review.
 func TestAnAPIKeyCmdThatAnsweredJustInsideItsBudgetKeepsItsAnswer(t *testing.T) {
 	t.Setenv("LINEAR_API_KEY", "")
-	cmd := scriptKeyCmd(t, "sleep 30 &\nsleep 0.98\nprintf 'lin_api_justintime\\n'\n")
-	setKeyCmdBudgets(t, time.Second, 33*time.Millisecond)
+	cmd := scriptKeyCmd(t, "sleep 30 &\nsleep 1.5\nprintf 'lin_api_justintime\\n'\n")
+	setKeyCmdBudgets(t, 2*time.Second, time.Second)
 
 	var key string
 	var err error
