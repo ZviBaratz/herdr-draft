@@ -113,7 +113,7 @@ type Sources struct {
 	Global config.State
 	// Repo is the selected project's committed .herdr-draft.toml
 	// (TierRepoConfig), already through config.LoadRepoConfig's own
-	// allow-list -- spec §11's trust model is enforced THERE, not here.
+	// allow-list -- v2 spec §11's trust model is enforced THERE, not here.
 	// Its zero value means "no repo config", which is what a non-repo
 	// project, an absent file and a malformed one all look like.
 	//
@@ -194,7 +194,7 @@ type Resolved struct {
 	// a candidate list naming it has landed.
 	BaseRef string
 	// LinearBranchName reports whether a chosen Linear issue's own
-	// branchName owns the branch (spec §11's repo-config key of the same
+	// branchName owns the branch (v2 spec §11's repo-config key of the same
 	// name). True unless a repo config says otherwise, and false means the
 	// branch is derived from the TITLE with BranchPrefix, exactly as it is
 	// in manual mode -- the app layer's reading of a key the spec names
@@ -296,7 +296,7 @@ func Resolve(s Sources) Resolved {
 	r.setAgentKind(&r.AgentKind, s.Global.LastKind, TierGlobalMemory, s.KnownAgentKinds)
 
 	// --- TierRepoConfig: .herdr-draft.toml -------------------------------
-	// The repository's committed default (spec §11). It sits here, above
+	// The repository's committed default (v2 spec §11). It sits here, above
 	// last-used.json and below projects.json, because a team's committed
 	// default should beat whatever the user last did in some OTHER
 	// repository and lose to what they last did in THIS one.

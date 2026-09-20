@@ -307,7 +307,7 @@ type testSetup struct {
 	// and poking the field.
 	ClauthUnavailable string
 	LinearCache       []linear.Issue
-	// RepoConfig stands in for config.LoadRepoConfig (spec §11), so a test
+	// RepoConfig stands in for config.LoadRepoConfig (v2 spec §11), so a test
 	// gets a deterministic .herdr-draft.toml without putting one on disk.
 	// nil leaves Deps.RepoConfig nil, which is the production reader --
 	// see repoConfigModel and TestRepoConfig_ProductionLoaderReadsTheFile

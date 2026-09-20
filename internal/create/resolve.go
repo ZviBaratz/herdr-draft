@@ -973,7 +973,7 @@ type explicitPrompt struct {
 // promptText resolves the initial prompt: --prompt (with "-" already read
 // from stdin by readPrompt) or, failing that, the prompt a chosen Linear
 // issue seeds through the USER's own template -- never a repository's,
-// which spec §11 forbids for exactly the reason it would be effective: it
+// which v2 spec §11 forbids for exactly the reason it would be effective: it
 // would become the agent's first instruction.
 func promptText(prompt explicitPrompt, issue *linear.Issue, cfg config.Config) string {
 	if prompt.given {

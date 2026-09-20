@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// This file is spec §11's trust boundary as a test suite. The allowed keys
+// This file is v2 spec §11's trust boundary as a test suite. The allowed keys
 // get one test; the forbidden ones get one test EACH, because "ignored"
 // and "reported" are two separate claims per key and a table that
 // aggregated them would pass while a single key silently leaked.
@@ -39,7 +39,7 @@ func notesMentioning(notes []string, key string) []string {
 }
 
 // TestLoadRepoConfig_AllowedKeys is the whole permitted surface, in one
-// file: spec §11's five keys, each reaching RepoConfig, and no notes at
+// file: v2 spec §11's five keys, each reaching RepoConfig, and no notes at
 // all -- a well-formed repo config must be silent.
 func TestLoadRepoConfig_AllowedKeys(t *testing.T) {
 	root := writeRepoConfig(t, `
@@ -92,7 +92,7 @@ func TestLoadRepoConfig_OmittedKeysSupplyNothing(t *testing.T) {
 
 // --- the forbidden list, one test per key ---------------------------------
 //
-// Each of these asserts BOTH halves of spec §11's rule: the key changes
+// Each of these asserts BOTH halves of v2 spec §11's rule: the key changes
 // nothing (the whole RepoConfig stays at its zero value apart from Notes),
 // and the note names the key, so someone who commits it and sees nothing
 // happen is told why rather than left to assume it worked.
@@ -360,7 +360,7 @@ func TestLoadRepoConfig_ReadsFromTheGivenRoot(t *testing.T) {
 // that makes a key in a `git clone`-delivered file take effect, so a
 // change to it is a change to the trust boundary, and this test makes such
 // a change impossible to land without editing an assertion that says so.
-// Read spec §11 before touching either.
+// Read v2 spec §11 before touching either.
 func TestRepoAllowedKeysIsExactlyTheSpecList(t *testing.T) {
 	want := []string{
 		"branch_prefix",
@@ -376,7 +376,7 @@ func TestRepoAllowedKeysIsExactlyTheSpecList(t *testing.T) {
 	sort.Strings(got)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("repoAllowedKeys = %v, want %v -- changing this set changes what a cloned "+
-			"repository can do to your machine; see spec §11", got, want)
+			"repository can do to your machine; see v2 spec §11", got, want)
 	}
 }
 
@@ -419,10 +419,10 @@ func TestLookupAllowedPanicsForAnUnlistedKey(t *testing.T) {
 // trust_repository` adds `--trust-repository` to `herdr worktree create`,
 // which is git's "this repository is safe to run code from" check being
 // waived. A file that arrives with `git clone` asserting its own
-// trustworthiness is the exact shape spec §11 exists to refuse: it is not a
-// preference the user could have picked in the form -- there is no row for
-// it -- and the answer to "should I trust this repository?" can never come
-// from the repository.
+// trustworthiness is the exact shape v2 spec §11 exists to refuse: it is
+// not a preference the user could have picked in the form -- there is no
+// row for it -- and the answer to "should I trust this repository?" can
+// never come from the repository.
 //
 // The table form is what makes this structurally safe rather than merely
 // remembered: repoAllowedKeys is flat by construction, so ANY table header

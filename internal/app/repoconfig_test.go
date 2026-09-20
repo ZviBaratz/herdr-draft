@@ -17,7 +17,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
-// This file covers spec §11's repo-level shared config as the app layer
+// This file covers v2 spec §11's repo-level shared config as the app layer
 // sees it: .herdr-draft.toml reaching the form through the SAME debounced,
 // versioned dir check the validity and memory-key checks ride, re-read on
 // every project change, and slotting between projects.json and
@@ -75,7 +75,7 @@ func focusedFrame(t *testing.T, m Model, id string) string {
 	return ansi.Strip(m.form.ViewAt(80, 24))
 }
 
-// TestRepoConfig_EachAttributedKeyEarnsItsOwnPanelsLine is spec §11's
+// TestRepoConfig_EachAttributedKeyEarnsItsOwnPanelsLine is v2 spec §11's
 // display half: a value the repository's committed file chose says so, in
 // the panel of the field that shows it, and nowhere else.
 //
@@ -389,7 +389,7 @@ var chosenIssue = &linear.Issue{
 }
 
 // TestRepoConfig_LinearBranchNameOffDerivesTheBranchFromTheTitle pins this
-// package's reading of spec §11's newest key. The spec names it and its
+// package's reading of v2 spec §11's newest key. The spec names it and its
 // default but not what FALSE does; the answer implemented here is "the
 // branch is derived from the title with the resolved prefix, exactly as in
 // manual mode", so a repository with its own branch naming can keep it
@@ -534,7 +534,7 @@ func TestRepoConfig_RejectedBranchPrefixFallsBackToTheUsersOwn(t *testing.T) {
 }
 
 // TestRepoConfig_NotesReachTheViewAndFollowTheProject: the report is
-// spec §11's "ignored with a visible note", and it is per-project like
+// v2 spec §11's "ignored with a visible note", and it is per-project like
 // everything else in the file, so leaving a repository must take its notes
 // with it rather than leave them attributed to the next one.
 //
@@ -596,7 +596,7 @@ func TestRepoConfig_MalformedFileDoesNotBlockTheForm(t *testing.T) {
 	}
 	// "Never blocks" is not the same as "never mentioned": a file someone
 	// wrote and expects to work reports the same way an ignored key does,
-	// on the project panel (spec §11).
+	// on the project panel (v2 spec §11).
 	if frame := focusedFrame(t, m, "dir"); !strings.Contains(frame, "ignoring .herdr-draft.toml: expected a value") {
 		t.Errorf("the project panel does not report the malformed file:\n%s", frame)
 	}

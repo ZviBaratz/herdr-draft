@@ -253,7 +253,7 @@ type dirResultMsg struct {
 	// rev-parse` and a symlink walk.
 	memoryKey string
 	// repoConfig is the selected project's committed .herdr-draft.toml
-	// (spec §11), read in the same background call for the same reason the
+	// (v2 spec §11), read in the same background call for the same reason the
 	// memory key is: both hang off the repository root this check already
 	// resolves, and both are inputs to the SINGLE defaults.Resolve that
 	// applyProjectDefaults runs when this lands.
@@ -319,7 +319,7 @@ func (m Model) runDirCheck(req request) tea.Cmd {
 			exists := git.DirExists(path)
 			isRepo := exists && git.IsGitRepo(path)
 			// Resolved ONCE and used twice: it is a `git rev-parse`, and both
-			// spec §10's memory key and spec §11's committed config are
+			// spec §10's memory key and v2 spec §11's committed config are
 			// questions about the same repository.
 			root := projectRepoRoot(ctx, git, path, exists, isRepo)
 			return dirResultMsg{
@@ -415,7 +415,7 @@ func (m Model) handleDirDebounce(msg dirDebounceMsg) (Model, tea.Cmd) {
 // be applied once the target is known to be a usable git repo).
 //
 // The defaults are re-applied on EVERY project change, not once per form
-// open: the top two tiers are per-project (projects.json and spec §11's
+// open: the top two tiers are per-project (projects.json and v2 spec §11's
 // committed .herdr-draft.toml), so a new project genuinely has a new
 // answer. What keeps that from fighting the user is the touched rule
 // (Model.worktreeTouched and friends), which replaced the one-shot flag

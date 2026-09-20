@@ -177,7 +177,7 @@ type Deps struct {
 	// (#211). nil -- every Model a test builds without one -- means
 	// context.Background(), exactly as this behaved before.
 	Lifetime *Lifetime
-	// RepoConfig reads spec §11's committed .herdr-draft.toml from a
+	// RepoConfig reads v2 spec §11's committed .herdr-draft.toml from a
 	// repository root. nil means config.LoadRepoConfig, the production
 	// reader -- it is a func rather than an interface for the same reason
 	// Clock.Sleep is: one call, no state, and a test that needs a
@@ -764,7 +764,7 @@ type Model struct {
 	// selection (spec §6 field 1: "In Linear mode branchName owns the
 	// branch and the title is free text") -- reactToChanges only derives a
 	// branch suggestion from the typed title while this is false, OR while
-	// spec §11's linear_branch_name has been turned off for this
+	// v2 spec §11's linear_branch_name has been turned off for this
 	// repository.
 	linearIssueSelected bool
 
@@ -864,7 +864,7 @@ type Model struct {
 	resolved defaults.Resolved
 
 	// repoConfig is the SELECTED project's committed .herdr-draft.toml
-	// (spec §11), re-read by the debounced dir check on every project
+	// (v2 spec §11), re-read by the debounced dir check on every project
 	// change and kept here for two reasons: applyProjectDefaults feeds it
 	// back into defaults.Resolve, and its Notes are the visible report of
 	// everything in that file the trust model refused -- pushed onto the
@@ -1406,7 +1406,7 @@ func (m Model) routeToForm(msg tea.Msg) (Model, tea.Cmd) {
 // The prompt template is taken from the USER's config.toml and never from
 // the repository's own .herdr-draft.toml: a repo-controlled template would
 // become the agent's first instruction, which is a prompt-injection
-// surface rather than a preference (spec §11, which lists
+// surface rather than a preference (v2 spec §11, which lists
 // `[linear] prompt_template` as forbidden after an earlier draft allowed
 // it). config.LoadRepoConfig ignores the key outright, so there is nothing
 // here to guard against -- this comment exists so the absence reads as a
@@ -1429,7 +1429,7 @@ func (m Model) handleIssueChosen(msg form.IssueChosenMsg) (Model, tea.Cmd) {
 // carry for the form as it currently stands -- the chosen Linear issue's
 // own branchName, or the title run through the resolved branch prefix.
 //
-// Which one depends on spec §11's linear_branch_name, the repo-config key
+// Which one depends on v2 spec §11's linear_branch_name, the repo-config key
 // a repository sets to keep its own branch naming. The spec names the key
 // and its default (true) but does not say what false DOES; this is the app
 // layer's reading: false means the branch is derived from the title
@@ -1450,7 +1450,7 @@ func (m Model) branchSuggestion() string {
 
 // BranchFor is branchSuggestion's rule with the form's state passed in
 // instead of read off a Model: the chosen Linear issue's own branchName
-// while spec §11's linear_branch_name leaves it in charge, and the title
+// while v2 spec §11's linear_branch_name leaves it in charge, and the title
 // run through the resolved prefix otherwise.
 //
 // Exported, and extracted from the method above rather than copied, for
@@ -2184,7 +2184,7 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	// The base status line follows the base, because what it says is about
 	// one: an unknown whose ref the user has replaced stops applying
 	// (baseUnknown), and the line saying it has to go with it, exactly as
-	// spec §11's provenance goes with a value the user moved. Its own
+	// v2 spec §11's provenance goes with a value the user moved. Its own
 	// snapshot rather than appliedBaseRef, which syncDerivedInertness
 	// resyncs for a different question -- sharing one is the shape the
 	// CLAUDE.md convention warns about.
@@ -2318,7 +2318,7 @@ func (m *Model) snapshotAppliedDefaults() {
 // dir check) and applies each resolved value to the field that shows it --
 // unless the user has already touched that field, in which case their
 // choice stands. This is "per-project memory re-applies when the project
-// row changes", now with the repository's own committed default (spec §11)
+// row changes", now with the repository's own committed default (v2 spec §11)
 // sitting between it and last-used.json.
 //
 // isGitRepo gates the worktree toggle alone: WorktreeField.SetOn is
@@ -2410,7 +2410,7 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	settle := m.scheduleBaseSettle()
 
 	// The branch follows the project too, which it did not have to before
-	// spec §11: branch_prefix and linear_branch_name are both per-repo now,
+	// v2 spec §11: branch_prefix and linear_branch_name are both per-repo now,
 	// so the same title produces a different branch in a different
 	// repository. Seeded, so a branch the user typed themselves still
 	// stands (WorktreeField.SetBranch's own touched guard), and no touched
@@ -2448,13 +2448,13 @@ func (m Model) repoConfigLoader() func(string) config.RepoConfig {
 	return config.LoadRepoConfig
 }
 
-// repoConfigNotes is spec §11's visible report: one line per key in the
+// repoConfigNotes is v2 spec §11's visible report: one line per key in the
 // selected repository's .herdr-draft.toml that the trust model refused,
 // plus the reason. Empty when there is no such file, or when everything in
 // it was allowed. showRepoConfig puts these on the project row's panel.
 func (m Model) repoConfigNotes() []string { return m.repoConfig.Notes }
 
-// showRepoConfig pushes spec §11's two visible pieces of the selected
+// showRepoConfig pushes v2 spec §11's two visible pieces of the selected
 // repository's own .herdr-draft.toml into the form. It is the ONLY place
 // this package renders anything about that file, and it is called from the
 // two paths that can change what it should say: applyProjectDefaults (a

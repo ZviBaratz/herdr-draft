@@ -251,7 +251,7 @@ func TestResolve_Precedence(t *testing.T) {
 			wantWorktree:     true,
 			wantPlacement:    plan.PlacementSplitHere,
 			// A repository does not choose which agent runs on your
-			// machine (spec §11's forbidden list), so the agent kind stays
+			// machine (v2 spec §11's forbidden list), so the agent kind stays
 			// last-used.json's.
 			wantAgentKind:           "gemini",
 			wantBaseRef:             "trunk",
