@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ZviBaratz/herdr-draft/internal/app"
+	"github.com/ZviBaratz/herdr-draft/internal/create"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"testing"
 )
@@ -21,6 +27,10 @@ import (
 // call -- there is no portable way to fake it without an env var this
 // function doesn't accept -- but the assertion itself never depends on the
 // actual value, only the suffix shape).
+// reraiseProbeEnv marks the child this package re-executes to watch reraise
+// kill something for real; see TestReraiseKillsThisProcessWithTheSignal.
+const reraiseProbeEnv = "HERDR_DRAFT_RERAISE_PROBE"
+
 func TestClauthStatusFilePath(t *testing.T) {
 	got := clauthStatusFilePath()
 	if got == "" {
@@ -274,5 +284,194 @@ func TestAFailedRunStillCancelsTheWork(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "terminal is not a terminal") {
 		t.Fatalf("stderr = %q, want the program's own error", stderr.String())
+	}
+}
+
+// --- a signalled create takes the picker with it (#252) ---------------------
+
+// The policy, in order: announce that a signal arrived, cancel the pre-flight
+// so the account picker is killed with it, wait long enough for that kill to
+// land, publish the signal for the main goroutine, and only then die.
+func TestSignalWatchCancelsThenDiesWithTheSameSignal(t *testing.T) {
+	const grace = 80 * time.Millisecond
+	sigs := make(chan os.Signal, 1)
+	var mu sync.Mutex
+	var order []string
+	var died os.Signal
+	var cancelledAt, diedAt time.Time
+	dead := make(chan struct{})
+
+	w := watchSignals(sigs,
+		func() { mu.Lock(); defer mu.Unlock(); order = append(order, "cancel"); cancelledAt = time.Now() },
+		grace,
+		func(s os.Signal) {
+			mu.Lock()
+			defer mu.Unlock()
+			order = append(order, "die")
+			died, diedAt = s, time.Now()
+			close(dead)
+		})
+
+	sigs <- syscall.SIGTERM
+
+	// begun must close as soon as the signal is seen, well before the grace
+	// is spent: it is what stops the main goroutine exiting underneath the
+	// teardown, which is the whole of #252's review finding.
+	select {
+	case <-w.begun:
+	case <-time.After(5 * time.Second):
+		t.Fatal("begun never closed -- main has no way to know a signal is being acted on")
+	}
+
+	select {
+	case <-dead:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the teardown never reached the dying half")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"cancel", "die"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("order = %v, want %v -- dying first would leave the picker running, which is the bug", order, want)
+	}
+	if died != syscall.SIGTERM {
+		t.Fatalf("died with %v, want the signal that was sent", died)
+	}
+	if waited := diedAt.Sub(cancelledAt); waited < grace {
+		t.Fatalf("waited %s between the cancel and the death, want at least the %s grace -- exec.CommandContext kills the picker from a watcher goroutine that has to be scheduled first", waited, grace)
+	}
+}
+
+// A closed channel is not a signal. Nothing is announced, nothing is
+// cancelled and nothing dies -- the alternative is a create that kills itself
+// on the way out of an ordinary successful run.
+func TestSignalWatchIgnoresAClosedChannel(t *testing.T) {
+	sigs := make(chan os.Signal)
+	close(sigs)
+	cancelled, died := false, false
+
+	w := watchSignals(sigs, func() { cancelled = true }, time.Second, func(os.Signal) { died = true })
+	time.Sleep(20 * time.Millisecond)
+
+	if cancelled || died {
+		t.Fatalf("a closed channel produced cancel=%v die=%v, want neither", cancelled, died)
+	}
+	select {
+	case <-w.begun:
+		t.Fatal("a closed channel announced a signal that never arrived")
+	default:
+	}
+}
+
+// And the half the review of #257 found missing. Cancelling the pre-flight
+// makes the very next step fail in microseconds, so `create` returns its own
+// exit code and main reaches os.Exit long before the teardown's grace is up:
+// the picker's kill is never waited for, and the run reports 2 -- "fix your
+// invocation" -- or 3, "herdr is unreachable", for a kill. Measured at 1ms
+// against a picker that is a single process.
+func TestASignalledRunReportsTheSignalAndWaitsForTheTeardown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code int
+		want int
+	}{
+		{"a cancelled pre-flight", create.ExitUsage, 128 + int(syscall.SIGTERM)},
+		{"a cancelled probe", create.ExitUnreachable, 128 + int(syscall.SIGTERM)},
+		// A create that finished its work says so. The session exists; a
+		// signal that arrived as it was being reported does not unmake it.
+		{"a create that succeeded anyway", create.ExitOK, create.ExitOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &signalWatch{begun: make(chan struct{}), acted: make(chan os.Signal, 1)}
+			close(w.begun)
+			w.acted <- syscall.SIGTERM
+			close(w.acted)
+
+			if got := exitAfterSignal(tc.code, w); got != tc.want {
+				t.Fatalf("exitAfterSignal(%d) = %d, want %d", tc.code, got, tc.want)
+			}
+		})
+	}
+}
+
+// With no signal in flight it is the create's own answer, immediately: a
+// create that waited for a teardown that is not coming would hang on every
+// ordinary run.
+func TestAnUnsignalledRunKeepsItsOwnExitCode(t *testing.T) {
+	w := watchSignals(make(chan os.Signal), func() {}, time.Hour, func(os.Signal) {})
+
+	done := make(chan int, 1)
+	go func() { done <- exitAfterSignal(create.ExitUsage, w) }()
+	select {
+	case got := <-done:
+		if got != create.ExitUsage {
+			t.Fatalf("exitAfterSignal = %d, want the create's own %d", got, create.ExitUsage)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("exitAfterSignal blocked with no signal in flight")
+	}
+}
+
+// reraise is the one piece of this that can only be proved by a process that
+// actually dies of it, so it is proved in a child. Its own evidence used to
+// be a smoke run whose stub picker held the exit open long enough for the
+// re-raise to win by accident -- which is to say, no evidence at all.
+func TestReraiseKillsThisProcessWithTheSignal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("signal death is a POSIX wait status")
+	}
+	if os.Getenv(reraiseProbeEnv) == "1" {
+		reraise(syscall.SIGTERM)
+		// Only reached if the re-raise did nothing, which is the failure
+		// this test exists to catch: a create that cannot die of the
+		// signal it was sent.
+		time.Sleep(10 * time.Second)
+		os.Exit(99)
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestReraiseKillsThisProcessWithTheSignal", "-test.timeout=60s")
+	cmd.Env = append(os.Environ(), reraiseProbeEnv+"=1")
+	err := cmd.Run()
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("the probe exited with %v, want a signal death", err)
+	}
+	// An anonymous interface rather than syscall.WaitStatus, which has a
+	// different shape on Windows and would not compile there.
+	type signaled interface {
+		Signaled() bool
+		Signal() syscall.Signal
+	}
+	ws, ok := exitErr.Sys().(signaled)
+	if !ok {
+		t.Skipf("no POSIX wait status on %s", runtime.GOOS)
+	}
+	if !ws.Signaled() {
+		t.Fatalf("the probe exited with code %d, want death by signal", exitErr.ExitCode())
+	}
+	if ws.Signal() != syscall.SIGTERM {
+		t.Fatalf("the probe died of %v, want SIGTERM", ws.Signal())
+	}
+}
+
+// A signal this process was started with instructions to ignore stays
+// ignored. signal.Notify would OVERRIDE an inherited SIG_IGN, so without this
+// filter `create &` in a POSIX shell -- which ignores SIGINT for background
+// jobs -- would start answering a ctrl+c it had been told to sit out, and
+// answer it by abandoning its pre-flight.
+func TestNotIgnoredDropsAnIgnoredSignal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIG_IGN inheritance is a POSIX story")
+	}
+	// SIGHUP rather than one the test binary's own runner leans on.
+	signal.Ignore(syscall.SIGHUP)
+	t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
+
+	got := notIgnored(syscall.SIGHUP, syscall.SIGTERM)
+
+	if want := []os.Signal{syscall.SIGTERM}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("notIgnored = %v, want %v -- an ignored signal must not be caught", got, want)
 	}
 }

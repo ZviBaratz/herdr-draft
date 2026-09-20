@@ -415,7 +415,17 @@ without the popup. It drives herdr exclusively through the public CLI
   `--account auto`. The picker's `warnings` and `machine` figures (load,
   cpus, swap) are shown on the `account` panel, with an unmeasured figure
   written as such rather than as zero, and `create` prints the warnings to
-  stderr; neither ever refuses a session (#165).
+  stderr; neither ever refuses a session (#165). **A signalled `create`
+  takes the picker with it too** (#252), where before it had no
+  cancellation at all and a `kill` left the picker to finish and record
+  an account: `SIGINT` and `SIGTERM` cancel the pre-flight, the kill is
+  given a moment to land, and the signal is then re-raised so the run
+  still reports the status a signal death has rather than one of
+  `create`'s own codes, where 2 means "fix your invocation". A signal the
+  process was started with instructions to ignore stays ignored.
+  `plan.Execute` is deliberately outside all of it — a pre-flight abort
+  has created nothing, while an abort mid-plan would leave a half-built
+  session nothing reports on.
 - `[clauth] launch` selects how a pinned account is launched, defaulting to
   `clauth start <profile> --`. The opt-in `"wrapper"` mode types
   `CLAUDE_CONFIG_DIR=<dir> claude` instead, which is only worth setting on a

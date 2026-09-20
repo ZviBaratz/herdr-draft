@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -226,8 +228,11 @@ func runPopup() int {
 	})
 }
 
-// shutdownGrace is how long the process stays alive, after the form is gone,
-// for the cancellation of its own background work to be delivered (#211).
+// shutdownGrace is how long the process stays alive, after it has decided to
+// go, for the cancellation of its own background work to be delivered: after
+// the form is gone for the popup (#211), and after a signal for `create`
+// (#252). One number, because both are waiting on the same thing -- a picker
+// being killed by exec.CommandContext.
 //
 // It is sized for the KILL, not for the call that is being killed. Measured
 // on 2026-09-20 over fifty runs against a `#!/bin/sh` + `sleep` stub: from
@@ -272,11 +277,135 @@ func runSkill(stdout, stderr io.Writer) int {
 	return skill.Run(stdout, stderr, os.Executable, herdrc.Version)
 }
 
+// signalWatch is what SIGINT and SIGTERM mean to `create` (#252), and the
+// handshake that keeps the main goroutine from exiting out from under it.
+//
+// begun closes the moment a signal is seen -- before the cancel, and long
+// before the grace. acted carries that signal once the teardown has done its
+// waiting. Both exist because of what the cancel does to the main goroutine:
+// it makes the very next pre-flight step fail in microseconds, so `create`
+// returns its own exit code and main reaches os.Exit about a millisecond
+// later (measured). Without the handshake the grace is never spent, nothing
+// waits for the picker's kill to land, and the run reports 2 -- "fix your
+// invocation" -- for a kill.
+type signalWatch struct {
+	begun chan struct{}
+	acted chan os.Signal
+}
+
+// watchSignals runs the teardown: announce, cancel so exec.CommandContext
+// kills the account picker, wait for that kill to land, publish, and die with
+// the signal that was sent.
+//
+// Dying with the same signal is not ceremony. Installing a handler at all
+// takes away the default "terminate now", and `create`'s exit codes are a
+// documented table where 2 already means "fix your invocation" -- so a create
+// killed by a supervisor that reported 2 would be telling its caller
+// something false. Re-raising leaves that table alone and gives the shell the
+// conventional 128+n. It is published BEFORE the die attempt so that a
+// process which cannot be killed by it -- one that inherited SIG_IGN, say --
+// still reports the right code through exitAfterSignal rather than hanging.
+//
+// The die is what covers plan.Execute, where main is inside create.Run for as
+// long as the plan takes and no handshake can reach it. A handler that simply
+// stayed out of the way there would make a create mid-creation immune to
+// SIGTERM until the plan finished, which is worse than the bug.
+//
+// It is `create` that needs this and not the popup, which bubbletea already
+// covers: v2.0.8 notifies on both signals and turns them into InterruptMsg/
+// QuitMsg (tea.go's own "SIGTERM is sent by unix utilities (like kill) to
+// terminate a process"), so Run returns and runProgram's teardown happens the
+// ordinary way.
+//
+// cancel, grace and die are parameters rather than the real thing so the
+// policy can be tested in a process that must not kill itself.
+func watchSignals(sigs <-chan os.Signal, cancel context.CancelFunc, grace time.Duration, die func(os.Signal)) *signalWatch {
+	w := &signalWatch{begun: make(chan struct{}), acted: make(chan os.Signal, 1)}
+	go func() {
+		s, ok := <-sigs
+		if !ok {
+			// Not a signal. Neither channel closes, so exitAfterSignal
+			// takes its no-signal path and nothing waits for anything.
+			return
+		}
+		close(w.begun)
+		cancel()
+		// The same wait, for the same reason, as the popup's shutdownGrace:
+		// the kill reaches the picker from exec.CommandContext's watcher
+		// goroutine, which has to be scheduled first. There is no WaitGroup
+		// to shorten it here -- create has no Lifetime, because it has no
+		// tea.Program to outlive -- so it is spent in full, once, on a
+		// process that is about to end anyway.
+		time.Sleep(grace)
+		w.acted <- s
+		close(w.acted)
+		die(s)
+	}()
+	return w
+}
+
+// exitAfterSignal is the main goroutine's half of that handshake: the exit
+// code `create` reports once a signal has had its say.
+//
+// A run that finished its work keeps its own answer whatever arrived late --
+// the session exists, and a signal does not unmake it. A run that FAILED
+// while a signal was being acted on reports the signal instead, because its
+// own code would name a cause that did not happen: exit 3 would tell a
+// supervisor herdr was unreachable when herdr was fine.
+func exitAfterSignal(code int, w *signalWatch) int {
+	select {
+	case <-w.begun:
+	default:
+		return code // no signal in flight: the create's own answer, at once
+	}
+	// Bounded by the grace, and this is where it is actually spent: the
+	// picker's kill is still landing while we are here.
+	s, ok := <-w.acted
+	if !ok || code == create.ExitOK {
+		return code
+	}
+	return signalExitCode(s)
+}
+
+// signalExitCode is the shell's own convention for a process a signal ended.
+func signalExitCode(s os.Signal) int {
+	if n, ok := s.(syscall.Signal); ok {
+		return 128 + int(n)
+	}
+	return create.ExitUsage
+}
+
+// reraise re-sends a signal to this process with the default disposition
+// back in place, which terminates it exactly as it would have terminated
+// with no handler installed.
+func reraise(s os.Signal) {
+	signal.Reset(s)
+	if p, err := os.FindProcess(os.Getpid()); err == nil {
+		_ = p.Signal(s)
+	}
+}
+
 // runCreate is spec §13's headless verb. The plugin context is read here
 // exactly as runPopup reads it -- it is normally absent for this path,
 // which is why the three per-pane variables are read alongside it.
 func runCreate(args []string) int {
-	return create.Run(context.Background(), args, create.Env{
+	// #252: the pre-flight -- everything up to and including the account
+	// pick -- runs on a context a signal cancels. plan.Execute does not;
+	// internal/create draws that seam and says why.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigs := make(chan os.Signal, 1)
+	// Only signals this process was not started with instructions to
+	// ignore. A POSIX shell sets SIGINT to SIG_IGN for a background job,
+	// and signal.Notify would OVERRIDE that -- so `create &` would start
+	// answering a ctrl+c it had been told to sit out, and answering it by
+	// abandoning its pre-flight.
+	if watched := notIgnored(os.Interrupt, syscall.SIGTERM); len(watched) > 0 {
+		signal.Notify(sigs, watched...)
+	}
+	watch := watchSignals(sigs, cancel, shutdownGrace, reraise)
+
+	code := create.Run(ctx, args, create.Env{
 		ConfigDir:   os.Getenv("HERDR_PLUGIN_CONFIG_DIR"),
 		StateDir:    os.Getenv("HERDR_PLUGIN_STATE_DIR"),
 		ContextJSON: os.Getenv("HERDR_PLUGIN_CONTEXT_JSON"),
@@ -294,4 +423,18 @@ func runCreate(args []string) int {
 			CLIBin:     defaultClauthBin,
 		}),
 	})
+	return exitAfterSignal(code, watch)
+}
+
+// notIgnored filters a signal list down to the ones this process has not
+// inherited as ignored. signal.Ignored answers that, and it has to be asked
+// BEFORE signal.Notify, which is what would change the answer.
+func notIgnored(sigs ...os.Signal) []os.Signal {
+	var watched []os.Signal
+	for _, s := range sigs {
+		if !signal.Ignored(s) {
+			watched = append(watched, s)
+		}
+	}
+	return watched
 }

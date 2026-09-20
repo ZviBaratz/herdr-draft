@@ -35,6 +35,14 @@ import (
 type fakeRunner struct {
 	calls []string
 
+	// onOp and ctxErrs are #252's instrumentation: onOp fires as an op
+	// begins, so a test can cancel in the MIDDLE of plan.Execute, and
+	// ctxErrs records the context each observed op was handed. Only the
+	// two ops those tests turn on are wired -- a fake that recorded every
+	// one of them would be a bigger edit than the fact being pinned.
+	onOp    func(op string)
+	ctxErrs map[string]error
+
 	// t is only for reporting a test's own mistake (splitting a pane this
 	// fake never handed out); nil is fine for a runner no test drives
 	// through PaneSplit.
@@ -209,6 +217,20 @@ func (r *fakeRunner) WorkspaceList(context.Context) ([]herdrc.WorkspaceInfo, err
 	return r.workspaces, r.listErr
 }
 
+// observe records the context an op was handed and lets a test act at that
+// moment. The ORDER matters and is why it runs before record: a test that
+// cancels here is standing in for a signal arriving mid-pipeline, and the
+// op it interrupts must be the one that has already started.
+func (r *fakeRunner) observe(ctx context.Context, op string) {
+	if r.ctxErrs == nil {
+		r.ctxErrs = map[string]error{}
+	}
+	r.ctxErrs[op] = ctx.Err()
+	if r.onOp != nil {
+		r.onOp(op)
+	}
+}
+
 func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreateReq) (herdrc.CreatedTopology, error) {
 	if err := r.record("WorktreeCreate", req.Cwd, req.Branch, req.Base); err != nil {
 		return herdrc.CreatedTopology{}, err
@@ -230,7 +252,8 @@ func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreate
 	return topo, nil
 }
 
-func (r *fakeRunner) WorkspaceCreate(_ context.Context, req herdrc.WorkspaceCreateReq) (herdrc.CreatedTopology, error) {
+func (r *fakeRunner) WorkspaceCreate(ctx context.Context, req herdrc.WorkspaceCreateReq) (herdrc.CreatedTopology, error) {
+	r.observe(ctx, "WorkspaceCreate")
 	if err := r.record("WorkspaceCreate", req.Cwd, req.Label); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
@@ -255,7 +278,8 @@ func (r *fakeRunner) PaneSplit(_ context.Context, req herdrc.PaneSplitReq) (herd
 	return r.nextPaneBeside(req.PaneID), nil
 }
 
-func (r *fakeRunner) AgentStart(_ context.Context, req herdrc.AgentStartReq) error {
+func (r *fakeRunner) AgentStart(ctx context.Context, req herdrc.AgentStartReq) error {
+	r.observe(ctx, "AgentStart")
 	r.startArgs = req.ExtraArgs
 	return r.record("AgentStart", req.Name, req.Kind, req.PaneID)
 }
@@ -456,11 +480,17 @@ func newHarness(t *testing.T) *harness {
 }
 
 func (h *harness) run(args ...string) int {
+	return h.runCtx(context.Background(), args...)
+}
+
+// runCtx is run with a context of the test's own, for the two tests that
+// care which side of #252's seam a cancellation reaches.
+func (h *harness) runCtx(ctx context.Context, args ...string) int {
 	// The invoking pane exists before this command runs, so the fake has
 	// to know it: a split-here placement splits it, and herdr answers
 	// that with a pane in the invoking pane's own tab.
 	h.runner.registerPane(h.env.WorkspaceID, h.env.TabID, h.env.PaneID)
-	return Run(context.Background(), args, h.env, h.deps)
+	return Run(ctx, args, h.env, h.deps)
 }
 
 // --- exit codes -----------------------------------------------------------
@@ -2241,11 +2271,21 @@ type fakePicker struct {
 	err   error
 	calls []picker.Options
 	dirs  []string
+	// obeyCtx makes this fake behave the way picker.CLI does about a
+	// cancelled context -- it refuses rather than answering -- and sawErr
+	// is the context it was handed, for #252's test of which context that
+	// is.
+	obeyCtx bool
+	sawErr  error
 }
 
-func (p *fakePicker) Pick(_ context.Context, dir string, opts picker.Options) (picker.Result, error) {
+func (p *fakePicker) Pick(ctx context.Context, dir string, opts picker.Options) (picker.Result, error) {
 	p.calls = append(p.calls, opts)
 	p.dirs = append(p.dirs, dir)
+	p.sawErr = ctx.Err()
+	if p.obeyCtx && p.sawErr != nil {
+		return picker.Result{}, p.sawErr
+	}
 	return p.res, p.err
 }
 

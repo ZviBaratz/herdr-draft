@@ -446,9 +446,40 @@ Layering, outermost to innermost:
   `BranchExists`, the branch list, clauth and Linear are simply reads
   nobody has needed cancelled; `runSubmitCmd`, `plan.CleanCheck` and
   `plan.Clean` are the creation and teardown pipeline, and abandoning one
-  of those halfway is a worse outcome than letting it finish. Headless
-  `create` is on `Background` end to end — #211's decision was about the
-  popup.
+  of those halfway is a worse outcome than letting it finish — which is the
+  same line `create` draws (#252): its pre-flight runs on the caller's
+  context, `plan.Execute` gets `context.WithoutCancel` of it, and
+  `--dry-run` has always stopped at that exact boundary.
+- **`create` answers a signal; the popup does not have to.** bubbletea
+  already notifies on `SIGINT`/`SIGTERM` and turns them into
+  `InterruptMsg`/`QuitMsg` (v2.0.8 `tea.go`), so the popup reaches
+  `runProgram`'s teardown the ordinary way — measured, and closing the
+  pane mid-pick kills both the popup and the picker too. `create` had no
+  such thing and left the picker running (#252). `main.watchSignals` is
+  the answer: announce, cancel, wait `shutdownGrace` for the kill to
+  land, publish, then **re-raise the same signal**. Re-raising is what
+  keeps `create`'s documented exit codes honest — 2 means "fix your
+  invocation", and a create killed by a supervisor that reported 2 would
+  be lying to it.
+  **The half that is easy to leave out is the handshake**, and it was
+  left out first time round: cancelling makes the very next pre-flight
+  step fail in *microseconds*, so `create` returns its own code and main
+  reaches `os.Exit` about a millisecond later — before the grace is
+  spent and before the re-raise runs. Measured at 1ms; the first
+  smoke run missed it only because its stub picker forked a `sleep` that
+  held the exit open past the grace, so the re-raise won by accident. A
+  picker that is a single process gave exit **2** for a `kill`.
+  `exitAfterSignal` is the fix: main waits on `signalWatch.begun`/`acted`
+  and reports 128+n. The `die` still matters for the window a handshake
+  cannot reach — inside `plan.Execute`, main is in `create.Run` for as
+  long as the plan takes.
+  Two things this rules out. A handler that simply stayed out of
+  `plan.Execute`'s way would make a create mid-creation immune to
+  `SIGTERM` until the plan finished, which is worse than the bug. And
+  `signal.Notify` **overrides an inherited `SIG_IGN`** — a POSIX shell
+  sets that for a background job's `SIGINT` — so the signals are filtered
+  through `notIgnored` first, or `create &` would start answering a
+  ctrl+c it had been told to sit out.
 - **App-layer state is diffed, not event-driven.** `form.Model` exposes no
   "section X changed" signal; `Model.reactToChanges` (in `app.go`) compares
   each relevant getter against a last-observed snapshot after every routed

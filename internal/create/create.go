@@ -332,7 +332,27 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 		rep.write(deps.stdout(), deps.stderr())
 		return ExitOK
 	}
-	return execute(ctx, resolved, req, deps, ops)
+	// #252's seam, and the reason it is HERE rather than anywhere else.
+	// main turns SIGINT/SIGTERM into a cancel of ctx, so that a signal
+	// arriving during the pre-flight kills the account picker with it --
+	// the commit pick is the one call that writes the picker's ledger, and
+	// a pick nobody is waiting for any more must not reach it.
+	//
+	// plan.Execute deliberately does not inherit that. Everything above has
+	// created nothing, so abandoning it is free; from here on a cancellation
+	// would tear the pipeline out mid-creation and leave a half-built
+	// session the keep-or-clean gate never sees -- worse than the orphaned
+	// ledger entry the cancel exists to prevent. It is the boundary this
+	// package already draws twice over: --dry-run stops exactly here, and
+	// the popup's app.Lifetime covers the picks and not runSubmitCmd.
+	//
+	// A signal arriving from here on therefore does what it always did,
+	// near enough: main's handler re-raises it after its grace, and the
+	// process dies mid-plan rather than unwinding through a cancellation
+	// nothing below is prepared for. It is the one window main's own
+	// handshake cannot cover, because main is inside this call for as long
+	// as the plan takes.
+	return execute(context.WithoutCancel(ctx), resolved, req, deps, ops)
 }
 
 // refuseWhatTheFormRefuses is the form's submit-time validation that
