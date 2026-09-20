@@ -383,8 +383,8 @@ func TestRGB8_RecoversChannelsExactly(t *testing.T) {
 // over.
 //
 // #277 added three more fields, and each is a different argument for the
-// same floor. Success carries field_account.go's `-> <profile>` picker badge
-// and submitview.go's `+` step glyph. Accent carries the focus gutter and the
+// same floor. Success carries field_account.go's picker badge and
+// submitview.go's done glyph. Accent carries the focus gutter and the
 // running step's glyph, where "distinguishable" would be bar enough, but it
 // also carries words: widgets/picker.go's matchStyle repaints the runes a
 // query matched, and widgets/chiprow.go renders the active chip's label in
@@ -399,9 +399,10 @@ func TestRGB8_RecoversChannelsExactly(t *testing.T) {
 // to check it, which is the case WCAG's 3:1 large-text figure is least
 // defensible for. What decided it is the theme's OWN body text, measured on
 // these same three grounds: Text bottoms out at 3.14:1 (solarized-light, on
-// its focused row), with tokyo-night-day at 3.51:1, solarized at 4.29:1,
-// one-dark at 4.56:1 and kanagawa-lotus at 4.65:1 -- five of the seventeen
-// draw ordinary words below 4.5:1. A 4.5:1 floor on Branch would hold a
+// its focused row), with tokyo-night-day at 3.51:1 and solarized at 4.29:1
+// -- three of the seventeen draw ordinary words below 4.5:1, and one-dark
+// at 4.56:1 and kanagawa-lotus at 4.65:1 sit just over it. A 4.5:1 floor on
+// Branch would hold a
 // branch name to a higher standard than the title beside it, and charge 11
 // of the 17 their branch hue to do it: solarized's #d33682 walks 96 units in
 // sRGB to #e586b4, rose-pine-dawn's 76, nord's 63. At 3:1 it is three
@@ -477,8 +478,8 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 //
 // All five are asserted, not the two #273 floored, because that is what
 // makes "#277 moved no frames" a measurement rather than an observation
-// about the day it was run: catppuccin's Success, Branch and Accent clear
-// 3:1 on their worst ground by 8.46, 6.19 and 5.97, so extending the clamp
+// about the day it was run: catppuccin's Success, Branch and Accent measure
+// 8.46:1, 6.19:1 and 5.97:1 on their worst ground, so extending the clamp
 // to them could not have moved a frame, and this is where that stops being
 // true if a future edit lowers one of the three.
 func TestFloorContrast_KeepsLegibleSemanticsUnchanged(t *testing.T) {
@@ -625,6 +626,69 @@ func TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG(t *testing.T) {
 	}
 }
 
+// TestFloorContrast_MeasuresAgainstThePaintedCursorFill is the test above's
+// twin, one ground over, and #149 is what made it necessary: the third
+// ground a word is measured against is the fill widgets/picker.go repaints
+// its cursor row with, and since #149 that is SurfaceFill(PanelBG) rather
+// than the Surface field. Name the field instead and a word is measured
+// against a value twelve of the seventeen builtins never draw -- the same
+// defect as measuring against a raw selection_bg, and it went unguarded in
+// #149's first draft: reverting that one expression left the whole suite
+// green, because over the eighteen builtins the two ground lists happen to
+// agree on every outcome.
+//
+// They only happen to. floorContrast also runs on a [palette] override and
+// a custom herdr theme, where nothing constrains Surface to sit near the
+// value its raise lands on. This fixture is such a palette, and it isolates
+// the simpler half exactly as the test above does -- a value skipped
+// outright rather than raised short:
+//
+//	Surface      #343434  1.060:1 on the panel, so the fill IS raised
+//	SurfaceFill  #454545  what a cursor row is actually painted
+//	Danger       #868686  3.419:1 on the raw Surface, 2.633:1 on the fill
+//
+// Its focused row is DARKER than its panel, which no builtin is, and that
+// is the point rather than a curiosity: a raised fill is the panel walked
+// toward Text, and so is a floored ActiveRowBG, so whenever ActiveRowBG
+// needs flooring the two grounds coincide and ActiveRowBG alone forces the
+// raise. Separating them takes an ActiveRowBG that clears its own floor
+// without being walked -- here #000000 at 1.591:1 -- and is gentler on the
+// word than the fill is.
+func TestFloorContrast_MeasuresAgainstThePaintedCursorFill(t *testing.T) {
+	raw := Palette{
+		PanelBG:     lipgloss.Color("#303030"),
+		Text:        lipgloss.Color("#ffffff"),
+		Surface:     lipgloss.Color("#343434"), // 1.06:1 on the panel, under SurfaceFillContrastFloor
+		ActiveRowBG: lipgloss.Color("#000000"), // 1.59:1: clears its own floor untouched
+		Danger:      lipgloss.Color("#868686"),
+		Warning:     lipgloss.Color("#ffcc00"), // comfortably legible; not the subject
+	}
+	fill := raw.SurfaceFill(raw.PanelBG)
+	if colorEqual(fill, raw.Surface) {
+		t.Fatalf("the fixture's Surface is not raised -- it must be, or both ground lists name the same value")
+	}
+
+	// The cursor fill has to be the ONLY ground that can raise this Danger,
+	// or the test would pass without measuring the thing it is named for.
+	for _, ground := range []Color{raw.PanelBG, raw.Surface, raw.ActiveRowBG} {
+		if ratio, _ := contrastRatio(raw.Danger, ground); ratio < SemanticTextContrastFloor {
+			t.Fatalf("fixture Danger is %.3f:1 on %v -- it must clear every ground but the painted fill, or this test is not about the fill", ratio, ground)
+		}
+	}
+	if ratio, _ := contrastRatio(raw.Danger, fill); ratio >= SemanticTextContrastFloor {
+		t.Fatalf("fixture Danger is %.3f:1 on the PAINTED fill -- it must fail there for this test to measure anything", ratio)
+	}
+
+	got := floorContrast(raw)
+
+	if colorEqual(got.Danger, raw.Danger) {
+		t.Errorf("Danger came back unraised: floorContrast measured it against the Surface field, not the fill a picker paints its cursor row with (#149)")
+	}
+	if ratio, _ := contrastRatio(got.Danger, fill); ratio < SemanticTextContrastFloor-contrastAssertionEpsilon {
+		t.Errorf("raised Danger is %.3f:1 on the painted fill, want >= %.2f:1", ratio, SemanticTextContrastFloor)
+	}
+}
+
 // TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride is the case the
 // clamp exists for that an assertion over builtinPalettes could not have
 // covered, and it is the same argument ensureContrast's doc makes for
@@ -663,6 +727,18 @@ func TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride(t *testing.T) {
 // or near-white -- the host's background is equally unknown and a terminal
 // nobody can read is not a terminal -- so the fill has to carry BOTH. A mid
 // grey does, at 4.00:1 against white and 5.25:1 against black.
+//
+// SemanticTextContrastFloor and not 4.5:1, and the choice has to be said
+// out loud here because the subject is ordinary body text rather than a
+// one-word marker, which is the case that constant's own doc argues 3:1 is
+// weakest for. Asserted at 4.5 this test FAILS on its own subject: #7f7f7f
+// is 4.00:1 to white, and the carrying band tightens from [0.1000, 0.3000]
+// to [0.1750, 0.1833], which its 0.2122 is outside. That is not a reason to
+// pick the floor that passes. It is the impossibility below getting worse:
+// at a body-text figure, no fill carries the inherited foreground at all,
+// let alone the red as well. 3:1 is used because it is the floor this
+// package actually enforces on words, and because the conclusion the test
+// exists for only gets stronger at any higher one.
 //
 // This is a guard, not a fix, and the defect it guards is the one #276 is
 // open on: that same fill draws terminal's #ff0000 Danger at 1.00:1, so the
@@ -768,10 +844,21 @@ func TestBuiltinPalettes_ClampedSemanticsStayDistinct(t *testing.T) {
 // five colours walking toward one end of one ramp is five chances to
 // collide, and the Danger/Warning pair above is only one of them.
 //
-// Measured across the eighteen, the closest pair the clamp produces that
-// was not already identical is nord's Danger and Warning at 24.5, and the
-// only pair it narrows at all is tokyo-night-day's Branch and Accent, from
-// 101.6 to 88.7.
+// Measured across the eighteen, over all ten pairs: the clamp narrows 73 of
+// them, by up to 49.9 units (catppuccin-latte's Warning and Success, 201.8
+// to 151.9), so "it barely moves anything" is not the defence -- the
+// relative rule is. The closest it leaves a pair it narrowed is
+// rose-pine-dawn's Danger and Warning at 23.0, three units over the floor,
+// with nord's next at 24.5; both are pairs semanticSeparationFloor's own
+// doc already records.
+//
+// The closest non-identical pair of all is vesper's, at 18.0 -- Branch
+// beside Accent and Warning beside Branch, untouched by the clamp and
+// under the floor before it ran. That is the second reason this assertion
+// has to be relative rather than absolute, and it is not the same reason as
+// the byte-identical pairs above: a theme may draw two semantics close
+// together as well as identically, and neither is a defect this package
+// introduced.
 func TestBuiltinPalettes_ClampDoesNotCloseAGapItDidNotCreate(t *testing.T) {
 	for name := range builtinPalettes {
 		t.Run(name, func(t *testing.T) {
@@ -870,8 +957,18 @@ func TestFarthestEnd_PicksTheDirectionWithRoomLeft(t *testing.T) {
 // ramp is five chances to collide, not one. catppuccin is the right base
 // for it because its five are all distinct to begin with, which is not true
 // of every builtin -- rose-pine's Branch and Accent are the same #c4a7e7 by
-// the theme's own choice, and vesper's Warning and Accent the same
-// #ffc799.
+// the theme's own choice, and vesper's Warning and Accent the same #ffc799.
+//
+// Note how weak the second promise is, and that the weakness is honest
+// rather than an oversight: it asserts the five are not BYTE-identical, not
+// that they are still told apart. On the #c0c0c0 fixture all five do give
+// up, and they land on five near-whites within about 7 units of each other
+// in sRGB -- distinct, and indistinguishable. bestAlong cannot promise more
+// than it does: the give-up path is reached exactly when no point on any of
+// the five segments clears the floor, and on that tier there is nothing
+// left to spend. semanticSeparationFloor is the assertion that a clamp
+// which SUCCEEDS keeps its colours apart; this one is only that a clamp
+// which fails does not answer for two fields with one value.
 func TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing(t *testing.T) {
 	// Chosen by measurement, not by taste: a mid grey Surface that no walk
 	// from either semantic can clear 3:1 against while still clearing the

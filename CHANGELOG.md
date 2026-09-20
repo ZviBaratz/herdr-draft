@@ -549,22 +549,40 @@ without the popup. It drives herdr exclusively through the public CLI
   back for want of a `config_dir`.
 - `[palette]` overrides individual theme fields when herdr's own theme
   cannot be resolved from a static config file. Every region that marks
-  something — rules, the focused row's fill, input backgrounds — has a
-  **measured** contrast floor against the ground it is actually drawn on,
-  over all eighteen builtin herdr themes.
+  something — rules, the focused row's fill, input backgrounds, a picker's
+  cursor row and the secondary button face — has a **measured** contrast
+  floor against the ground it is actually drawn on, over all eighteen
+  builtin herdr themes. The last two were the twelve-of-seventeen case
+  (#149): `Surface` on the panel is 1.07:1 on rose-pine, a highlighted row
+  with no band and a cancel button with no face.
 
-  So does every colour that **carries a word**. `Danger` and `Warning` are
-  not emphasis over a legible word; they are the only rendering of the
-  words a refusal is made of — `invalid`, `check timed out`,
-  `sign in again`, `expired`, every repo-config note — and a word reaches
-  all three grounds this form paints: the panel, the focused row's fill,
-  and a picker's cursor row. Both are raised to 3:1 against all three at
-  load time, which reaches a custom herdr theme and a `[palette]` override
-  as well as the builtins. The raise moves lightness and leaves hue where
-  it was, so a clamped red stays a red. Ten of the eighteen needed a raise,
-  seven already cleared the floor and the `terminal` theme is exempt for
-  want of a ground this process can measure; the default theme is one of
-  the seven, so nothing on most screens changes at all.
+  So does every colour that **carries a word**, and all five of them do.
+  `Danger` and `Warning` are the only rendering of the words a refusal is
+  made of — `invalid`, `check timed out`, `sign in again`, `expired`, every
+  repo-config note. `Success` carries the account row's picker badge,
+  `Branch` every branch and base ref, `Accent` the runes a picker query
+  matched and the active chip's label. A word reaches all three grounds
+  this form paints: the panel, the focused row's fill, and a picker's
+  cursor row. All five are raised to 3:1 against all three at load time,
+  which reaches a custom herdr theme and a `[palette]` override as well as
+  the builtins. The raise moves lightness and leaves hue where it was, so a
+  clamped red stays a red.
+
+  3:1 rather than WCAG's 4.5:1 body-text figure, and `Branch` is where that
+  was decided, since a branch name is read character by character rather
+  than glanced at: the builtins' own `Text` falls below 4.5:1 on three of
+  them and below 3:1 on none, so 3:1 lands under every theme's own body
+  text without reaching any of it — while 4.5:1 would have walked 11 of the
+  17 branch colours, one of them 96 units in sRGB.
+
+  Twelve of the eighteen needed a raise on at least one field, five already
+  cleared the floor and the `terminal` theme is exempt for want of a ground
+  this process can measure; the default theme is one of the five, so
+  nothing on most screens changes at all. That theme is also where the one
+  known gap is: `terminal` draws `invalid` at 1.00:1 on its focused row,
+  and no choice of fill can fix it (#276) — the fill has to carry the host
+  terminal's own foreground, which pins it to the same luminance band the
+  ANSI red is in.
 
 ### Robustness
 

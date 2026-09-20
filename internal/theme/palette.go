@@ -572,9 +572,13 @@ const SurfaceFillContrastFloor = 1.25
 // by character to check it, not glanced at -- so the large-text figure is
 // least defensible there. But Text itself, measured on these same three
 // grounds, bottoms out at 3.14:1 (solarized-light on its focused row), with
-// tokyo-night-day at 3.51:1, solarized at 4.29:1, one-dark at 4.56:1 and
-// kanagawa-lotus at 4.65:1: five of the seventeen draw ordinary words below
-// 4.5:1. A 4.5:1 floor on Branch would hold a branch name to a higher
+// tokyo-night-day at 3.51:1 and solarized at 4.29:1: three of the seventeen
+// draw ordinary words below 4.5:1, and one-dark at 4.56:1 and
+// kanagawa-lotus at 4.65:1 sit just over it. Note the other end of the same
+// measurement, which is what makes 3 the right number rather than merely a
+// cheaper one: no builtin's Text is below 3:1 on any ground, so this floor
+// lands under every theme's own body text without reaching any of them.
+// A 4.5:1 floor on Branch would hold a branch name to a higher
 // standard than the title beside it, and charge 11 of the 17 their branch
 // hue to do it -- solarized's #d33682 walks 96 units in sRGB to #e586b4,
 // rose-pine-dawn's 76, nord's 63. At 3:1 it is three builtins and at most
@@ -662,7 +666,8 @@ func floorContrast(p Palette) Palette {
 // numbers, and note that catppuccin, the default, is exactly 1.000:1.
 //
 // The raise is ensureContrast, the same walk §5.3 uses for ActiveRowBG, so
-// there is one clamp in this package and not two. It mixes the GROUND toward
+// there is one clamp in this package and not three -- SurfaceFill is the
+// third caller. It mixes the GROUND toward
 // Text, which makes the input a slightly RAISED chip rather than an inset
 // well. That direction is deliberate: a well would be painted PanelBG, and a
 // PanelBG rectangle inside a focused row lines up vertically with the
