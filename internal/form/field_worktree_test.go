@@ -592,7 +592,7 @@ func TestWorktreeField_SetBaseStatusShown(t *testing.T) {
 	w := NewWorktreeField(theme.Default())
 	w.SetGitTarget(true)
 	turnOn(w)
-	w.SetBaseStatus("searching…")
+	w.SetBaseStatus("searching…", false)
 
 	frame := ansi.Strip(w.Panel(60, w.PanelRows()))
 	if !strings.Contains(frame, "searching…") {
@@ -1064,6 +1064,32 @@ func TestWorktreeField_FooterRungsFollowThePart(t *testing.T) {
 	if got := widest(); strings.Contains(got, "back to the branch") || !strings.Contains(got, "↑↓ pick a base") {
 		t.Errorf("rung below the top of the base list = %q, want ↑↓ to mean the list", got)
 	}
+	// That ↓ was itself a pick, so the ↵ rung is gone -- which is the
+	// OTHER half of the conditional and the half a frame of the top row
+	// cannot see. All four combinations are asserted below, because the
+	// rung appears on (at-top × picked) independently and a test of one
+	// diagonal proves nothing about the other.
+	if got := widest(); strings.Contains(got, "↵") {
+		t.Errorf("rung below the top, after the user's own pick = %q, want no ↵: it has nothing left to commit", got)
+	}
+
+	// Below the top with NO pick yet: the app put the cursor on a base it
+	// chose, and ↵ keeps it. Reached by SetBase rather than by a key,
+	// because any key that gets there is itself the pick -- which is the
+	// whole reason this branch needs a test of its own and why the two
+	// golden frames, both taken at the top row, cannot cover it.
+	fresh := NewWorktreeField(theme.Default())
+	fresh.SetGitTarget(true)
+	fresh.SetOn(true)
+	fresh.SetBaseItems(1, []string{"main", "release/1.4"})
+	fresh.SetBase("release/1.4")
+	focusBase(fresh)
+	if fresh.BasePicked() {
+		t.Fatalf("setup: BasePicked() = true with only the app having moved the base")
+	}
+	if got := fresh.FooterRungs()[0]; !strings.Contains(got, "↵ keep this base") {
+		t.Errorf("rung below the top with nothing picked yet = %q, want the ↵ that keeps it", got)
+	}
 
 	// A non-git target must not be promised keys that do nothing -- which
 	// is exactly what footer.go's own ZoneWorktree table would have said.
@@ -1372,6 +1398,20 @@ func TestWorktreeField_EnterCommitsTheBaseRowUnderTheCursor(t *testing.T) {
 	// form advances -- the account row's own gesture.
 	if w.Complete() {
 		t.Errorf("a second Complete() = true, want false so ↵ moves on")
+	}
+
+	// The half that is invisible at the moment of the press, and the
+	// reason Complete goes through noteBasePicked rather than setting the
+	// flag itself: the HOLD has to go too. Without this a later refresh
+	// naming the held ref re-applies it over the row the user just chose,
+	// which is #256's defect verbatim -- and every assertion above still
+	// passes, because they all read the field before any refresh.
+	if got := w.RequestedBase(); got != "" {
+		t.Errorf("RequestedBase() after the committing ↵ = %q, want \"\": the hold survived the user's decision", got)
+	}
+	w.SetBaseItems(1, []string{"remote-only", "develop"})
+	if got := w.Base(); got != "" {
+		t.Errorf("Base() after a refresh naming the held ref = %q, want the HEAD row the user committed to", got)
 	}
 }
 

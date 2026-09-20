@@ -240,6 +240,16 @@ const (
 // accountPicker (textInput_keys.go's isAccountPicker branch) only responds
 // to arrow keys, never to Tab-complete, unlike Atrium's directoryPicker/
 // modelField.
+//
+// ZoneWorktree is excluded for ZoneAccount's reason, and the exclusion is
+// load-bearing in the same way: the base picker it now contains COMPLETES
+// on ↵ (#269), and Tab is how a user leaves a row, so a Tab that committed
+// whatever the cursor was resting on would reintroduce the defect #256
+// removed. Note that the ZoneBase listed above is the v1 kind no section
+// has been mapped onto since the v2 collapse -- the live base picker is
+// part of ZoneWorktree, so adding either kind here on the reasoning that
+// "the base picker is a picker" is the mistake this paragraph exists to
+// stop.
 func (z ZoneKind) isPicker() bool {
 	switch z {
 	case ZoneIssue, ZoneDir, ZoneBase:

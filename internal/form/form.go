@@ -189,12 +189,19 @@ type (
 	// than submitting), the conservative default.
 	titleValuer interface{ Value() string }
 
-	// completer lets a picker-zone Section (ZoneKind.isPicker():
-	// Issue/Dir/Base) try MapKey's ActionComplete itself (e.g. a
-	// directory picker's shell-style path completion) before this
-	// package falls back to a plain advance -- MapKey's own doc: "a zone
-	// whose widget has nothing to complete should treat this the same
-	// as ActionAdvance."
+	// completer lets a Section accept what its cursor is resting on when
+	// MapKey returns ActionComplete, before this package falls back to a
+	// plain advance -- MapKey's own doc: "a zone whose widget has nothing
+	// to complete should treat this the same as ActionAdvance."
+	//
+	// Not the same population as ZoneKind.isPicker(), and never was: the
+	// implementers are DirField (shell-style path completion, on Tab),
+	// AccountField (↵ pins, v3 spec §10.3) and WorktreeField (↵ commits
+	// the base row, #269), and the last two are deliberately NOT picker
+	// zones -- see isPicker's own comment for why Tab must not do this.
+	// Of the three kinds isPicker does name, ZoneBase has had no section
+	// since the v2 collapse and ZoneIssue's section implements nothing
+	// here.
 	completer interface{ Complete() bool }
 
 	// newliner lets the Prompt-zone Section insert a literal newline on

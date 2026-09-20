@@ -397,7 +397,10 @@ without the popup. It drives herdr exclusively through the public CLI
   and on a base the form chose for you — and the base panel's footer says
   so while it has something to commit. Where it has nothing, `↵` goes on
   advancing to the next row exactly as it always has, which is also what
-  it does on the worktree toggle and the branch.
+  it does on the worktree toggle and the branch. It is not offered under a
+  line asking you to *pick* a base — a base no check could answer for
+  refuses the create until the value moves, and `↵` is the one pick that
+  does not move it.
 - The resolver is pure and is the only place the precedence chain exists.
 
 ### Repository-level config (`.herdr-draft.toml`)

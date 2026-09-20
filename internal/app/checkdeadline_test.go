@@ -762,3 +762,47 @@ func TestBaseSettle_PickingTheHeadRowAlsoRetiresTheUnknown(t *testing.T) {
 		t.Errorf("worktree panel = %q, want nothing about a base the user has left", panel)
 	}
 }
+
+// TestBaseUnknown_TheFooterDoesNotOfferToKeepAnUncheckedBase is #269 meeting
+// #202, and the collision is entirely in what the footer says.
+//
+// A base whose check timed out refuses the submit until the VALUE moves:
+// baseUnknown compares the unchecked ref against the base in play, so only
+// picking a different one clears it. ↵ is the one pick that does not move
+// the value -- it commits the row already under the cursor -- so under a
+// line reading "couldn't check <ref>: pick a base" it is an offer to do the
+// one thing that cannot help. The user would press the key the footer
+// taught them, watch the rung disappear, and find the refusal and the line
+// exactly as they were.
+//
+// The at-top case is clean without this and stays so: there ↵ retires a
+// hold, RequestedBase moves from the held ref to "", and the unknown clears
+// on its own. This is about the other arm.
+func TestBaseUnknown_TheFooterDoesNotOfferToKeepAnUncheckedBase(t *testing.T) {
+	m := timedOutBaseSettle(t, "old-branch")
+	m.worktree.SetOn(true)
+	m.worktree.SetBaseItems(9, []string{"main", "old-branch", "develop"})
+	m.worktree.SetBase("old-branch")
+	m.form.FocusByID("worktree")
+	for range 2 { // chips -> branch -> base
+		next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = next.(Model)
+	}
+	// Genuinely the state: below the top row, nothing picked by hand, and
+	// the unknown standing. Without the first two the rung would be absent
+	// for a reason that has nothing to do with the refusal.
+	if m.worktree.BasePicked() || !m.baseUnknown() {
+		t.Fatalf("setup: BasePicked = %v, baseUnknown = %v, want an unchecked base nobody has picked",
+			m.worktree.BasePicked(), m.baseUnknown())
+	}
+	rung := m.worktree.FooterRungs()[0]
+	// Loose on purpose: every wording of this part's rung names a base, so
+	// the guard holds whichever branch the field takes and the assertion
+	// below is what actually fires.
+	if !strings.Contains(rung, "base") {
+		t.Fatalf("setup: rung = %q, want the base part's own rung", rung)
+	}
+	if strings.Contains(rung, "↵") {
+		t.Errorf("rung under a refusal = %q, want no ↵: the panel is asking for a different base and ↵ keeps this one", rung)
+	}
+}
