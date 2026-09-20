@@ -446,9 +446,27 @@ Layering, outermost to innermost:
   `BranchExists`, the branch list, clauth and Linear are simply reads
   nobody has needed cancelled; `runSubmitCmd`, `plan.CleanCheck` and
   `plan.Clean` are the creation and teardown pipeline, and abandoning one
-  of those halfway is a worse outcome than letting it finish. Headless
-  `create` is on `Background` end to end — #211's decision was about the
-  popup.
+  of those halfway is a worse outcome than letting it finish — which is the
+  same line `create` draws (#252): its pre-flight runs on the caller's
+  context, `plan.Execute` gets `context.WithoutCancel` of it, and
+  `--dry-run` has always stopped at that exact boundary.
+- **`create` answers a signal; the popup does not have to.** bubbletea
+  already notifies on `SIGINT`/`SIGTERM` and turns them into
+  `InterruptMsg`/`QuitMsg` (v2.0.8 `tea.go`), so the popup reaches
+  `runProgram`'s teardown the ordinary way — measured, and closing the
+  pane mid-pick kills both the popup and the picker too. `create` had no
+  such thing and left the picker running (#252). `main.signalTeardown` is
+  the answer, and its order is the whole of it: cancel, wait
+  `shutdownGrace` for the kill to land, then **re-raise the same signal**
+  so the process dies as it would have with no handler. That last step is
+  not ceremony. Installing a handler removes the default "terminate now",
+  and `create`'s exit codes are a documented table where 2 means "fix your
+  invocation" — a create killed by a supervisor that reported 2 would be
+  lying to it. Re-raising leaves the table alone and gives the shell the
+  conventional 128+n. Note what this rules out: a handler that stays
+  installed would make a `create` past the pre-flight swallow the first
+  signal and become immune to `SIGTERM` until the plan finished, which is
+  worse than the bug it set out to fix.
 - **App-layer state is diffed, not event-driven.** `form.Model` exposes no
   "section X changed" signal; `Model.reactToChanges` (in `app.go`) compares
   each relevant getter against a last-observed snapshot after every routed

@@ -410,7 +410,14 @@ without the popup. It drives herdr exclusively through the public CLI
   for a session that never existed. A pick that had ALREADY written is
   unchanged, because the protocol has no verb for handing an account back.
   The `--dry-run` preview dies with the popup too, and so does the `git
-  rev-parse` a lane's base is resolved with. With it configured, the
+  rev-parse` a lane's base is resolved with. **`create` answers `SIGINT`
+  and `SIGTERM` the same way** (#252), where before it had no cancellation
+  at all and a `kill` left the picker to finish: the pre-flight is
+  cancelled, the kill is given a moment to land, and the signal is then
+  re-raised so the process still dies with the status it would have had.
+  `plan.Execute` is deliberately outside that — a pre-flight abort has
+  created nothing, while an abort mid-plan would leave a half-built
+  session nothing reports on. With it configured, the
   `account` row grows an `auto` selection and `create` accepts
   `--account auto`. The picker's `warnings` and `machine` figures (load,
   cpus, swap) are shown on the `account` panel, with an unmeasured figure

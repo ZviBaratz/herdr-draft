@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -226,8 +228,11 @@ func runPopup() int {
 	})
 }
 
-// shutdownGrace is how long the process stays alive, after the form is gone,
-// for the cancellation of its own background work to be delivered (#211).
+// shutdownGrace is how long the process stays alive, after it has decided to
+// go, for the cancellation of its own background work to be delivered: after
+// the form is gone for the popup (#211), and after a signal for `create`
+// (#252). One number, because both are waiting on the same thing -- a picker
+// being killed by exec.CommandContext.
 //
 // It is sized for the KILL, not for the call that is being killed. Measured
 // on 2026-09-20 over fifty runs against a `#!/bin/sh` + `sleep` stub: from
@@ -272,11 +277,66 @@ func runSkill(stdout, stderr io.Writer) int {
 	return skill.Run(stdout, stderr, os.Executable, herdrc.Version)
 }
 
+// signalTeardown is what SIGINT and SIGTERM mean to `create` (#252), in the
+// order that makes it worth doing: cancel the pre-flight, so the account
+// picker dies with the context it was started on; wait for that kill to
+// land; and only then die, with the signal that was sent.
+//
+// Dying with the same signal is not ceremony. Installing a handler at all
+// takes away the default "terminate now", and `create`'s exit codes are a
+// documented table where 2 already means "fix your invocation" -- so a
+// create killed by a supervisor that reported 2 would be telling its caller
+// something false. Re-raising leaves that table alone and gives the shell
+// the conventional 128+n it expects.
+//
+// It is `create` that needs this and not the popup, which bubbletea already
+// covers: v2.0.8 notifies on both signals and turns them into InterruptMsg/
+// QuitMsg (tea.go's own "SIGTERM is sent by unix utilities (like kill)"),
+// so Run returns and runProgram's teardown happens the ordinary way.
+//
+// cancel, grace and die are parameters rather than the real thing so the
+// policy can be tested in a process that must not kill itself.
+func signalTeardown(sigs <-chan os.Signal, cancel context.CancelFunc, grace time.Duration, die func(os.Signal)) {
+	s, ok := <-sigs
+	if !ok {
+		return
+	}
+	cancel()
+	// The same wait, for the same reason, as the popup's shutdownGrace: the
+	// kill reaches the picker from exec.CommandContext's watcher goroutine,
+	// which has to be scheduled first. There is no WaitGroup to shorten it
+	// here -- create has no Lifetime, because it has no tea.Program to
+	// outlive -- so it is spent in full, which is single-digit milliseconds
+	// of need and a quarter-second of margin, once, on a process that is
+	// about to end anyway.
+	time.Sleep(grace)
+	die(s)
+}
+
+// reraise re-sends a signal to this process with the default disposition
+// back in place, which terminates it exactly as it would have terminated
+// with no handler installed.
+func reraise(s os.Signal) {
+	signal.Reset(s)
+	if p, err := os.FindProcess(os.Getpid()); err == nil {
+		_ = p.Signal(s)
+	}
+}
+
 // runCreate is spec §13's headless verb. The plugin context is read here
 // exactly as runPopup reads it -- it is normally absent for this path,
 // which is why the three per-pane variables are read alongside it.
 func runCreate(args []string) int {
-	return create.Run(context.Background(), args, create.Env{
+	// #252: the pre-flight -- everything up to and including the account
+	// pick -- runs on a context a signal cancels. plan.Execute does not;
+	// internal/create draws that seam and says why.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go signalTeardown(sigs, cancel, shutdownGrace, reraise)
+
+	return create.Run(ctx, args, create.Env{
 		ConfigDir:   os.Getenv("HERDR_PLUGIN_CONFIG_DIR"),
 		StateDir:    os.Getenv("HERDR_PLUGIN_STATE_DIR"),
 		ContextJSON: os.Getenv("HERDR_PLUGIN_CONTEXT_JSON"),

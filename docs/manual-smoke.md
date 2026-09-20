@@ -1717,6 +1717,38 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### A signalled `create` takes the picker with it (#252) — 2026-09-20
+
+herdr 0.9.0. `main` at `65f14db` and `zvi/fix-252-create-signals`, both
+built with `go build`. **Route A0**: a disposable headless `herdr server`
+under `/var/tmp/x252` with its own `XDG_CONFIG_HOME`/`XDG_STATE_HOME`,
+`onboarding = false` and `[worktrees] directory` under the same path, an
+`HERDR_BIN_PATH` wrapper pinning `HERDR_SESSION`, a throwaway `git init`
+repository, and a scratch plugin config/state dir. All four plugin
+variables were set on every run, `HERDR_PLUGIN_ID` included.
+
+The stub picker answered a `--dry-run` at once and, on the commit pick,
+logged `start`, slept **5s**, and only then logged the line standing in
+for a real picker's ledger write — then refused with exit 2, so a run that
+was not interrupted could not reach the plan either. Each case ran
+`create --title "fix 252" --account auto --no-worktree --placement
+new-space` in a process group of its own, so the `SIGTERM` reached
+`create` **alone** and not the picker with it. That is the whole point:
+a signal to the group is already covered, by the terminal.
+
+| Case | Result |
+|---|---|
+| `main`, `SIGTERM` 2s in | **Reproduced.** `create` died instantly (`rc=-15`, 0.00s) and the picker went on to log its ledger line 3s later. |
+| the fix, `SIGTERM` 2s in | `create` exited after **0.25s** — the grace — still with `rc=-15`, so a shell still sees 143. The ledger line never appeared, then or five seconds later. |
+| the fix, not signalled | Unchanged: 5.04s (the picker's own sleep, no grace added), the refusal reported as `picker refused: stub refuses after the sleep`, exit 2, and `workspace list` still empty. |
+
+The re-raise is what keeps the third column of that table honest: `rc=-15`
+on both rows rather than one of `create`'s own exit codes, where 2 already
+means "fix your invocation".
+
+Teardown: the disposable session was stopped and deleted, the tree
+removed, and the picker process count confirmed 0.
+
 ### the extra argument and the usage window, live (Cell 13 step 4, #219/#215) — 2026-09-20
 
 herdr 0.9.0, Claude Code on Opus 5 at `high` in auto mode, with the

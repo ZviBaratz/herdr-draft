@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ZviBaratz/herdr-draft/internal/app"
@@ -274,5 +276,58 @@ func TestAFailedRunStillCancelsTheWork(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "terminal is not a terminal") {
 		t.Fatalf("stderr = %q, want the program's own error", stderr.String())
+	}
+}
+
+// --- a signalled create takes the picker with it (#252) ---------------------
+
+// The policy, in order: cancel the pre-flight so the account picker is killed
+// with it, wait long enough for that kill to land, and only then die -- with
+// the signal that was sent, so the exit status is the conventional 128+n
+// rather than one of create's own codes, where 2 already means "fix your
+// invocation".
+func TestSignalTeardownCancelsThenDiesWithTheSameSignal(t *testing.T) {
+	const grace = 80 * time.Millisecond
+	sigs := make(chan os.Signal, 1)
+	var order []string
+	var died os.Signal
+	var cancelledAt, diedAt time.Time
+	done := make(chan struct{})
+
+	go signalTeardown(sigs,
+		func() { order = append(order, "cancel"); cancelledAt = time.Now() },
+		grace,
+		func(s os.Signal) { order = append(order, "die"); died, diedAt = s, time.Now(); close(done) })
+
+	sigs <- syscall.SIGTERM
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the teardown never reached the dying half")
+	}
+
+	if want := []string{"cancel", "die"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("order = %v, want %v -- dying first would leave the picker running, which is the bug", order, want)
+	}
+	if died != syscall.SIGTERM {
+		t.Fatalf("died with %v, want the signal that was sent", died)
+	}
+	if waited := diedAt.Sub(cancelledAt); waited < grace {
+		t.Fatalf("waited %s between the cancel and the death, want at least the %s grace -- exec.CommandContext kills the picker from a watcher goroutine that has to be scheduled first", waited, grace)
+	}
+}
+
+// A closed channel is not a signal. Nothing is cancelled and nothing dies --
+// which matters because the alternative is a create that kills itself on the
+// way out of an ordinary successful run.
+func TestSignalTeardownIgnoresAClosedChannel(t *testing.T) {
+	sigs := make(chan os.Signal)
+	close(sigs)
+	cancelled, died := false, false
+
+	signalTeardown(sigs, func() { cancelled = true }, time.Second, func(os.Signal) { died = true })
+
+	if cancelled || died {
+		t.Fatalf("a closed channel produced cancel=%v die=%v, want neither", cancelled, died)
 	}
 }
