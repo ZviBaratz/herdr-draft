@@ -383,7 +383,10 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 		}
 	}
 
-	// A named picker is PROBED before it is trusted (spec §5.6 as amended).
+	// A named picker is PROBED before it is trusted (#122; the protocol
+	// itself is README's "Account picker protocol"). No spec section
+	// carries this: the brief it was written from cited a "§5.6" that
+	// exists in no document in docs/specs.
 	// Naming one is the user's explicit consent to run it; the probe is what
 	// checks that the thing under that name implements the protocol, because
 	// a same-named stranger routing account credentials is worse than no

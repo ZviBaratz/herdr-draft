@@ -48,7 +48,7 @@ func TestOptions_NothingSetIsNilInThePlan(t *testing.T) {
 
 // The row follows the agent row, through the real message path: options
 // chosen for claude never ride along with codex, and come back with
-// claude (spec §7.2).
+// claude (agent-options spec §7.2).
 func TestOptions_FollowTheAgentKind(t *testing.T) {
 	m := newTestModel(t, testSetup{Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude", "codex"}}}})
 	m.form.FocusByID("options")
@@ -94,7 +94,7 @@ func TestOptions_AStaleRowSendsTheLaunchedKindsDefault(t *testing.T) {
 }
 
 // config.toml's refused entries are on the panel of the row they would
-// have configured (spec §6.2).
+// have configured (agent-options spec §6.2).
 func TestOptions_ConfigWarningsReachThePanel(t *testing.T) {
 	const warning = `ignoring [agents.options.claude] effort = "ultra": expected one of low, medium, high, xhigh, max, or inherit`
 	m := newTestModel(t, testSetup{Config: config.Config{Agents: config.AgentsConfig{OptionWarnings: []string{warning}}}})

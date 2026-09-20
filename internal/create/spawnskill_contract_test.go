@@ -284,11 +284,11 @@ func TestSkillInstallDirMatchesItsName(t *testing.T) {
 	}
 }
 
-// TestRenderedSkillHasNoFormattingError covers spec §8.2's "no %!-shaped
-// formatting error". Render substitutes with ReplaceAll and Run writes
-// with Fprint, so there is no format verb to get wrong today -- this is
-// what would notice the day somebody reaches for Fprintf and hands it a
-// document full of literal % signs.
+// TestRenderedSkillHasNoFormattingError covers spawn-skill spec §8.2's
+// "no %!-shaped formatting error". Render substitutes with ReplaceAll and
+// Run writes with Fprint, so there is no format verb to get wrong today
+// -- this is what would notice the day somebody reaches for Fprintf and
+// hands it a document full of literal % signs.
 func TestRenderedSkillHasNoFormattingError(t *testing.T) {
 	if i := strings.Index(renderedSkill(), "%!"); i >= 0 {
 		t.Errorf("the rendered skill carries a formatting error at byte %d", i)

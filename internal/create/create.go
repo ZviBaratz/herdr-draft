@@ -12,7 +12,7 @@
 // two plan.Inputs, because a promise like this one decays the moment only
 // one side is exercised.
 //
-// Everything below the plan is unchanged (spec §15): plan.Build stays pure
+// Everything below the plan is unchanged (v2 spec §15): plan.Build stays pure
 // and receives every fact already resolved by this caller, plan.Execute
 // runs the ops, and internal/plan/dialog.go's screen guard still decides
 // whether a queued prompt may be sent. A prompt that guard withholds is
@@ -22,7 +22,7 @@
 //
 // plan.Execute runs synchronously on the calling goroutine and reports
 // progress through an unbuffered callback, so it is never abandoned
-// mid-pipeline -- the same hazard spec §12 names for the form's Esc
+// mid-pipeline -- the same hazard v2 spec §12 names for the form's Esc
 // handling, with no TUI around it.
 package create
 

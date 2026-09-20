@@ -2032,7 +2032,7 @@ func TestBrowsingIsReachableByTypingThroughUpdate(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	m = next.(Model)
 	m.Init()
-	// v2 opens focus on the title (spec §8), so reaching the project row
+	// v2 opens focus on the title (v2 spec §8), so reaching the project row
 	// is now a deliberate move -- exactly as it is for a real user.
 	if cmd := m.form.FocusByID("dir"); cmd != nil {
 		cmd()

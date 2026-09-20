@@ -142,7 +142,7 @@ func TestLayoutFrame_FooterSurvivesEveryHeight(t *testing.T) {
 // NOTE, flagged for review: the issue's test plan asks for "Rows == n for
 // every h >= n + 1". That is the SUPERSEDED ladder's floor, in which the
 // panel and its rule were dropped as a unit before the stack scrolled.
-// The correction that the issue itself closes with -- spec §9's "panel
+// The correction that the issue itself closes with -- v2 spec §9's "panel
 // content never falls below three rows" -- ranks the panel floor above
 // the stack's completeness, which moves the floor to n + 4 and is what
 // its own worked table shows (n = 8: eight rows at h = 12, seven at

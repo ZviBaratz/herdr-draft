@@ -123,8 +123,8 @@ func TestOptionsField_ATypedSeedLandsOnOther(t *testing.T) {
 	}
 }
 
-// The part grammar (spec §7.2, the worktree panel's): ↑↓ between parts,
-// ←→ along the focused part's chips.
+// The part grammar (agent-options spec §7.2, the worktree panel's): ↑↓
+// between parts, ←→ along the focused part's chips.
 func TestOptionsField_PartGrammar(t *testing.T) {
 	f := newClaudeOptions(t, nil)
 	f.Focus()
@@ -276,8 +276,9 @@ func TestOptionsField_TypingOnAClosedLineIsIgnored(t *testing.T) {
 	}
 }
 
-// The name input refuses an edit that would make an invalid id (spec
-// §7.2): a leading dash is how a value becomes a flag.
+// The name input refuses an edit that would make an invalid id
+// (agent-options spec §7.2): a leading dash is how a value becomes a
+// flag.
 func TestOptionsField_NameRefusesAnInvalidEdit(t *testing.T) {
 	f := newClaudeOptions(t, nil)
 	f.Focus()

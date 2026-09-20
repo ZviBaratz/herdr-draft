@@ -62,7 +62,7 @@ func TestLoad_AgentOptionsInheritIsUnset(t *testing.T) {
 
 // Everything the table can get wrong degrades with a reason and keeps the
 // rest of the table: nothing here may stop the popup opening, and nothing
-// may vanish without a word (spec §6.2).
+// may vanish without a word (agent-options spec §6.2).
 func TestLoad_AgentOptionsDegradeWithAReason(t *testing.T) {
 	cfg, err := Load(writeConfigBody(t, `
 [agents.options]
