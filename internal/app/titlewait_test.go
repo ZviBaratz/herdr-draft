@@ -239,7 +239,7 @@ func TestSubmit_ATitleCheckFromBeforeAClearDoesNotReleaseIt(t *testing.T) {
 
 	next, _ := m.Update(form.ClearRequestedMsg{})
 	m = settle(t, next.(Model))
-	for i := 0; m.titleReqVersion < before.req.version-1; i++ {
+	for i := 0; m.reqs.title < before.req.version-1; i++ {
 		retypeTitle(&m, fmt.Sprintf("draft %d", i))
 	}
 	cmds := retypeTitle(&m, "Fresh")

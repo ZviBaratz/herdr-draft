@@ -283,8 +283,8 @@ type dirResultMsg struct {
 // counter and returns a tea.Cmd that sleeps out debounceDelay before
 // reporting the fire -- see runDirCheck for the actual check this leads to.
 func (m *Model) scheduleDirCheck(path string) tea.Cmd {
-	m.dirReqVersion++
-	v := m.dirReqVersion
+	m.reqs.dir++
+	v := m.reqs.dir
 	// The row says so from here rather than from where the check actually
 	// starts (handleDirDebounce), because the hold starts here too: a ⌃S
 	// inside the debounce window is held by dirCheckPending just as one
@@ -401,7 +401,7 @@ func projectMemoryKey(path string, exists bool, repoRoot string) string {
 }
 
 func (m Model) handleDirDebounce(msg dirDebounceMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.dirReqVersion {
+	if msg.req.version != m.reqs.dir {
 		return m, nil // superseded by a newer directory selection
 	}
 	return m, m.runDirCheck(msg.req)
@@ -421,7 +421,7 @@ func (m Model) handleDirDebounce(msg dirDebounceMsg) (Model, tea.Cmd) {
 // (Model.worktreeTouched and friends), which replaced the one-shot flag
 // this handler used to carry.
 func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.dirReqVersion {
+	if msg.req.version != m.reqs.dir {
 		return m, nil // a newer request landed while this one was in flight
 	}
 	m.dirLandedVersion = msg.req.version
@@ -520,8 +520,8 @@ type browseResultMsg struct {
 // Model.reactToTypedDir bumps this same counter directly (without
 // scheduling anything) when the user leaves path mode.
 func (m *Model) scheduleBrowse(dirRaw string) tea.Cmd {
-	m.browseReqVersion++
-	v := m.browseReqVersion
+	m.reqs.browse++
+	v := m.reqs.browse
 	clock := m.deps.Clock
 	return func() tea.Msg {
 		clock.sleep(debounceDelay)
@@ -541,7 +541,7 @@ func (m Model) runBrowse(req request) tea.Cmd {
 }
 
 func (m Model) handleBrowseDebounce(msg browseDebounceMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.browseReqVersion {
+	if msg.req.version != m.reqs.browse {
 		return m, nil // superseded by a newer directory, or by leaving path mode
 	}
 	return m, m.runBrowse(msg.req)
@@ -566,7 +566,7 @@ func (m Model) handleBrowseDebounce(msg browseDebounceMsg) (Model, tea.Cmd) {
 // describing the previous selection, and a submit in that window would
 // hand herdr a directory nothing had ever checked.
 func (m Model) handleBrowseResult(msg browseResultMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.browseReqVersion {
+	if msg.req.version != m.reqs.browse {
 		return m, nil // a newer request landed while this one was in flight
 	}
 	m.supplyDirCandidates(msg.entries)
@@ -597,8 +597,8 @@ type baseResultMsg struct {
 type fetchPruneDoneMsg struct{ path string }
 
 func (m *Model) scheduleBaseCheck(path string) tea.Cmd {
-	m.baseReqVersion++
-	v := m.baseReqVersion
+	m.reqs.base++
+	v := m.reqs.base
 	clock := m.deps.Clock
 	return func() tea.Msg {
 		clock.sleep(debounceDelay)
@@ -625,7 +625,7 @@ func (m Model) runBaseCheck(req request) tea.Cmd {
 }
 
 func (m Model) handleBaseDebounce(msg baseDebounceMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.baseReqVersion {
+	if msg.req.version != m.reqs.base {
 		return m, nil
 	}
 	return m, m.runBaseCheck(msg.req)
@@ -645,7 +645,7 @@ func (m Model) handleBaseDebounce(msg baseDebounceMsg) (Model, tea.Cmd) {
 // refs could not be read), and the previous project's branch must not go
 // on being displayed beside the new project's name.
 func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.baseReqVersion {
+	if msg.req.version != m.reqs.base {
 		return m, nil
 	}
 	// Claimed here rather than read below, so that a result which takes the
@@ -724,13 +724,13 @@ func (m Model) handleFetchPruneDone(msg fetchPruneDoneMsg) (Model, tea.Cmd) {
 	if m.dir.Value() != msg.path {
 		return m, nil
 	}
-	m.baseReqVersion++
+	m.reqs.base++
 	// Which re-list is the fetch's, for handleBaseResult to recognise. The
 	// version rather than a bool, and it needs no clearing: every later
-	// request bumps baseReqVersion past it, so a flag the form navigates
+	// request bumps reqs.base past it, so a flag the form navigates
 	// away from can never match again.
-	m.relistAfterFetch = m.baseReqVersion
-	return m, m.runBaseCheck(request{version: m.baseReqVersion, key: msg.path})
+	m.relistAfterFetch = m.reqs.base
+	return m, m.runBaseCheck(request{version: m.reqs.base, key: msg.path})
 }
 
 // keepChosenBaseAcrossRelist is #212, and it runs BEFORE the re-list above
@@ -1030,8 +1030,8 @@ type titleResultMsg struct {
 // same "capture the relevant state at call time" discipline Atrium's own
 // runBranchSearch uses for m.newSessionPath.
 func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn bool) tea.Cmd {
-	m.titleReqVersion++
-	v := m.titleReqVersion
+	m.reqs.title++
+	v := m.reqs.title
 	clock := m.deps.Clock
 	return func() tea.Msg {
 		clock.sleep(debounceDelay)
@@ -1127,7 +1127,7 @@ func WorkspaceLabelled(workspaces []herdrc.WorkspaceInfo, label string) (herdrc.
 }
 
 func (m Model) handleTitleDebounce(msg titleDebounceMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.titleReqVersion {
+	if msg.req.version != m.reqs.title {
 		return m, nil
 	}
 	return m, m.runTitleCheck(msg)
@@ -1136,11 +1136,11 @@ func (m Model) handleTitleDebounce(msg titleDebounceMsg) (Model, tea.Cmd) {
 // handleTitleResult applies a duplicate-verdict result to TitleField. The
 // version staleness gate already guarantees msg.req.key still equals
 // TitleField's own CURRENT Value() here: any title edit since scheduling
-// would have bumped titleReqVersion (see reactToChanges), making this
+// would have bumped reqs.title (see reactToChanges), making this
 // result stale and dropped above -- so there is nothing further to check
 // before calling SetVerdict.
 func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.titleReqVersion {
+	if msg.req.version != m.reqs.title {
 		return m, nil
 	}
 	m.titleLandedVersion = msg.req.version
@@ -1325,8 +1325,8 @@ func (m *Model) schedulePickerPreview(path string) tea.Cmd {
 	if m.deps.Picker == nil || m.account == nil {
 		return nil
 	}
-	m.pickerReqVersion++
-	v := m.pickerReqVersion
+	m.reqs.picker++
+	v := m.reqs.picker
 	clock := m.deps.Clock
 	m.account.SetPickerPreview(form.AccountPickerPreview{Pending: true})
 	return func() tea.Msg {
@@ -1338,7 +1338,7 @@ func (m *Model) schedulePickerPreview(path string) tea.Cmd {
 // handlePickerDebounce drops a superseded debounce and runs a current one --
 // the same two lines handleDirDebounce is.
 func (m Model) handlePickerDebounce(msg pickerDebounceMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.pickerReqVersion {
+	if msg.req.version != m.reqs.picker {
 		return m, nil // superseded by a newer project directory
 	}
 	return m, m.runPickerPreview(msg.req)
@@ -1372,7 +1372,7 @@ func (m Model) runPickerPreview(req request) tea.Cmd {
 
 // handlePickerPreview applies a CURRENT preview to the account row.
 func (m Model) handlePickerPreview(msg pickerPreviewMsg) (Model, tea.Cmd) {
-	if msg.req.version != m.pickerReqVersion || m.account == nil {
+	if msg.req.version != m.reqs.picker || m.account == nil {
 		return m, nil
 	}
 	if m.submitResolving {
@@ -1576,8 +1576,8 @@ func (m *Model) reloadClauthCmd() tea.Cmd {
 	if src == nil {
 		return nil
 	}
-	m.clauthReqVersion++
-	v := m.clauthReqVersion
+	m.reqs.clauth++
+	v := m.reqs.clauth
 	return func() tea.Msg {
 		st, err := src.Status(context.Background())
 		if err != nil {
@@ -1589,7 +1589,7 @@ func (m *Model) reloadClauthCmd() tea.Cmd {
 
 // handleClauthResult applies a current reload to AccountField -- a no-op
 // when the field wasn't constructed at all, or when a fresher reload has
-// since been scheduled (msg.version != m.clauthReqVersion -- see
+// since been scheduled (msg.version != m.reqs.clauth -- see
 // clauthResultMsg's own doc comment).
 //
 // What it does with the result depends on which of the two states the row
@@ -1606,7 +1606,7 @@ func (m *Model) reloadClauthCmd() tea.Cmd {
 //   - An UNAVAILABLE row is rebuilt from what the reload found -- #200 and
 //     its decision comment (2026-09-20). See recoverAccountRow.
 func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
-	if msg.version != m.clauthReqVersion || m.account == nil {
+	if msg.version != m.reqs.clauth || m.account == nil {
 		return m, nil
 	}
 	if m.clauthUnavailable != "" {

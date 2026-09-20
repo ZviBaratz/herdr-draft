@@ -481,7 +481,7 @@ func TestDirResult_AppliesWorktreeDefaultOnceAndReChecksTitle(t *testing.T) {
 	m.title.SetTitle("t", false)
 	m.worktree.SetBranch("zvi/t", false)
 
-	req := request{version: m.dirReqVersion, key: "/repo"}
+	req := request{version: m.reqs.dir, key: "/repo"}
 	m2, cmd := m.handleDirResult(dirResultMsg{req: req, dirExists: true, isGitRepo: true})
 	m = m2
 	if !m.worktree.On() {
@@ -503,7 +503,7 @@ func TestDirResult_AppliesWorktreeDefaultOnceAndReChecksTitle(t *testing.T) {
 	// actually mattered -- see
 	// TestDirResult_MemoryReAppliesAcrossASecondProjectChange for the case
 	// where a second project SHOULD move it.
-	req2 := request{version: m.dirReqVersion, key: "/other-repo"}
+	req2 := request{version: m.reqs.dir, key: "/other-repo"}
 	m2, cmd = m.handleDirResult(dirResultMsg{req: req2, dirExists: true, isGitRepo: true})
 	m = m2
 	if cmd != nil {
@@ -696,7 +696,7 @@ func TestBaseResult_ErrorSetsCouldNotList(t *testing.T) {
 	m.worktree.SetOn(true)
 
 	req := request{version: 1, key: "/repo"}
-	m.baseReqVersion = 1
+	m.reqs.base = 1
 
 	m2, cmd := m.handleBaseResult(baseResultMsg{req: req, err: true})
 	m = m2
@@ -806,7 +806,7 @@ func TestFetchPruneFiresOncePerRepoPerFormOpen(t *testing.T) {
 	m := newTestModel(t, testSetup{Git: git})
 
 	req := request{version: 1, key: "/repo"}
-	m.baseReqVersion = 1
+	m.reqs.base = 1
 
 	m2, cmd := m.handleBaseResult(baseResultMsg{req: req, refs: []string{"main"}})
 	m = m2
@@ -1209,8 +1209,8 @@ func TestView_EnablesAltScreenAndMouse(t *testing.T) {
 func TestInit_DoesNotLoseNewsCounterState(t *testing.T) {
 	m := newTestModel(t, testSetup{})
 
-	if m.dirReqVersion == 0 {
-		t.Fatalf("dirReqVersion = 0 right after New, want New to have already scheduled the first dir-validity request")
+	if m.reqs.dir == 0 {
+		t.Fatalf("reqs.dir = 0 right after New, want New to have already scheduled the first dir-validity request")
 	}
 
 	var found bool
@@ -1220,8 +1220,8 @@ func TestInit_DoesNotLoseNewsCounterState(t *testing.T) {
 			continue
 		}
 		found = true
-		if dd.req.version != m.dirReqVersion {
-			t.Fatalf("dirDebounceMsg.req.version = %d, want it to match New's own dirReqVersion %d", dd.req.version, m.dirReqVersion)
+		if dd.req.version != m.reqs.dir {
+			t.Fatalf("dirDebounceMsg.req.version = %d, want it to match New's own reqs.dir %d", dd.req.version, m.reqs.dir)
 		}
 		next, runCmd := m.handleDirDebounce(dd)
 		m = next
@@ -1324,12 +1324,12 @@ func TestUpdate_IssueChosenRoutesThroughTopLevelDispatch(t *testing.T) {
 func TestUpdate_DefaultRoutesToFormAndReactsToChanges(t *testing.T) {
 	m := newTestModel(t, testSetup{})
 	m.dir.SetCandidates(99, []string{"/repo-a", "/repo-b"})
-	versionBefore := m.dirReqVersion
+	versionBefore := m.reqs.dir
 
 	next, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
-	if m.dirReqVersion == versionBefore {
-		t.Fatalf("dirReqVersion unchanged after a directory-candidate change routed through Update, want reactToChanges to have scheduled a fresh check")
+	if m.reqs.dir == versionBefore {
+		t.Fatalf("reqs.dir unchanged after a directory-candidate change routed through Update, want reactToChanges to have scheduled a fresh check")
 	}
 	_ = cmd
 }
@@ -1646,7 +1646,7 @@ func TestHeaderContextNamesTheSelectedProjectAndItsBranch(t *testing.T) {
 		Ctx: herdrc.Context{WorkspaceCwd: "/home/zvi/Projects/herdr-draft"},
 	})
 
-	req := request{version: m.baseReqVersion, key: m.dir.Value()}
+	req := request{version: m.reqs.base, key: m.dir.Value()}
 	m2, _ := m.handleBaseResult(m.runBaseCheck(req)().(baseResultMsg))
 	m = m2
 
@@ -1674,7 +1674,7 @@ func TestHeaderContextOnANonRepositoryDropsTheBranchHalf(t *testing.T) {
 		Ctx: herdrc.Context{WorkspaceCwd: "/home/zvi/Projects/herdr-draft"},
 	})
 
-	req := request{version: m.baseReqVersion, key: m.dir.Value()}
+	req := request{version: m.reqs.base, key: m.dir.Value()}
 	m2, _ := m.handleBaseResult(m.runBaseCheck(req)().(baseResultMsg))
 	m = m2
 	if header := ansi.Strip(strings.SplitN(m.form.ViewAt(80, 24), "\n", 2)[0]); !strings.Contains(header, "· main") {
@@ -1682,7 +1682,7 @@ func TestHeaderContextOnANonRepositoryDropsTheBranchHalf(t *testing.T) {
 	}
 
 	// The project moves to something git cannot list refs for.
-	m2, _ = m.handleBaseResult(baseResultMsg{req: request{version: m.baseReqVersion, key: "/tmp/plain"}, err: true})
+	m2, _ = m.handleBaseResult(baseResultMsg{req: request{version: m.reqs.base, key: "/tmp/plain"}, err: true})
 	m = m2
 
 	header := ansi.Strip(strings.SplitN(m.form.ViewAt(80, 24), "\n", 2)[0])
@@ -1707,7 +1707,7 @@ func TestBaseListNamesTheCurrentBranchOnTheHeadRow(t *testing.T) {
 	m.worktree.SetGitTarget(true)
 	m.worktree.SetOn(true)
 
-	req := request{version: m.baseReqVersion, key: "/repo"}
+	req := request{version: m.reqs.base, key: "/repo"}
 	result := m.runBaseCheck(req)().(baseResultMsg)
 	if result.head != "main" {
 		t.Fatalf("baseResultMsg.head = %q, want the current branch %q", result.head, "main")
@@ -1732,7 +1732,7 @@ func TestBaseListFallsBackToABareHeadOnADetachedHead(t *testing.T) {
 	m.worktree.SetGitTarget(true)
 	m.worktree.SetOn(true)
 
-	req := request{version: m.baseReqVersion, key: "/repo"}
+	req := request{version: m.reqs.base, key: "/repo"}
 	m2, _ := m.handleBaseResult(m.runBaseCheck(req)().(baseResultMsg))
 	m = m2
 
@@ -2041,12 +2041,12 @@ func TestBrowsingIsReachableByTypingThroughUpdate(t *testing.T) {
 	// Only the LAST keystroke's cmd is flattened: every keystroke also
 	// batches the text input's own blink timer, which really does sleep.
 	var last tea.Cmd
-	versionBefore := m.browseReqVersion
+	versionBefore := m.reqs.browse
 	for _, r := range "~/Projects/" {
 		n, cmd := m.Update(rn(r))
 		m, last = n.(Model), cmd
 	}
-	if m.browseReqVersion == versionBefore {
+	if m.reqs.browse == versionBefore {
 		t.Fatalf("typing a path through Update never bumped the browse counter (Typed() = %q)", m.dir.Typed())
 	}
 
@@ -2910,7 +2910,7 @@ func TestFetchPruneRunsUnderADeadline(t *testing.T) {
 	m := newTestModel(t, testSetup{Git: git})
 
 	req := request{version: 1, key: "/repo"}
-	m.baseReqVersion = 1
+	m.reqs.base = 1
 
 	_, cmd := m.handleBaseResult(baseResultMsg{req: req, refs: []string{"main"}})
 	if cmd == nil {

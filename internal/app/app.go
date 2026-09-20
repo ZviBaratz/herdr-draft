@@ -263,15 +263,14 @@ type Setup struct {
 	// pin no account there, so no picker could have been used.
 	PickerUnavailable string
 
-	// dirReqVersion and titleReqVersion are where the project row's and the
-	// title-duplicate check's request counters resume. Only a ⌃R⌃R rebuild
-	// sets them (handleClearRequested), to the discarded form's own
+	// reqs is where every request counter resumes. Only a ⌃R⌃R rebuild
+	// sets it (handleClearRequested), to the discarded form's own
 	// counters: a check that form still has in flight lands after the
 	// rebuild, and starting again from zero would let its version meet one
 	// the fresh form issues -- passing another value's answer off as the
 	// fresh form's own, and releasing a submit held for it (#195, #201).
-	dirReqVersion   int
-	titleReqVersion int
+	// See reqVersions on why it is one field and not six.
+	reqs reqVersions
 }
 
 // Bootstrap performs spec §9's pre-open refusal plus every other piece of
@@ -635,6 +634,44 @@ func linearRefreshReason(err error) string {
 	return strings.Join(strings.Fields(msg), " ")
 }
 
+// reqVersions is every request-version counter the form's async sources
+// share: one monotonic number per source, compared against by that
+// source's own handle* to drop the answer to a question that has been
+// superseded (async.go's request type).
+//
+// A struct rather than six fields on Model because of the one thing that
+// is done to all six at once. ⌃R⌃R rebuilds the whole form through New
+// (handleClearRequested), and a check the discarded form still has in
+// flight lands afterwards -- so a counter that restarted at zero would
+// hand the rebuilt form's first check of that kind the SAME version
+// number, and the guard, which compares nothing else, would accept both
+// answers in arrival order. #196 and #203 carried the project row's and
+// the title check's counters across the rebuild one field at a time
+// because those two hold a submit; #201 is the other four, and carrying
+// the struct whole is what makes a seventh counter carried by existing
+// there rather than by someone remembering.
+//
+// What is deliberately NOT in here is the pair of landed-version fields
+// beside it on Model (dirLandedVersion, titleLandedVersion). Those say
+// which answer has been APPLIED to the form on screen, which a rebuilt
+// form has none of -- they belong to the fields, not to the questions.
+type reqVersions struct {
+	dir    int
+	title  int
+	base   int
+	browse int
+	// picker is the account picker's preview counter: a preview for a
+	// project the user has navigated away from must not overwrite the
+	// current one.
+	picker int
+	// clauth is bumped directly by reloadClauthCmd -- there is no separate
+	// debounce phase for this source, unlike the four above -- and
+	// compared against by handleClauthResult (fix round 1: closes a
+	// rapid-refocus staleness gap, see clauthResultMsg's own doc comment
+	// in async.go).
+	clauth int
+}
+
 // Model is the real tea.Model herdr-draft runs: form.Model plus every
 // concrete field it needs to drive via setters (form.go's own doc: "the
 // app layer is expected to hold each concrete Section by its own concrete
@@ -697,7 +734,7 @@ type Model struct {
 	linked       linkedProject
 	linkedCommit string
 
-	// relistAfterFetch is the baseReqVersion of the base check the
+	// relistAfterFetch is the base-request version (reqs.base) of the check the
 	// once-per-repo `git fetch --prune` scheduled when it finished, and 0
 	// when none is out: the one re-list on which a base the user chose is
 	// kept on offer and settled (#212, keepChosenBaseAcrossRelist). Every
@@ -813,33 +850,22 @@ type Model struct {
 	// restore.
 	dirCandVersion int
 
-	// request-version counters -- see async.go's request type and the
-	// schedule*/handle* pair for each source.
-	dirReqVersion int
+	// reqs is every request-version counter this Model issues -- see
+	// async.go's request type and the schedule*/handle* pair for each
+	// source. One struct rather than six fields because of what it is
+	// handed to: New takes it whole across a ⌃R⌃R rebuild (#201).
+	reqs reqVersions
+
 	// dirLandedVersion is the version of the last directory check whose
-	// answer was applied (handleDirResult). It trails dirReqVersion exactly
+	// answer was applied (handleDirResult). It trails reqs.dir exactly
 	// while a check is in flight -- debouncing or running -- which is what
 	// dirCheckPending compares (#195).
 	dirLandedVersion int
-	baseReqVersion   int
-	titleReqVersion  int
 	// titleLandedVersion is dirLandedVersion for the title-duplicate check:
 	// the version of the last one whose verdict was applied
-	// (handleTitleResult), trailing titleReqVersion exactly while a check is
+	// (handleTitleResult), trailing reqs.title exactly while a check is
 	// in flight (titleCheckPending, #137).
 	titleLandedVersion int
-	browseReqVersion   int
-	// clauthReqVersion is the clauth-reload source's own version counter --
-	// bumped directly by reloadClauthCmd (there is no separate debounce
-	// phase for this source, unlike the three above), and compared against
-	// by handleClauthResult (fix round 1: closes a rapid-refocus staleness
-	// gap -- see clauthResultMsg's own doc comment in async.go).
-	clauthReqVersion int
-
-	// pickerReqVersion is the account picker's preview version counter, the
-	// same staleness guard dirReqVersion is: a preview for a project the user
-	// has navigated away from must not overwrite the current one.
-	pickerReqVersion int
 
 	// baseItemsVersion/issueItemsVersion are the monotonic version
 	// parameters WorktreeField.SetBaseItems/IssueField.SetIssues expect
@@ -1085,8 +1111,7 @@ func New(s Setup) Model {
 
 		fetchedRepos: map[string]bool{},
 
-		dirReqVersion:   s.dirReqVersion,
-		titleReqVersion: s.titleReqVersion,
+		reqs: s.reqs,
 	}
 
 	m.dir = form.NewDirField(palette)
@@ -1592,12 +1617,12 @@ func reachesAFrozenForm(msg tea.Msg) bool {
 // schedules one (reactToChanges) and a stale answer is dropped rather than
 // landed (handleDirResult), so the versions agree only once the answer for
 // the value the row now holds is the one applied.
-func (m Model) dirCheckPending() bool { return m.dirLandedVersion != m.dirReqVersion }
+func (m Model) dirCheckPending() bool { return m.dirLandedVersion != m.reqs.dir }
 
 // titleCheckPending is dirCheckPending for the title-duplicate check: one
 // scheduled for what the title, branch and project now hold, and not yet
 // landed.
-func (m Model) titleCheckPending() bool { return m.titleLandedVersion != m.titleReqVersion }
+func (m Model) titleCheckPending() bool { return m.titleLandedVersion != m.reqs.title }
 
 // continueSubmit is handleSubmit's second step, and where a lane's commit
 // resumes it (handleLinkedCommit).
@@ -2075,8 +2100,10 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		ClauthUnavailable: m.clauthUnavailable,
 		PickerUnavailable: m.pickerUnavailable,
 
-		dirReqVersion:   m.dirReqVersion,
-		titleReqVersion: m.titleReqVersion,
+		// Every counter, whole (#201): a check the form being discarded
+		// still has in flight must not meet a version the rebuilt one
+		// issues. See reqVersions.
+		reqs: m.reqs,
 	})
 	// Spec §10: "⌃R⌃R clears back to the repository default" -- explicitly
 	// NOT back to what you last did in this project. New has already
@@ -2706,7 +2733,7 @@ func (m *Model) reactToTypedDir(typed string) []tea.Cmd {
 			return nil // already in fragment mode; the pool is already right
 		}
 		m.browseDir = ""
-		m.browseReqVersion++
+		m.reqs.browse++
 		m.supplyDirCandidates(m.projectCandidates)
 		return nil
 	}
