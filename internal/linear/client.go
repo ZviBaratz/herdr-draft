@@ -599,10 +599,23 @@ const (
 // comment claimed one or other of these windows was impossible or
 // nanoseconds wide; all three were wrong, and each was found so in review.
 //
-// A run the deadline KILLED does not reach the first case: Process.Wait
-// reports a non-zero state, so cmd.Run returns an *exec.ExitError and the
-// watcher's error is preferred only `if err == nil`. So the first case
-// cannot swallow a timeout.
+// A run the deadline AFFECTED does not reach the first case, and it takes
+// one of two shapes rather than the one shape three earlier versions of
+// this paragraph named:
+//
+//   - Killed while running. Process.Wait reports a non-zero state, so
+//     cmd.Run returns an *exec.ExitError and the watcher's error is
+//     preferred only `if err == nil`.
+//   - Exited 0 before it could be reaped. Cancel's Kill succeeds on the
+//     zombie, watchCtx injects ctx.Err(), Process.Wait then reports a ZERO
+//     state -- so cmd.Run returns the CONTEXT error itself, not an
+//     ExitError (go1.26.4 src/os/exec/exec.go). Measured by sweeping the
+//     deadline across the exit instant: 20 runs in 400.
+//
+// Neither is nil and neither is ErrWaitDelay, so the conclusion holds
+// either way: the first case cannot swallow a timeout. It is the mechanism
+// that was stated too narrowly, which is the fourth time for this
+// paragraph and the reason it now enumerates rather than generalises.
 //
 // The deadline is then read before the exit code, and as DeadlineExceeded
 // SPECIFICALLY rather than `ctxErr != nil`: exec.CommandContext kills the

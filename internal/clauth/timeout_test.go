@@ -266,9 +266,21 @@ func TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone(t *testing.T) {
 		{"answered while the caller was cancelling", nil, context.Canceled, outcomeAnswered},
 		{"drain overstayed the grace, nothing wrong", exec.ErrWaitDelay, nil, outcomeAnswered},
 		{"drain overstayed the grace AND the deadline", exec.ErrWaitDelay, context.DeadlineExceeded, outcomeAnswered},
-		{"killed by the deadline", killed, context.DeadlineExceeded, outcomeTimedOut},
+		{"drain overstayed the grace, caller cancelled mid-drain", exec.ErrWaitDelay, context.Canceled, outcomeAnswered},
+		{"killed by the deadline while running", killed, context.DeadlineExceeded, outcomeTimedOut},
+		// Exited 0 before Process.Wait could reap it, so cmd.Run returns the
+		// CONTEXT error rather than an *ExitError -- the second of the two
+		// shapes a deadline takes, measured at 20 runs in 400 and named by
+		// no earlier version of classifyRun's comment.
+		{"exited 0 but was reaped after the deadline", context.DeadlineExceeded, context.DeadlineExceeded, outcomeTimedOut},
 		{"killed by the caller", killed, context.Canceled, outcomeCancelled},
 		{"exited non-zero on its own", killed, nil, outcomeFailed},
+		// A binary that is not on PATH, which is NOT an *ExitError. The
+		// outcome has to stay outcomeFailed so the error reaches the caller
+		// intact: app.Bootstrap branches on errors.Is(err, exec.ErrNotFound)
+		// to tell "not installed, show nothing" from "installed and broken,
+		// show a reason".
+		{"not on PATH", &exec.Error{Name: "nosuch", Err: exec.ErrNotFound}, nil, outcomeFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := classifyRun(tc.runErr, tc.ctxErr); got != tc.want {

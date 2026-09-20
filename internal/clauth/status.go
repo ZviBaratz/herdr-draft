@@ -273,9 +273,11 @@ func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 // TestACLIThatAnsweredJustInsideItsBudgetKeepsItsAnswer pins the first and
 // TestACLIWhoseDrainOutlivesTheDeadlineKeepsItsAnswer the second.
 //
-// A run the deadline KILLED is a different thing and does not reach this
-// arm: Process.Wait reports a non-zero state, so runErr is an
-// *exec.ExitError and the deadline arm below takes it.
+// A run the deadline AFFECTED is a different thing and does not reach this
+// arm, in either of the two shapes it takes: killed while running, which
+// gives an *exec.ExitError, or exited 0 before it could be reaped, which
+// gives the CONTEXT error itself. linear.classifyRun has the mechanism and
+// the measurement; neither shape is nil and neither is ErrWaitDelay.
 //
 // Otherwise the DEADLINE is read first, which is load-bearing rather than
 // tidy:
