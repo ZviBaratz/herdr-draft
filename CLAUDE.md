@@ -458,7 +458,18 @@ Layering, outermost to innermost:
   `Update` already uses internally. Touched-versus-preselected flags need
   their **own** snapshot fields: `syncDerivedInertness` resyncs its own on
   every call, so sharing one silently stops per-project memory re-applying
-  after the first project change.
+  after the first project change. And a touched-versus-preselected snapshot
+  records what the app **asked for**, not what the field is showing — #248,
+  which is the same failure from the other side. A field may defer what it
+  was told: `WorktreeField.SetBase` holds a ref no candidate list names yet
+  and reads as the `HEAD` row meanwhile, so `snapshotAppliedDefaults`
+  recording `Base()` recorded `""` for a base the app had already applied,
+  and the list landing it a moment later read as the user moving it. Hence
+  the pair `Base()` (what is on screen, for the row, the panel and the plan)
+  and `RequestedBase()` (what the app put there, for the diff alone). A new
+  deferring setter needs the same pair, and note that the getter has to come
+  off the field's own **concrete** type — the `Section` interface
+  deliberately exposes none of this.
 - **A golden-frame suite proves only the states someone thought to
   fixture.** The v2 form shipped a defect in its *opening* state — the
   first thing every user sees, a worktree row naming a branch called
