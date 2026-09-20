@@ -9,14 +9,18 @@
 //
 //   - os.Getwd, in resolveProjectDir, is on the project's mount, and it
 //     runs BEFORE the first bounded question. It is not the bare getcwd(2)
-//     it looks like: with $PWD set and absolute, which every shell does,
-//     Go's os.Getwd stats "." and then $PWD before it reaches the syscall
-//     (go1.26 src/os/getwd.go), so it is a real read on that mount and can
-//     block there. With $PWD unset or relative it falls straight through
-//     and does no path I/O, so the hazard is conditional on the
-//     environment rather than on this code. Reached whenever --project is
-//     absent OR relative: pathx.Resolve calls filepath.Abs, which calls
-//     os.Getwd for any non-absolute path.
+//     it looks like, and in the ordinary case it does not reach getcwd(2)
+//     AT ALL: with $PWD set and absolute, which every shell exports, Go's
+//     os.Getwd stats "." and then $PWD and returns if they are the same
+//     file (go1.26 src/os/getwd.go). Both stats are on the project, so
+//     both block on a stalled one. Only with $PWD unset or relative does
+//     it fall through to getcwd(2), which is answered from the dentry
+//     cache and does not block -- so the blocking path is the normal one
+//     and env -i is the exception. Measured under strace in review, after
+//     an earlier pass reasoned about the syscall alone and got it exactly
+//     backwards. Reached whenever --project is absent OR relative:
+//     pathx.Resolve calls filepath.Abs, which calls os.Getwd for any
+//     non-absolute path.
 //   - The repository's own .herdr-draft.toml (config.LoadRepoConfig, an
 //     os.ReadFile) is on that mount too, but loadTiers reads it after the
 //     three git questions -- g.IsGitRepo is its first statement and
@@ -199,7 +203,11 @@ func (checkTimeout) Is(target error) bool { return target == errCheckTimedOut }
 // the bound to be the smaller of the two. The machinery for the first half
 // is cheap -- context.AfterFunc over context.WithCancel of
 // context.WithoutCancel(ctx) propagates a cancellation without the
-// parent's deadline, in about four lines -- but the second half is not:
+// parent's deadline in about four lines, one of which has to be a filter:
+// AfterFunc fires when the parent is DONE, deadline included, so without
+// `if ctx.Err() == context.Canceled` it forwards the very thing the
+// construction exists to drop (measured; the sketch was a line short when
+// review found it) -- but the second half is not:
 // taking the smaller of the two puts a min on the wait, and a parent
 // deadline expiring at nearly the same instant as the shrunken wait is
 // this same situation again unless something is authoritative. Cheap
