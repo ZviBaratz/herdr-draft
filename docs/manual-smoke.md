@@ -1724,6 +1724,65 @@ arg or merely followed it.
 
 ## Recorded runs
 
+### A headless check that never answers (#272) — 2026-09-20
+
+`origin/main` at `381fde8` and `zvi/fix-272-create-deadline` on top of it,
+both built with plain `go build`. The base tree was extracted with `git
+archive origin/main | tar -x`, not checked out: no second worktree, no
+branch, nothing to clean up in the live install afterwards.
+
+**This one needs no herdr, no session and no account**, which is what makes
+it cheap enough to re-run. The bound fires inside `loadTiers`, which is
+before the reachability probe, so the stall is reached without herdr ever
+being called. Everything below is `--dry-run`, and `$HERDR_BIN_PATH` points
+at a stub that answers `workspace list` and **refuses every other
+subcommand**, so nothing in the sequence could create anything even if the
+pre-flight were wrong about it.
+
+**The hang was arranged rather than waited for**, with #202's own lever.
+`internal/gitx` runs `exec.Command("git", ...)`, so `git` resolves through
+`PATH` and a wrapper ahead of the real binary stalls whichever call you
+name on argv:
+
+```sh
+# bin/git -- gitx.IsGitRepo and nothing else
+case " $* " in
+  *' --is-inside-work-tree '*) [ -n "$D_IIWT" ] && sleep "$D_IIWT" ;;
+esac
+exec /usr/bin/git "$@"
+```
+
+Measured narrow before it was trusted: with `D_IIWT=3`, `git rev-parse
+--is-inside-work-tree` took 3.00s and `git rev-parse --short HEAD` took
+0.00s in the same repository. The runs used **600s**, past the whole
+sequence rather than past the deadline — #202's trap, and it costs a real
+session when you get it wrong.
+
+Each pass: `create --dry-run --project <repo> --title "stall probe"`, under
+a 45s wall clock.
+
+| | `origin/main` at `381fde8` | this branch |
+|---|---|---|
+| lever on, 600s stall | **never came back.** Killed by the 45s wall clock with no output and no exit code of its own | `exit=5` after **30s**: `herdr-draft create: timed out after 30s checking whether <repo> is a git repository` |
+| stdout on that refusal | — | **empty**, as for exit 2 and exit 3 |
+| lever off (control) | `exit=0` in 1s, the `--dry-run` object | `exit=0` in 1s, the `--dry-run` object |
+
+The before is the issue's own sentence at a prompt: no output, no exit
+code, and a caller that waits for as long as the mount stays stalled.
+
+**The control is the strongest half.** With the lever removed the two
+binaries' `--dry-run --json` objects are **byte-identical** — same
+`worktree: true`, same `branch: zvi/stall-probe`, same provenance map — so
+the difference between them is the bound and nothing else.
+
+Teardown: the probe directory removed; `ps` confirmed **no orphaned
+`sleep 600` with `ppid=1`**, and `pgrep -x herdr-draft` 0. No account quota
+spent and no pick made — the picker was never reached, and every run was a
+dry run. Note for anyone re-running: `pgrep -f 'sleep 600'` reports a
+phantom, because it matches the shell running the `pgrep` too; match on
+`ps -eo args=` exactly, and check `ppid=1`, since an unrelated `sleep 600`
+with a live parent is not yours.
+
 ### A check that never answers (#202) — 2026-09-20
 
 herdr 0.9.0. `main` at `517c5a8` and `zvi/fix-202-check-deadline` on top of

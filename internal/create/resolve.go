@@ -128,12 +128,15 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
 	}
 
-	projectDir, err := resolveProjectDir(req, deps)
+	projectDir, err := resolveProjectDir(ctx, req, deps)
 	if err != nil {
 		return resolution{}, err
 	}
 
-	t := loadTiers(ctx, cfg, env, deps, projectDir)
+	t, err := loadTiers(ctx, cfg, env, deps, projectDir)
+	if err != nil {
+		return resolution{}, err
+	}
 	for _, note := range t.repo.Notes {
 		// Spec §11 puts these in the focused row's panel. There is no panel
 		// here, and a repository key that was refused has to be visible
@@ -171,8 +174,17 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	// outright -- withBase checks that one, and refuses it rather than
 	// swapping it for another.
 	if !req.set["base"] {
-		var note string
-		if res, note = app.SettleBase(ctx, deps.git(), t.projectDir, res); note != "" {
+		// Bounded as a unit rather than through its ResolveCommit, because
+		// SettleBase turns that call's error into a verdict of its own --
+		// "no such commit here; using HEAD" -- so a bound any deeper would
+		// drop the tier's base over a question git never answered (#272).
+		// See checks.go's rule.
+		settled, note, err := deps.checks().SettleBase(ctx, t.projectDir, res)
+		if err != nil {
+			return resolution{}, err
+		}
+		res = settled
+		if note != "" {
 			fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", note)
 		}
 	}
@@ -196,7 +208,7 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	if err != nil {
 		return resolution{}, err
 	}
-	in, err = withBase(ctx, in, t, prov, req.set["base"], deps.git())
+	in, err = withBase(ctx, in, t, prov, req.set["base"], deps.checks())
 	if err != nil {
 		return resolution{}, err
 	}
@@ -220,7 +232,7 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 // and tilde-expanded here, at the boundary where a typed path becomes an
 // argument for herdr's CLI and git (pathx's own package doc explains why
 // herdr cannot be relied on to expand it).
-func resolveProjectDir(req request, deps Deps) (string, error) {
+func resolveProjectDir(ctx context.Context, req request, deps Deps) (string, error) {
 	raw := req.project
 	if !req.set["project"] || strings.TrimSpace(raw) == "" {
 		wd, err := deps.workdir()
@@ -230,7 +242,15 @@ func resolveProjectDir(req request, deps Deps) (string, error) {
 		raw = wd
 	}
 	dir := pathx.Resolve(raw)
-	if !deps.git().DirExists(dir) {
+	// Unknown is not invalid (#272): a stat that never answered is not a
+	// directory that does not exist, and only one of the two is fixed by
+	// passing a different --project. The timeout travels up as itself and
+	// lands on ExitCheckTimedOut rather than on this line's ExitUsage.
+	exists, err := deps.checks().DirExists(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
 		return "", fmt.Errorf("project directory does not exist: %s", dir)
 	}
 	return dir, nil
@@ -253,16 +273,38 @@ func (d Deps) git() GitSource {
 // runDirCheck/projectMemoryKey): is this a repository, what is its root,
 // what does its committed .herdr-draft.toml say, and what does
 // projects.json remember about it.
-func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, projectDir string) tiers {
+// The three git questions are bounded and their timeouts are FATAL, which
+// is the one place this function's own "not fatal" rule does not reach:
+// every answer below is read as a fact about the repository, and a zero
+// value carried on from a question nobody answered is a quietly different
+// session rather than a slower one (#272).
+func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, projectDir string) (tiers, error) {
 	t := tiers{cfg: cfg, projectDir: projectDir}
-	t.isGitRepo = deps.git().IsGitRepo(projectDir)
+	g := deps.checks()
+
+	// The sharpest of the three, and the reason a timeout may not be read
+	// as the verdict's negative: a false here silently turns the WORKTREE
+	// OFF (useWorktree, below), so a create that timed out would report
+	// success over a session in the wrong place.
+	isGitRepo, err := g.IsGitRepo(ctx, projectDir)
+	if err != nil {
+		return tiers{}, err
+	}
+	t.isGitRepo = isGitRepo
 
 	repoRoot := ""
 	if t.isGitRepo {
 		// An error here is not fatal: the form treats an unresolvable root
 		// as "no repo-level config and a path-keyed memory" rather than as
-		// a failure, and so does this.
-		if root, err := deps.git().RepoRoot(ctx, projectDir); err == nil {
+		// a failure, and so does this. A timeout is not such an error --
+		// carrying on from it would re-key the per-project memory to a path
+		// and drop the repository's own .herdr-draft.toml, neither of which
+		// anybody established.
+		root, err := g.RepoRoot(ctx, projectDir)
+		if errors.Is(err, errCheckTimedOut) {
+			return tiers{}, err
+		}
+		if err == nil {
 			repoRoot = root
 		}
 	}
@@ -271,8 +313,14 @@ func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, proje
 		// Not fatal either, and for the same reason: an unanswered question,
 		// or one with no answer (gitx.PrimaryCheckout), leaves the lane as
 		// the source, which herdr refuses by name (linked_worktree_source) --
-		// loud, and no worse than before #171.
-		if primary, err := deps.git().PrimaryCheckout(ctx, projectDir); err == nil {
+		// loud, and no worse than before #171. A timeout is the same
+		// exception as above: that refusal names the checkout as the
+		// problem, which is the wrong thing to say about a mount.
+		primary, err := g.PrimaryCheckout(ctx, projectDir)
+		if errors.Is(err, errCheckTimedOut) {
+			return tiers{}, err
+		}
+		if err == nil {
 			t.primary = primary
 		}
 	}
@@ -287,7 +335,7 @@ func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, proje
 	if ws, err := deps.Runner.WorkspaceList(ctx); err == nil {
 		t.workspaces = ws
 	}
-	return t
+	return t, nil
 }
 
 // loadUserConfig reads the user's config.toml, and exists for one reason:
@@ -669,7 +717,7 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 // The commit is not remembered. BaseRef stays what was chosen, and
 // projects.json records that, since it is keyed on the origin root and a
 // remembered commit would pin every later session in the repository to it.
-func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]string, explicit bool, git GitSource) (plan.Input, error) {
+func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]string, explicit bool, git boundedGit) (plan.Input, error) {
 	lane := in.UseWorktree && t.primary != ""
 	chosen := explicit && in.BaseRef != "" && in.UseWorktree && t.isGitRepo
 	if !lane && !chosen {
@@ -678,13 +726,30 @@ func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]strin
 	ref := cmp.Or(in.BaseRef, "HEAD")
 	commit, err := git.ResolveCommit(ctx, in.ProjectDir, ref)
 	switch {
+	case errors.Is(err, errCheckTimedOut):
+		// Unknown, not invalid (#272), and this is the one of the three
+		// where the wording makes it plainest: both messages below name the
+		// REF as the problem and tell the caller to pass another, which is
+		// the wrong instruction for a question git never answered. The ref
+		// may well be fine.
+		return plan.Input{}, err
 	case err != nil && lane:
 		return plan.Input{}, fmt.Errorf("%s is a linked worktree checkout, so the base is resolved there, and %s could not be: %v -- pass --base to choose another", in.ProjectDir, ref, err)
 	case err != nil:
 		return plan.Input{}, fmt.Errorf("--base %q names no commit in %s -- pass a branch, tag or commit that exists there, or leave --base off", ref, in.ProjectDir)
 	}
-	if chosen && app.NamesHead(ctx, git, in.ProjectDir, ref, commit) {
-		in.BaseRef = ""
+	// Asked only when a base was chosen, as before: the lane resolves a
+	// commit and never compares it to HEAD, so this stays one git call and
+	// not two. Bounded as a unit for SettleBase's reason -- NamesHead turns
+	// its own ResolveCommit's error into a plain false.
+	if chosen {
+		head, err := git.NamesHead(ctx, in.ProjectDir, ref, commit)
+		if err != nil {
+			return plan.Input{}, err
+		}
+		if head {
+			in.BaseRef = ""
+		}
 	}
 	if !lane {
 		return in, nil

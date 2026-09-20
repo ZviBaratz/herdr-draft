@@ -187,8 +187,33 @@ without the popup. It drives herdr exclusively through the public CLI
   reaching the agent unseen. The spawn skill shows those arguments before
   the user approves, even when no question would otherwise be asked, and
   checks the list afterwards (#219).
+- **Every question the pre-flight asks the filesystem or git gives up
+  after thirty seconds** rather than waiting for good, and reports `5`
+  (#272). Without it, a `create` on a stalled network mount sat there with
+  no output and no exit code for as long as the mount stayed stalled --
+  fine for a person, who can press `⌃C`, and useless for the script or
+  agent that is the usual caller. All six of them are bounded: does this
+  directory exist, is it a repository, what is its root and its primary
+  checkout, does this branch already exist, what commit does this base
+  name. Each check gets its own thirty seconds, and a create spends at most
+  one of them, because the questions are asked in order and a timeout
+  refuses the run.
+
+  It is its own exit code because the answer is unknown rather than
+  negative: `2` means "fix the command and re-run", and nothing in the
+  command would make a hung mount answer, while `3` would send the caller
+  to look at a herdr that is fine. Each of the three questions that used to
+  read its own failure as an answer now refuses instead, which is the half
+  that could go wrong quietly -- a timed-out repository check silently
+  turned `--worktree` off, and a timed-out branch check read as "the branch
+  is free", so the create checked out the old work herdr v0.9.0 does not
+  refuse. The budget is not configurable: it is a safety bound rather than
+  a tuning knob, and `[timeouts]` values are not validated. A cancelled
+  context is not a timeout and never says it was; the popup makes the same
+  distinction on screen, with a shorter budget, because there is someone
+  holding the key (#202).
 - **`--dry-run` shows what a create would make, and makes nothing.** It
-  runs the whole pre-flight, with the real run's exit 2 and 3, then
+  runs the whole pre-flight, with the real run's exit 2, 3 and 5, then
   reports and stops. It creates nothing and remembers nothing, and an
   `auto` account goes to the picker's own `--dry-run`, so no pick is spent.
   Under `--json` it prints the create's object with `dry_run: true` and no
@@ -246,7 +271,8 @@ without the popup. It drives herdr exclusively through the public CLI
 - Exit codes: `0` created, `1` the plan started and failed, and part of
   the session may exist (`--on-failure` applied), `2` bad usage or an
   unresolvable request, `3` herdr unreachable, `4` the plan started and its
-  first step failed before anything existed (#192). `4` is given only with
+  first step failed before anything existed (#192), `5` a check did not
+  answer in time (#272). `4` is given only with
   evidence: herdr refused the step before acting, or was never asked. A
   worktree step herdr fails after git has run is `1`, and so is any other
   first-step failure that shows neither: `create` no longer says "nothing
