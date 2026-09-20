@@ -2065,10 +2065,15 @@ func (m *Model) reactToChanges() []tea.Cmd {
 // touched when their current value differs from what the app itself last
 // put there -- spec §10's touched-versus-preselected rule, for the three
 // fields per-project memory re-applies to. None of them carries a touched
-// flag of its own (WorktreeField has one only for its branch input), and
-// the form deliberately exposes no "section X changed" signal, so this is
-// the same one-level-up diff reactToChanges already does for the other
-// getters.
+// flag of its own, and the form deliberately exposes no "section X
+// changed" signal, so this is the same one-level-up diff reactToChanges
+// already does for the other getters.
+//
+// The base is the exception on both counts, and the exception is the
+// interesting part: WorktreeField does carry a flag for it (BasePicked,
+// alongside the one it has always had for its branch input), and this
+// function reads it below, because a pick of the HEAD row is a decision
+// that changes no value for a diff to find (#262).
 //
 // Once set, a flag is never cleared: only a ⌃R⌃R rebuild (which starts
 // from a fresh Model) resets the form's idea of what the user has decided.
@@ -2105,6 +2110,25 @@ func (m *Model) noteUserEdits() {
 		// to where the move is actually observed so that a note set AFTER it,
 		// about the user's own base, survives to be shown (#212).
 		m.baseNote = ""
+	}
+	// And the base alone needs a second SOURCE as well, because the guard
+	// above excludes exactly one real decision: a user who picks the HEAD
+	// row (#262). Their pick changes no value -- the row is already
+	// selected whenever a ref is held, and a held ref is precisely when a
+	// tier's settle is out to overwrite them -- so no diff of the value can
+	// see it. WorktreeField.BasePicked is that event rather than its
+	// (absent) effect, reported by the one layer that receives it as a
+	// click or a keystroke.
+	//
+	// A second source rather than a replacement, and a second source rather
+	// than a second FLAG. It cannot compete with the diff the way two gates
+	// would (see worktreeTouched's own note above): both only ever set the
+	// one flag true, and this one is literally user input, so it is never
+	// the spurious true #248 was. What it deliberately does not do is clear
+	// baseNote -- that note says HEAD is in use instead of some ref, which
+	// the diff's move to a real ref falsifies and a pick of HEAD does not.
+	if m.worktree.BasePicked() {
+		m.baseTouched = true
 	}
 }
 

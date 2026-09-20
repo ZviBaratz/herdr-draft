@@ -413,11 +413,12 @@ func TestMouseZones_ClickingABaseRowRetiresAHeldBase(t *testing.T) {
 // choosing the row that is already selected. Nothing moves, and they have
 // still decided.
 //
-// A claim about the FIELD, and deliberately only that: the app layer does
-// not read a base sitting on HEAD as a decision, so end to end the tier's
-// base settle puts the remembered ref back anyway. handleClick's own
-// comment carries that boundary; this test is what holds the field to its
-// half of it.
+// BasePicked() is asserted beside the retirement because they are the two
+// halves of the same event and only one of them is visible from here: the
+// retirement is what keeps a later refresh from landing the held ref, and
+// the flag is what lets the app layer know a choice was made at all (#262
+// -- until it, this test's own subject stopped at the field, and the
+// tier's base settle put the remembered ref back end to end regardless).
 func TestMouseZones_ClickingTheHeadRowRetiresAHeldBase(t *testing.T) {
 	m, w := heldBaseForm(t, "remote-only", []string{"develop", "release/1.4"})
 
@@ -430,6 +431,9 @@ func TestMouseZones_ClickingTheHeadRowRetiresAHeldBase(t *testing.T) {
 	_ = next.(Model)
 	if got := w.Base(); got != "" {
 		t.Fatalf("setup: Base() after clicking %s = %q, want the HEAD row", zoneID, got)
+	}
+	if !w.BasePicked() {
+		t.Errorf("BasePicked() after the user clicked the HEAD row = false, want true")
 	}
 
 	w.SetBaseItems(2, []string{"develop", "release/1.4", "remote-only"})

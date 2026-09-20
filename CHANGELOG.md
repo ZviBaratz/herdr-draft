@@ -361,6 +361,15 @@ without the popup. It drives herdr exclusively through the public CLI
   `worktree` row naming it and the plan built from it, without a word.
   Choosing a base for yourself now ends the hold, whether you choose it
   with the arrows, the wheel or a click.
+- **Choosing `HEAD` is choosing a base** (#262). Every other pick moves the
+  selection somewhere new, which is how the form recognised one; picking
+  the `HEAD` row moves nothing when it is already selected — and it always
+  is while a remembered base is being held — so the form did not count it,
+  and the check still out for that remembered base put it back over you,
+  with the `worktree` row naming it and the plan built from it, without a
+  word. A pick of `HEAD` is now recorded like any other: by a click on the
+  row, and by an arrow or the wheel arriving on it from a base the form
+  chose for you. Both inputs were affected; #262 reported only the click.
 - The resolver is pure and is the only place the precedence chain exists.
 
 ### Repository-level config (`.herdr-draft.toml`)

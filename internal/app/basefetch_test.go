@@ -610,3 +610,220 @@ func TestPopup_AHeldBaseNeverOverwritesTheUsersOwnPick(t *testing.T) {
 		t.Errorf("plan.Input.BaseRef = %q, want the user's own %q", got, "main")
 	}
 }
+
+// TestPopup_AClickOnTheHeadRowIsTheUsersOwnPick is #262, and it is
+// TestPopup_AHeldBaseNeverOverwritesTheUsersOwnPick's own blind spot: there
+// the user picks a base out of the list, which is a move AWAY from HEAD and
+// so a move noteUserEdits can see. Here they pick the HEAD row itself.
+//
+// Nothing moves -- a held ref shows the HEAD row, so the row they click is
+// the one already selected -- and that is the whole difficulty. Base() reads
+// "" before and after, which is also what a list moving underneath a
+// selection reads, so the app's value diff cannot tell the two apart and
+// baseTouched stays false. The tier's settle is still out (a hold is exactly
+// what being out means), and its !baseTouched branch puts the remembered ref
+// back over them.
+//
+// Asserted at both of the moments the issue measured: the settle landing,
+// and the fetch re-list afterwards. The plan is asserted last because that
+// is what the overwrite costs -- a session branched from a ref nobody chose.
+func TestPopup_AClickOnTheHeadRowIsTheUsersOwnPick(t *testing.T) {
+	git := newFakeGit()
+	// The remembered base is NOT in the branch list, so SetBase holds it
+	// and the picker shows the HEAD row -- the state the click lands in.
+	git.listBranchesResult = []string{"main", "develop"}
+	git.currentBranchResult = "main"
+	git.commits = map[string]string{"/repo-a remote-only": "3d4e5f6", "/repo-a main": "0a1b2c3"}
+	m := newTestModel(t, testSetup{
+		Git:    git,
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude"}}},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true), Base: "remote-only"},
+		}),
+	})
+	m, held := pumpHoldingBaseChecks(t, m, m.initCmds)
+	if len(held) != 1 {
+		t.Fatalf("base checks held = %d, want /repo-a's", len(held))
+	}
+	// Genuinely the held window, not merely a base that never resolved:
+	// Base() == "" is equally true of a SetBase that was dropped.
+	if m.worktree.Base() != "" || m.worktree.RequestedBase() != "remote-only" {
+		t.Fatalf("setup: Base() = %q, RequestedBase() = %q, want a held remote-only over the HEAD row",
+			m.worktree.Base(), m.worktree.RequestedBase())
+	}
+
+	// By CLICK, because it is the only input that can PICK the HEAD row
+	// from here: the picker's selection is already on it, so ↑ hands the
+	// part cursor back to the branch instead of moving it and ↓ leaves the
+	// row entirely. (With no branch list at all -- the state the hold
+	// opens in -- both are clamped to nothing instead; measured in
+	// internal/form's TestWorktreeField_OnlyAUserMovePicksABase.)
+	m.form.FocusByID("worktree")
+	_ = m.form.ViewAt(80, 24)
+	syncZones()
+	zi := widgets.Zones.Get("row:base:0")
+	if zi.IsZero() {
+		t.Fatal("setup: the base panel's HEAD row never resolved")
+	}
+	next, _ := m.Update(tea.MouseClickMsg{X: zi.StartX, Y: zi.StartY, Button: tea.MouseLeft})
+	m = next.(Model)
+	if got := m.worktree.Base(); got != "" {
+		t.Fatalf("setup: the click selected %q, want the HEAD row", got)
+	}
+	if !m.baseTouched {
+		t.Errorf("baseTouched after the user clicked the HEAD row: their pick was not recorded as one")
+	}
+
+	next, _ = m.Update(held[0])
+	m = next.(Model)
+	if got := m.worktree.Base(); got != "" {
+		t.Errorf("Base() after the settle landed = %q, want the HEAD row the user picked", got)
+	}
+
+	m = prune(t, m, git, []string{"main", "develop", "remote-only"})
+	if got := m.worktree.Base(); got != "" {
+		t.Errorf("Base() after the fetch re-listed the remembered ref = %q, want the HEAD row the user picked", got)
+	}
+	if got := m.PlanInput().BaseRef; got != "" {
+		t.Errorf("plan.Input.BaseRef = %q, want the HEAD row the user picked", got)
+	}
+}
+
+// TestPopup_AKeyMoveOntoTheHeadRowIsTheUsersOwnPick is the same defect
+// without the hold and without the mouse, and #262 says it does not exist:
+// its "the click is the only way in" was reached by reading the key grammar
+// rather than by measuring, and both halves of its argument have a gap. The
+// user does not have to have WALKED to the branch they are leaving -- which
+// is the step that would have set baseTouched -- because the app can have
+// put them there.
+//
+// A PROJECT SWITCH is where it lands outright with nothing held: the
+// previous project's branch list is already loaded, so if it names the new
+// project's remembered ref, applyProjectDefaults' SetBase hits at once. The
+// settle's `git rev-parse` is then the only thing still out, and one ↑ onto
+// HEAD is a real move -- not the clamped keystroke the issue reasoned about
+// -- that lands on the one value the `b != ""` guard refuses. The settle
+// puts the ref back just the same.
+//
+// The form-open path cannot reach this state, and an earlier draft of this
+// test claimed it did: applyProjectDefaults runs off dirResultMsg, which
+// precedes the `git for-each-ref` of baseResultMsg, so on open the ref is
+// always HELD first and the branch list is what lands it. That fixture is
+// TestPopup_ARememberedBaseThatLandsLateIsNotTheUsersChoice's, and the
+// window is a race between two calls started together rather than the
+// strict subset the draft described.
+//
+// The remembered ref is deliberately the FIRST listed branch, so it sits
+// directly under the HEAD row: reaching HEAD past another branch would set
+// baseTouched on the way through and the test would pass either way.
+func TestPopup_AKeyMoveOntoTheHeadRowIsTheUsersOwnPick(t *testing.T) {
+	git := newFakeGit()
+	git.listBranchesResult = []string{"shared", "main"}
+	git.currentBranchResult = "main"
+	git.commits = map[string]string{"/repo-b shared": "3d4e5f6"}
+	m := newTestModel(t, testSetup{
+		Git:    git,
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude"}}},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-b": {Worktree: ptrBool(true), Base: "shared"},
+		}),
+	})
+	m, _ = pumpHoldingBaseChecks(t, m, m.initCmds)
+
+	backspaceDir(&m, len("/repo-a"))
+	typeDir(&m, "/repo-b")
+	m, held := pumpHoldingBaseChecks(t, m, m.reactToChanges())
+	if len(held) != 1 {
+		t.Fatalf("base checks held = %d, want /repo-b's", len(held))
+	}
+	// Landed outright, with nothing held -- the whole point of this fixture,
+	// and what separates it from the held-then-landed one. RequestedBase()
+	// is what says so: while a ref is held it is the ref and Base() is "".
+	if m.worktree.Base() != "shared" || m.worktree.RequestedBase() != "shared" || m.baseTouched {
+		t.Fatalf("setup: Base() = %q, RequestedBase() = %q, touched = %v, want /repo-b's remembered ref landed with nothing held",
+			m.worktree.Base(), m.worktree.RequestedBase(), m.baseTouched)
+	}
+
+	m.form.FocusByID("worktree")
+	for _, k := range []tea.KeyPressMsg{
+		{Code: tea.KeyDown}, {Code: tea.KeyDown}, // chips -> branch -> base
+		{Code: tea.KeyUp}, // shared -> HEAD
+	} {
+		next, _ := m.Update(k)
+		m = next.(Model)
+	}
+	if got := m.worktree.Base(); got != "" {
+		t.Fatalf("setup: Base() = %q, want the HEAD row the user moved to", got)
+	}
+	if !m.baseTouched {
+		t.Errorf("baseTouched after the user moved the base onto HEAD: their move was not recorded as a decision")
+	}
+
+	next, _ := m.Update(held[0])
+	m = next.(Model)
+	if got := m.worktree.Base(); got != "" {
+		t.Errorf("Base() after the settle landed = %q, want the HEAD row the user moved to", got)
+	}
+	if got := m.PlanInput().BaseRef; got != "" {
+		t.Errorf("plan.Input.BaseRef = %q, want the HEAD row the user moved to", got)
+	}
+}
+
+// TestPopup_PickingHeadDropsTheRepoConfigsCredit is the third clause of
+// #262's decision, and the only one of the three visible on screen:
+// baseTouched is what showRepoConfig consults to decide whether
+// `.herdr-draft.toml` may still be credited with the base, so recording a
+// pick of HEAD has to withdraw that line as any other pick does. A panel
+// crediting a file with the base the user has just refused would be the
+// same false sentence the row was.
+//
+// Read through the rendered frame rather than off a field, the way
+// repoconfig_test.go's own display assertions are: "the value is
+// reachable" is not the claim.
+func TestPopup_PickingHeadDropsTheRepoConfigsCredit(t *testing.T) {
+	git := newFakeGit()
+	// The repository's base is one the branch list does not name, so it is
+	// held and the picker shows the HEAD row -- #262's own state.
+	git.listBranchesResult = []string{"main", "develop"}
+	git.currentBranchResult = "main"
+	git.commits = map[string]string{"/repo-a repo-default": "3d4e5f6"}
+	// The base is the ONLY thing the repository's file supplies, which is
+	// load-bearing: repoProvenance draws one line for the whole panel, so a
+	// `default_worktree` here would keep it on screen on the toggle's credit
+	// and the test would pass with its subject removed. The worktree comes
+	// from per-project memory instead, a tier above it.
+	repo := &fakeRepoConfigs{byRoot: map[string]config.RepoConfig{
+		"/repo-a": {DefaultBase: "repo-default"},
+	}}
+	m := newTestModel(t, testSetup{
+		Git:        git,
+		RepoConfig: repo.load,
+		Ctx:        herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Config:     config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude"}}},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true)},
+		}),
+	})
+	m, _ = pumpHoldingBaseChecks(t, m, m.initCmds)
+	if frame := focusedFrame(t, m, "worktree"); !strings.Contains(frame, provenanceLine) {
+		t.Fatalf("setup: the worktree panel does not credit the repo config for the base:\n%s", frame)
+	}
+
+	_ = m.form.ViewAt(80, 24)
+	syncZones()
+	zi := widgets.Zones.Get("row:base:0")
+	if zi.IsZero() {
+		t.Fatal("setup: the base panel's HEAD row never resolved")
+	}
+	next, _ := m.Update(tea.MouseClickMsg{X: zi.StartX, Y: zi.StartY, Button: tea.MouseLeft})
+	m = next.(Model)
+	if got := m.worktree.Base(); got != "" {
+		t.Fatalf("setup: the click selected %q, want the HEAD row", got)
+	}
+
+	if frame := focusedFrame(t, m, "worktree"); strings.Contains(frame, provenanceLine) {
+		t.Errorf("the panel still says %q about a base the user has just refused:\n%s", provenanceLine, frame)
+	}
+}

@@ -1269,3 +1269,58 @@ func TestWorktreeField_AClampedKeyDoesNotRetireAHeldBase(t *testing.T) {
 		t.Errorf("Base() once the list named the held ref = %q, want the remembered %q", got, "remote-only")
 	}
 }
+
+// TestWorktreeField_OnlyAUserMovePicksABase measures the key grammar #262
+// reasoned about from the source, and it is what BasePicked() is held to:
+// the flag says the user pointed at a base row, so an input that cannot
+// reach one must not set it.
+//
+// The held state has no branch list at all, which is the state the app
+// layer's own hold opens in (the `git for-each-ref` is a later round trip
+// than the resolution that holds the ref). One row, so every arrow and
+// every wheel click is clamped to nothing -- and #256's rule is that a
+// keystroke the user could not see land is not a decision.
+func TestWorktreeField_OnlyAUserMovePicksABase(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetHeadBranch("main")
+	if w.BasePicked() {
+		t.Fatalf("BasePicked() on a fresh field = true, want false")
+	}
+	w.SetBase("remote-only") // held: there is no list to name it
+	if got := w.Base(); got != "" {
+		t.Fatalf("setup: Base() = %q, want the HEAD row while the ref is held", got)
+	}
+
+	focusBase(w)
+	for _, tc := range []struct {
+		name string
+		msg  tea.Msg
+	}{
+		// ↑ on the top row hands the part cursor back to the branch rather
+		// than moving the selection, so it never reaches a base row at all.
+		{"up", key(tea.KeyUp, 0)},
+		{"down", key(tea.KeyDown, 0)},
+		{"wheel up", tea.MouseWheelMsg{Button: tea.MouseWheelUp}},
+		{"wheel down", tea.MouseWheelMsg{Button: tea.MouseWheelDown}},
+	} {
+		focusBase(w) // ↑ walked the cursor off the list; put it back
+		w.Update(tc.msg)
+		if w.BasePicked() {
+			t.Errorf("BasePicked() after %s on the single held row = true, want false: nothing moved and nothing was on offer", tc.name)
+		}
+	}
+
+	// And a move that CAN land is a pick, which is what keeps the assertions
+	// above from passing for the wrong reason.
+	w.SetBaseItems(1, []string{"main", "develop"})
+	focusBase(w)
+	w.Update(key(tea.KeyDown, 0))
+	if got := w.Base(); got != "main" {
+		t.Fatalf("setup: Base() = %q, want the %q the user moved to", got, "main")
+	}
+	if !w.BasePicked() {
+		t.Errorf("BasePicked() after the user moved the selection = false, want true")
+	}
+}
