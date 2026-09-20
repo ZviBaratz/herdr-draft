@@ -486,6 +486,30 @@ func (w *WorktreeField) noteBasePicked() {
 // keyboard reaches this only once a list exists to move within.
 func (w *WorktreeField) BasePicked() bool { return w.basePicked }
 
+// Complete implements form.go's completer capability: ↵ commits the base
+// row under the cursor (#269), reporting whether that changed anything.
+//
+// Reporting the change is the whole of how this key stays cheap, and it is
+// AccountField.commitPin's contract for the same reason: form.go falls a
+// declined Complete through to a plain advance. So ↵ acts only where it
+// has something to say -- the base part, with no pick recorded yet -- and
+// everywhere else keeps advancing exactly as it did before this existed:
+// on the chips, on the branch, and on a base the user has already moved to
+// and thereby already decided.
+//
+// Note which state it is guarded on. Not "is the cursor on HEAD": ↵ on a
+// ref the APP put under the cursor is a decision too, and the same silent
+// overwrite is waiting for it (#262's second path). basePicked is the
+// question -- has this user decided yet -- and it is the same fact the
+// footer's own ↵ rung appears and disappears on.
+func (w *WorktreeField) Complete() bool {
+	if w.part != partBase || w.basePicked {
+		return false
+	}
+	w.noteBasePicked()
+	return true
+}
+
 // setPart moves the sub-focus cursor, clamped to the parts that currently
 // mean anything (maxPart), and syncs the branch input's own focus so an
 // unfocused text input never silently swallows keystrokes.
@@ -1235,8 +1259,20 @@ func (w *WorktreeField) FooterRungs() []string {
 		// is (footer.go): at the top of the list it hands the part
 		// cursor back to the branch, and anywhere else it just moves the
 		// list, so one wording cannot be true in both places.
+		// ↵ is advertised exactly where it does something -- while no
+		// pick has been recorded yet (#269, Complete's own guard). At the
+		// top row it is the ONLY key that can say "this one", since a
+		// held ref already shows it; below the top it says "keep the one
+		// the form chose", which the arrows would also say but only by
+		// leaving it first.
 		if w.baseAtTop() {
+			if !w.basePicked {
+				return []string{"↵ use HEAD · ↓ pick a base · ↑ back to the branch", "↵ use HEAD · ↓ pick a base", "↵ use HEAD"}
+			}
 			return []string{"↓ pick a base · ↑ back to the branch", "↓ pick a base"}
+		}
+		if !w.basePicked {
+			return []string{"↵ keep this base · ↑↓ pick another", "↵ keep this base"}
 		}
 		return []string{"↑↓ pick a base"}
 	default:

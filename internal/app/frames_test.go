@@ -1293,3 +1293,49 @@ func stepRowIndex(t *testing.T, steps []form.Step, label string) int {
 	t.Fatalf("no %q row in %+v", label, steps)
 	return -1
 }
+
+// TestAssembledForm_TheBasePartTeachesItsCommitKey pins the footer of the
+// one part no frame covered: the base list, with the part cursor on it.
+//
+// It is worth bytes because the rung is the whole of how #269's key is
+// discoverable. ↵ commits the row under the cursor, which at the top of a
+// HELD list is the only way to choose it at all -- every arrow and every
+// wheel click there is clamped, and #256 will not count a keystroke the
+// user could not see land. A key nothing advertises is a key nobody
+// presses, so a footer that stops saying it is the defect, not a detail.
+//
+// Both states, because the rung is conditional and a frame of one proves
+// nothing about the other: before a pick (↵ acts, and says so) and after
+// one (↵ has nothing to commit and falls through to a plain advance, so
+// the footer must stop promising it).
+func TestAssembledForm_TheBasePartTeachesItsCommitKey(t *testing.T) {
+	// A held ref over an empty list: the picker is the single HEAD row,
+	// which is the state #269 is about.
+	base := func(t *testing.T) Model {
+		t.Helper()
+		m := fillFrameModel(newAssembledModel(t, true), true)
+		m.worktree.SetBaseItems(2, nil)
+		m.worktree.SetBase("origin/remote-only")
+		m.form.FocusByID("worktree")
+		for range 2 { // chips -> branch -> base
+			next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+			m = next.(Model)
+		}
+		return m
+	}
+
+	t.Run("before the pick", func(t *testing.T) {
+		m := base(t)
+		assertAppFrame(t, fmt.Sprintf("assembled-base-part-%dx%d", framePopupW, framePopupH), m, framePopupW, framePopupH)
+	})
+
+	t.Run("after the pick", func(t *testing.T) {
+		m := base(t)
+		next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = next.(Model)
+		if !m.worktree.BasePicked() {
+			t.Fatalf("setup: ↵ did not commit the row")
+		}
+		assertAppFrame(t, fmt.Sprintf("assembled-base-part-picked-%dx%d", framePopupW, framePopupH), m, framePopupW, framePopupH)
+	})
+}

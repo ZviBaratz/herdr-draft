@@ -827,3 +827,62 @@ func TestPopup_PickingHeadDropsTheRepoConfigsCredit(t *testing.T) {
 		t.Errorf("the panel still says %q about a base the user has just refused:\n%s", provenanceLine, frame)
 	}
 }
+
+// TestPopup_EnterOnTheHeadRowIsTheUsersOwnPick is #269 end to end, and it
+// is TestPopup_AClickOnTheHeadRowIsTheUsersOwnPick with the mouse taken
+// away. #268 recorded a pick of the HEAD row but left only the click able
+// to make one, because #256 will not count a clamped arrow and a held ref
+// already shows that row -- so for the whole window a remembered base is in
+// flight, a keyboard-only user could not refuse it.
+//
+// Driven through the real key grammar (MapKey's ActionComplete on ↵, the
+// account row's own gesture) rather than by calling Complete, because "the
+// field has a method" is not the claim.
+func TestPopup_EnterOnTheHeadRowIsTheUsersOwnPick(t *testing.T) {
+	git := newFakeGit()
+	// No branch list at all: the state the hold opens in, and the one in
+	// which every arrow and every wheel click is clamped to nothing.
+	git.listBranchesResult = nil
+	git.currentBranchResult = "main"
+	git.commits = map[string]string{"/repo-a remote-only": "3d4e5f6"}
+	m := newTestModel(t, testSetup{
+		Git:    git,
+		Ctx:    herdrc.Context{WorkspaceCwd: "/repo-a"},
+		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude"}}},
+		Projects: memoryFor(map[string]config.ProjectDefaults{
+			"/repo-a": {Worktree: ptrBool(true), Base: "remote-only"},
+		}),
+	})
+	m, held := pumpHoldingBaseChecks(t, m, m.initCmds)
+	if len(held) != 1 {
+		t.Fatalf("base checks held = %d, want /repo-a's", len(held))
+	}
+	if m.worktree.Base() != "" || m.worktree.RequestedBase() != "remote-only" {
+		t.Fatalf("setup: Base() = %q, RequestedBase() = %q, want a held remote-only over the HEAD row",
+			m.worktree.Base(), m.worktree.RequestedBase())
+	}
+
+	m.form.FocusByID("worktree")
+	for _, k := range []tea.KeyPressMsg{
+		{Code: tea.KeyDown}, {Code: tea.KeyDown}, // chips -> branch -> base
+		{Code: tea.KeyEnter}, // "this one" -- the row already selected
+	} {
+		next, _ := m.Update(k)
+		m = next.(Model)
+	}
+	if got := m.form.FocusedID(); got != "worktree" {
+		t.Errorf("focus after the committing ↵ = %q, want it still on worktree: a ↵ that commits does not also advance", got)
+	}
+	if !m.baseTouched {
+		t.Errorf("baseTouched after ↵ on the HEAD row: the keyboard still cannot make this decision")
+	}
+
+	next, _ := m.Update(held[0])
+	m = next.(Model)
+	if got := m.worktree.Base(); got != "" {
+		t.Errorf("Base() after the settle landed = %q, want the HEAD row the user chose", got)
+	}
+	if got := m.PlanInput().BaseRef; got != "" {
+		t.Errorf("plan.Input.BaseRef = %q, want the HEAD row the user chose", got)
+	}
+}

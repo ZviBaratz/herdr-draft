@@ -1324,3 +1324,72 @@ func TestWorktreeField_OnlyAUserMovePicksABase(t *testing.T) {
 		t.Errorf("BasePicked() after the user moved the selection = false, want true")
 	}
 }
+
+// TestWorktreeField_EnterCommitsTheBaseRowUnderTheCursor is #269: the top
+// row is the one base selection no MOVE can express, because a held ref
+// already shows it and #256 will not let a clamped arrow count. ↵ is what
+// says "this one" without moving.
+//
+// Complete() reports whether it changed anything, exactly as
+// AccountField.commitPin does and for the same reason: form.go falls a
+// declined Complete through to a plain advance, so every ↵ that has
+// nothing to commit keeps the meaning it has always had.
+func TestWorktreeField_EnterCommitsTheBaseRowUnderTheCursor(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetHeadBranch("main")
+	w.SetBase("remote-only") // held: there is no list to name it
+
+	// On the chips and on the branch ↵ still advances, which is what a
+	// declining Complete buys. Asserted before the base part, because a
+	// Complete that fired anywhere would be a key that silently spends a
+	// remembered default from a part that is not even showing the list.
+	w.Focus()
+	if w.Complete() {
+		t.Errorf("Complete() on the chips part = true, want false so ↵ advances as it always has")
+	}
+	w.Update(key(tea.KeyDown, 0)) // chips -> branch
+	if w.Complete() {
+		t.Errorf("Complete() on the branch part = true, want false so ↵ advances as it always has")
+	}
+	if w.BasePicked() {
+		t.Fatalf("BasePicked() = true after ↵ on a part that does not show the base list")
+	}
+
+	w.Update(key(tea.KeyDown, 0)) // branch -> base
+	if !w.Complete() {
+		t.Errorf("Complete() on the base part = false, want true: ↵ is the only way to pick the row already selected")
+	}
+	if !w.BasePicked() {
+		t.Errorf("BasePicked() after ↵ on the base part = false, want true")
+	}
+	if got := w.Base(); got != "" {
+		t.Errorf("Base() after ↵ on the HEAD row = %q, want the HEAD row: ↵ commits, it does not move", got)
+	}
+
+	// And a second ↵ has nothing left to commit, so it declines and the
+	// form advances -- the account row's own gesture.
+	if w.Complete() {
+		t.Errorf("a second Complete() = true, want false so ↵ moves on")
+	}
+}
+
+// TestWorktreeField_EnterDoesNotReCommitABasePickedByHand is the other
+// half of Complete()'s "did anything change": a user who has already moved
+// the selection has already decided, so ↵ there must keep advancing rather
+// than becoming a key that needs pressing twice everywhere.
+func TestWorktreeField_EnterDoesNotReCommitABasePickedByHand(t *testing.T) {
+	w := NewWorktreeField(theme.Default())
+	w.SetGitTarget(true)
+	w.SetOn(true)
+	w.SetBaseItems(1, []string{"main", "develop"})
+	focusBase(w)
+	w.Update(key(tea.KeyDown, 0)) // HEAD -> main, which is itself the pick
+	if !w.BasePicked() {
+		t.Fatalf("setup: BasePicked() = false after the user moved the selection")
+	}
+	if w.Complete() {
+		t.Errorf("Complete() after the user had already picked = true, want false so ↵ advances")
+	}
+}

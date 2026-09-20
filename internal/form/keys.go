@@ -368,6 +368,24 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 			// out of isPicker() for that reason.
 			return ActionComplete, armed
 		}
+		if zone.Kind == ZoneWorktree {
+			// ↵ COMMITS the base row under the cursor (#269), for the
+			// reason immediately above and one more of its own. The base
+			// picker's top row is the one selection no MOVE can express:
+			// a held ref already shows HEAD, so there is nowhere to move
+			// from, and #256 will not let a clamped arrow count -- which
+			// left a pick of HEAD reachable by mouse alone, for exactly
+			// the window a remembered base is in flight.
+			//
+			// This zone covers the WHOLE field, chips and branch
+			// included, and MapKey cannot see which part the cursor is
+			// on. It does not need to: a Complete the field declines
+			// falls through to a plain advance, so WorktreeField.Complete
+			// answers for the part, and ↵ keeps the meaning it has always
+			// had everywhere else -- including on a base the user has
+			// already moved to, which needs no second press.
+			return ActionComplete, armed
+		}
 		if zone.Kind == ZoneTitle && !zone.TitleEmpty {
 			// The quick-create contract: choosing a title is choosing a
 			// branch (spec §6 field 3), so "n -> name -> Enter" creates
