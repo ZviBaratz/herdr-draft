@@ -2091,6 +2091,12 @@ func (m *Model) noteUserEdits() {
 	// moving, not the user. (widgets.Picker itself keeps a vanished row's
 	// index rather than going back to row 0, which is why a user's own base
 	// is kept on offer across a project change -- applyProjectDefaults.)
+	//
+	// That rule answers only one half. The other -- a held ref LANDING,
+	// which is a move away from HEAD that the app made -- is answered in
+	// snapshotAppliedDefaults instead, by recording the ref the app asked
+	// for rather than the row it was showing (#248). Read the two together
+	// before changing either.
 	if b := m.worktree.Base(); b != m.appliedBaseRef && b != "" {
 		m.baseTouched = true
 		// And retires the note, which said HEAD was being used instead of
@@ -2118,15 +2124,19 @@ func (m *Model) noteUserEdits() {
 // form-open. A deferred selection IS what the app put there; it has
 // simply not landed yet.
 //
-// The converse costs nothing: while a ref is held, a user who selects
-// that same ref by hand makes no change by this diff's reckoning. They
-// have chosen the value that was going to be applied anyway, so nothing
-// the form does differs -- and the window is narrower than that, since
-// the row they would have to click is the one whose absence is the
-// reason the ref is being held at all.
+// The converse -- a snapshot holding a ref the picker is not showing, so
+// a user who selects that same ref by hand registers as no change at all
+// -- is unreachable rather than merely harmless, and the order matters:
+// the row they would have to select is the one whose ABSENCE is the reason
+// the ref is being held, and every path that adds a row (SetBaseItems,
+// OfferBase, SetHeadBranch) goes through refreshBaseItems, which lands the
+// held ref before anyone can point at it. Were it reachable it would not
+// be free: baseTouched would stay false and the next project change would
+// re-apply memory over a choice they had made.
 //
 // It is called at the end of every path that can move one of them without
-// user input -- New, reactToChanges and applyProjectDefaults -- always
+// user input -- New, reactToChanges, applyProjectDefaults, and both of
+// handleBaseSettled's applying branches (#212, #247) -- always
 // AFTER syncDerivedInertness. That ordering used to matter for Placement
 // itself: syncDerivedInertness moved it when a worktree turned on, and
 // snapshotting before that call would have left the snapshot holding a

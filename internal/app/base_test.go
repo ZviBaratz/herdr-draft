@@ -544,34 +544,48 @@ func TestPopup_ARememberedBaseThatLandsLateIsNotTheUsersChoice(t *testing.T) {
 }
 
 // TestPopup_AUserBaseChosenBeforeTheCheckLandsIsStillTheirs is the other
-// direction of #248, and the one the fix could plausibly over-suppress:
-// the snapshot now holds a ref the app requested rather than the HEAD row
-// it was showing, so a user moving the base inside that same window has to
-// still register as a decision. No existing test enters the window with
-// user input -- they all open settled -- so the widened snapshot would
-// have gone unchallenged.
+// direction of #248, and the one the fix could plausibly over-suppress.
+// The snapshot now holds the ref the app ASKED for, which while a ref is
+// held is one the picker is not showing -- so a user moving the base
+// inside that window has to still register as a decision, against a
+// snapshot that no longer matches what is on screen.
+//
+// The remembered base is deliberately one the branch list does NOT name,
+// which is what keeps it held: a remembered ref the list happens to carry
+// lands during the pump, and then RequestedBase() is just Base() again and
+// the window is the settle's, not the pending one. (An earlier draft of
+// this test made that mistake -- it had the ref in the list, asserted
+// Base() was already it, and described the pending window it never
+// entered.)
 func TestPopup_AUserBaseChosenBeforeTheCheckLandsIsStillTheirs(t *testing.T) {
 	git := newFakeGit()
-	git.listBranchesResult = []string{"main", "remembered"}
-	git.commits = map[string]string{"/repo-a remembered": "3d4e5f6", "/repo-b other": "4e5f607"}
+	git.listBranchesResult = []string{"main", "develop"}
+	git.commits = map[string]string{"/repo-a remote-only": "3d4e5f6", "/repo-b other": "4e5f607"}
 	m := newTestModel(t, testSetup{
 		Git:    git,
 		Ctx:    herdrc.Context{WorkspaceCwd: "/repo-a"},
 		Config: config.Config{Agents: config.AgentsConfig{Favorites: []string{"claude"}}},
 		Projects: memoryFor(map[string]config.ProjectDefaults{
-			"/repo-a": {Worktree: ptrBool(true), Base: "remembered"},
+			"/repo-a": {Worktree: ptrBool(true), Base: "remote-only"},
 			"/repo-b": {Worktree: ptrBool(true), Base: "other"},
 		}),
 	})
 	m, held := pumpHoldingBaseChecks(t, m, m.initCmds)
-	if len(held) != 1 || m.worktree.Base() != "remembered" {
-		t.Fatalf("setup: held = %d, Base() = %q, want /repo-a's check out over its remembered base", len(held), m.worktree.Base())
+	// Genuinely held: the app asked for remote-only, the row shows HEAD,
+	// and the check that would offer it is still out. This is the state the
+	// fix widened the snapshot to record.
+	if len(held) != 1 || m.worktree.Base() != "" || m.worktree.RequestedBase() != "remote-only" {
+		t.Fatalf("setup: held = %d, Base() = %q, RequestedBase() = %q, want a held remote-only over the HEAD row",
+			len(held), m.worktree.Base(), m.worktree.RequestedBase())
+	}
+	if m.appliedBaseRef != "remote-only" {
+		t.Fatalf("setup: appliedBaseRef = %q, want the ref the app asked for", m.appliedBaseRef)
 	}
 
 	m.form.FocusByID("worktree")
 	for _, k := range []tea.KeyPressMsg{
 		{Code: tea.KeyDown}, {Code: tea.KeyDown}, // chips -> branch -> base
-		{Code: tea.KeyUp}, // remembered -> main
+		{Code: tea.KeyDown}, // HEAD -> main
 	} {
 		next, _ := m.Update(k)
 		m = next.(Model)
@@ -580,7 +594,7 @@ func TestPopup_AUserBaseChosenBeforeTheCheckLandsIsStillTheirs(t *testing.T) {
 		t.Fatalf("setup: Base() = %q, want the %q the user moved to", got, "main")
 	}
 	if !m.baseTouched {
-		t.Errorf("baseTouched is false after the user moved the base themselves")
+		t.Errorf("baseTouched is false after the user moved the base themselves, against a snapshot holding a ref the picker was not showing")
 	}
 
 	m = switchProject(t, m, "/repo-a", "/repo-b")
