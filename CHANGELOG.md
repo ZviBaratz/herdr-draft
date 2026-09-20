@@ -122,6 +122,24 @@ without the popup. It drives herdr exclusively through the public CLI
   duplicate check the same way (#137), so a duplicate title typed and
   submitted at once no longer gets past the refusal, and a duplicate fixed
   at once is no longer refused with no warning on screen.
+- **Every check a submit waits for is bounded, and the project row says
+  when one is out** (#202). Nothing in those waits could time out: the
+  directory check is an `os.Stat` and a `git rev-parse`, the base check and
+  the lane's commit read are one `rev-parse` each, and the duplicate check
+  asks git whether a branch exists — all of them unbounded. On a stalled
+  network mount or a hung git, `⌃S` looked like a dead key: it waited,
+  silently, for good, and `esc` was the only way out. Each check now gives
+  up after five seconds — its own five, so a submit held by two of them in
+  turn waits longer than one — and a check that gives up means **unknown,
+  not invalid**: the submit is refused and nothing is created on a guess.
+  The refusal lifts by itself the moment any of them gets an answer, or the
+  value it was about moves. Each
+  row says which: the `project` row reads `check timed out` beside the
+  path, distinct from the `invalid` it shows for a path that is genuinely
+  not there, the `title` panel reads `couldn't check`, and the `worktree`
+  panel names the base it could not check. While a check is out the
+  `project` row reads `checking…`, so a held `⌃S` is visible rather than
+  looking like nothing happened.
 - **A submit that has passed validation builds what validation saw**
   (#136). When it must first pick an `auto` account or read a lane's commit,
   the form is frozen until it has: a second `⌃S` used to spend a second

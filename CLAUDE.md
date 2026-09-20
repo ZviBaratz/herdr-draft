@@ -440,10 +440,18 @@ Layering, outermost to innermost:
   returns, so a late `Begin` is ordinary, and a `sync.WaitGroup` `Add`
   overlapping a `Wait` is misuse — it panicked the quit path in review.
   Anything new that shells out from a `tea.Cmd` belongs on the same
-  context. What is still on `context.Background()` is nine more sites in
-  `internal/app`, and they are not one kind: the dir check's `RepoRoot`/
-  `PrimaryCheckout`, the base settle, `fetch --prune`, the title-dup
-  `BranchExists`, the branch list, clauth and Linear are simply reads
+  context. Since #202 the four checks a submit waits for are on it too —
+  the dir check's `RepoRoot`/`PrimaryCheckout`, the base settle, the
+  title-dup `BranchExists`, and the lane's commit read, which was already
+  there — through `awaitCheck`, which runs each one under the Lifetime's
+  context with the deadline on top, so that a quit and a check giving up
+  are the same cancellation from the model's side. Until 2026-09-20 this bullet
+  listed the first three as "reads nobody has needed cancelled"; #202 is
+  what needed them cancelled, and the sentence was true only until
+  something did. What is still on `context.Background()` in `internal/app`
+  is not one kind: Bootstrap's own startup reads (nothing has started that
+  a quit could cancel yet), `fetch --prune` (which carries
+  `fetchPruneTimeout` instead), the base list, clauth and Linear are reads
   nobody has needed cancelled; `runSubmitCmd`, `plan.CleanCheck` and
   `plan.Clean` are the creation and teardown pipeline, and abandoning one
   of those halfway is a worse outcome than letting it finish — which is the
@@ -480,6 +488,51 @@ Layering, outermost to innermost:
   sets that for a background job's `SIGINT` — so the signals are filtered
   through `notIgnored` first, or `create &` would start answering a
   ctrl+c it had been told to sit out.
+- **A check that holds a submit is bounded, and unknown is not invalid
+  (#202).** `handleSubmit` refuses to build a plan while the project row's
+  check, the base settle or the title-duplicate check is out, and the
+  lane's commit read stops the submit dead after validation. None of the
+  four could time out, so a stalled mount made `⌃S` a dead key: it waited,
+  silently, for good. All four now run through `checkBudget` and
+  `awaitCheck`, which bound **the answer** rather than the calls —
+  deliberately, because `os.Stat` and `gitx.IsGitRepo` take no context at
+  all, and because a process blocked on a stalled network mount is in
+  uninterruptible sleep, where a cancelled context returns nothing sooner
+  than no context would. The price is a goroutine left on a call that may
+  never come back; it answers into a buffered channel nobody reads, so it
+  costs no late message and the existing version guards never see one. That
+  goroutine, not the `tea.Cmd`, is what holds the `Lifetime` region, and
+  that is load-bearing rather than tidy: `Shutdown`'s wait exists so a
+  cancelled child is dead before the process exits, and `awaitCheck`
+  returns the moment the deadline fires with the child still running.
+  What that goroutine must **not** hold is the `cancel`. `select` picks
+  uniformly at random among the cases that are ready, so cancelling from
+  the answering goroutine's own defer makes every answer expire its own
+  context and turns "the answer and the deadline are both ready" from a
+  boundary case into the common one — a coin flip, per check, between the
+  answer and a refusal. It shipped once, and the thing to learn from how
+  it was caught is what could not catch it: `go test -race` is blind to
+  it, because two ready channel operations are not unsynchronised memory.
+  One CI runner went red and the other stayed green. The
+  `ctx.Done()` branch also peeks at the answer before giving up, for the
+  boundary that remains.
+  Two rules follow for anything new that holds a submit. It gets the same
+  bound, from the same two helpers. And its timeout is reported as
+  **unknown**, never as the verdict's negative: `dirUnknown`,
+  `titleDupUnknown` and `baseUnknown` refuse the submit exactly as
+  `dirInvalid` and `titleDupBlocked` do, and say something else while doing
+  it, because "we could not check" and "we checked, and no" are only the
+  same sentence to whoever wrote the code. Note which of the three is not a
+  flag. `baseUnknown` compares a stored REF against the base in play, the
+  way `DirField.SetValidity` compares its `validityPath` against `Value()`,
+  because the base check is the one that can decline to ask: with the
+  resolution supplying no base, or the user having picked their own,
+  `scheduleBaseSettle` returns no message at all. A flag cleared only where
+  an answer lands therefore latched — and the line it writes says "pick a
+  base", which sets `baseTouched`, which is exactly the condition under
+  which no answer is coming, so the submit was refused for the life of the
+  popup. A verdict about a value belongs to that value; the other two are
+  flags only because their pipelines always answer.
 - **App-layer state is diffed, not event-driven.** `form.Model` exposes no
   "section X changed" signal; `Model.reactToChanges` (in `app.go`) compares
   each relevant getter against a last-observed snapshot after every routed

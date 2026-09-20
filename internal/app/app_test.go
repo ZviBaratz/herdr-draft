@@ -774,17 +774,24 @@ func TestBaseDebounce_TriggersRun(t *testing.T) {
 
 func TestTitleVerdictText_AllCombinations(t *testing.T) {
 	cases := []struct {
-		branchExists, labelTaken bool
-		want                     string
+		branchExists, labelTaken, timedOut bool
+		want                               string
 	}{
-		{false, false, ""},
-		{true, false, "branch exists"},
-		{false, true, "label in use"},
-		{true, true, "branch & label in use"},
+		{false, false, false, ""},
+		{true, false, false, "branch exists"},
+		{false, true, false, "label in use"},
+		{true, true, false, "branch & label in use"},
+		// A timed-out check (#202) says so whatever the other two hold.
+		// branchExists is meaningless on that path -- git never answered
+		// -- and a label collision the check DID find is the weaker thing
+		// to say when the branch question came back blank.
+		{false, false, true, "couldn't check"},
+		{false, true, true, "couldn't check"},
+		{true, true, true, "couldn't check"},
 	}
 	for _, c := range cases {
-		if got := titleVerdictText(c.branchExists, c.labelTaken); got != c.want {
-			t.Errorf("titleVerdictText(%v, %v) = %q, want %q", c.branchExists, c.labelTaken, got, c.want)
+		if got := titleVerdictText(c.branchExists, c.labelTaken, c.timedOut); got != c.want {
+			t.Errorf("titleVerdictText(%v, %v, %v) = %q, want %q", c.branchExists, c.labelTaken, c.timedOut, got, c.want)
 		}
 	}
 }

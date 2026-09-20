@@ -103,6 +103,17 @@ const (
 	// ValidityInvalid is a path that does not exist (or is not a
 	// directory) -- shown as a danger-colored "(invalid)" marker.
 	ValidityInvalid
+	// ValidityChecking is a path whose check is out: scheduled and not yet
+	// answered (#202). It is the only one of these the app pushes BEFORE
+	// it knows anything, and it exists because a submit waits for this
+	// check -- without it a ⌃S held on a stalled mount had nothing on
+	// screen at all.
+	ValidityChecking
+	// ValidityUnknown is a check that did not answer inside its deadline
+	// (#202): no verdict, rather than a bad one. Deliberately distinct
+	// from ValidityInvalid, which is a path the user fixes by typing a
+	// different one -- this is not.
+	ValidityUnknown
 )
 
 const (
@@ -121,8 +132,16 @@ const (
 	// markers. The row-stack rewrite plan kept v1's wording; the spec's
 	// table is normative and says `invalid` / `not a repository`, so that
 	// is what the row says.
-	dirRowInvalid   = "invalid"
-	dirRowNotRepo   = "not a repository"
+	dirRowInvalid = "invalid"
+	dirRowNotRepo = "not a repository"
+	// dirRowChecking and dirRowUnknown are #202's two additions to that
+	// table: a check still out, and one that never answered. The first is
+	// dim, like `not a repository` -- it is a passing fact about the row,
+	// not a problem. The second is warning-toned rather than danger: it
+	// refuses a submit, so it is not nothing, but the path it is about may
+	// be perfectly good and retyping it is not the fix.
+	dirRowChecking  = "checking…"
+	dirRowUnknown   = "check timed out"
 	dirRowMarkerGap = "  " // separates a path from its marker
 
 	// dirPanelMaxRows caps PanelRows: a project list can be long, and the
@@ -523,6 +542,10 @@ func (d *DirField) rowMarker() string {
 		return dirRowMarkerGap + lipgloss.NewStyle().Foreground(d.palette.Danger).Render(dirRowInvalid)
 	case ValidityDirect:
 		return dirRowMarkerGap + dimText(d.palette).Render(dirRowNotRepo)
+	case ValidityChecking:
+		return dirRowMarkerGap + dimText(d.palette).Render(dirRowChecking)
+	case ValidityUnknown:
+		return dirRowMarkerGap + lipgloss.NewStyle().Foreground(d.palette.Warning).Render(dirRowUnknown)
 	default:
 		return ""
 	}
