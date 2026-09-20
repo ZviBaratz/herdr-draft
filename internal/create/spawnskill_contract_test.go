@@ -141,24 +141,36 @@ func TestSkillNamesEveryExitCode(t *testing.T) {
 	}
 }
 
-// TestSkillNamesTheCheckBudget holds the budget the document promises to
-// the one the binary keeps.
+// TestSkillNamesTheCheckBudget holds the budgets the document promises to
+// the ones the binary keeps.
 //
-// The number is a fact in five documents -- this one, README's exit-code
-// section, the CHANGELOG entry, the v2 spec's #272 amendment and
-// docs/manual-smoke.md's recorded run -- and was held to the constant by
+// Each number is a fact in several documents -- this one, README's
+// exit-code section, the CHANGELOG entry, the v2 spec's amendments and
+// docs/manual-smoke.md's recorded runs -- and was held to the constant by
 // nothing: changing preflightCheckDeadline to 300s left the ENTIRE suite
 // green. This file exists because a document naming a flag `create` does
 // not have is worse than no document, and a document naming a budget it
 // does not keep is the same class: an agent that reads "thirty seconds"
 // decides how long to wait before concluding the create is stuck.
 //
+// SIXTY is checked too, since #141: exit 5 stopped being only about git,
+// and api_key_cmd's budget is the one an agent waiting on a create is most
+// likely to be sitting through.
+//
 // Only this document is asserted against, because only this one is
 // rendered from the binary. The guard below is what sends a maintainer to
-// the other four.
+// the others -- and it covers only preflightCheckDeadline, because the two
+// external budgets live in internal/linear and internal/clauth and are
+// unexported. Their own packages hold them to the documents, in
+// linear.TestTheBudgetsAreWhatTheDocumentsSay and clauth's sibling; a guard
+// that could not read the number would be a comment pretending to be a
+// test.
 func TestSkillNamesTheCheckBudget(t *testing.T) {
-	if doc := renderedSkill(); !strings.Contains(doc, "thirty seconds") {
-		t.Error("the skill never tells a caller how long a create waits before it gives up on a check")
+	doc := renderedSkill()
+	for _, word := range []string{"thirty seconds", "sixty"} {
+		if !strings.Contains(doc, word) {
+			t.Errorf("the skill never says %q -- a caller cannot tell how long a create waits before it gives up", word)
+		}
 	}
 	if preflightCheckDeadline != 30*time.Second {
 		t.Fatalf("the check budget is now %s. Four other documents name it and no test reads them: "+

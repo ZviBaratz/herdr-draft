@@ -383,3 +383,25 @@ func TestTimeoutMessagesCarryThePrefixesTheRowStrips(t *testing.T) {
 		})
 	}
 }
+
+// The budgets are a fact in several documents and were held to these
+// constants by nothing. Changing either leaves the whole suite green while
+// README, SECURITY.md, the CHANGELOG, the agent-facing spawn skill and the
+// v2 spec's #141 amendment all go on naming the old number -- and the skill
+// is the one that matters, because an agent reads it to decide how long to
+// wait before concluding a create is stuck.
+//
+// The guard lives here rather than beside create's
+// TestSkillNamesTheCheckBudget for the plain reason that only this package
+// can read these two.
+func TestTheBudgetsAreWhatTheDocumentsSay(t *testing.T) {
+	if keyCmdTimeout != 60*time.Second {
+		t.Errorf("api_key_cmd's budget is now %s. Five documents name it and no test reads them: "+
+			"internal/skill/spawn_skill.md's exit-5 paragraph, README.md's [linear] and exit-code "+
+			"sections, SECURITY.md's api_key_cmd bullet, the CHANGELOG entry, and the v2 spec's "+
+			"#141 amendment", keyCmdTimeout)
+	}
+	if httpTimeout != 30*time.Second {
+		t.Errorf("the assignedIssues budget is now %s. The same documents name it", httpTimeout)
+	}
+}

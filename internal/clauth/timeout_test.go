@@ -235,3 +235,14 @@ func TestTheCLITimeoutMessageCarriesThePrefixTheRowStrips(t *testing.T) {
 		t.Errorf("Load error = %v, want one line", err)
 	}
 }
+
+// The budget is a fact in several documents and was held to this constant
+// by nothing -- see linear.TestTheBudgetsAreWhatTheDocumentsSay, whose
+// reasoning this shares and whose location it shares the reason for.
+func TestTheBudgetIsWhatTheDocumentsSay(t *testing.T) {
+	if cliTimeout != 30*time.Second {
+		t.Errorf("the clauth budget is now %s. Three documents name it and no test reads them: "+
+			"README.md's [clauth] and Troubleshooting sections, the CHANGELOG entry, and the v2 "+
+			"spec's #141 amendment", cliTimeout)
+	}
+}

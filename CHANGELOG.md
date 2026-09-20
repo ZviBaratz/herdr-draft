@@ -195,8 +195,9 @@ without the popup. It drives herdr exclusively through the public CLI
   caller. All six are bounded: does this directory exist, is it a
   repository, what is its root and its primary checkout, does this branch
   already exist, what commit does this base name. Each check gets its own
-  thirty seconds, and a create spends at most one of them, because the
-  questions are asked in order and a timeout refuses the run. The plain
+  thirty seconds, and a create spends at most one that REFUSES, because the
+  questions are asked in order and a timeout refuses the run -- the one
+  bounded call that does not refuse is clauth's, below. The plain
   file reads beside them are not bounded, and only two are on the project
   at all: the repository's `.herdr-draft.toml`, read after the git
   questions, and `os.Getwd`, which runs before them whenever `--project` is
@@ -216,6 +217,42 @@ without the popup. It drives herdr exclusively through the public CLI
   context is not a timeout and never says it was; the popup makes the same
   distinction on screen, with a shorter budget, because there is someone
   holding the key (#202).
+- **The three calls herdr-draft makes outside the machine are bounded
+  too** (#141), and exit `5` widened from "a question the pre-flight asked
+  git" to "a question the command asked". Two of them ran *before the
+  popup drew*, and neither had a deadline: the `api_key_cmd` that resolves
+  your Linear key reached a plain `exec.Command`, which takes no context at
+  all, and the clauth read had a context both callers handed
+  `context.Background()`. The third, the Linear fetch, went out over a
+  client whose timeout is zero. A credential helper waiting on a desktop
+  approval nobody gave, or a proxy that accepts the connection and never
+  answers, therefore meant a popup pane that stayed blank for good and a
+  `create` with no output and no exit code.
+
+  **Sixty seconds for `api_key_cmd`, thirty for the other two.** That is
+  two reasons rather than three numbers: `api_key_cmd` is the only thing
+  herdr-draft runs that may legitimately be waiting on a *person*, since an
+  `op read` raises a desktop approval, so its budget sits above the slowest
+  real approval — cutting a working helper off at thirty would report it as
+  broken, permanently, with nothing saying why. The other two are a local
+  daemon and one GraphQL POST.
+
+  **What a timeout means depends on whether the answer was load-bearing,
+  not on which path asked.** In the popup all three degrade the row that
+  needed them and the form still opens, which is what every other failure
+  of theirs already did. In `create` the two Linear calls are exit `5`:
+  `--issue` has nothing to fall back on, since unlike the popup `create`
+  never reads the issue cache. The clauth read is not, and that is the
+  decision rather than an oversight — it only qualifies a session that will
+  be created either way, so it prints a line and the run carries on, the
+  posture every other clauth failure already takes.
+
+  Read the stderr line before deciding what to do with it, and the spawn
+  skill now says so: a stalled mount answers a retry exactly as it answered
+  the first time, while Linear or a credential helper may well answer the
+  next one. None of the budgets is configurable, for the reason above.
+  A cancelled caller is not a timeout here either. Still unbounded, and
+  deliberately: every `herdr` CLI call, including the reachability probe.
 - **`--dry-run` shows what a create would make, and makes nothing.** It
   runs the whole pre-flight, with the real run's exit 2, 3 and 5, then
   reports and stops. It creates nothing and remembers nothing, and an
@@ -699,8 +736,9 @@ without the popup. It drives herdr exclusively through the public CLI
 - `herdr pane run` types its argv into a shell rather than exec'ing it, so
   the runner shell-quotes every element — and the argv path that has no
   shell deliberately does not.
-- **Besides Linear — which a configured key is your consent for — one
-  thing reaches the network without being asked, and it is bounded.**
+- **Besides Linear — which a configured key is your consent for, and
+  which is itself bounded at thirty seconds (#141) — one thing reaches the
+  network without being asked, and it is bounded too.**
   Landing the form on a git repository runs a background `git fetch
   --prune` there — once per repository per form open — so the base picker
   knows about remote branches that arrived since you last fetched. It

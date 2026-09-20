@@ -31,10 +31,27 @@
 //     them. config.Load is nonetheless the very first read the pre-flight
 //     makes.
 //
-// Not file reads, unbounded, and likewise not on the project: `clauth
-// status --json` and every herdr CLI call, both exec.CommandContext on the
-// caller's context with no timeout of their own. The account pick is the
-// one subprocess that does have a bound (picker.pickerTimeout).
+// Not file reads, and no longer unbounded. The two subprocesses this
+// enumeration used to name -- `clauth status --json`, and the api_key_cmd
+// that resolves the Linear key, which it left out entirely -- now carry
+// deadlines of their own (#141), as the account pick already did
+// (picker.pickerTimeout); so does the Linear fetch behind --issue, which is
+// a network call rather than a subprocess. Each is bounded in its OWN
+// package rather than here, because the popup makes the same three calls
+// and has no `bounded` to put them in, and each is a KILL bound rather than
+// an answer bound -- their own comments say why, and it matters, because a
+// child that cannot be reaped still hangs the caller.
+//
+// Still unbounded, and not on the project either: every herdr CLI call,
+// including the reachability probe -- exec.CommandContext on the caller's
+// context with no timeout of its own. #280 leaves it out deliberately: a
+// herdr that accepts a socket and never answers is a different failure from
+// a stalled disk, and arguably fine.
+//
+// This enumeration has now been wrong twice, which is the reason it is
+// grouped rather than counted: it called the account pick the only bounded
+// subprocess while omitting api_key_cmd, which had no context at all and
+// was the worst of the set.
 //
 // Bounding a bare os.ReadFile is a larger change than this one wants. The
 // point of writing it down is that "unlikely to be reached" is not

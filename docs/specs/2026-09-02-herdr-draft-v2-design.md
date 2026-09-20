@@ -740,6 +740,45 @@ prompts.
 > a person holding the key; a script has nobody, which is why this exists at
 > all. A cancelled context is not a timeout and never says it was.
 
+> **Amended, #141 (2026-09-20): exit 5 is not only about git.** #272's
+> amendment above scoped 5 to "every question the pre-flight asks git", and
+> both it and #192's before it assumed the rest of the pre-flight either
+> could not hang or was not the command's to bound. Three calls could, and
+> two of them ran before the popup drew: the `api_key_cmd` that resolves the
+> Linear key (a plain `exec.Command`, no context at all), the clauth read
+> (a context both callers handed `context.Background()`), and the Linear
+> fetch (a client whose timeout is zero).
+>
+> Exit 5 now means **a question the command asked that did not answer in
+> time**, and covers two of the three: `api_key_cmd`, after sixty seconds,
+> and the `--issue` fetch, after thirty. Sixty for the first because it is
+> the only thing herdr-draft runs that may legitimately be waiting on a
+> person. Both are reached only under `--issue`, which has nothing to fall
+> back on — the popup renders its issue cache and carries on, and `create`
+> never reads that cache at all.
+>
+> The **clauth** read is bounded at thirty seconds and does **not** refuse,
+> and that asymmetry is the decision rather than an omission. Its check only
+> qualifies a session that will be created either way, so a timeout prints
+> one line and the run carries on, exactly as every other clauth failure
+> already did. One create therefore still spends at most one *refusing*
+> budget, but a run that spends clauth's can reach the account picker's own
+> thirty afterwards.
+>
+> One code rather than a sixth, because what a caller does first is the same
+> for both kinds — stop and read the line, which names the question. What it
+> does next differs, and the line is what says which: a stalled mount
+> answers a retry as it answered the first time, while Linear or a
+> credential helper may answer the next one. The spawn skill's exit-5
+> paragraph carries that split; a caller branching on a code would still
+> have had to read the line.
+>
+> In the **popup** none of the three refuses. Each degrades the row that
+> needed it, with the reason on the row, which is spec §13's rule and what
+> every other failure of theirs already did. The budgets are the same on
+> both paths — a shorter one before the draw would report a working
+> credential helper as broken, which is worse than the wait it saves.
+
 `main.go` dispatches on `os.Args[1]`: absent means the popup, exactly as
 today; an unknown verb prints usage and exits 2.
 

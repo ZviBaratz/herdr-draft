@@ -153,8 +153,9 @@ exit codes:
   3  herdr is unreachable, found before the plan starts
   4  the plan started, and its first step failed before making anything:
      nothing exists
-  5  a check did not answer in time -- a stalled filesystem, in practice;
-     nothing was created and nothing in the command would change it
+  5  a question the command asked did not answer in time -- a stalled
+     filesystem, or Linear; nothing was created and nothing in the
+     command would change it
 
 tab-here and split-here need herdr's own pane environment
 (HERDR_WORKSPACE_ID / HERDR_TAB_ID / HERDR_PANE_ID), which herdr sets for

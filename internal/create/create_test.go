@@ -413,10 +413,11 @@ func (g *fakeGit) ResolveCommit(_ context.Context, dir, ref string) (string, err
 // fakeLinear implements IssueSource.
 type fakeLinear struct {
 	issues []linear.Issue
+	err    error
 }
 
 func (f *fakeLinear) AssignedIssues(context.Context) ([]linear.Issue, error) {
-	return f.issues, nil
+	return f.issues, f.err
 }
 
 // harness is one `create` invocation's environment: temp config/state

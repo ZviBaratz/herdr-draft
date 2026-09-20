@@ -421,27 +421,50 @@ what commit does this base name — gives up after thirty seconds instead of
 waiting for good. Without that, a `create` on a stalled network mount sat
 there with no output and no exit code for as long as the mount stayed
 stalled: fine for a person, who can press `⌃C`, and useless for the script
-or agent that is the usual caller. The line on stderr names which check ran
-out, and nothing was created.
+or agent that is the usual caller. The line on stderr names which question
+ran out, and nothing was created.
 
-Each check gets its own thirty seconds, and one create spends at most one
-of them, because the questions are asked in order and a timeout refuses the
-run. The plain file reads beside them are not bounded — but only two are on
-the project at all, and of those, the repository's `.herdr-draft.toml` is
-read after the git questions, so on a stalled project it is git that runs
-out. The exception is `os.Getwd`, which runs first and is on the project
-whenever `--project` is absent or relative. Your `config.toml` and the two state
-files are in the plugin's own directories, not the project's.
+**Two of the questions are asked outside the machine**, and both only under
+`--issue`: the `api_key_cmd` that resolves your Linear key, which gives up
+after **sixty** seconds, and the Linear fetch itself, after thirty. Sixty
+because that one is the only thing herdr-draft runs that may legitimately
+be waiting on *you* — a `op read` raises a desktop approval, and cutting a
+working helper off at thirty would report it as broken.
+
+**Read the line before deciding what to do with it.** A stalled mount will
+answer a retry exactly as it answered the first time, so report it and
+leave the mount to whoever owns it. Linear not answering, or a credential
+helper waiting on an approval nobody gave, may well answer next time.
+Re-running with a *different flag* helps in neither case.
+
+Each question gets its own budget, and one create spends at most one that
+*refuses*, because the questions are asked in order and a timeout refuses
+the run. One bounded call does not refuse and so does not end the run:
+`clauth status --json`, read for `--account <name>` and for a
+`--dry-run --json` report, gives up after thirty seconds and the create
+carries on without it — the same thing every other clauth failure does. A
+run that spends that one can still reach the account picker's own thirty
+afterwards.
+
+The plain file reads beside all of this are not bounded — but only two are
+on the project at all, and of those, the repository's `.herdr-draft.toml`
+is read after the git questions, so on a stalled project it is git that
+runs out. The exception is `os.Getwd`, which runs first and is on the
+project whenever `--project` is absent or relative. Your `config.toml` and
+the two state files are in the plugin's own directories, not the
+project's. Every `herdr` call is unbounded too.
 
 It is not exit 2: that one means "fix the command and re-run", and there is
 nothing in the command to fix. It is not exit 3 either, which would send you
 to look at a herdr that is fine. The popup makes the same distinction on
-screen, with a shorter budget, since there is someone holding the key.
+screen, with a shorter budget for the git questions, since there is someone
+holding the key; the three external calls take the same budgets there as
+here, and degrade the row that needed them rather than refusing.
 
-The budget is not configurable, by design. It is a safety bound rather than
-a tuning knob — nothing you could set it to would make a hung mount answer —
-and `[timeouts]` values are not validated, so one typo would turn it into
-"give up immediately" instead.
+None of the budgets is configurable, by design. They are safety bounds
+rather than tuning knobs — nothing you could set them to would make a hung
+mount answer — and `[timeouts]` values are not validated, so one typo would
+turn one into "give up immediately" instead.
 
 **`--dry-run` shows what a create would make, and makes nothing.** It
 runs every check a create runs before it starts, with the same exit 2,
@@ -753,7 +776,10 @@ Both are *defaults*, and a later tier can override them — see
 
 - `api_key_cmd` — argv (no shell) whose stdout is your Linear API key, e.g.
   `["pass", "show", "linear-api-key"]`. Checked before `LINEAR_API_KEY` and
-  before `api_key` below.
+  before `api_key` below. It is given **sixty seconds** to answer, which is
+  longer than anything else here waits: it is the one command herdr-draft
+  runs that may legitimately be waiting on *you*, since an `op read` raises
+  a desktop approval. Past that it is treated as a source that failed.
 - `api_key` — the API key given directly in the config file. Discouraged;
   herdr-draft checks the file's permissions (0600) before trusting a value
   read this way.
@@ -773,11 +799,21 @@ If no Linear API key resolves from any of the three sources, the `issue` row
 is simply not rendered — the form is seven rows and everything else works
 unchanged.
 
-If a key source is *configured but fails* — `api_key_cmd` exits non-zero or
-isn't on `$PATH`, or `api_key` sits in a `config.toml` readable by anyone
-but you — the row is rendered and reads `unavailable  <reason>`, with the
-same reason on its panel's own line. It can't be focused, and everything
-else in the form still works.
+If a key source is *configured but fails* — `api_key_cmd` exits non-zero,
+isn't on `$PATH`, or does not answer within its sixty seconds, or `api_key`
+sits in a `config.toml` readable by anyone but you — the row is rendered
+and reads `unavailable  <reason>`, with the same reason on its panel's own
+line. It can't be focused, and everything else in the form still works.
+
+The popup resolves the key *before* it draws, so a helper that hangs used
+to mean a pane that stayed blank for good. It now stays blank for at most
+that minute and then draws, with the reason on the row.
+
+Fetching your issues is bounded separately, at **thirty seconds**. In the
+popup that refresh runs in the background over the list already rendered
+from cache, so a timeout costs freshness and leaves the list pickable, with
+the reason on the panel's status row. `create --issue` has no cache to fall
+back on, so there it is exit 5.
 
 ### `[clauth]`
 
@@ -1517,20 +1553,21 @@ two profiles, or clauth not detected at all, means the row is simply absent
 Linear.
 
 **The `account` row says `unavailable`.** Different situation: clauth *is*
-installed, and herdr-draft could not read it — it exited non-zero, or its
-`--json` output did not parse. The reason is on the row. The row is inert
+installed, and herdr-draft could not read it — it exited non-zero, its
+`--json` output did not parse, or it did not answer within thirty seconds.
+The reason is on the row. The row is inert
 — it takes no input — but **focusing it asks clauth again** without closing
 the form: `⇥` stops there for exactly that reason, and a click works too.
 A reload that finds at least two profiles makes the row live, exactly as if
 clauth had answered when the form opened. Its panel, which only the focused
 row draws, is also where a reason too long for one line is readable in
-full. One that fails, or that finds fewer than two profiles,
+full. One that fails, times out, or that finds fewer than two profiles,
 replaces the reason with what clauth said *this* time — so the row is
 always reporting the most recent attempt, not the one from startup.
 
 **The `issue` row says `unavailable`.** Your key source is configured but
-failed; the reason is on the row itself and in its panel. See
-[`[linear]`](#linear).
+failed, or did not answer inside its budget; the reason is on the row
+itself and in its panel. See [`[linear]`](#linear).
 
 **"prompt not sent" after a submit.** The session was created and the agent
 started, but the prompt was never typed: the agent was showing a dialog, or
