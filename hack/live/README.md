@@ -6,10 +6,22 @@ the way herdr launches it, with every input it reads replaced by a stub under
 a scratch `HOME`.
 
 ```bash
-just live --size 101x30                                    # the popup's own size
-just live --size 57x18 --keys 'tab tab tab' --row -1       # one row's footer, narrow
-just live --size 44x12 --click 4,6                         # reach a row Tab skips
+just live --size 101x30                                 # the popup's own size
+just live --size 57x18 --keys tab,tab,tab --row -1      # one row's footer, narrow
+just live --size 44x12 --click 4,4                      # reach a row Tab skips
 ```
+
+**Commas, not spaces, in `--keys` through `just`.** The recipe's `{{ARGS}}` is a
+space-joined string the shell re-splits, so a quoted `--keys 'tab tab tab'`
+arrives as three arguments and argparse refuses the last two. `drive.py` splits
+key tokens on either separator, so commas work through both callers; run it
+directly (`python hack/live/drive.py …`) when a flag's value has to contain a
+space. The recipe also sets `set -f`, because without it `tab*3` is globbed
+into a filename that happens to match.
+
+A row number in an example is only as good as the rows on screen — the issue
+row is absent here (see below), which moves everything above `placement` up by
+one. Dump the screen before clicking.
 
 `just live` builds the binary, makes a venv with the pinned `pyte` (the pin is
 the justfile's `pyte_version`, and lives nowhere else), and runs `drive.py`.
@@ -17,10 +29,27 @@ Nothing is installed into the repository or onto your machine; the venv sits
 under `$TMPDIR`. `hack/` is not a Go package and nothing here is on the
 `[[build]]` path that runs on a user's machine at install time.
 
-It talks to **no real herdr**, spends no account quota and creates nothing, so
-it is safe to run in a loop while you read a screen. What it cannot do is the
-other half of the smoke matrix: the popup (which has no pane id, so nothing
-can send keys to it) and a real submit. Those still need `docs/manual-smoke.md`.
+It reaches **no real herdr, no real Linear and no real clauth**, and creates
+nothing outside its own scratch tree, so it is safe to run in a loop while you
+read a screen. What it cannot do is the other half of the smoke matrix: the
+popup (which has no pane id, so nothing can send keys to it) and a submit that
+creates anything real. Those still need `docs/manual-smoke.md`.
+
+**The child's environment is an allow-list**, which is the only reason any of
+that is true. It inherits `LANG`/`LC_*`, `TZ` and `TMPDIR` and nothing else;
+everything the form reads comes from the scratch tree. The first version of
+this driver subtracted `HERDR_*` and the two `XDG_*` names and called that
+"nothing of yours" — and still handed over the Linear API key, which
+`internal/linear` reads straight from the environment, so the issue row was
+live against a real workspace and 163KB of it landed in the scratch state
+directory on every run. A screen that depends on whose key is in the shell is
+not evidence, and a screen dump that carries real issue titles is worse than
+useless in a PR.
+
+The visible consequence is that **the issue row is absent**: with no key, the
+form reports Linear unavailable and the row goes. That is the honest state for
+a hermetic run. Reading that row live needs a real key, which is exactly what
+this driver will not do on your behalf.
 
 ## The stub `herdr`'s envelope
 
@@ -50,6 +79,37 @@ herdr-draft: herdr unreachable: herdr workspace list: parse response: unexpected
 `drive.py` carries that stub inline and says so when the binary exits before
 anything is sent. To answer more subcommands — or to reproduce the failure
 above — pass your own with `--herdr FILE`.
+
+**The empty array is why the title row's panel is blank**, and it is the first
+thing that looks broken and is not. That panel lists the sessions open when the
+form opened, fed by the *same* `workspace list` call. Hand `--herdr` a stub
+that returns two workspaces and it fills in exactly as the committed fixture
+`internal/app/testdata/frames/assembled-opening-101x30.txt` has it:
+
+```sh
+#!/bin/sh
+case "$1 $2" in
+  "workspace list") cat <<'JSON'
+{"result":{"workspaces":[
+  {"workspace_id":"ws-1","number":1,"label":"report-studio","focused":false,
+   "pane_count":4,"tab_count":2,"active_tab_id":"t1","agent_status":"idle","worktree":null},
+  {"workspace_id":"ws-2","number":2,"label":"qspace-tls","focused":false,
+   "pane_count":1,"tab_count":1,"active_tab_id":"t2","agent_status":"blocked","worktree":null}
+]}}
+JSON
+  ;;
+  *) echo '{"result":{}}' ;;
+esac
+```
+
+```console
+$ just live --herdr /tmp/rich-herdr.sh --size 101x30
+15    sessions open when this form did                     2 sessions
+16    report-studio  idle     4 panes
+17    qspace-tls     blocked  1 pane
+```
+
+`WorkspaceInfo` in `internal/herdrc/runner.go` is the field list.
 
 ## The stub `clauth`, and why `HOME` has to be a scratch directory
 
@@ -91,6 +151,12 @@ the footer at 12 rows and a blank line at 30. Look before you rely on it.
 waits for a repaint. A debounced check — the project row's, the base settle —
 takes longer than either; give it seconds, not milliseconds.
 
+**`--repo` points the form at a real repository, and the form fetches.** The
+project row's open does one `git fetch --prune` against that repo's real
+remote. It is the one flag that reaches the network — no credentials travel
+with it, since `SSH_AUTH_SOCK` is not inherited, so a private remote simply
+fails — and the throwaway repo the driver makes has no remote at all.
+
 **State carries over unless you let it go.** The plugin's state directory holds
 `recents.json`, `last-used.json` and `projects.json`, so a second run would
 otherwise open on what the first left behind. The driver wipes it on every run;
@@ -99,9 +165,9 @@ tree away (and refuses to do that to a directory it did not make).
 
 ## Worked example: reading a footer cliff
 
-`internal/form`'s `narrowFloorCases` records six terminal widths where the key
-ladder falls to its constant tail. Two of them, read live on 2026-09-20 against
-this branch's binary:
+The key ladder falls to its constant tail at six measured terminal widths, one
+per zone, and steps back up one column wider. Two of them, read live on
+2026-09-20 against this branch's binary:
 
 ```console
 $ just live --size 35x12 --size 36x12 --keys 'tab*3' --row -1
@@ -117,6 +183,10 @@ $ just live --size 40x12 --size 41x12 --keys 'tab*4' --row -1
  ↑↓ all kinds   ⌃S create    esc cancel
 ```
 
-Which is what the golden frames say, arrived at through a real terminal
-instead of `ViewAt` — and that agreement is the point. A golden-frame suite
-proves only the states someone thought to fixture.
+Which is what `internal/form`'s own narrow-band fixtures say, arrived at
+through a real terminal instead of `ViewAt` — and that agreement is the point.
+A golden-frame suite proves only the states someone thought to fixture.
+
+(The widths are deliberately not cited to a symbol here. They belong to a test
+table in `internal/form`, and a pointer from `hack/` into an unexported test
+variable is the kind of citation that resolves on one branch and nowhere else.)

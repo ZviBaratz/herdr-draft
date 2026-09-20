@@ -183,28 +183,54 @@ class Term:
     def lines(self):
         return [l.rstrip() for l in self.screen.display]
 
-    def exited(self):
-        try:
-            pid, status = os.waitpid(self.pid, os.WNOHANG)
-        except ChildProcessError:
-            return 0
-        return os.waitstatus_to_exitcode(status) if pid else None
+    def exited(self, grace=1.0):
+        """The child's exit code, or None if it is still running.
+
+        Polled to a deadline rather than asked once. pump() returns the
+        instant the pty master reports EIO, which is BEFORE the child is
+        reapable, so a single WNOHANG says "still running" for a binary
+        that has already refused to start -- measured at roughly one run
+        in ten, and the run then prints the refusal screen with row
+        numbers and exits 0. That is the confident wrong reading this
+        driver exists to avoid, in the one place it would be read as good
+        news.
+        """
+        end = time.time() + grace
+        while True:
+            try:
+                pid, status = os.waitpid(self.pid, os.WNOHANG)
+            except ChildProcessError:
+                return 0
+            if pid:
+                self.reaped = True
+                return os.waitstatus_to_exitcode(status)
+            if time.time() >= end:
+                return None
+            time.sleep(0.01)
 
     def close(self):
-        try:
-            os.write(self.fd, b"\x1b")
-            time.sleep(0.2)
-        except OSError:
-            pass
-        for sig in (signal.SIGKILL,):
+        """esc, then SIGTERM, and only then SIGKILL.
+
+        SIGTERM rather than straight to KILL because the binary answers
+        it: bubbletea turns SIGINT/SIGTERM into a QuitMsg, so the program
+        reaches runProgram's teardown -- which cancels the Lifetime and
+        waits for whatever it shelled out to (a configured picker) to
+        die. Killing outright would orphan exactly the grandchild that
+        convention exists to reap.
+        """
+        if not getattr(self, "reaped", False):
             try:
-                os.kill(self.pid, sig)
-            except ProcessLookupError:
-                break
-        try:
-            os.waitpid(self.pid, 0)
-        except ChildProcessError:
-            pass
+                os.write(self.fd, b"\x1b")
+                time.sleep(0.2)
+            except OSError:
+                pass
+            for sig, grace in ((signal.SIGTERM, 1.0), (signal.SIGKILL, 1.0)):
+                try:
+                    os.kill(self.pid, sig)
+                except ProcessLookupError:
+                    break
+                if self.exited(grace) is not None:
+                    break
         os.close(self.fd)
 
 
@@ -223,14 +249,27 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
     would otherwise open on what the first run left behind -- a driver whose
     output depends on how often you have used it is not evidence.
     """
-    # MARKER guards --fresh, which is an rm -rf of a path that came off the
-    # command line. A tree this driver did not make is never deleted, so a
-    # slip of --root costs an error message rather than someone's work.
+    # MARKER decides whether this directory is OURS, and the check is at
+    # the top because --root is a path off the command line and two things
+    # below it are rm -rf: --fresh on the whole tree, and the state wipe on
+    # every ordinary run.
+    #
+    # The first version guarded only --fresh and planted the marker on
+    # every run, which made a mistyped --root a two-step escalation: run
+    # one silently deleted <path>/state AND adopted the directory, so run
+    # two -- the same command one word longer -- passed the guard and took
+    # the rest. An existing directory is therefore adopted only when it is
+    # EMPTY, and the marker is written when the tree is made rather than
+    # on every pass.
     marker = os.path.join(root, MARKER)
+    ours = os.path.exists(marker)
+    if os.path.exists(root) and not ours and os.listdir(root):
+        raise SystemExit(
+            "drive.py: %s exists, is not empty, and was not made by this driver -- refusing to use it\n"
+            "           (it would delete %s/state, and --fresh would delete all of it)" % (root, root))
     if fresh and os.path.exists(root):
-        if not os.path.exists(marker):
-            raise SystemExit("drive.py: %s exists and was not made by this driver -- refusing --fresh" % root)
         shutil.rmtree(root, ignore_errors=True)
+        ours = False
     home = os.path.join(root, "home")
     state = os.path.join(root, "state")
     if not keep_state:
@@ -243,11 +282,18 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
         with open(herdr_stub) as f:
             stub = f.read()
     write_exec(os.path.join(root, "bin", "herdr"), stub)
-    with open(marker, "w") as f:
-        f.write("made by hack/live/drive.py\n")
     write_exec(os.path.join(root, "bin", "clauth"), STUB_CLAUTH)
+    if not ours:
+        with open(marker, "w") as f:
+            f.write("made by hack/live/drive.py\n")
     if config:
-        shutil.copyfile(config, os.path.join(root, "cfg", "config.toml"))
+        # Copied, then chmod 0600: shutil.copyfile carries content and not
+        # mode, so the copy lands at the umask -- and internal/linear
+        # refuses an inline api_key in a file readable by anyone else, so a
+        # 0600 source silently became an unavailable issue row.
+        dest = os.path.join(root, "cfg", "config.toml")
+        shutil.copyfile(config, dest)
+        os.chmod(dest, 0o600)
     repo = os.path.join(root, "repo")
     if not os.path.isdir(os.path.join(repo, ".git")):
         os.makedirs(repo, exist_ok=True)
@@ -257,21 +303,40 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
     return home, state, repo
 
 
-def child_env(root, home, state, repo, cols, rows):
-    """herdr's five variables, and nothing of yours.
+# KEEP is the whole of what the child inherits, and it is an ALLOW-list
+# because a deny-list of this was wrong in a way nothing on screen showed.
+# The first version dropped every HERDR_* and both XDG_* and called that
+# "nothing of yours"; it still handed over 130-odd variables, among them
+# the Linear API key, which internal/linear reads straight from the
+# environment (client.go: "2. The LINEAR_API_KEY environment variable").
+# So the issue row was LIVE -- the form queried the real Linear API and
+# wrote 163KB of a real workspace into the scratch state directory on
+# every run. That is a screen that changes with whoever is at the
+# keyboard, and a screen dump that carries real issue titles into a PR.
+#
+# Dropping GIT_* earns its place twice: `git rebase -x` exports GIT_DIR,
+# and a child that inherited it would work on the wrong repository.
+KEEP = ("LANG", "LANGUAGE", "TZ", "TMPDIR")
 
-    Every HERDR_* and both XDG_* are dropped rather than overridden: this
-    driver is usually run from inside a herdr pane, and an inherited
-    HERDR_SOCKET_PATH or HERDR_SESSION reaches the stub and then the real
-    server behind it.
+
+def child_env(root, home, state, repo, cols, rows):
+    """herdr's five variables, a locale, and nothing else of yours.
+
+    Everything the form reads has to come from the scratch tree or it is
+    not reproducible -- and worse, not safe to paste. An inherited
+    HERDR_SOCKET_PATH would reach the real server behind the stub, an
+    inherited Linear key reaches the real Linear, and an inherited
+    SSH_AUTH_SOCK would let a `git fetch` authenticate.
     """
-    env = {k: v for k, v in os.environ.items()
-           if not k.startswith("HERDR_") and k not in ("XDG_CONFIG_HOME", "XDG_STATE_HOME")}
+    env = {k: v for k, v in os.environ.items() if k in KEEP or k.startswith("LC_")}
     env.update(
         HOME=home,
         XDG_CONFIG_HOME=os.path.join(home, ".config"),
         XDG_STATE_HOME=os.path.join(home, ".local", "state"),
-        PATH=os.path.join(root, "bin") + ":/usr/bin:/bin",
+        # The stub bin first, then the ordinary places `git` lives --
+        # /usr/local/bin and /opt/homebrew/bin included, or the child has
+        # no git at all on a Mac.
+        PATH=":".join([os.path.join(root, "bin"), "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"]),
         TERM="xterm-256color",
         COLUMNS=str(cols), LINES=str(rows),
         HERDR_BIN_PATH=os.path.join(root, "bin", "herdr"),
@@ -319,7 +384,7 @@ def run_once(args, env_for, cols, rows):
             return 1
         for kind, value in args.actions or []:
             if kind == "keys":
-                for token in value.split():
+                for token in re.split(r"[\s,]+", value.strip()):
                     t.send(key_bytes(token), args.settle)
             elif kind == "type":
                 t.send(value, args.settle)
@@ -328,6 +393,8 @@ def run_once(args, env_for, cols, rows):
         lines = t.lines()
         if args.row or args.line:
             for n in args.row:
+                if not -len(lines) <= n < len(lines):
+                    raise SystemExit("drive.py: --row %d is outside a %d-row screen" % (n, len(lines)))
                 print(lines[n])
             for needle in args.line:
                 for line in lines:
@@ -345,12 +412,13 @@ def main(argv):
     p = argparse.ArgumentParser(
         prog="drive.py",
         description="run the real form under a pty and print the screen",
-        epilog="actions apply in the order given: --keys 'tab tab' --click 4,5 --keys down")
+        epilog="actions apply in the order given: --keys tab,tab --click 4,5 --keys down")
     p.add_argument("--size", type=size, action="append", metavar="WxH",
                    help="terminal size, repeatable; the binary is relaunched per size (default 101x30, the popup's)")
     p.add_argument("--keys", action=Ordered, metavar="SEQ",
-                   help="space-separated: tab, shift-tab, enter, esc, up/down/left/right, ctrl-s, "
-                        "a single character, any of them with *N to repeat")
+                   help="comma- or space-separated: tab, shift-tab, enter, esc, up/down/left/right, "
+                        "ctrl-s, a single character, any of them with *N to repeat. Through `just live` "
+                        "use commas -- a quoted value with spaces does not survive the recipe")
     p.add_argument("--type", action=Ordered, metavar="TEXT", help="type TEXT literally")
     p.add_argument("--click", type=point, action=Ordered, metavar="X,Y",
                    help="click cell X,Y -- the only way to reach a row Tab skips")

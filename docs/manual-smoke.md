@@ -286,12 +286,15 @@ Route A is what proves the popup itself still works, which is cell 1's job.
 **`just live` is Route B with nothing real behind it, and no pane needed.**
 `hack/live/drive.py` runs the same binary under a pty, reads the screen with a
 terminal emulator, and prints it — at a size you name, after keys you name.
-Every input is a stub under a scratch `HOME`, so it creates nothing, spends no
-account quota and cannot submit: it answers "what does this actually look like
-at 57 columns with the worktree row focused", which is the question a golden
-frame cannot be trusted with (`CLAUDE.md`: a golden-frame suite proves only the
-states someone thought to fixture). It does **not** replace anything in the
-matrix below — nothing it drives is real, and it cannot reach the popup either.
+Every input is a stub under a scratch `HOME`, reached through an allow-listed
+environment, so nothing it drives is real: no herdr, no Linear, no clauth, and
+no account quota. It answers "what does this actually look like at 57 columns
+with the worktree row focused", which is the question a golden frame cannot be
+trusted with (`CLAUDE.md`: a golden-frame suite proves only the states someone
+thought to fixture). It does **not** replace anything in the matrix below. A
+submit is not refused — `⌃S` runs the whole plan and the form reports a created
+session — but every step of it went to the stub, so nothing exists afterwards;
+and it cannot reach the popup either.
 `hack/live/README.md` has the usage, the stub `herdr` envelope that costs an
 afternoon to rediscover, and four ways a pty reading can still mislead you.
 

@@ -151,7 +151,21 @@ smoke repo:
 # thing here by an order of magnitude.
 #
 #     just live --size 101x30
-#     just live --size 57x18 --keys 'tab tab tab' --row -1
+#     just live --size 57x18 --keys tab,tab,tab --row -1
+#
+# COMMAS, not spaces, in --keys through this recipe. `{{ARGS}}` is a
+# space-joined string that the shell then re-splits, so a quoted
+# `--keys 'tab tab tab'` arrives as three arguments and argparse refuses
+# the last two. drive.py splits key tokens on either separator, so the
+# comma form is the one that survives both callers; `python3
+# hack/live/drive.py --keys 'tab tab tab'` is fine directly. The same
+# limit applies to any other flag whose value has a space in it, which is
+# why --type and --line are worth running directly when they do.
+#
+# `set -f` is not decoration either. Without it the shell globs {{ARGS}}
+# on the way past, and a key token like `tab*3` silently becomes a
+# filename that happens to match -- the same shape as #72's unquoted
+# model id and #209's `[1m]`.
 #
 # A leading `--` is swallowed rather than passed on: just does not need
 # one before a recipe's own flags, but typing it is the reflex, and
@@ -164,15 +178,25 @@ live *ARGS:
     set -euo pipefail
     just build
     venv="${TMPDIR:-/var/tmp}/herdr-draft-live-venv"
-    if [[ ! -x "$venv/bin/python" ]]; then
+    # Probed by IMPORTING pyte, not by the interpreter existing: a first
+    # run interrupted between `venv` and `pip install` leaves an
+    # executable python with nothing in it, and a guard that only checks
+    # for the binary never repairs it -- it just tells you to run the
+    # command that failed.
+    if ! "$venv/bin/python" -c 'import pyte' >/dev/null 2>&1; then
         command -v python3 >/dev/null 2>&1 || { echo "just live needs python3" >&2; exit 1; }
+        rm -rf "$venv"
         echo "creating $venv with pyte {{pyte_version}}"
         python3 -m venv "$venv" || {
             echo "could not create a venv -- on Debian/Ubuntu that is the python3-venv package" >&2
             exit 1
         }
-        "$venv/bin/pip" install --quiet "pyte=={{pyte_version}}"
+        "$venv/bin/pip" install --quiet "pyte=={{pyte_version}}" || {
+            echo "could not install pyte {{pyte_version}} -- the half-built venv has been left at $venv" >&2
+            exit 1
+        }
     fi
+    set -f
     set -- {{ARGS}}
     [[ "${1:-}" == "--" ]] && shift
     exec "$venv/bin/python" hack/live/drive.py "$@"
