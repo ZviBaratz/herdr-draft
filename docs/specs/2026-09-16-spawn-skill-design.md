@@ -360,7 +360,7 @@ observed failure modes.
    Waiting is said to create nothing, since `create` cannot schedule it.
    Offering an account is allowed there; swapping one in silently is not.
    `clauth status --json` is how the candidates are found, an absent
-   `account_usage` makes one unknown rather than free, and a signed-out
+   `account_usage` makes one unknown rather than free, and a dead-credential
    one is refused with exit 2 and is simply not a candidate.) (Amended,
    #258: the two cheaper moves are ranked. The effort step down comes
    before the row up item 5's table, because a row up changes what the

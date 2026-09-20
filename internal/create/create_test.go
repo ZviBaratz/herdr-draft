@@ -2918,8 +2918,33 @@ func TestCreateLaunchesOnADegradedStatus(t *testing.T) {
 	if got, want := strings.Join(h.runner.runArgv, " "), "clauth start alpha-2 --"; got != want {
 		t.Fatalf("the typed launch = %q, want %q (calls: %v)", got, want, h.runner.calls)
 	}
-	if got := h.stderr.String(); !strings.Contains(got, "alpha-2") || !strings.Contains(got, "degraded") {
+	if got := h.stderr.String(); !strings.Contains(got, "alpha-2") || !strings.Contains(got, "degraded") || !strings.Contains(got, "schema 7") {
+		t.Errorf("a skipped check must say so, naming the profile and the schema:\n%s", got)
+	}
+}
+
+// TestCreateLaunchesOnAnUnreadableShape is the OTHER degraded path, and the
+// reason the line does not simply interpolate Schema: ParseStatus's minimal
+// fallback -- a payload whose shape this build cannot decode at all --
+// recovers the profile names and no schema, so Schema is 0. A number no
+// clauth writes, printed beside a sentence inviting the reader to go and
+// look that schema up, would describe the wrong failure.
+func TestCreateLaunchesOnAnUnreadableShape(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Clauth = &fakeClauth{status: clauth.Status{
+		Degraded: true,
+		Profiles: []clauth.Profile{{Name: "alpha-2"}},
+	}}
+
+	if code := h.run("--title", "fix login", "--account", "alpha-2", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	got := h.stderr.String()
+	if !strings.Contains(got, "alpha-2") || !strings.Contains(got, "degraded") {
 		t.Errorf("a skipped check must say so, naming the profile:\n%s", got)
+	}
+	if strings.Contains(got, "schema 0") {
+		t.Errorf("the line names a schema clauth never writes:\n%s", got)
 	}
 }
 

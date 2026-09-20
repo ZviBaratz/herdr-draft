@@ -448,9 +448,14 @@ func TestAccountField_WarnsOnAuthFailedAndRateLimited(t *testing.T) {
 // expiry whose refresh has not run -- the launch hands its refresh token
 // straight to `claude` -- so it is Warning and says the word clauth itself
 // uses. `broken` is a credential rejected as revoked, so it keeps Danger
-// and the remedy that is actually the remedy. A value clauth has never
-// written is marked like the dead one and refused like neither (see
-// clauth.AuthUnrecognized).
+// and the remedy that is actually the remedy.
+//
+// The last three rows are the ones that keep `broken` from creeping back
+// into meaning "not ok". `expiring` is schema 1's spelling of `expired`,
+// which this plugin's documented clauth floor still writes; `unknown` is a
+// codex profile with no usage cache, which joined the set additively under
+// schema 2; and `revoked` stands for the next such arrival. Painting any of
+// them red would be a false alarm, and two of the three are not hypothetical.
 func TestAccountBadgeIsTonedByAuthVerdict(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -462,7 +467,9 @@ func TestAccountBadgeIsTonedByAuthVerdict(t *testing.T) {
 		{"absent", "", "", widgets.ToneWarning},
 		{"expired", clauth.AuthExpired, accountWarnAuthExpired, widgets.ToneWarning},
 		{"broken", clauth.AuthBroken, accountWarnAuthFailed, widgets.ToneDanger},
-		{"unrecognized", "revoked", accountWarnAuthFailed, widgets.ToneDanger},
+		{"expiring", clauth.AuthExpiring, accountWarnAuthExpired, widgets.ToneWarning},
+		{"unknown", clauth.AuthUnknown, "", widgets.ToneWarning},
+		{"unrecognized", "revoked", "revoked", widgets.ToneWarning},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := NewAccountField(theme.Default())
@@ -483,6 +490,20 @@ func TestAccountBadgeIsTonedByAuthVerdict(t *testing.T) {
 				t.Errorf("auth_status %q rendered badge tone %v, want %v", tc.status, item.BadgeTone, tc.wantTone)
 			}
 		})
+	}
+}
+
+// TestUnrecognizedAuthWordIsCapped: the badge column is sized over every
+// row, so an unfamiliar value -- whose length nothing in this package
+// controls -- must not be able to widen it past what `rate limited` already
+// costs, which is what every account frame is laid out around.
+func TestUnrecognizedAuthWordIsCapped(t *testing.T) {
+	long := strings.Repeat("x", 80)
+	if got := unrecognizedAuthWord(long); len(got) != len(accountWarnRateLimited) {
+		t.Errorf("a %d-character value rendered %d cells, want at most %d", len(long), len(got), len(accountWarnRateLimited))
+	}
+	if got := unrecognizedAuthWord("revoked"); got != "revoked" {
+		t.Errorf("a short value was altered: %q", got)
 	}
 }
 

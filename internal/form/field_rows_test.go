@@ -1119,6 +1119,29 @@ func TestAccountField_RowVocabulary(t *testing.T) {
 	if !strings.Contains(f.Row(60), ansiColor(palette.Warning)) {
 		t.Errorf("an expired row carries no warning color; §6 field 7 still wants it visibly marked")
 	}
+
+	// Schema 1's spelling of the same state, which this plugin's documented
+	// clauth floor writes. It reads identically, because it IS the same
+	// state -- clauth's own note on the rename tells a reader keying on the
+	// new word to refuse or translate, and this translates.
+	expiring := sampleStatus()
+	expiring.Profiles[1].AuthStatus = clauth.AuthExpiring
+	f.SetProfiles(expiring, sampleNow())
+	if got, want := rowText(f.Row(60)), "beta · Max 20x · 5h 0% · expired"; got != want {
+		t.Errorf("Row pinned to a schema-1 `expiring` profile = %q, want %q", got, want)
+	}
+
+	// A word none of the known ones: clauth's own spelling, in Warning.
+	// Inventing a state for it named the wrong one twice already.
+	odd := sampleStatus()
+	odd.Profiles[1].AuthStatus = "quarantined"
+	f.SetProfiles(odd, sampleNow())
+	if got, want := rowText(f.Row(60)), "beta · Max 20x · 5h 0% · quarantined"; got != want {
+		t.Errorf("Row pinned to an unfamiliar auth_status = %q, want %q", got, want)
+	}
+	if strings.Contains(f.Row(60), ansiColor(palette.Danger)) {
+		t.Errorf("an unfamiliar auth_status carries the danger color; nothing here knows it is a failure")
+	}
 }
 
 // TestAccountField_RowWarnsAtNinetyFive is the threshold change of v3

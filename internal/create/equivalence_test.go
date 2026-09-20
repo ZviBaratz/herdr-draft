@@ -1546,12 +1546,14 @@ func pinAccount(t *testing.T, m app.Model, row int, want string) app.Model {
 // packages, were written at different times, and each carries a doc comment
 // claiming to be the other.
 //
-// The table is every auth_status clauth can write, crossed with whether the
-// status parsed cleanly. `revoked` stands in for the value clauth's own
-// evolution rule says cannot arrive without a schema bump -- marked, never
-// refused. The degraded column is #245: a schema nobody has read clauth's
-// reason for makes every field past the profile's name unreliable, so
-// neither path may refuse on one, `broken` included.
+// The table is every auth_status clauth is known to write -- across three
+// of its versions, because the set is not closed: `expiring` is schema 1's
+// spelling of `expired`, and `unknown` joined additively under schema 2
+// without a bump. `revoked` stands in for the next such arrival, which is a
+// thing that happens rather than a thing the schema rule prevents. Only
+// `broken` is refused. The degraded column is #245: a schema nobody has
+// read clauth's reason for makes every field past the profile's name
+// unreliable, so neither path may refuse on one, `broken` included.
 //
 // Each path is driven through its own real entry point rather than through
 // its refusal function, so the ORDER each applies the check in is under test
@@ -1571,12 +1573,16 @@ func TestFormAndCommandRefuseTheSameAuthStatuses(t *testing.T) {
 		{name: "absent", status: "", refused: false},
 		{name: "ok", status: clauth.AuthOK, refused: false},
 		{name: "expired", status: clauth.AuthExpired, refused: false},
+		{name: "expiring", status: clauth.AuthExpiring, refused: false},
+		{name: "unknown", status: clauth.AuthUnknown, refused: false},
 		{name: "broken", status: clauth.AuthBroken, refused: true},
 		{name: "unrecognized", status: "revoked", refused: false},
 
 		{name: "absent degraded", status: "", degraded: true, refused: false},
 		{name: "ok degraded", status: clauth.AuthOK, degraded: true, refused: false},
 		{name: "expired degraded", status: clauth.AuthExpired, degraded: true, refused: false},
+		{name: "expiring degraded", status: clauth.AuthExpiring, degraded: true, refused: false},
+		{name: "unknown degraded", status: clauth.AuthUnknown, degraded: true, refused: false},
 		{name: "broken degraded", status: clauth.AuthBroken, degraded: true, refused: false},
 		{name: "unrecognized degraded", status: "revoked", degraded: true, refused: false},
 	} {

@@ -840,8 +840,15 @@ Auth status appears only when it is *not* `ok`, as `sign in again` in
 > and the `clauth start <profile> --` this form types hands the stored
 > refresh token to `claude`, which refreshes it. So `expired` reads as
 > `expired` — clauth's own word — in `Warning`, names no remedy, and blocks
-> nothing. A value clauth has never written reads as the dead one and
-> blocks nothing either (§9's amendment says why).
+> nothing. So does `expiring`, schema 1's spelling of the same state, which
+> is translated rather than shown as unfamiliar. `unknown` shows nothing at
+> all, like an absent value.
+>
+> Any OTHER value reads in `Warning`, spelled the way clauth spelled it,
+> and blocks nothing. Not red: the value set is not closed under a schema
+> (`unknown` arrived additively under schema 2), and neither addition so
+> far was a dead credential, so an unfamiliar word painted red is a false
+> alarm by default. §9's amendment carries the evidence.
 >
 > The mark column is unchanged: an `expired` profile still takes `!`, and
 > §8.2's marker-over-`✓` priority still applies to it. That is a decision,

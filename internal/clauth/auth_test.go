@@ -28,11 +28,12 @@ func verdictName(v AuthVerdict) string {
 // TestAuthOf is clauth's whole auth_status vocabulary in one table, and the
 // two halves of #243 and #245 crossed against each other.
 //
-// The values are closed at v0.15.2 -- `ok`, `expired`, `broken`, and absent
-// meaning `ok` -- so `revoked` stands for the case clauth's own evolution
-// rule says cannot arrive without a schema bump. It is Unrecognized rather
-// than Dead because only `broken` refuses (#243), and it is not Usable
-// either: the row still marks it.
+// Five words, from three clauth versions, which is the point of the table:
+// the set is not closed and never was. `expiring` is schema 1's name for
+// `expired`; `unknown` joined additively under schema 2 without a bump. So
+// `revoked` stands for the NEXT such arrival rather than for something
+// impossible -- Unrecognized, because only `broken` refuses (#243), and not
+// Usable, because the row still shows it.
 func TestAuthOf(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -42,7 +43,17 @@ func TestAuthOf(t *testing.T) {
 		{"absent means ok", "", AuthUsable},
 		{"ok", AuthOK, AuthUsable},
 		{"expired refreshes itself", AuthExpired, AuthSelfHealing},
+		// Schema 1's spelling of the very state #243 is about, and the
+		// one this plugin's documented clauth floor writes. Untranslated
+		// it fell to AuthUnrecognized, which the row paints -- so the
+		// sentence #243 opens with survived the fix for every reader on
+		// a schema-1 clauth.
+		{"expiring is schema 1's word for it", AuthExpiring, AuthSelfHealing},
 		{"broken is the dead one", AuthBroken, AuthDead},
+		// Additive under schema 2, so ParseStatus does NOT degrade it: a
+		// codex profile with no usage cache yet. The absence of a
+		// reading, not a finding about a credential.
+		{"unknown is no reading, not a bad one", AuthUnknown, AuthUsable},
 		{"a value clauth has never written", "revoked", AuthUnrecognized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

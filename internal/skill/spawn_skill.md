@@ -482,11 +482,13 @@ creates nothing now, since `create` cannot schedule it.
 see which ones have room; a dry run naming one reports the same windows
 for that account, and neither spends anything. A candidate whose
 `account_usage` comes back absent is unknown rather than free, so leave
-it off the list. An account whose credential clauth reports as dead
-(`auth_status: broken`) is refused with exit 2, which makes it not a
-candidate rather than a failure worth reporting. One it reports `expired`
-is not that: the token is between refreshes and the launch heals it, so the
-account is an ordinary candidate and its windows are what decide. When you offer accounts, name each one's spent windows even
+it off the list. An account whose credential clauth reports dead — the
+word is `broken` — is refused with exit 2, which makes it not a candidate
+rather than a failure worth reporting. That is the only auth state that
+does it. `expired` is a token between refreshes and the launch heals it,
+and any other word clauth reports is marked in the popup and refused
+nowhere, so those accounts are ordinary candidates and their windows are
+what decide. When you offer accounts, name each one's spent windows even
 where they cap a model you did not pick: an account that cannot run
 `fable` at all is a different kind of candidate. Never swap an account in
 silently: whatever the user asked for stays on the list, and they may

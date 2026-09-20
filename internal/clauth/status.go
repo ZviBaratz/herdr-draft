@@ -102,9 +102,14 @@ type Status struct {
 //     (https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L143),
 //     so a bump that keeps every field's type changed some field's MEANING.
 //   - And the auth_status VALUES are checked too, against auth.go's
-//     constants, at the release tag. clauth has renamed one of these words
-//     once already; the set is closed at `ok` / `expired` / `broken` only
-//     for as long as someone has looked.
+//     constants, at the release tag -- but a schema bump is NOT when to
+//     check them. clauth has renamed one of these words once (`expiring`
+//     to `expired`, the schema 2 bump) and ADDED one without a bump at all
+//     (`unknown`, named as additive under schema 2 in clauth's own
+//     evolution rule). The rule is about fields; it has never promised the
+//     value set is closed under a schema. So auth.go's unrecognised arm is
+//     what actually catches the next one, and this clause is the smaller
+//     half: read the values whenever the floor moves, bump or no bump.
 //
 // A new schema goes here only after reading clauth's stated reason for the
 // bump, at the release tag, and confirming both clauses -- and the reason is

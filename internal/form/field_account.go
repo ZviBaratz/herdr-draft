@@ -179,8 +179,10 @@ const (
 	// accountRowAuthFailed is v2 spec §6's danger-colored state word,
 	// replacing v1's bare "!" marker: "an auth failure reads `beta · max ·
 	// sign in again` in the danger color". It is the DEAD credential's
-	// word now, not every non-"ok" status's (#243) -- which is what makes
-	// it true: `clauth login` is exactly what clears a `broken`.
+	// word now, and ONLY that one's (#243) -- which is what makes it true:
+	// `clauth login` is exactly what clears a `broken`, and is not known to
+	// clear anything else, which is why an unfamiliar value gets clauth's
+	// own word instead of this one.
 	accountRowAuthFailed = "sign in again"
 	// accountRowAuthExpired is the row's word for clauth's `expired`, in
 	// Warning rather than Danger. Same word as the picker badge on
@@ -888,7 +890,8 @@ func (f *AccountField) profileItem(p clauth.Profile) widgets.PickerItem {
 // short-circuit on Degraded before reaching this, so today that is belt
 // and braces -- but it is the belt that the two other readers were missing.
 func (f *AccountField) accountWarning(p clauth.Profile) (text string, tone widgets.Tone) {
-	if v := f.status.AuthOf(p.Name); v == clauth.AuthDead || v == clauth.AuthUnrecognized {
+	verdict := f.status.AuthOf(p.Name)
+	if verdict == clauth.AuthDead {
 		return accountWarnAuthFailed, widgets.ToneDanger
 	}
 	for _, w := range p.Windows {
@@ -896,10 +899,36 @@ func (f *AccountField) accountWarning(p clauth.Profile) (text string, tone widge
 			return accountWarnRateLimited, widgets.ToneWarning
 		}
 	}
-	if f.status.AuthOf(p.Name) == clauth.AuthSelfHealing {
+	switch verdict {
+	case clauth.AuthSelfHealing:
 		return accountWarnAuthExpired, widgets.ToneWarning
+	case clauth.AuthUnrecognized:
+		return unrecognizedAuthWord(p.AuthStatus), widgets.ToneWarning
 	}
 	return "", widgets.ToneWarning
+}
+
+// unrecognizedAuthWord is what the badge and the row say for a value none
+// of clauth's known ones: the value itself, in clauth's spelling, capped at
+// the badge column's existing width.
+//
+// Its own word rather than a state this package invents, because there is
+// no state to name -- and inventing "auth failed" for it was wrong twice
+// over in the two cases that actually arrived (`expiring`, `unknown`),
+// neither of which was a failure. A reader who can see the word can look it
+// up; one shown a verdict nobody computed cannot.
+//
+// The cap is accountWarnRateLimited's width, which is the badge column's
+// max today (widgets.Picker sizes that column over every row), so an
+// unfamiliar value -- whose length nothing here controls -- cannot re-lay
+// out the panel or re-elide the 44-cell frame. Bytes, not cells: clauth's
+// values come from a `&'static str` match and are ASCII, and a cap that
+// cut a multi-byte rune in half would be worse than a wide one.
+func unrecognizedAuthWord(status string) string {
+	if len(status) > len(accountWarnRateLimited) {
+		return status[:len(accountWarnRateLimited)]
+	}
+	return status
 }
 
 // accountWindow returns the profile's window carrying label, or
@@ -1024,7 +1053,9 @@ func (f *AccountField) SetPin(pin string) {
 // shape Pin() returns) that was current when it was computed: a short
 // note shown on the always-reserved hint row, taking priority there over
 // the degraded-status hint (View's own doc comment) -- e.g. spec §9's "a
-// pinned account whose auth_status != ok blocks with an account verdict."
+// pinned account whose credential clauth reports dead blocks with an
+// account verdict" (§9 as #243 amended it -- it read `auth_status != ok`,
+// which was three states treated as one).
 // A later call whose key no longer matches Pin() (the user has since
 // moved to a different profile) is stored but never rendered -- see
 // verdictKey's own doc comment; there is no separate Clear method,
@@ -1083,10 +1114,11 @@ func (f *AccountField) Label() string { return accountRowLabel }
 // literal AuthStatus for a pinned profile and the utilization only for an
 // unpinned one. That is backwards, and §10.1 says why: **`ok` is the state
 // that needs no words.** So the auth status appears only when it is NOT
-// "ok", and as one of two words (#243): `sign in again` in Danger for a
-// credential clauth reports dead, `expired` -- clauth's own word -- in
-// Warning for a token between refreshes, which the launch heals on its
-// own. The numbers are shown either way; they are the reason anyone looks
+// "ok", and then as one of three things (#243): `sign in again` in Danger
+// for a credential clauth reports dead, `expired` -- clauth's own word --
+// in Warning for a token between refreshes, which the launch heals on its
+// own, and any unfamiliar value in Warning spelled the way clauth spelled
+// it. The numbers are shown either way; they are the reason anyone looks
 // at this row.
 //
 // Inert (the selected agent kind is not claude) states why, dim. A
@@ -1205,7 +1237,10 @@ type accountRowPart struct {
 
 // rowParts builds the row's tail (v3 spec §10.1): the plan, then one part
 // per reported window in accountWindowLabels, then -- only when it is not
-// "ok" -- the auth status, as `sign in again` in Danger.
+// "ok" -- the auth status, in the three shapes accountWarning draws it in:
+// `sign in again` in Danger for a dead credential, `expired` in Warning for
+// a token between refreshes, and an unfamiliar value in Warning spelled the
+// way clauth spelled it.
 //
 // A window at or past accountWarnThreshold is drawn in Warning, which is
 // the surface the threshold change is most visible on: at v2's 100 a
@@ -1239,7 +1274,12 @@ func (f *AccountField) rowParts(p clauth.Profile) []accountRowPart {
 			text:  accountRowAuthExpired,
 			style: lipgloss.NewStyle().Foreground(f.palette.Warning),
 		})
-	case clauth.AuthDead, clauth.AuthUnrecognized:
+	case clauth.AuthUnrecognized:
+		parts = append(parts, accountRowPart{
+			text:  unrecognizedAuthWord(p.AuthStatus),
+			style: lipgloss.NewStyle().Foreground(f.palette.Warning),
+		})
+	case clauth.AuthDead:
 		parts = append(parts, accountRowPart{
 			text:  accountRowAuthFailed,
 			style: lipgloss.NewStyle().Foreground(f.palette.Danger),

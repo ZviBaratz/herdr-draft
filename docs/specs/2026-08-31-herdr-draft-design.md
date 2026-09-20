@@ -288,7 +288,7 @@ only if config demands it (default: optional).
 
 > **Amended, #243/#245 (2026-09-20): only `broken` blocks, and never off a
 > degraded status.** `auth_status != ok` was three states treated as one.
-> clauth's set is closed at `ok` / `expired` / `broken`, and it ranks them:
+> clauth ranks its values:
 > `broken` is "last refresh rejected as revoked/invalid" and is the one
 > clauth itself excludes from fallback walks and refuses as a switch target,
 > while `expired` is an access token past its expiry whose refresh has not
@@ -301,12 +301,21 @@ only if config demands it (default: optional).
 > on `expired` named `clauth login` as the remedy for a state that needed
 > nothing.
 >
-> So: `broken` blocks. `expired` is marked on the row and blocks nothing. A
-> value clauth has never written is marked like `broken` and blocks nothing
-> — clauth bumps the schema on any breaking change, so a new value arrives
-> as a degraded parse rather than as an unfamiliar word, and a block whose
-> remedy nobody can state leaves a session uncreatable where a launch on a
-> bad credential has the agent saying so within seconds. And a **degraded**
+> So: `broken` blocks. `expired` is marked on the row and blocks nothing,
+> and so is `expiring`, schema 1's spelling of the same state — clauth's own
+> note on that rename tells a reader keying on the new word to "refuse or
+> translate", and since schema 1 is admitted in full, this translates.
+> `unknown` is quiet, like an absent value: it is a codex profile with no
+> usage cache, not a finding about a credential.
+>
+> A word none of those is marked in clauth's own spelling, in the warning
+> colour, and blocks nothing. Not red, and the reason is evidence rather
+> than caution: the value set is **not** closed under a schema. `unknown`
+> joined additively under schema 2, named as such in clauth's evolution
+> rule, which governs fields and never promised otherwise. Two arrivals so
+> far, neither a dead credential — so a reader that paints an unfamiliar
+> word red is wrong more often than right, and wrong in the direction this
+> amendment exists to stop being wrong in. And a **degraded**
 > status blocks nothing at all (#245): §11 already told callers to treat
 > every field past `profiles[].name` as unreliable, which the account row
 > did while this gate refused to launch on the very state it was refusing to

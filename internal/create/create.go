@@ -357,7 +357,7 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 
 // refuseWhatTheFormRefuses is the form's submit-time validation that
 // plan.Build does not already make (#147): checkSubmitValidation's
-// duplicate-title and signed-out-profile blocks. Without it a request the
+// duplicate-title and dead-credential blocks. Without it a request the
 // popup would refuse went straight to herdr from here, and
 // equivalence_test.go could not see the difference, because it compares
 // plan.Inputs and a refusal is not one.
@@ -407,12 +407,18 @@ func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Dep
 // here and a check skipped in silence reads as a check passed:
 //
 //   - one that could not be read at all, and
-//   - one clauth.ParseStatus marked Degraded (#245), where the schema is one
-//     nobody has read clauth's reason for and every field past the profile's
-//     name is unreliable. That guard lives in clauth.Status.AuthOf, so this
-//     asks whether it fired rather than re-deciding it; the line exists
-//     because AuthOf is deliberately silent about which of its reasons
-//     answered.
+//
+//   - one clauth.ParseStatus marked Degraded (#245), where every field past
+//     the profile's name is unreliable. The DECISION is AuthOf's and is not
+//     taken again here; what this branch decides is only whether to say
+//     something, which AuthOf cannot answer -- it is deliberately silent
+//     about which of its reasons applied, and an unlisted profile must not
+//     print this line.
+//
+//     It does mean the Degraded field is read in two places. What holds
+//     them together is equivalence_test.go's auth table: deleting AuthOf's
+//     guard leaves this one standing and breaks the popup, so the pair
+//     fails as a pair rather than drifting.
 //
 // The degraded line does NOT set cl.said, which means something narrower:
 // that the read's ERROR is already on stderr. A degraded read succeeded.
@@ -426,18 +432,34 @@ func refuseUnusableProfile(ctx context.Context, resolved resolution, deps Deps, 
 	}
 	status, err := cl.get(ctx)
 	if err != nil {
-		fmt.Fprintf(deps.stderr(), "herdr-draft create: could not check whether %s is signed in: %v\n", pin, err)
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: could not check whether %s can be used: %v\n", pin, err)
 		cl.said = true
 		return nil
 	}
 	if status.Degraded {
-		fmt.Fprintf(deps.stderr(), "herdr-draft create: clauth status is degraded (schema %d); not checking whether %s is signed in\n", status.Schema, pin)
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: clauth status is degraded (%s); not checking whether %s can be used\n", degradedBecause(status), pin)
 		return nil
 	}
 	if status.AuthOf(pin) == clauth.AuthDead {
 		return fmt.Errorf("clauth reports profile %s as %q, which cannot be used: `clauth login %s`, or pass a different --account", pin, clauth.AuthBroken, pin)
 	}
 	return nil
+}
+
+// degradedBecause names why clauth.ParseStatus degraded a status, for the
+// one line refuseUnusableProfile prints when it skips its check.
+//
+// Two causes, and the difference is worth the words: a full parse of a
+// schema nobody has read clauth's reason for still carries every field,
+// while a structurally incompatible payload recovered only the profile
+// names. The second decodes no schema at all, so it reports Schema 0 --
+// naming a number no clauth writes, next to a sentence about a schema
+// someone could go and read, would describe the wrong failure.
+func degradedBecause(status clauth.Status) string {
+	if status.Schema == 0 {
+		return "its shape is one this build cannot read"
+	}
+	return fmt.Sprintf("schema %d is one this build has not checked", status.Schema)
 }
 
 // clauthEnabled is `[clauth] enabled`, which defaults to on.
@@ -477,8 +499,9 @@ func (c *clauthOnce) get(ctx context.Context) (clauth.Status, error) {
 // clauth to ask, clauth switched off, an agent other than claude (the
 // account applies to claude only), or a status that could not be read.
 //
-// A status that could not be read is said on stderr, as the signed-out check
-// says it, unless the check already did, or clauth is simply not installed:
+// A status that could not be read is said on stderr, as the dead-credential
+// check says it, unless the check already did, or clauth is simply not
+// installed:
 // most people never installed it, and the popup does not mention it either
 // (#88). A report whose key is absent because clauth broke, with nothing to
 // say so, would read as an account nobody could see into for no reason.
