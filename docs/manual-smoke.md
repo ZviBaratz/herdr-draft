@@ -714,6 +714,20 @@ export HERDR_BIN_PATH=/nonexistent/herdr
 | `herdr-draft create --title x --no-worktree --placement new-space` | `herdr unreachable: herdr workspace list: ...` → **exit 3** |
 | `herdr-draft bogus` | the top-level usage block → **exit 2**; `herdr-draft help` prints the same at **exit 0** |
 
+One more, and it needs a lever rather than a flag, because nothing you can
+type makes a filesystem stall. Put a `git` wrapper first on `PATH` that
+sleeps on `--is-inside-work-tree` (the recipe is under **Recorded runs**,
+`A headless check that never answers (#272)`), then:
+
+| Probe | Expected |
+|---|---|
+| `herdr-draft create --dry-run --project <repo> --title x` with the lever stalling 600s | `timed out after 30s checking whether <repo> is a git repository` → **exit 5**, nothing on stdout, after **30s** and not before |
+| the same with the lever removed | the pre-flight completes; with `$HERDR_BIN_PATH` still unreachable that is **exit 3** |
+
+Size the stall past the whole probe, not past the deadline: a stall that
+expires first lets the create proceed, and without `--dry-run` that makes a
+real session.
+
 Also confirm, with `HERDR_PLUGIN_CONFIG_DIR` / `HERDR_PLUGIN_STATE_DIR`
 unset, that the first stderr line is the warning that `create` is resolving
 without your config and remembered defaults. A headless caller that silently

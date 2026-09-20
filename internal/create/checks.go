@@ -131,8 +131,12 @@ func (checkTimeout) Is(target error) bool { return target == errCheckTimedOut }
 // pins it; giving callCtx a deadline shorter than the wait's fails it
 // three times out of three.
 //
-// Nothing is lost by dropping that timer. git is still killed, a few
-// microseconds later, when this returns.
+// Nothing is lost by dropping that timer. git is still told to stop a few
+// microseconds later, when this returns -- and unlike #211's account pick
+// there is nothing to WAIT for it to land: every question here is a read,
+// so a `git rev-parse` that outlives the process writes nothing and
+// records nothing. That is why `create` needs no Lifetime for these, only
+// for the pick.
 func bounded[T any](ctx context.Context, deadline time.Duration, what string, ask func(context.Context) T) (T, error) {
 	callCtx, cancelCall := context.WithCancel(ctx)
 	defer cancelCall()
