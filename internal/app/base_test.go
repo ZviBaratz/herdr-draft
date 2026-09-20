@@ -536,6 +536,14 @@ func TestPopup_ARememberedBaseThatLandsLateIsNotTheUsersChoice(t *testing.T) {
 	if m.baseTouched {
 		t.Errorf("baseTouched with nobody having touched anything: the list landing is the app's move, not the user's")
 	}
+	// #262 added a second source for that flag, and this is the one thing
+	// it must never say: the list landing a held ref is not an input, so
+	// no pick was made. Asserted separately from the flag because the two
+	// sources fail differently -- a spurious BasePicked() would set
+	// baseTouched from a path the guard above cannot see.
+	if m.worktree.BasePicked() {
+		t.Errorf("BasePicked() after the branch list landed the held ref = true: nobody pointed at anything")
+	}
 
 	m = switchProject(t, m, "/repo-a", "/repo-b")
 	if got := m.worktree.Base(); got != "other" {

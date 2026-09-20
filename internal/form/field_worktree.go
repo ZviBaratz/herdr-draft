@@ -183,11 +183,27 @@ type WorktreeField struct {
 	// retried on every subsequent list refresh rather than dropped. Three
 	// sites clear it, and naming only the first is what #256 was: the
 	// landing (refreshBaseItems), a SetBase that hits outright, and the
-	// user picking a base of their own (retireHeldBase). Between them a
+	// user picking a base of their own (noteBasePicked). Between them a
 	// later refresh cannot re-apply it over a selection the user has since
 	// moved -- see SetBase.
 	pendingBase     string
 	havePendingBase bool
+
+	// basePicked records that the USER pointed at a base row -- the field's
+	// half of #262, and the only evidence anyone has for it. The app layer's
+	// touched-versus-preselected diff works off the selection's VALUE, which
+	// cannot tell a person picking the HEAD row from the candidate list
+	// falling back to it underneath them; this is that same event named at
+	// the one level where the two are distinguishable, because here it
+	// arrives as a keystroke or a click rather than as a value.
+	//
+	// Note what it is not: it says nothing about the hold, which #256
+	// deliberately kept private to this field. A pick retires a hold when
+	// there is one to retire, and sets this either way -- see noteBasePicked.
+	//
+	// Never cleared, like the app layer's own touched flags: a decision
+	// stands for the rest of the form-open.
+	basePicked bool
 
 	// offeredBase is OfferBase's ref: a base the list does not name that the
 	// app layer has confirmed resolves, drawn right after the HEAD row. ""
@@ -367,17 +383,16 @@ func (w *WorktreeField) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 			// Nothing moves, and they have still decided (#256).
 			//
 			// Note where that stops, because it is a claim about THIS
-			// field and not yet about the product: a click on the HEAD row
-			// leaves Base() == "", and the app layer does not read that as
-			// a decision (internal/app's noteUserEdits: "a fall back to
-			// HEAD is the list moving, not the user"), so baseTouched
-			// stays false and the tier's base settle -- still out, since a
-			// hold is exactly what being out means -- re-applies the
-			// remembered ref through handleBaseSettled. That is unchanged
-			// by #256, which neither caused it nor claims to answer it;
-			// whether an explicit click on HEAD is a decision is the app
-			// layer's question.
-			w.retireHeldBase()
+			// field, and until #262 it stopped there: a click on the HEAD
+			// row leaves Base() == "", the app layer's own diff reads that
+			// as the candidate list moving rather than as a person, and
+			// the tier's base settle -- still out, since a hold is exactly
+			// what being out means -- put the remembered ref back through
+			// handleBaseSettled. What crosses the boundary now is
+			// BasePicked(), which is this event rather than the value it
+			// failed to change; the hold itself stays private, as #256
+			// decided.
+			w.noteBasePicked()
 			return w.setPart(partBase)
 		}
 	}
@@ -415,7 +430,7 @@ func (w *WorktreeField) moveBaseCursor(move func()) {
 	before := w.baseSelectionID()
 	move()
 	if w.baseSelectionID() != before {
-		w.retireHeldBase()
+		w.noteBasePicked()
 	}
 }
 
@@ -427,8 +442,16 @@ func (w *WorktreeField) baseSelectionID() string {
 	return sel.ID
 }
 
-// retireHeldBase drops a SetBase hold because the user has picked a base
-// of their own (#256 -- see SetBase for what is being held and why).
+// noteBasePicked records that the user has picked a base of their own: it
+// drops a SetBase hold if one is standing (#256 -- see SetBase for what is
+// being held and why) and sets basePicked (#262) either way.
+//
+// The two halves are one call because they are one event, but they answer
+// different layers, and only the second is a claim about the product. The
+// retirement stops a later refresh landing the held ref over their choice.
+// The flag is what lets the app layer know a choice was made at all, which
+// it cannot see for itself when the row they picked is the one already
+// selected.
 //
 // Silent, deliberately: the held ref was never on screen, so nothing
 // visible changes at the moment it is retired, and a note here would be
@@ -436,9 +459,32 @@ func (w *WorktreeField) baseSelectionID() string {
 // rather than on something having gone wrong. It is what every other
 // touched field already does -- the app layer's applyProjectDefaults
 // skips a field the user has touched without a word.
-func (w *WorktreeField) retireHeldBase() {
+func (w *WorktreeField) noteBasePicked() {
 	w.pendingBase, w.havePendingBase = "", false
+	w.basePicked = true
 }
+
+// BasePicked reports whether the user has picked a base row themselves,
+// the HEAD row included -- spec §10's touched-versus-preselected rule for
+// the one field that cannot answer it from its own value (#262).
+//
+// The app layer reads this off the concrete type -- the Section interface
+// deliberately exposes none of this, exactly as it does not expose
+// RequestedBase, its neighbour in the same diff -- and ORs it into its own
+// baseTouched. That diff answers the same question from the value and gets
+// it right for every move that changes one; this answers the move that
+// does not, which is a pick of the row the picker is already on. That
+// state is ordinary rather than exotic: a held ref shows the HEAD row, so
+// it is what the user is looking at for as long as the app is waiting on
+// the list that would name the ref it remembered.
+//
+// Note one asymmetry, deliberate and worth stating rather than leaving to
+// be rediscovered. While a hold is standing the list is a single row, so
+// every arrow and every wheel click on it is clamped -- and #256's rule is
+// that a keystroke the user could not see land is not a decision. For that
+// window, therefore, a pick of HEAD can only be made with the MOUSE. The
+// keyboard reaches this only once a list exists to move within.
+func (w *WorktreeField) BasePicked() bool { return w.basePicked }
 
 // setPart moves the sub-focus cursor, clamped to the parts that currently
 // mean anything (maxPart), and syncs the branch input's own focus so an
@@ -574,7 +620,7 @@ func (w *WorktreeField) SetBaseItems(version int, refs []string) {
 // resolves the remembered base from projects.json the moment the project
 // row changes, which is one debounce plus one `git for-each-ref` before
 // the list naming it exists. It is forgotten the moment it lands, and the
-// moment the user picks a base of their own (retireHeldBase) -- so a
+// moment the user picks a base of their own (noteBasePicked) -- so a
 // later refresh cannot re-apply it over a selection the user has since
 // moved.
 //
