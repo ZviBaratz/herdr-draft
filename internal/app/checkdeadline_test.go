@@ -464,9 +464,9 @@ func TestBaseSettle_ATimedOutTierAnswerIsDroppedOnceTheUserHasChosen(t *testing.
 	m := settledRepoForm(t, newFakeGit())
 	m.resolved.BaseRef = "old-branch"
 	m.baseTouched = true
-	m.baseSettleVersion++
+	m.reqs.baseSettle++
 
-	next, _ := m.Update(baseSettledMsg{version: m.baseSettleVersion, timedOut: true})
+	next, _ := m.Update(baseSettledMsg{version: m.reqs.baseSettle, timedOut: true})
 	m = next.(Model)
 
 	if m.baseUnknown() {
@@ -522,8 +522,8 @@ func TestBaseSettle_AnAnswerAfterATimeoutTakesTheRefusalBack(t *testing.T) {
 
 	// The same question, asked again and answered: the base still names a
 	// commit, so nothing is dropped and nothing is left to say.
-	m.baseSettleVersion++
-	next, _ := m.Update(baseSettledMsg{version: m.baseSettleVersion, resolved: m.resolved})
+	m.reqs.baseSettle++
+	next, _ := m.Update(baseSettledMsg{version: m.reqs.baseSettle, resolved: m.resolved})
 	m = next.(Model)
 
 	if m.baseUnknown() {
@@ -544,8 +544,8 @@ func timedOutBaseSettle(t *testing.T, ref string) Model {
 	m.resolved.BaseRef = ref
 	m.worktree.OfferBase(ref)
 	m.worktree.SetBase(ref)
-	m.baseSettleVersion++
-	next, _ := m.Update(baseSettledMsg{version: m.baseSettleVersion, timedOut: true})
+	m.reqs.baseSettle++
+	next, _ := m.Update(baseSettledMsg{version: m.reqs.baseSettle, timedOut: true})
 	m = next.(Model)
 	if !m.baseUnknown() {
 		t.Fatalf("test setup: the timed-out base check for %s recorded no unknown", ref)

@@ -264,12 +264,11 @@ type Setup struct {
 	PickerUnavailable string
 
 	// reqs is where every request counter resumes. Only a ⌃R⌃R rebuild
-	// sets it (handleClearRequested), to the discarded form's own
-	// counters: a check that form still has in flight lands after the
-	// rebuild, and starting again from zero would let its version meet one
-	// the fresh form issues -- passing another value's answer off as the
-	// fresh form's own, and releasing a submit held for it (#195, #201).
-	// See reqVersions on why it is one field and not six.
+	// sets it (handleClearRequested, through reqVersions.superseded), past
+	// the discarded form's own counters: a check that form still has in
+	// flight lands after the rebuild, and a counter it can still meet
+	// passes another value's answer off as the fresh form's own, releasing
+	// a submit held for it (#195, #201). See reqVersions.
 	reqs reqVersions
 }
 
@@ -637,39 +636,78 @@ func linearRefreshReason(err error) string {
 // reqVersions is every request-version counter the form's async sources
 // share: one monotonic number per source, compared against by that
 // source's own handle* to drop the answer to a question that has been
-// superseded (async.go's request type).
+// superseded (async.go's request type). A bump is what retires a request
+// already in flight, which is the property the whole of #201 rests on.
 //
-// A struct rather than six fields on Model because of the one thing that
-// is done to all six at once. ⌃R⌃R rebuilds the whole form through New
-// (handleClearRequested), and a check the discarded form still has in
-// flight lands afterwards -- so a counter that restarted at zero would
-// hand the rebuilt form's first check of that kind the SAME version
-// number, and the guard, which compares nothing else, would accept both
-// answers in arrival order. #196 and #203 carried the project row's and
-// the title check's counters across the rebuild one field at a time
-// because those two hold a submit; #201 is the other four, and carrying
-// the struct whole is what makes a seventh counter carried by existing
-// there rather than by someone remembering.
+// A struct rather than seven fields on Model because of the one thing
+// that is done to all seven at once. ⌃R⌃R rebuilds the whole form through
+// New (handleClearRequested), and a check the discarded form still has in
+// flight lands afterwards -- against a counter that must already have
+// moved past it. #196 and #203 did that for the project row's and the
+// title check's counters one Setup field at a time, because those two hold
+// a submit; #201 is the rest, as one value, so that what a rebuild does to
+// a counter is decided in one place rather than per counter.
 //
 // What is deliberately NOT in here is the pair of landed-version fields
 // beside it on Model (dirLandedVersion, titleLandedVersion). Those say
 // which answer has been APPLIED to the form on screen, which a rebuilt
 // form has none of -- they belong to the fields, not to the questions.
+// baseSettleLanded is the exception and New says why.
 type reqVersions struct {
-	dir    int
-	title  int
-	base   int
-	browse int
+	dir   int
+	title int
+	base  int
+	// baseSettle is #197's, shared by the two questions about a base --
+	// the one a tier supplied (scheduleBaseSettle) and the one the user
+	// picked (keepChosenBaseAcrossRelist, #212). It reached this struct
+	// late, in #201's own review, on the strength of the second one: the
+	// issue left it out because a rebuilt form marks its base touched and
+	// scheduleBaseSettle then declines to ask -- which is true, and is not
+	// the whole of it, since keepChosenBaseAcrossRelist's precondition IS
+	// baseTouched, so a rebuilt form runs a real check here as soon as the
+	// user picks a base and the once-per-repo fetch re-lists. A pre-clear
+	// answer matching that version sets baseSettleLanded before
+	// handleBaseSettled's switch ever looks at it, which releases a submit
+	// held for a base nothing checked -- #195's own shape.
+	baseSettle int
+	browse     int
 	// picker is the account picker's preview counter: a preview for a
 	// project the user has navigated away from must not overwrite the
 	// current one.
 	picker int
-	// clauth is bumped directly by reloadClauthCmd -- there is no separate
-	// debounce phase for this source, unlike the four above -- and
-	// compared against by handleClauthResult (fix round 1: closes a
+	// clauth is bumped directly by reloadClauthCmd, with no separate
+	// debounce phase -- dir, title, base, browse and picker each have one
+	// -- and compared against by handleClauthResult (fix round 1: closes a
 	// rapid-refocus staleness gap, see clauthResultMsg's own doc comment
 	// in async.go).
 	clauth int
+}
+
+// superseded is what a ⌃R⌃R rebuild starts from: every counter one past
+// the discarded form's, so every request that form has in flight is
+// already retired when the rebuilt one is constructed.
+//
+// Carrying the counters unchanged is not enough, and that is #201's own
+// review finding rather than a refinement: a carried counter EQUALS the
+// discarded form's until the rebuilt form issues a request of that kind,
+// so an answer landing inside that window matches the guard and is
+// applied. New re-asks dir, base and picker itself, which closes the
+// window for those three; browse and clauth are re-asked only when the
+// user types a path or focuses the account row, so the window is in
+// practice the whole life of the form -- and a check in flight answers in
+// milliseconds. Starting one past leaves no window at all: the value the
+// rebuilt form starts on is one no request ever carried, and its own
+// first request is higher again.
+func (v reqVersions) superseded() reqVersions {
+	return reqVersions{
+		dir:        v.dir + 1,
+		title:      v.title + 1,
+		base:       v.base + 1,
+		baseSettle: v.baseSettle + 1,
+		browse:     v.browse + 1,
+		picker:     v.picker + 1,
+		clauth:     v.clauth + 1,
+	}
 }
 
 // Model is the real tea.Model herdr-draft runs: form.Model plus every
@@ -742,15 +780,14 @@ type Model struct {
 	// above all (#197).
 	relistAfterFetch int
 
-	// baseSettleVersion is the staleness guard on scheduleBaseSettle's
-	// answers, and baseSettleLanded the version of the last one landed: the
-	// two differ exactly while a base check is out (baseSettlePending).
+	// baseSettleLanded is the version of the last base-settle answer
+	// landed -- reqs.baseSettle is the counter it trails, and the two
+	// differ exactly while a base check is out (baseSettlePending).
 	// baseNote is the note the last answer carried: why a tier's base was
 	// dropped, shown on the worktree panel while the HEAD row it fell back to
 	// still stands (#194). "" when nothing was dropped.
-	baseSettleVersion int
-	baseSettleLanded  int
-	baseNote          string
+	baseSettleLanded int
+	baseNote         string
 
 	// checkDeadline overrides blockingCheckDeadline, the bound on every
 	// check a submit waits for (#202). Zero -- which is what production
@@ -1112,6 +1149,21 @@ func New(s Setup) Model {
 		fetchedRepos: map[string]bool{},
 
 		reqs: s.reqs,
+		// Nothing is outstanding for this one source at construction, and
+		// only carrying its counter makes that need saying: New schedules
+		// no base settle -- applyProjectDefaults does, off the first dir
+		// check -- so a landed version left at zero beside a carried
+		// counter reports a check out that nobody started
+		// (baseSettlePending). Every other landed version is zero here on
+		// purpose, because New really does schedule those checks.
+		//
+		// Consistency rather than a defect fixed: every window that state
+		// is wrong in is one where the submit is held or refused for
+		// another reason anyway -- the dir check is out, or it timed out
+		// and dirUnknown refuses. Said here because the next reader should
+		// not have to re-derive it, and pinned by
+		// TestClear_EveryCounterStartsPastTheDiscardedForms.
+		baseSettleLanded: s.reqs.baseSettle,
 	}
 
 	m.dir = form.NewDirField(palette)
@@ -2100,10 +2152,10 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		ClauthUnavailable: m.clauthUnavailable,
 		PickerUnavailable: m.pickerUnavailable,
 
-		// Every counter, whole (#201): a check the form being discarded
-		// still has in flight must not meet a version the rebuilt one
-		// issues. See reqVersions.
-		reqs: m.reqs,
+		// Every counter, one past this form's (#201): a check the form
+		// being discarded still has in flight must not meet a version the
+		// rebuilt one holds or issues. See reqVersions.superseded.
+		reqs: m.reqs.superseded(),
 	})
 	// Spec §10: "⌃R⌃R clears back to the repository default" -- explicitly
 	// NOT back to what you last did in this project. New has already

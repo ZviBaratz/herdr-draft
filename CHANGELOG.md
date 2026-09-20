@@ -157,9 +157,12 @@ without the popup. It drives herdr exclusively through the public CLI
   in the header, the directory listing can change which project a submit
   would use, and since #200 a clauth answer rewrites the account row's
   state and the reason on it. The project row's and the title check's
-  numbering already carried across, because a submit waits for those two;
-  all six do now, and they are carried as one value, so a seventh source is
-  carried by existing rather than by being remembered.
+  numbering already carried across, because a submit waits for those two.
+  All seven do now — including the check of whether the base you picked
+  still names a commit, which a clear was expected not to reach and does,
+  as soon as the once-per-repo fetch re-lists: a `⌃S` held for that check
+  could be released by the answer to the one before the clear, and the
+  session created from a base nothing had checked.
 - **A branch git cannot hold is refused where the branch is shown** (#199).
   The `worktree` panel names what is wrong with it on the line under the
   branch, and a submit lands the cursor in the branch input to fix it. The

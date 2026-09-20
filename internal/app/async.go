@@ -766,8 +766,8 @@ func (m *Model) keepChosenBaseAcrossRelist() tea.Cmd {
 	// the later question is the live one, a project change retires an answer
 	// to either, and a submit waits for either check (#197) -- which is
 	// wanted, since the plan must not be built from a base being re-checked.
-	m.baseSettleVersion++
-	v := m.baseSettleVersion
+	m.reqs.baseSettle++
+	v := m.reqs.baseSettle
 	git, dir := m.deps.Git, pathx.ExpandTilde(m.dir.Value())
 	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
@@ -785,7 +785,7 @@ func (m *Model) keepChosenBaseAcrossRelist() tea.Cmd {
 
 // baseSettledMsg is SettleBase's answer about the base one resolution
 // supplied: that resolution back, with the base dropped to HEAD when it
-// does not resolve, and the note saying so. version is baseSettleVersion at
+// does not resolve, and the note saying so. version is reqs.baseSettle at
 // scheduling time.
 type baseSettledMsg struct {
 	version  int
@@ -824,9 +824,9 @@ type baseSettledMsg struct {
 // the Cmd itself -- and with nothing to ask, the check counts as landed at
 // once, so a submit is never held for an answer that is not coming.
 func (m *Model) scheduleBaseSettle() tea.Cmd {
-	m.baseSettleVersion++
+	m.reqs.baseSettle++
 	if m.resolved.BaseRef == "" || m.baseTouched {
-		m.baseSettleLanded = m.baseSettleVersion
+		m.baseSettleLanded = m.reqs.baseSettle
 		// Nothing to ask is also nothing outstanding, so any unknown from
 		// the last project's base is over (#202). This decline is the one
 		// that latched it: a project change comes through here, and a
@@ -837,7 +837,7 @@ func (m *Model) scheduleBaseSettle() tea.Cmd {
 		m.refreshBaseStatus()
 		return nil
 	}
-	v := m.baseSettleVersion
+	v := m.reqs.baseSettle
 	git, dir, res := m.deps.Git, pathx.ExpandTilde(m.dir.Value()), m.resolved
 	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
@@ -872,7 +872,7 @@ func (m *Model) scheduleBaseSettle() tea.Cmd {
 // this, so their choice has already been recorded and stands. Either way a
 // current answer has landed, and a submit held for it goes on (handleSubmit).
 func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
-	if msg.version != m.baseSettleVersion {
+	if msg.version != m.reqs.baseSettle {
 		return m, nil
 	}
 	m.baseSettleLanded = msg.version
@@ -997,7 +997,7 @@ func (m *Model) refreshBaseStatus() {
 
 // baseSettlePending reports whether a base check is out: scheduled for the
 // current resolution and not yet landed.
-func (m Model) baseSettlePending() bool { return m.baseSettleLanded != m.baseSettleVersion }
+func (m Model) baseSettlePending() bool { return m.baseSettleLanded != m.reqs.baseSettle }
 
 // --- title duplicate verdict (spec §6 field 3) ---------------------------
 

@@ -594,8 +594,8 @@ func TestAssembledForm_WhenTheOtherChecksTimeOut(t *testing.T) {
 		m.resolved.BaseRef = "release/1.2"
 		m.worktree.OfferBase("release/1.2")
 		m.worktree.SetBase("release/1.2")
-		m.baseSettleVersion++
-		next, _ := m.handleBaseSettled(baseSettledMsg{version: m.baseSettleVersion, timedOut: true})
+		m.reqs.baseSettle++
+		next, _ := m.handleBaseSettled(baseSettledMsg{version: m.reqs.baseSettle, timedOut: true})
 		m = next
 		m.form.FocusByID("worktree")
 
