@@ -177,9 +177,27 @@ func TestMapKey_GrammarTable(t *testing.T) {
 			want: ActionSubmit,
 		},
 		{
-			name: "enter in a plain zone still advances",
+			// #269, and the same reasoning as the account row below: ↵
+			// COMMITS the base row under the cursor. The base picker's
+			// top row is the one selection a move cannot express -- a
+			// held ref already shows HEAD, so there is nothing to move
+			// to -- and #256 will not let a clamped arrow count. Complete
+			// rather than a bespoke action because a Complete the field
+			// declines falls through to a plain advance, which is how ↵
+			// keeps its old meaning on the chips, on the branch, and on a
+			// base the user has already picked.
+			name: "enter on the worktree field completes",
 			msg:  keyEnter,
 			zone: FocusZone{Kind: ZoneWorktree},
+			want: ActionComplete,
+		},
+		{
+			// The row ZoneWorktree used to occupy here: some zone has to
+			// hold the plain-advance case, and placement is one MapKey
+			// gives no special treatment at all.
+			name: "enter in a plain zone still advances",
+			msg:  keyEnter,
+			zone: FocusZone{Kind: ZonePlacement},
 			want: ActionAdvance,
 		},
 		{

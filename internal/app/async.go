@@ -989,10 +989,10 @@ func (m Model) baseUnknown() bool {
 // and a base nobody could check stops the create.
 func (m *Model) refreshBaseStatus() {
 	if m.baseUnknown() {
-		m.worktree.SetBaseStatus("couldn't check " + m.uncheckedBaseRef + ": pick a base")
+		m.worktree.SetBaseStatus("couldn't check "+m.uncheckedBaseRef+": pick a base", true)
 		return
 	}
-	m.worktree.SetBaseStatus(m.baseListNote)
+	m.worktree.SetBaseStatus(m.baseListNote, false)
 }
 
 // baseSettlePending reports whether a base check is out: scheduled for the
@@ -1485,7 +1485,7 @@ func (m Model) handleLinkedCommit(msg linkedCommitMsg) (Model, tea.Cmd) {
 		if errors.Is(msg.err, errCheckTimedOut) {
 			reason = "couldn't check "
 		}
-		m.worktree.SetBaseStatus(reason + m.linkedBaseRef() + ": pick a base")
+		m.worktree.SetBaseStatus(reason+m.linkedBaseRef()+": pick a base", true)
 		return m, m.form.FocusByID("worktree")
 	}
 	return m.WithLinkedCommit(msg.commit).continueSubmit()

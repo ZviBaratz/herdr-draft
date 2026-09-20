@@ -240,6 +240,16 @@ const (
 // accountPicker (textInput_keys.go's isAccountPicker branch) only responds
 // to arrow keys, never to Tab-complete, unlike Atrium's directoryPicker/
 // modelField.
+//
+// ZoneWorktree is excluded for ZoneAccount's reason, and the exclusion is
+// load-bearing in the same way: the base picker it now contains COMPLETES
+// on ↵ (#269), and Tab is how a user leaves a row, so a Tab that committed
+// whatever the cursor was resting on would reintroduce the defect #256
+// removed. Note that the ZoneBase listed above is the v1 kind no section
+// has been mapped onto since the v2 collapse -- the live base picker is
+// part of ZoneWorktree, so adding either kind here on the reasoning that
+// "the base picker is a picker" is the mistake this paragraph exists to
+// stop.
 func (z ZoneKind) isPicker() bool {
 	switch z {
 	case ZoneIssue, ZoneDir, ZoneBase:
@@ -366,6 +376,24 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 			// that pinned whatever the cursor was resting on would
 			// reintroduce the very defect §10.3 removes. ZoneAccount stays
 			// out of isPicker() for that reason.
+			return ActionComplete, armed
+		}
+		if zone.Kind == ZoneWorktree {
+			// ↵ COMMITS the base row under the cursor (#269), for the
+			// reason immediately above and one more of its own. The base
+			// picker's top row is the one selection no MOVE can express:
+			// a held ref already shows HEAD, so there is nowhere to move
+			// from, and #256 will not let a clamped arrow count -- which
+			// left a pick of HEAD reachable by mouse alone, for exactly
+			// the window a remembered base is in flight.
+			//
+			// This zone covers the WHOLE field, chips and branch
+			// included, and MapKey cannot see which part the cursor is
+			// on. It does not need to: a Complete the field declines
+			// falls through to a plain advance, so WorktreeField.Complete
+			// answers for the part, and ↵ keeps the meaning it has always
+			// had everywhere else -- including on a base the user has
+			// already moved to, which needs no second press.
 			return ActionComplete, armed
 		}
 		if zone.Kind == ZoneTitle && !zone.TitleEmpty {

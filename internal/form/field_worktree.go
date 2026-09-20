@@ -216,6 +216,10 @@ type WorktreeField struct {
 	// basePickerRows the v2 panel's list height varies with the window.
 	baseRowsShown int
 
+	// baseStatusRefuses is whether baseStatus is asking for a different
+	// base rather than reporting on the list -- see SetBaseStatus.
+	baseStatusRefuses bool
+
 	// provenance is SetProvenance's config-file name, "" for a panel whose
 	// values no config file chose. See SetProvenance.
 	provenance string
@@ -478,13 +482,38 @@ func (w *WorktreeField) noteBasePicked() {
 // it is what the user is looking at for as long as the app is waiting on
 // the list that would name the ref it remembered.
 //
-// Note one asymmetry, deliberate and worth stating rather than leaving to
-// be rediscovered. While a hold is standing the list is a single row, so
+// Three inputs set it, and the third exists because of what the first two
+// cannot reach. While a hold is standing the list is a single row, so
 // every arrow and every wheel click on it is clamped -- and #256's rule is
-// that a keystroke the user could not see land is not a decision. For that
-// window, therefore, a pick of HEAD can only be made with the MOUSE. The
-// keyboard reaches this only once a list exists to move within.
+// that a keystroke the user could not see land is not a decision. That
+// left a pick of HEAD mouse-only for exactly the window a remembered base
+// is in flight, which is what #269 was; Complete is the ↵ that answered
+// it.
 func (w *WorktreeField) BasePicked() bool { return w.basePicked }
+
+// Complete implements form.go's completer capability: ↵ commits the base
+// row under the cursor (#269), reporting whether that changed anything.
+//
+// Reporting the change is the whole of how this key stays cheap, and it is
+// AccountField.commitPin's contract for the same reason: form.go falls a
+// declined Complete through to a plain advance. So ↵ acts only where it
+// has something to say -- the base part, with no pick recorded yet -- and
+// everywhere else keeps advancing exactly as it did before this existed:
+// on the chips, on the branch, and on a base the user has already moved to
+// and thereby already decided.
+//
+// Note which state it is guarded on. Not "is the cursor on HEAD": ↵ on a
+// ref the APP put under the cursor is a decision too, and the same silent
+// overwrite is waiting for it (#262's second path). basePicked is the
+// question -- has this user decided yet -- and it is the same fact the
+// footer's own ↵ rung appears and disappears on.
+func (w *WorktreeField) Complete() bool {
+	if w.part != partBase || w.basePicked {
+		return false
+	}
+	w.noteBasePicked()
+	return true
+}
 
 // setPart moves the sub-focus cursor, clamped to the parts that currently
 // mean anything (maxPart), and syncs the branch input's own focus so an
@@ -740,7 +769,17 @@ func (w *WorktreeField) headLabel() string {
 // SetBaseStatus sets the status text shown alongside the base part (e.g.
 // "searching…" while an async ref list is loading, or "couldn't list" on
 // failure) -- "" hides it.
-func (w *WorktreeField) SetBaseStatus(s string) { w.baseStatus = s }
+//
+// refusing says the line is asking for a DIFFERENT base rather than
+// reporting on the list: a base no check could answer for (#202) refuses
+// the submit until the value moves, and only moving it clears the line. It
+// travels with the text rather than in a setter of its own so the two
+// cannot disagree, which matters because the footer reads it: ↵ commits
+// the row already under the cursor, so under a line that says "pick a
+// base" it is an offer to do the one thing that cannot work (#269).
+func (w *WorktreeField) SetBaseStatus(s string, refusing bool) {
+	w.baseStatus, w.baseStatusRefuses = s, refusing
+}
 
 // Base returns the currently selected base ref, or "" to mean HEAD (the
 // always-first sentinel row -- see refreshBaseItems). The sentinel's own
@@ -1235,8 +1274,29 @@ func (w *WorktreeField) FooterRungs() []string {
 		// is (footer.go): at the top of the list it hands the part
 		// cursor back to the branch, and anywhere else it just moves the
 		// list, so one wording cannot be true in both places.
+		// ↵ is advertised exactly where it does something -- while no
+		// pick has been recorded yet (#269, Complete's own guard), and
+		// while the status line is not asking for a different base. That
+		// second condition is not the same question said twice: under a
+		// refusal ↵ still RECORDS the decision, so Complete would report a
+		// change, but it cannot clear the refusal, because what clears one
+		// is the base moving and ↵ is the key that does not move it. A
+		// footer that offered it there would be answering "pick a base"
+		// with "keep this one".
+		if w.baseStatusRefuses {
+			if w.baseAtTop() {
+				return []string{"↓ pick a base · ↑ back to the branch", "↓ pick a base"}
+			}
+			return []string{"↑↓ pick a base"}
+		}
 		if w.baseAtTop() {
+			if !w.basePicked {
+				return []string{"↵ use HEAD · ↓ pick a base · ↑ back to the branch", "↵ use HEAD · ↓ pick a base", "↵ use HEAD"}
+			}
 			return []string{"↓ pick a base · ↑ back to the branch", "↓ pick a base"}
+		}
+		if !w.basePicked {
+			return []string{"↵ keep this base · ↑↓ pick another", "↵ keep this base"}
 		}
 		return []string{"↑↓ pick a base"}
 	default:

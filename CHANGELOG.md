@@ -431,6 +431,19 @@ without the popup. It drives herdr exclusively through the public CLI
   word. A pick of `HEAD` is now recorded like any other: by a click on the
   row, and by an arrow or the wheel arriving on it from a base the form
   chose for you. Both inputs were affected; #262 reported only the click.
+- **`↵` chooses the base row under the cursor** (#269). The fix above left
+  that choice reachable by mouse alone for exactly the window it matters:
+  while a remembered base is being held the list is the single `HEAD` row,
+  so every arrow and every wheel click on it is clamped to nothing, and a
+  keystroke you could not see land is deliberately not counted as a
+  decision. `↵` now says "this one" without moving — on the `HEAD` row,
+  and on a base the form chose for you — and the base panel's footer says
+  so while it has something to commit. Where it has nothing, `↵` goes on
+  advancing to the next row exactly as it always has, which is also what
+  it does on the worktree toggle and the branch. It is not offered under a
+  line asking you to *pick* a base — a base no check could answer for
+  refuses the create until the value moves, and `↵` is the one pick that
+  does not move it.
 - The resolver is pure and is the only place the precedence chain exists.
 
 ### Repository-level config (`.herdr-draft.toml`)

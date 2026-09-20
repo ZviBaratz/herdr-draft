@@ -134,7 +134,7 @@ in the row order is spent on a button.
 | `↑` `↓` | move within the focused row's panel |
 | `←` `→` | chips: worktree on/off, placement, agent favorites, an option's value |
 | `⇥` in a picker | complete, then advance |
-| `↵` | create, from a non-empty title, from the prompt, or from the button; advance from anywhere else |
+| `↵` | create, from a non-empty title, from the prompt, or from the button; choose what the cursor is on, on the account row and the base list; advance from anywhere else |
 | `⌃S` | create, from anywhere |
 | `⌃J` (or `⇧↵`, `⌥↵`) | newline in the prompt |
 | `⌃X` | in the prompt: `keep` or `reap` — whether the prompt ends with pane-reaper's instruction |

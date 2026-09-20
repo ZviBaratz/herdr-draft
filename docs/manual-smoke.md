@@ -361,7 +361,7 @@ each cell below assume this walk:
 | `↑↓` | move within the focused row's panel |
 | `←→` | chips (worktree on/off, placement, agent favorites) |
 | `⇥` in a picker | complete, then advance |
-| `↵` | create, from a non-empty title, from the prompt, or from the create button; advance from anywhere else |
+| `↵` | create, from a non-empty title, from the prompt, or from the create button; choose what the cursor is on, on the account row and the base list; advance from anywhere else |
 | `⌃S` | create, from anywhere |
 | `⌃J` | newline in the prompt (`↵` there creates) |
 | `⌃R ⌃R` | clear the form back to its resolved defaults |
