@@ -619,8 +619,10 @@ claude-only), then:
    The stack row then reads `<name> · <plan> · 5h N% · 7d N%`. Note what it
    does NOT say: `ok`. v3 spec §10.1 drops the auth status from the resting
    row entirely — "`ok` is the state that needs no words" — so it appears
-   only when it is not ok, as `sign in again` in red. A rate-limited
-   profile's percentage is in the warning color.
+   only when it is not ok, and as one of two words (#243): `expired` in the
+   warning color for a token between refreshes, which stays launchable, and
+   `sign in again` in red for a `broken` credential, which is refused at
+   submit. A rate-limited profile's percentage is in the warning color.
 10. Submit.
 
 **Expected:** the agent step reads `claude   under clauth <the profile you

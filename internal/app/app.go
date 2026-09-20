@@ -1609,8 +1609,9 @@ func (m Model) beginSubmit() (Model, tea.Cmd) {
 //   - Branch/workspace-label duplicates (titleDupBlocked, kept live by
 //     handleTitleResult) -- the SAME live verdict TitleField is already
 //     showing; this does not compute a new message, only blocks.
-//   - A pinned clauth profile whose auth_status isn't "ok"
-//     (accountAuthBlocked).
+//   - A pinned clauth profile clauth reports `broken` -- the one
+//     auth_status that means the credential cannot be used at all
+//     (accountAuthBlocked, #243).
 //
 // Returns (nil, false) when nothing blocks.
 func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
@@ -1645,7 +1646,7 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 		// opens already says which of the two it is (#202).
 		return m.form.FocusByID("title"), true
 	}
-	if pin, status, blocked := m.accountAuthBlocked(); blocked {
+	if pin, blocked := m.accountAuthBlocked(); blocked {
 		// Fix round 1 (reviewer finding -- silent failure): the row
 		// marker Task 18 already renders for this profile was already
 		// visible BEFORE this blocked Create press, so it alone gave no
@@ -1659,7 +1660,7 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 		// "blocked — auth: <status>", which led with a state the user
 		// cannot act on and carried a `Label:` colon v2 spec §7 drops
 		// everywhere else.
-		m.account.SetVerdict(pin, fmt.Sprintf("sign in again  clauth reports %s", status))
+		m.account.SetVerdict(pin, fmt.Sprintf("sign in again  clauth reports %s", clauth.AuthBroken))
 		return m.form.FocusByID("account"), true
 	}
 	return nil, false
@@ -1839,39 +1840,36 @@ func (m Model) WithAccount(r picker.Result) Model {
 }
 
 // accountAuthBlocked reports whether the currently pinned profile (see
-// accountPin) has a known, non-"ok" auth_status (spec §9: "pinned account
-// auth_status != ok -> blocking verdict"), and that raw status text when
-// it does (fix round 1: checkSubmitValidation threads it into
-// AccountField.SetVerdict's own new blocking message) -- consulting
-// m.clauthStatus, the last clauth feed New/handleClauthResult recorded
-// (AccountField itself exposes no per-profile AuthStatus getter of its
-// own). A pin naming a profile clauth's own feed doesn't currently list
-// (e.g. one removed since the last reload) is not blocked here -- there
-// is nothing to judge it against.
+// accountPin) is one clauth says cannot be used at all -- spec §9's
+// blocking verdict as #243 narrowed it -- consulting m.clauthStatus, the
+// last clauth feed New/handleClauthResult recorded (AccountField itself
+// exposes no per-profile AuthStatus getter of its own).
 //
-// Disclosed judgment call (flagged by review, not explicitly specified
-// by spec §9): an EMPTY AuthStatus is treated as non-blocking, same as
-// "ok" -- mirroring accountRow's own accountWarning helper (Task 18),
-// which already treats "" the same way for the picker row's own inline
-// marker. Consistency with that already-shipped, already-reviewed
-// behavior was chosen over inventing a stricter "unknown status blocks"
-// rule this task was never asked to add; an empty AuthStatus would
-// otherwise disagree with what the row itself is already showing (an
-// unmarked, unwarned row) about the very same profile.
-func (m Model) accountAuthBlocked() (pin, status string, blocked bool) {
+// The judgment is clauth.Status.AuthOf's, not this function's, and that is
+// the point: every guard it applies is one a loop over Profiles here would
+// forget. Two used to be forgotten right here.
+//
+//   - An EMPTY AuthStatus does not block. This was a disclosed judgment
+//     call when it was written ("consistency with the row over a stricter
+//     rule nobody asked for"); it is now clauth's own contract, which tells
+//     readers to default an absent auth_status to "ok"
+//     (https://github.com/uwuclxdy/clauth/blob/v0.15.2/wiki/Daemon.md#L165).
+//   - A DEGRADED status does not block (#245). It used to: the popup drew
+//     names only, saying nothing about any profile's auth state, while this
+//     gate refused to launch because of that same unreadable state.
+//
+// And only `broken` blocks. `expired` is a token between refreshes -- the
+// launch this form builds hands its refresh token to `claude` -- so it is
+// marked on the row and never refused (#243). No status text is returned
+// with the verdict any more: `broken` is the only value that reaches the
+// caller's message, so the caller names it from the constant rather than
+// from a second traversal that could disagree with this one.
+func (m Model) accountAuthBlocked() (pin string, blocked bool) {
 	pin = m.accountPin()
 	if pin == "" {
-		return "", "", false
+		return "", false
 	}
-	for _, p := range m.clauthStatus.Profiles {
-		if p.Name == pin {
-			if p.AuthStatus != "" && p.AuthStatus != "ok" {
-				return pin, p.AuthStatus, true
-			}
-			return pin, "", false
-		}
-	}
-	return pin, "", false
+	return pin, m.clauthStatus.AuthOf(pin) == clauth.AuthDead
 }
 
 // PlanInput is the plan.Input this form would submit as it currently

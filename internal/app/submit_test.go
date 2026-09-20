@@ -502,16 +502,22 @@ func TestSubmit_DuplicateVerdictBlocksAndRefocusesTitle(t *testing.T) {
 }
 
 // TestSubmit_PinnedProfileAuthFailedBlocksWithAccountVerdict pins spec
-// §9's third named validation: a pinned clauth profile whose auth_status
-// isn't "ok" blocks submission and re-focuses Account -- the field
-// already showing that profile's own "auth failed" row marker (Task 18).
+// §9's third named validation as #243 narrowed it: a pinned clauth profile
+// clauth reports `broken` blocks submission and re-focuses Account -- the
+// field already showing that profile's own "auth failed" row marker
+// (Task 18).
+//
+// `broken`, not `expired`, which this fixture used to carry. `expired` is a
+// token between refreshes and launches fine; see
+// TestSubmit_PinnedExpiredProfileSubmits below, which is the half that
+// would otherwise go unpinned.
 func TestSubmit_PinnedProfileAuthFailedBlocksWithAccountVerdict(t *testing.T) {
 	runner := &submitFakeRunner{}
 	m := newSubmitTestModel(t, runner, testSetup{
 		Ctx: herdrc.Context{WorkspaceCwd: "/repo"},
 		ClauthStatus: clauth.Status{Profiles: []clauth.Profile{
-			{Name: "active-ish", AuthStatus: "ok"},
-			{Name: "work", AuthStatus: "expired"},
+			{Name: "active-ish", AuthStatus: clauth.AuthOK},
+			{Name: "work", AuthStatus: clauth.AuthBroken},
 		}},
 		Clauth: &fakeClauth{},
 	})
@@ -529,7 +535,7 @@ func TestSubmit_PinnedProfileAuthFailedBlocksWithAccountVerdict(t *testing.T) {
 	// sign submission proceeded; m.submitting and FocusedID() are the
 	// real signals.
 	if m.submitting {
-		t.Fatal("Update(SubmitMsg{}) started submitting despite a pinned profile with auth_status \"expired\"")
+		t.Fatal("Update(SubmitMsg{}) started submitting despite a pinned profile with auth_status \"broken\"")
 	}
 	if got := m.form.FocusedID(); got != "account" {
 		t.Fatalf("FocusedID() after an account-blocked submit = %q, want %q", got, "account")
@@ -539,19 +545,92 @@ func TestSubmit_PinnedProfileAuthFailedBlocksWithAccountVerdict(t *testing.T) {
 	}
 
 	// Fix round 1 (reviewer finding -- silent failure): before this fix,
-	// the only cue was the picker row's own marker/label -- which already
-	// mentions "expired" regardless (accountRow's own "name · tier ·
-	// auth_status" format) and was ALREADY visible before the click, so
-	// checking for "expired" alone would pass even without the fix.
+	// the only cue was the picker row's own marker/label -- which was
+	// ALREADY visible before the click, so checking for the row's own
+	// words alone would pass even without the fix.
 	// AccountField.SetVerdict pushes a NEW panel-status message naming
 	// clauth as the source, which nothing else in the view ever renders
 	// -- that's the actual signal this fix adds. (v2's copy pass turned
-	// "blocked — auth: expired" into a line that leads with what to do;
+	// "blocked — auth: broken" into a line that leads with what to do;
 	// "clauth reports" is the half no row can produce on its own.)
 	frame := fieldText(m.account, 60)
-	wantVerdict := "sign in again  clauth reports expired"
+	wantVerdict := "sign in again  clauth reports broken"
 	if !strings.Contains(frame, wantVerdict) {
 		t.Fatalf("the account panel after a blocked submit = %q, want it to contain the new blocking verdict %q", frame, wantVerdict)
+	}
+}
+
+// TestSubmit_PinnedExpiredProfileSubmits is #243: `expired` is an OAuth
+// access token past its expiry whose refresh has not run yet, not a dead
+// credential, and the launch this form builds -- `clauth start <profile> --`
+// -- hands the stored refresh token to `claude`, which refreshes it. So the
+// submit goes through.
+//
+// m.submitting is the assertion because startSubmit sets it only once
+// checkSubmitValidation has cleared EVERY gate -- a submit refused by any
+// of them returns before it is ever set.
+func TestSubmit_PinnedExpiredProfileSubmits(t *testing.T) {
+	runner := &submitFakeRunner{}
+	m := newSubmitTestModel(t, runner, testSetup{
+		Ctx: herdrc.Context{WorkspaceCwd: "/repo"},
+		ClauthStatus: clauth.Status{Profiles: []clauth.Profile{
+			{Name: "active-ish", AuthStatus: clauth.AuthOK},
+			{Name: "work", AuthStatus: clauth.AuthExpired},
+		}},
+		Clauth: &fakeClauth{},
+	})
+	m = settle(t, m)
+	m.title.SetTitle("Fix pagination", false)
+	m.account.SetPin("work")
+	m.account.SetAgentIsClaude(true)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if !m.submitting {
+		t.Fatal("Update(SubmitMsg{}) did not submit a pinned profile clauth reports \"expired\"")
+	}
+	if cmd == nil {
+		t.Fatal("Update(SubmitMsg{}) returned a nil cmd, want the submit-pipeline chain")
+	}
+	if frame := fieldText(m.account, 60); strings.Contains(frame, "clauth reports") {
+		t.Fatalf("the account panel = %q, want no blocking verdict for an expired pin", frame)
+	}
+}
+
+// TestSubmit_DegradedStatusDoesNotBlockABrokenPin is #245: when
+// clauth.ParseStatus degrades a status, every field past Profiles[].Name is
+// unreliable -- the account row says so and draws names only. The submit
+// gate used to read auth_status off that same status anyway, so the popup
+// refused to launch on a state it was simultaneously refusing to show.
+//
+// The profile carries `broken` on purpose: it is the one value that DOES
+// block on a status this package trusts, so a degraded status that still
+// blocks would pass a weaker fixture.
+func TestSubmit_DegradedStatusDoesNotBlockABrokenPin(t *testing.T) {
+	runner := &submitFakeRunner{}
+	m := newSubmitTestModel(t, runner, testSetup{
+		Ctx: herdrc.Context{WorkspaceCwd: "/repo"},
+		ClauthStatus: clauth.Status{
+			Degraded: true,
+			Profiles: []clauth.Profile{
+				{Name: "active-ish", AuthStatus: clauth.AuthOK},
+				{Name: "work", AuthStatus: clauth.AuthBroken},
+			},
+		},
+		Clauth: &fakeClauth{},
+	})
+	m = settle(t, m)
+	m.title.SetTitle("Fix pagination", false)
+	m.account.SetPin("work")
+	m.account.SetAgentIsClaude(true)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if !m.submitting {
+		t.Fatal("Update(SubmitMsg{}) blocked on auth_status read off a DEGRADED clauth status")
+	}
+	if cmd == nil {
+		t.Fatal("Update(SubmitMsg{}) returned a nil cmd, want the submit-pipeline chain")
 	}
 }
 

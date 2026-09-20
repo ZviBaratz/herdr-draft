@@ -1095,12 +1095,29 @@ func TestAccountField_RowVocabulary(t *testing.T) {
 		t.Errorf("a rate-limited row does not carry the warning color; §10.1 puts the percentage in it")
 	}
 
-	f.SetPin("beta") // auth_status "expired"
+	f.SetPin("beta") // auth_status "broken"
 	if got, want := rowText(f.Row(60)), "beta · Max 20x · 5h 0% · sign in again"; got != want {
 		t.Errorf("Row pinned to an auth-failed profile = %q, want %q", got, want)
 	}
 	if !strings.Contains(f.Row(60), ansiColor(palette.Danger)) {
 		t.Errorf("an auth-failed row does not carry the danger color; §10.1 puts the state word in it")
+	}
+
+	// #243: `expired` is its own state, not a quieter spelling of the one
+	// above. clauth's own word, in Warning, and NOT `sign in again` --
+	// which names a remedy that is both unnecessary and, for a token the
+	// launch refreshes on its own, misleading about what is wrong.
+	expired := sampleStatus()
+	expired.Profiles[1].AuthStatus = clauth.AuthExpired
+	f.SetProfiles(expired, sampleNow())
+	if got, want := rowText(f.Row(60)), "beta · Max 20x · 5h 0% · expired"; got != want {
+		t.Errorf("Row pinned to an expired profile = %q, want %q", got, want)
+	}
+	if strings.Contains(f.Row(60), ansiColor(palette.Danger)) {
+		t.Errorf("an expired row carries the danger color; it is a token between refreshes, not a dead credential")
+	}
+	if !strings.Contains(f.Row(60), ansiColor(palette.Warning)) {
+		t.Errorf("an expired row carries no warning color; §6 field 7 still wants it visibly marked")
 	}
 }
 

@@ -386,18 +386,37 @@ func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Dep
 		return fmt.Errorf("workspace %s is already labelled %q; pass a different --title", w.WorkspaceID, in.Title)
 	}
 
-	return refuseSignedOutProfile(ctx, resolved, deps, cl)
+	return refuseUnusableProfile(ctx, resolved, deps, cl)
 }
 
-// refuseSignedOutProfile is the form's accountAuthBlocked: a pinned profile
-// clauth reports with an auth status other than "ok". Only a named profile
-// is checked -- `auto` is still the sentinel here, exactly as it is when the
-// form runs the same check -- and an unknown status never blocks, as it does
-// not in the form. Unlike the form, where the account row already shows why
-// clauth could not be read, a status that could not be loaded is said on
-// stderr: there is no row here, and a check skipped in silence reads as a
-// check passed.
-func refuseSignedOutProfile(ctx context.Context, resolved resolution, deps Deps, cl *clauthOnce) error {
+// refuseUnusableProfile is the form's accountAuthBlocked: a pinned profile
+// whose credential clauth reports dead. Only a named profile is checked --
+// `auto` is still the sentinel here, exactly as it is when the form runs the
+// same check.
+//
+// Dead means clauth's `broken`, and only that (#243). It is the value that
+// means "last refresh rejected as revoked/invalid", and `clauth login` --
+// which this message names -- is what clears it. `expired` is a different
+// thing wearing a similar word: an access token past its expiry whose
+// refresh has not run, which the `clauth start` this create goes on to type
+// heals by handing the stored refresh token to `claude`. Refusing it made
+// the one remedy a person could act on the wrong one.
+//
+// Two statuses are checked on and pass, both of them said on stderr. Unlike
+// the form, where the account row shows the reason itself, there is no row
+// here and a check skipped in silence reads as a check passed:
+//
+//   - one that could not be read at all, and
+//   - one clauth.ParseStatus marked Degraded (#245), where the schema is one
+//     nobody has read clauth's reason for and every field past the profile's
+//     name is unreliable. That guard lives in clauth.Status.AuthOf, so this
+//     asks whether it fired rather than re-deciding it; the line exists
+//     because AuthOf is deliberately silent about which of its reasons
+//     answered.
+//
+// The degraded line does NOT set cl.said, which means something narrower:
+// that the read's ERROR is already on stderr. A degraded read succeeded.
+func refuseUnusableProfile(ctx context.Context, resolved resolution, deps Deps, cl *clauthOnce) error {
 	pin := resolved.input.AccountPin
 	if pin == "" || pin == clauthAuto || deps.Clauth == nil {
 		return nil
@@ -411,10 +430,12 @@ func refuseSignedOutProfile(ctx context.Context, resolved resolution, deps Deps,
 		cl.said = true
 		return nil
 	}
-	for _, p := range status.Profiles {
-		if p.Name == pin && p.AuthStatus != "" && p.AuthStatus != "ok" {
-			return fmt.Errorf("clauth reports profile %s as %q, not signed in: `clauth login %s`, or pass a different --account", pin, p.AuthStatus, pin)
-		}
+	if status.Degraded {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: clauth status is degraded (schema %d); not checking whether %s is signed in\n", status.Schema, pin)
+		return nil
+	}
+	if status.AuthOf(pin) == clauth.AuthDead {
+		return fmt.Errorf("clauth reports profile %s as %q, which cannot be used: `clauth login %s`, or pass a different --account", pin, clauth.AuthBroken, pin)
 	}
 	return nil
 }

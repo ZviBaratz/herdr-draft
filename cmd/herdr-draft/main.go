@@ -416,8 +416,9 @@ func runCreate(args []string) int {
 	}, create.Deps{
 		Runner: herdrRunner(),
 		Git:    app.NewGitSource(),
-		// The popup's own loader, so a profile the account row would mark
-		// signed out is refused here too (#147).
+		// The popup's own loader, so a profile the account row marks as a
+		// dead credential is refused here too (#147) -- and, since #243,
+		// one it merely marks `expired` is refused by neither.
 		Clauth: app.NewClauthSource(clauth.LoadOpts{
 			StatusFile: clauthStatusFilePath(),
 			CLIBin:     defaultClauthBin,

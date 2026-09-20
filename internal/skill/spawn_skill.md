@@ -482,9 +482,11 @@ creates nothing now, since `create` cannot schedule it.
 see which ones have room; a dry run naming one reports the same windows
 for that account, and neither spends anything. A candidate whose
 `account_usage` comes back absent is unknown rather than free, so leave
-it off the list. An account clauth reports as signed out is refused with
-exit 2, which makes it not a candidate rather than a failure worth
-reporting. When you offer accounts, name each one's spent windows even
+it off the list. An account whose credential clauth reports as dead
+(`auth_status: broken`) is refused with exit 2, which makes it not a
+candidate rather than a failure worth reporting. One it reports `expired`
+is not that: the token is between refreshes and the launch heals it, so the
+account is an ordinary candidate and its windows are what decide. When you offer accounts, name each one's spent windows even
 where they cap a model you did not pick: an account that cannot run
 `fable` at all is a different kind of candidate. Never swap an account in
 silently: whatever the user asked for stays on the list, and they may
@@ -517,7 +519,7 @@ before you create, with the two choices above.
 |---|---|---|
 | 0 | created | report where it is |
 | 1 | the plan started and failed | part of the session may exist — a space, or only some of a worktree: its branch, its checkout; look at it before retrying |
-| 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, a branch name git cannot use, and a pinned account clauth reports as signed out | fix the command and re-run |
+| 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, a branch name git cannot use, and a pinned account whose credential clauth reports dead (`broken`) | fix the command and re-run |
 | 3 | herdr is unreachable, found before anything started | nothing was created; stop |
 | 4 | the plan started, and its first step failed before making anything | nothing exists and there is nothing to clean up; the error says why the step failed, so report it, or re-run once it is dealt with |
 

@@ -2833,26 +2833,93 @@ func TestCreateRefusesATitleAnOpenWorkspaceAlreadyCarries(t *testing.T) {
 	}
 }
 
-// #147: a pinned profile clauth reports as not signed in is refused, as the
-// form refuses it, rather than typed into a pane where it fails.
-func TestCreateRefusesAProfileClauthReportsSignedOut(t *testing.T) {
+// #147, as #243 narrowed it: a pinned profile whose credential clauth
+// reports DEAD is refused, as the form refuses it, rather than typed into a
+// pane where it fails.
+//
+// `broken` is that value, and the message names `clauth login` because for
+// `broken` that is genuinely the remedy -- it means the last refresh was
+// rejected as revoked or invalid. The fixture said `expired` until #243,
+// which is a token between refreshes and launches fine; see
+// TestCreateLaunchesAProfileClauthReportsExpired.
+func TestCreateRefusesAProfileClauthReportsBroken(t *testing.T) {
 	h := newHarness(t)
 	h.deps.Clauth = &fakeClauth{status: clauth.Status{Schema: 1, Profiles: []clauth.Profile{
-		{Name: "alpha-1", AuthStatus: "ok"},
-		{Name: "alpha-2", AuthStatus: "expired"},
+		{Name: "alpha-1", AuthStatus: clauth.AuthOK},
+		{Name: "alpha-2", AuthStatus: clauth.AuthBroken},
 	}}}
 
 	code := h.run("--title", "fix login", "--account", "alpha-2", "--no-worktree")
 	if code != ExitUsage {
 		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitUsage, h.stderr)
 	}
-	for _, want := range []string{"alpha-2", "expired"} {
+	for _, want := range []string{"alpha-2", "broken", "clauth login alpha-2"} {
 		if !strings.Contains(h.stderr.String(), want) {
 			t.Errorf("stderr should mention %q:\n%s", want, h.stderr)
 		}
 	}
 	if h.createdAnything() {
 		t.Fatalf("a refused create must create nothing, got %v", h.runner.calls)
+	}
+}
+
+// TestCreateLaunchesAProfileClauthReportsExpired is #243's other half, and
+// the half that was broken: `expired` is an OAuth access token past its
+// expiry whose refresh has not run yet. The launch this builds --
+// `clauth start alpha-2 --` -- hands the stored refresh token to `claude`,
+// which refreshes it, so waiting is the remedy and `clauth login` is not.
+// It used to exit 2.
+//
+// The assertion reaches the LAUNCH, not just the exit code: a future edit
+// that re-blocked `expired` one step earlier would change the exit code, and
+// an exit code is the kind of assertion someone retunes. The typed command
+// is not.
+func TestCreateLaunchesAProfileClauthReportsExpired(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Clauth = &fakeClauth{status: clauth.Status{Schema: 1, Profiles: []clauth.Profile{
+		{Name: "alpha-1", AuthStatus: clauth.AuthOK},
+		{Name: "alpha-2", AuthStatus: clauth.AuthExpired},
+	}}}
+
+	if code := h.run("--title", "fix login", "--account", "alpha-2", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if got, want := strings.Join(h.runner.runArgv, " "), "clauth start alpha-2 --"; got != want {
+		t.Fatalf("the typed launch = %q, want %q (calls: %v)", got, want, h.runner.calls)
+	}
+	if strings.Contains(h.stderr.String(), "expired") {
+		t.Errorf("an expired account is a normal state and should be said nowhere:\n%s", h.stderr)
+	}
+}
+
+// TestCreateLaunchesOnADegradedStatus is #245: when clauth.ParseStatus
+// degrades a status, every field past Profiles[].Name is unreliable -- the
+// popup's account row says exactly that and draws names only. This check
+// used to read auth_status off that same status and refuse on it, so a
+// schema bump alone could have failed every pinned create, with the popup
+// unable to say why.
+//
+// The profile carries `broken`, the one value that DOES refuse on a status
+// this tree trusts, so a degraded status that still refused would pass a
+// weaker fixture. And the skip is SAID, for the reason the refusal's own
+// doc gives: there is no row here, and a check skipped in silence reads as
+// a check passed.
+func TestCreateLaunchesOnADegradedStatus(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Clauth = &fakeClauth{status: clauth.Status{
+		Schema:   7,
+		Degraded: true,
+		Profiles: []clauth.Profile{{Name: "alpha-2", AuthStatus: clauth.AuthBroken}},
+	}}
+
+	if code := h.run("--title", "fix login", "--account", "alpha-2", "--no-worktree"); code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if got, want := strings.Join(h.runner.runArgv, " "), "clauth start alpha-2 --"; got != want {
+		t.Fatalf("the typed launch = %q, want %q (calls: %v)", got, want, h.runner.calls)
+	}
+	if got := h.stderr.String(); !strings.Contains(got, "alpha-2") || !strings.Contains(got, "degraded") {
+		t.Errorf("a skipped check must say so, naming the profile:\n%s", got)
 	}
 }
 
