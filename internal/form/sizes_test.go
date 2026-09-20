@@ -36,7 +36,7 @@ func TestModel_ComposeFitsExactlyTheWindow(t *testing.T) {
 		}
 		rows := strings.Split(got, "\n")
 		ftr := footerRow(layoutFrame(h, n), h)
-		if line := ansi.Strip(rows[ftr]); !strings.Contains(line, "↵ create") {
+		if line := ansi.Strip(rows[ftr]); !strings.Contains(line, stubCreateButton) {
 			t.Errorf("ViewAt(80, %d) row %d = %q, want the Create button", h, ftr, line)
 		}
 	}

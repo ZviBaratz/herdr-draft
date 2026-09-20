@@ -360,7 +360,19 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 		}
 		return ActionNone, armed
 	case "enter", "alt+enter":
-		if zone.Kind == ZoneCreate {
+		if zone.Kind == ZonePrompt && msg.Mod.Contains(tea.ModAlt) {
+			// Alt+Enter inserts a newline in the prompt: the
+			// terminal-independent route that arrives even on a legacy
+			// terminal (as ESC CR), unlike the real Shift+Enter.
+			//
+			// FIRST, and scoped to the prompt, because everything below
+			// treats "enter" and "alt+enter" alike: hoisted out of this
+			// zone it would turn ⌥↵ on a filled title into a newline,
+			// and left below enterSubmits it would never be reached at
+			// all. keys_test.go pins both halves.
+			return ActionNewline, armed
+		}
+		if enterSubmits(zone) {
 			return ActionSubmit, armed
 		}
 		if zone.Kind == ZoneAccount {
@@ -396,33 +408,6 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 			// already moved to, which needs no second press.
 			return ActionComplete, armed
 		}
-		if zone.Kind == ZoneTitle && !zone.TitleEmpty {
-			// The quick-create contract: choosing a title is choosing a
-			// branch (spec §6 field 3), so "n -> name -> Enter" creates
-			// the session one-handed. An empty title falls through to
-			// the shared advance below instead (submitting would only
-			// bounce off the title-required validation).
-			return ActionSubmit, armed
-		}
-		if zone.Kind == ZonePrompt {
-			if msg.Mod.Contains(tea.ModAlt) {
-				// Alt+Enter inserts a newline in the prompt: the
-				// terminal-independent route that arrives even on a
-				// legacy terminal (as ESC CR), unlike the real
-				// Shift+Enter.
-				return ActionNewline, armed
-			}
-			// A BARE Enter in the prompt submits (v2 spec §8: "↵ from the
-			// prompt submits rather than advancing. Nothing used it for a
-			// newline; ⌃J, ⇧↵ and ⌥↵ keep that job"). The prompt is the
-			// last field a user fills before creating, and v1's advance
-			// only moved focus onto the Create button -- one keystroke to
-			// save, at the cost of a newline key nothing was using. The
-			// companion view plan's footer table still says "↵ next" for
-			// this zone; the spec wins, and footer.go's ZonePrompt rung
-			// says so.
-			return ActionSubmit, armed
-		}
 		// Every other field (an empty Title, pickers, chip rows) advances
 		// to the next enabled zone, exactly like Tab in a non-picker
 		// zone. Advancing by one rather than jumping to Create keeps
@@ -430,6 +415,47 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 		return ActionAdvance, armed
 	default:
 		return ActionNone, armed
+	}
+}
+
+// enterSubmits reports whether a BARE ↵ creates the session from zone --
+// the three places in the whole form where it does.
+//
+//   - ZoneCreate: the button's own activation key.
+//   - ZonePrompt: v2 spec §8, "↵ from the prompt submits rather than
+//     advancing. Nothing used it for a newline; ⌃J, ⇧↵ and ⌥↵ keep that
+//     job". The prompt is the last field a user fills before creating, and
+//     v1's advance only moved focus onto the Create button -- one keystroke
+//     to save, at the cost of a newline key nothing was using. The
+//     companion view plan's footer table still says "↵ next" here; the
+//     spec wins.
+//   - A non-empty ZoneTitle: the quick-create contract, since choosing a
+//     title is choosing a branch (spec §6 field 3), so "n -> name -> Enter"
+//     creates the session one-handed. An EMPTY title is not one of the
+//     three -- it advances instead, because submitting would only bounce
+//     off the title-required validation.
+//
+// BARE is the word that keeps this honest, and it is why MapKey tests
+// ⌥↵ in the prompt before asking this: ⌥↵ there is a newline, not a
+// create, and this function cannot see the modifier.
+//
+// It exists as a function rather than as four inline zone tests because
+// #281 gave it a SECOND caller: form.go's primary button names the key
+// that creates from the zone in view (↵ where this is true, ⌃S where it
+// is not), and a button whose legend disagreed with the grammar is the
+// defect that issue is about. Both callers ask the same question here, so
+// they cannot drift; form_test.go's
+// TestFooterButton_NamesAKeyThatActuallyCreates reads the glyph back off
+// the rendered button and asks MapKey, which is what fails if they ever
+// do.
+func enterSubmits(zone FocusZone) bool {
+	switch zone.Kind {
+	case ZoneCreate, ZonePrompt:
+		return true
+	case ZoneTitle:
+		return !zone.TitleEmpty
+	default:
+		return false
 	}
 }
 

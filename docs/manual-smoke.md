@@ -337,7 +337,7 @@ At the shipped 101×30, fully configured (blank panel rows elided):
    Work on ENG-101: Fix login redirect loop
 
  ───────────────────────────────────────────────────────────────────────────────────────────────────
- ⌃J newline · ⇥ move · ⌃R clear                                              ↵ create    esc cancel
+ ⌃J newline · ⌃X keep or reap · ⇥ move · ⌃R clear                            ↵ create    esc cancel
 
 ```
 
@@ -365,10 +365,14 @@ formatting here: at 101×30 the frame is
   step off whatever they sit on. An input that looks exactly like the space
   around it is the defect that fill exists to remove, so check it on a light
   theme too — the fill is derived per theme, not a fixed colour.
-- **Create is on the footer**, right-aligned (`↵ create`, `esc cancel`),
-  not a row in the stack. It is still the ring's last focus stop: `⇥` past
-  `account` lands on it — the button looks the same there (it is filled with
-  the accent color in every state, v3 spec §5.5), and what changes is the
+- **Create is on the footer**, right-aligned, not a row in the stack, with
+  `esc cancel` beside it. Its legend names the key that creates from the
+  row you are on (#281): `↵ create` on a named title, in the prompt and on
+  the button itself, `⌃S create` on every other row, where `↵` advances or
+  chooses instead. Watch it flip as you type the first character of a title
+  — that is the moment `↵` starts creating. It is still the ring's last
+  focus stop: `⇥` past `account` lands on it — the button is filled with
+  the accent color in every state (v3 spec §5.5), and what changes is the
   key ladder beside it, to `⇧⇥ back to the form`.
 - **The card fills the pane**, one blank column on each side (v3 spec §6.2).
   Rules and footer reaching only two thirds of the way across is the v2
@@ -390,8 +394,8 @@ each cell below assume this walk:
 | `←→` | chips (worktree on/off, placement, agent favorites) |
 | `⇥` in a picker | complete, then advance |
 | `↵` | create, from a non-empty title, from the prompt, or from the create button; choose what the cursor is on, on the account row and the base list; advance from anywhere else |
-| `⌃S` | create, from anywhere |
-| `⌃J` | newline in the prompt (`↵` there creates) |
+| `⌃S` | create, from anywhere — and what the create button names on every row `↵` does not create from |
+| `⌃J` | newline in the prompt (`↵` there creates, which is why the button says so) |
 | `⌃R ⌃R` | clear the form back to its resolved defaults |
 | `esc` | cancel |
 

@@ -884,8 +884,9 @@ func (m Model) composeRows(w, h int) string {
 
 	if f.Footer {
 		focused := m.ring.current()
-		rungs := footerRungsFor(focused, zoneFor(focused), m.clearArmed)
-		add(renderFooter(boxWidth, rungs, m.palette), m.palette.PanelBG)
+		zone := zoneFor(focused)
+		rungs := footerRungsFor(focused, zone, m.clearArmed)
+		add(renderFooter(boxWidth, zone, rungs, m.palette), m.palette.PanelBG)
 	}
 	for i := 0; i < f.PadBottom; i++ {
 		add("", m.palette.PanelBG)
@@ -1005,8 +1006,8 @@ func (m Model) renderPanelRegion(width, region int) []string {
 // Nothing else here is width-aware. The footer's reach is entirely a
 // function of the boxWidth composeRows hands it, which is why v3 spec
 // §6.2's edge-to-edge box needed no change on this side of the call.
-func renderFooter(width int, rungs []string, p theme.Palette) string {
-	create := widgets.Zones.Mark(zoneCreateButton, createButton(p))
+func renderFooter(width int, zone FocusZone, rungs []string, p theme.Palette) string {
+	create := widgets.Zones.Mark(zoneCreateButton, createButton(p, zone))
 	createWidth := lipgloss.Width(create)
 	if createWidth >= width {
 		return fitLine(create, width)
@@ -1140,8 +1141,9 @@ func (c *createSection) PanelRows() int        { return 0 }
 // distinguish it from." v2 spec §4's footer has two, so that premise is
 // gone: color tells primary from secondary exactly as herdr's own dialogs
 // use it. Both states keep the key glyph, because §7 makes the glyph part
-// of what a button IS, and because the footer's key ladder no longer
-// repeats ↵ anywhere (footer.go's zoneRungs).
+// of what a button IS, and because the footer's key ladder never repeats
+// the glyph the button is wearing (footer.go's zoneRungs, and createKey
+// below for which glyph that is in a given zone).
 func actionButtonText(hint, label string) string {
 	if hint == "" {
 		return " " + label + " "
@@ -1175,18 +1177,68 @@ func panelContrastFG(p theme.Palette) theme.Color {
 // on it swaps the footer's whole key ladder to `⇧⇥ back to the form`
 // (footer.go's zoneRungs, ZoneCreate) -- the same line the button sits
 // on, so the two are read together.
-func createButtonFace(p theme.Palette) (string, lipgloss.Style) {
-	return actionButtonText("↵", "create"), lipgloss.NewStyle().
+func createButtonFace(p theme.Palette, zone FocusZone) (string, lipgloss.Style) {
+	return actionButtonText(createKey(zone), "create"), lipgloss.NewStyle().
 		Foreground(panelContrastFG(p)).
 		Background(p.Accent).
 		Bold(true)
 }
 
+// createKey is the glyph the primary button wears in zone: the key that
+// actually creates a session from the row the cursor is on (#281).
+//
+// ↵ in the three zones where a bare Enter submits (keys.go's
+// enterSubmits) and ⌃S in the other seven, because ⌃S is the one key
+// that submits from everywhere -- MapKey's ctrl+s case sits above every
+// zone test and returns ActionSubmit unconditionally.
+//
+// The button used to say `↵ create` on every row, which was false on
+// seven of ten: ↵ completes on the account row and the base list and
+// advances on the rest. On two of those the footer then said ↵ twice on
+// one line meaning two different things -- `↵ pin` beside `↵ create`
+// (v3 spec §10.3), `↵ use HEAD` beside it (#269) -- which is the defect
+// #281 was filed on. The fix is the button, not the rungs: a rung is
+// per-zone by construction and can say what ↵ does where it does it,
+// and a constant legend cannot.
+//
+// Note what does NOT change with the zone. The fill, the bold and the
+// label are unconditional, which is v3 spec §5.5's "ONE face, not two"
+// -- that paragraph is about spending the fill on FOCUS, and the fill is
+// still spent on nothing. What varies here is which working key the
+// button names, and it names one in every zone.
+//
+// It is one cell wider while it says ⌃S, so the key ladder beside it
+// has one cell less to work with, and that is not a rounding error: the
+// chosen rung differs at 71 (zone, terminal width) pairs between 24 and
+// 160 columns. Almost all of them are the ladder degrading on its own
+// terms (footer.go's crossRungs) one column earlier than before. Seven
+// are the floor -- no lead fits at all and the line falls to "⇥ move"
+// -- at terminal widths 35 (worktree), 36 (options), 37 (issue, dir,
+// placement), 40 (agent) and 44 (an empty title). Only TWO golden
+// fixtures moved their ladder text: account-panel-44x12 lost "⌃R clear"
+// for "⇥ move", and assembled-opening-57x18 gained "name it to create"
+// (see zoneRungs' ZoneTitle branch, which has the measurement). An
+// earlier draft of this paragraph said "three widths", which was a guess
+// and did not survive being measured.
+//
+// The EMPTY title is the one row where the legend is still not the whole
+// truth, and it is the exception zoneRungs already documents: ⌃S there
+// reaches a submit that checkSubmitValidation refuses with "title
+// required", so the rung says `name it to create` and corrects it. That
+// is strictly better than what it corrected before -- ↵ from an empty
+// title never even reached a submit.
+func createKey(zone FocusZone) string {
+	if enterSubmits(zone) {
+		return "↵"
+	}
+	return "⌃S"
+}
+
 // createButton renders the primary button at its INTRINSIC width, for
 // the footer line (v2 spec §5): renderFooter places it flush right and
 // fits the key ladder into what is left.
-func createButton(p theme.Palette) string {
-	text, style := createButtonFace(p)
+func createButton(p theme.Palette, zone FocusZone) string {
+	text, style := createButtonFace(p, zone)
 	return style.Inline(true).Render(text)
 }
 
