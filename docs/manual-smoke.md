@@ -369,8 +369,10 @@ formatting here: at 101×30 the frame is
   `esc cancel` beside it. Its legend names the key that creates from the
   row you are on (#281): `↵ create` on a named title, in the prompt and on
   the button itself, `⌃S create` on every other row, where `↵` advances or
-  chooses instead. Watch it flip as you type the first character of a title
-  — that is the moment `↵` starts creating. It is still the ring's last
+  chooses instead. On the OPENING form it names no key at all — `↵`
+  advances there and `⌃S` only earns `title required` — so watch it grow a
+  `↵` as you type the first character of a title. That is the moment a key
+  starts creating, and the button says so. It is still the ring's last
   focus stop: `⇥` past `account` lands on it — the button is filled with
   the accent color in every state (v3 spec §5.5), and what changes is the
   key ladder beside it, to `⇧⇥ back to the form`.

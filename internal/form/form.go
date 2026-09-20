@@ -1207,27 +1207,53 @@ func createButtonFace(p theme.Palette, zone FocusZone) (string, lipgloss.Style) 
 // still spent on nothing. What varies here is which working key the
 // button names, and it names one in every zone.
 //
-// It is one cell wider while it says ⌃S, so the key ladder beside it
-// has one cell less to work with, and that is not a rounding error: the
-// chosen rung differs at 71 (zone, terminal width) pairs between 24 and
-// 160 columns. Almost all of them are the ladder degrading on its own
-// terms (footer.go's crossRungs) one column earlier than before. Seven
-// are the floor -- no lead fits at all and the line falls to "⇥ move"
-// -- at terminal widths 35 (worktree), 36 (options), 37 (issue, dir,
-// placement), 40 (agent) and 44 (an empty title). Only TWO golden
-// fixtures moved their ladder text: account-panel-44x12 lost "⌃R clear"
-// for "⇥ move", and assembled-opening-57x18 gained "name it to create"
-// (see zoneRungs' ZoneTitle branch, which has the measurement). An
-// earlier draft of this paragraph said "three widths", which was a guess
-// and did not survive being measured.
+// The three faces are three widths -- 8, 10 and 11 cells -- so the key
+// ladder beside the button gets a different budget per zone, and that is
+// not a rounding error. Measured against what shipped before #281 (one
+// 10-cell face everywhere), the chosen rung differs at 74 (zone, terminal
+// width) pairs between 24 and 160 columns. Almost all are the ladder
+// degrading on its own terms (footer.go's crossRungs) one column earlier,
+// because ⌃S costs a cell. SIX are the floor -- no lead fits at all and
+// the line falls to "⇥ move" -- at terminal widths 35 (worktree), 36
+// (options), 37 (issue, dir and placement) and 40 (agent).
 //
-// The EMPTY title is the one row where the legend is still not the whole
-// truth, and it is the exception zoneRungs already documents: ⌃S there
-// reaches a submit that checkSubmitValidation refuses with "title
-// required", so the rung says `name it to create` and corrects it. That
-// is strictly better than what it corrected before -- ↵ from an empty
-// title never even reached a submit.
+// The empty title is deliberately NOT among those six, and that is the
+// point of giving it the narrow face. It is the opening screen, so it is
+// the one that could least afford to lose a cell -- and at 8 cells it
+// gains two instead. Measured over the same range it is better than
+// pre-#281 at 24 widths and identical at the other 113, with no width
+// where it teaches less. Two earlier drafts of this paragraph carried
+// numbers that did not survive being measured ("three widths", then
+// seven floor losses including this one); the habit to copy is the
+// measuring, not the numbers.
+//
+// The EMPTY title gets NO glyph, because there no key creates: ↵
+// advances, and ⌃S reaches a submit checkSubmitValidation refuses with
+// "title required" (app.go). Naming either would be the same defect
+// #281 is about, one key over -- so the button names none, and the rung
+// beside it says `name it to create`. This retires zoneRungs' last
+// standing exception rather than moving it: the rule is now simply that
+// the button names a key exactly when a key creates, and names the
+// right one, which is what
+// TestFooterButton_NamesAKeyThatActuallyCreates asserts in both
+// directions.
+//
+// Half-borrowed from submitview.go's own footerParts, whose disabled
+// button already drops its glyph on the reasoning "the face is what
+// advertises a working key". Only half: that button is also drawn
+// buttonDisabled, and this one stays FILLED (v3 spec §5.5, unconditional)
+// because it is not dead -- a click still submits, and the refusal it
+// earns names the missing title and moves focus there, which is a useful
+// answer rather than a no-op.
+//
+// The glyph-less face is also the NARROWEST of the three (8 cells against
+// 10 and 11), so the opening screen -- the one every user sees, and the
+// one the widened ⌃S face cost the most -- gets ladder room back rather
+// than losing it.
 func createKey(zone FocusZone) string {
+	if zone.Kind == ZoneTitle && zone.TitleEmpty {
+		return ""
+	}
 	if enterSubmits(zone) {
 		return "↵"
 	}
