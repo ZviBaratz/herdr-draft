@@ -1902,6 +1902,12 @@ With every lever removed, the two binaries agree exactly.
 
 So the difference between the two binaries is the bound and nothing else.
 
+**Re-confirmed at the final head**, nine commits later, after the arm order
+had been refactored into a pure classifier: `exit=5` after 60.1s, stdout
+empty, byte-identical stderr. Worth doing rather than assuming, because
+"that refactor changed no behaviour" is the claim a recorded run exists to
+stop anyone having to take on trust.
+
 Teardown: probe directory removed; `pgrep -x herdr-draft` 0; no orphaned
 `sleep 600` with `ppid=1`. No account quota spent and no pick made — the
 picker was never configured. Note for anyone re-running: `pgrep -f 'sleep
