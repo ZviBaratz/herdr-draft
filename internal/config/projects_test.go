@@ -155,10 +155,11 @@ func TestProjectsTouchedIgnoresAnEmptyKey(t *testing.T) {
 	}
 }
 
-// TestLoadProjectsDiscardsUnusableFiles pins v2 spec §10's "corrupt or
-// missing file discarded silently, like every other state file": every
-// one of these must yield an empty Projects and a nil error, never a
-// failure the rest of the app has to handle.
+// TestLoadProjectsDiscardsUnusableFiles applies spec §12's loss-tolerance
+// rule -- "corrupt/missing state files are discarded silently" -- to v2
+// spec §10's projects.json: every one of these must yield an empty
+// Projects and a nil error, never a failure the rest of the app has to
+// handle.
 func TestLoadProjectsDiscardsUnusableFiles(t *testing.T) {
 	cases := []struct {
 		name    string
