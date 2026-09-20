@@ -180,9 +180,12 @@ type WorktreeField struct {
 	// pendingBase is SetBase's own deferred selection: the app layer
 	// resolves a remembered base ref (internal/defaults) long before the
 	// async branch list naming it has landed, so a SelectID that misses is
-	// retried on every subsequent list refresh rather than dropped. It is
-	// cleared the moment it lands, so a later refresh cannot re-apply it
-	// over a selection the user has since moved.
+	// retried on every subsequent list refresh rather than dropped. Three
+	// sites clear it, and naming only the first is what #256 was: the
+	// landing (refreshBaseItems), a SetBase that hits outright, and the
+	// user picking a base of their own (retireHeldBase). Between them a
+	// later refresh cannot re-apply it over a selection the user has since
+	// moved -- see SetBase.
 	pendingBase     string
 	havePendingBase bool
 
@@ -362,6 +365,18 @@ func (w *WorktreeField) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 			// moveBaseCursor does: a held ref shows the HEAD row, so a user
 			// clicking HEAD is choosing the row that is already selected.
 			// Nothing moves, and they have still decided (#256).
+			//
+			// Note where that stops, because it is a claim about THIS
+			// field and not yet about the product: a click on the HEAD row
+			// leaves Base() == "", and the app layer does not read that as
+			// a decision (internal/app's noteUserEdits: "a fall back to
+			// HEAD is the list moving, not the user"), so baseTouched
+			// stays false and the tier's base settle -- still out, since a
+			// hold is exactly what being out means -- re-applies the
+			// remembered ref through handleBaseSettled. That is unchanged
+			// by #256, which neither caused it nor claims to answer it;
+			// whether an explicit click on HEAD is a decision is the app
+			// layer's question.
 			w.retireHeldBase()
 			return w.setPart(partBase)
 		}

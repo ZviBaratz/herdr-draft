@@ -577,6 +577,13 @@ func TestPopup_AHeldBaseNeverOverwritesTheUsersOwnPick(t *testing.T) {
 	if got := m.worktree.Base(); got != "" {
 		t.Fatalf("setup: Base() = %q, want the HEAD row while the remembered ref is held", got)
 	}
+	// And the window is really the HELD one, not merely a base that never
+	// resolved: Base() == "" is equally true of a SetBase that was dropped
+	// instead of remembered, so without this the test passes with its own
+	// subject deleted.
+	if got := m.worktree.RequestedBase(); got != "remote-only" {
+		t.Fatalf("setup: RequestedBase() = %q, want the remembered ref held", got)
+	}
 
 	// The user picks a base out of the list they can actually see.
 	m.form.FocusByID("worktree")

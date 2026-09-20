@@ -412,6 +412,12 @@ func TestMouseZones_ClickingABaseRowRetiresAHeldBase(t *testing.T) {
 // moving: a held ref shows the HEAD row, so a user clicking HEAD is
 // choosing the row that is already selected. Nothing moves, and they have
 // still decided.
+//
+// A claim about the FIELD, and deliberately only that: the app layer does
+// not read a base sitting on HEAD as a decision, so end to end the tier's
+// base settle puts the remembered ref back anyway. handleClick's own
+// comment carries that boundary; this test is what holds the field to its
+// half of it.
 func TestMouseZones_ClickingTheHeadRowRetiresAHeldBase(t *testing.T) {
 	m, w := heldBaseForm(t, "remote-only", []string{"develop", "release/1.4"})
 
