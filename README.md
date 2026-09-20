@@ -403,6 +403,7 @@ report. It never prompts. Exit codes:
 | 2 | bad usage, or a request that cannot be resolved |
 | 3 | herdr is unreachable — found before the plan starts |
 | 4 | the plan started, and its first step failed before making anything: nothing exists |
+| 5 | a check did not answer in time: nothing was created |
 
 Exit 4 needs evidence, not just a failed first step: herdr refused that
 step before acting, or it was never asked. A worktree step that herdr
@@ -413,9 +414,39 @@ exit 4 still prints the object — `ok: false`, `failed_step` and `error` —
 with no `workspace_id`/`space_*` ids, since there is nothing for them to
 name.
 
+**Exit 5 is the refusal that is not yours to fix.** Every question the
+pre-flight asks **git** — does this directory exist, is it a repository,
+what is its root and its primary checkout, does this branch already exist,
+what commit does this base name — gives up after thirty seconds instead of
+waiting for good. Without that, a `create` on a stalled network mount sat
+there with no output and no exit code for as long as the mount stayed
+stalled: fine for a person, who can press `⌃C`, and useless for the script
+or agent that is the usual caller. The line on stderr names which check ran
+out, and nothing was created.
+
+Each check gets its own thirty seconds, and one create spends at most one
+of them, because the questions are asked in order and a timeout refuses the
+run. The plain file reads beside them are not bounded — but only two are on
+the project at all, and of those, the repository's `.herdr-draft.toml` is
+read after the git questions, so on a stalled project it is git that runs
+out. The exception is `os.Getwd`, which runs first and is on the project
+whenever `--project` is absent or relative. Your `config.toml` and the two state
+files are in the plugin's own directories, not the project's.
+
+It is not exit 2: that one means "fix the command and re-run", and there is
+nothing in the command to fix. It is not exit 3 either, which would send you
+to look at a herdr that is fine. The popup makes the same distinction on
+screen, with a shorter budget, since there is someone holding the key.
+
+The budget is not configurable, by design. It is a safety bound rather than
+a tuning knob — nothing you could set it to would make a hung mount answer —
+and `[timeouts]` values are not validated, so one typo would turn it into
+"give up immediately" instead.
+
 **`--dry-run` shows what a create would make, and makes nothing.** It
-runs every check a create runs before it starts, with the same exit 2 and
-exit 3 and the same reasons, then prints what it would create and stops.
+runs every check a create runs before it starts, with the same exit 2,
+exit 3 and exit 5 and the same reasons, then prints what it would create
+and stops.
 There is no workspace, no branch and nothing remembered. With `--json` it
 prints the object a create would, with `dry_run: true` and without the ids
 or `prompt_status`, which only a run can know. `--account auto` asks your

@@ -134,41 +134,49 @@ func (m Model) checkBudget() (*Lifetime, time.Duration) {
 	return m.deps.Lifetime, d
 }
 
-// awaitCheck runs answer on its own goroutine and returns what it
+// AwaitCheck runs answer on its own goroutine and returns what it
 // answered, or (zero, false) when ctx runs out first -- the deadline, or
-// the popup quitting.
+// the caller's own context being cancelled.
 //
 // It bounds the ANSWER, not the calls, and that is the half that matters:
-// the deadline on awaitCheck's context reaches only the calls that take
+// the deadline on AwaitCheck's context reaches only the calls that take
 // one, and the two that start every directory check -- os.Stat and
 // gitx.IsGitRepo -- take none. Nor would giving them one help on the hang
 // #202 is about: a process blocked on a stalled network mount is in
 // uninterruptible sleep, where a cancelled context (and the KILL behind
 // it) returns nothing any sooner than no context at all. Bounding what the
-// form waits for is the only bound that releases the form.
+// caller waits for is the only bound that releases the caller.
 //
 // The price is deliberate and stated: the goroutine is left running on a
 // call that may never come back, holding whatever that call holds for the
-// life of the popup. It answers into a buffered channel nobody reads, so
-// it costs one goroutine and no late message -- the Cmd has already
-// returned the one message it will ever return, and a stale answer can
+// life of the process. It answers into a buffered channel nobody reads, so
+// it costs one goroutine and no late answer -- the caller has already
+// produced the one result it will ever produce, and a stale answer can
 // therefore not reach handleDirResult behind the guard's back.
 //
-// The Lifetime region is held by the ANSWER's goroutine rather than by this
-// call, and that is the difference between bounding a check and breaking
-// #211. Shutdown's wait exists so a cancelled child is actually dead before
+// release, when non-nil, is called by the ANSWER's goroutine once the call
+// has come back -- never by this one, and that is the difference between
+// bounding a check and breaking #211. The popup passes Lifetime.Begin's own
+// done: Shutdown's wait exists so a cancelled child is actually dead before
 // the process exits -- exec.CommandContext kills it from a watcher
 // goroutine that has to be scheduled first -- and this call returns the
 // moment the deadline fires, with the child still there. Releasing the
 // region here would leave Shutdown nothing to wait for, which is that bug
 // with an extra step, for all four checks at once. Found in review.
-func awaitCheck[T any](lt *Lifetime, deadline time.Duration, answer func(context.Context) T) (T, bool) {
-	ctx, done := lt.Begin()
+//
+// Exported for internal/create, which has the same questions to bound in
+// its headless pre-flight and no Lifetime to bound them on -- it has no
+// tea.Program to outlive -- so it passes its own context and a nil release
+// (#272). One copy rather than two: each half of the select below is a
+// shipped defect's fix, and a duplicated body can drift.
+func AwaitCheck[T any](ctx context.Context, release func(), deadline time.Duration, answer func(context.Context) T) (T, bool) {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	answered := make(chan T, 1)
 	go func() {
-		defer done()
+		if release != nil {
+			defer release()
+		}
 		answered <- answer(ctx)
 	}()
 	select {
@@ -205,6 +213,16 @@ func awaitCheck[T any](lt *Lifetime, deadline time.Duration, answer func(context
 		var zero T
 		return zero, false
 	}
+}
+
+// awaitCheck is AwaitCheck over the popup's own Lifetime: quitting the
+// popup ends the check with it (#249), and Shutdown still waits for the
+// call the quit cancelled (#211), because the region is released by the
+// answer's goroutine. Every check a submit waits for goes through it, with
+// both halves read on the update loop by checkBudget.
+func awaitCheck[T any](lt *Lifetime, deadline time.Duration, answer func(context.Context) T) (T, bool) {
+	ctx, done := lt.Begin()
+	return AwaitCheck(ctx, done, deadline, answer)
 }
 
 // request is the single (version, key) staleness guard every debounced

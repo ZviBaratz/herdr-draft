@@ -722,6 +722,24 @@ prompts.
 > new branch before it refuses a checkout path that already exists. Those
 > failures stay 1, and so does any first-step failure that shows neither.
 
+> **Amended, #272 (2026-09-20): exit 5, a check that did not answer.** The
+> sentence above, and #192's amendment with it, assumed every pre-flight
+> refusal was the caller's to fix. One is not. Every question the pre-flight
+> asks git -- does this directory exist, is it a repository, what is its
+> root and its primary checkout, does this branch already exist, what commit
+> does this base name -- now gives up after thirty seconds instead of
+> waiting for good, and reports **5**. The plain file reads beside them are
+> not bounded; of those, only `.herdr-draft.toml` and `os.Getwd` are on the
+> project, and only the second of them runs before a git question. Nothing was
+> created, and nothing on stdout, as for 2 and 3.
+>
+> It is not 2, whose documented remedy is "fix the command and re-run":
+> nothing in the command would make a hung mount answer. It is not 3, which
+> would send the caller to look at a herdr that is fine. The popup makes the
+> same distinction on screen with a shorter budget (#202), because there is
+> a person holding the key; a script has nobody, which is why this exists at
+> all. A cancelled context is not a timeout and never says it was.
+
 `main.go` dispatches on `os.Args[1]`: absent means the popup, exactly as
 today; an unknown verb prints usage and exits 2.
 

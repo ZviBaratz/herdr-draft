@@ -524,12 +524,22 @@ before you create, with the two choices above.
 | 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, a branch name git cannot use, and a pinned account whose credential clauth reports dead (`broken`) | fix the command and re-run |
 | 3 | herdr is unreachable, found before anything started | nothing was created; stop |
 | 4 | the plan started, and its first step failed before making anything | nothing exists and there is nothing to clean up; the error says why the step failed, so report it, or re-run once it is dealt with |
+| 5 | a check did not answer in time, most likely a stalled filesystem | nothing was created and nothing in the command would change it; the line says which check, so report that rather than retrying into the same mount |
 
 `--json` prints one object instead of a human line, and is the right
-choice whenever you are going to act on the result. Note that on exit 2
-and exit 3 it prints **nothing** on stdout, so a pipe into `jq` gets empty
-input — read the exit status before you read the JSON. On exit 4 it prints
-the object with `ok: false`, `failed_step` and `error`, and no ids at all.
+choice whenever you are going to act on the result. Note that on exit 2,
+exit 3 and exit 5 it prints **nothing** on stdout, so a pipe into `jq` gets
+empty input — read the exit status before you read the JSON. On exit 4 it
+prints the object with `ok: false`, `failed_step` and `error`, and no ids
+at all.
+
+**Exit 5 is the one that is not yours to fix.** Every question the command
+asks git — does this directory exist, is it a repository, does this branch
+already exist — gives up after thirty seconds rather than waiting for good,
+which is what stops a create on a stalled network mount from sitting there
+with no output and no exit code while you wait for it. Nothing was created.
+Re-running with a different flag will not help; say which check timed out
+and leave the mount to whoever owns it.
 
 **Check `launch_options` and `agent_args` against what the user
 approved.** `launch_options` is what the agent was started with for each

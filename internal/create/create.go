@@ -59,6 +59,17 @@ import (
 // ExitUnreachable is the other refusal that comes before the plan: the
 // reachability probe, run after every check that needs no herdr.
 //
+// ExitCheckTimedOut is the third, and the one that is NOT the caller's to
+// fix (#272): a question the pre-flight asked the filesystem or git that
+// did not answer inside its budget -- a stalled mount, in practice.
+// Deliberately not ExitUsage, whose remedy is "fix the command and
+// re-run", and whose existing occupant is "project directory does not
+// exist": a directory nobody could CHECK is the other thing, and #202
+// named the distinction "unknown is not invalid". Deliberately not
+// ExitUnreachable either, which says herdr is down and would send a caller
+// to look at a herdr that is fine. Nothing was created, and nothing on
+// stdout, as for the two above.
+//
 // ExitFailed and ExitNothingCreated are the plan's own: it started, and it
 // failed. They split on what the failure can be shown to have left behind
 // (#192). ExitNothingCreated is a first step that failed before anything
@@ -76,6 +87,7 @@ const (
 	ExitUsage          = 2
 	ExitUnreachable    = 3
 	ExitNothingCreated = 4
+	ExitCheckTimedOut  = 5
 )
 
 // Env is the process environment `create` reads, passed in as a struct
@@ -127,6 +139,19 @@ const pluginID = herdrc.PluginID
 // hangs on). It is a deliberate SUBSET of internal/app's own gitSource, so
 // app.NewGitSource satisfies it directly and production has one
 // implementation rather than two.
+//
+// Nothing in the pre-flight calls it directly: every question goes through
+// Deps.checks() and checks.go's boundedGit (#272). A call site added here
+// instead would be one that can wait for good on a stalled mount, and one
+// that reads a question nobody answered as its own negative.
+//
+// The compiler catches TWO of the six, not all of them, and the difference
+// is worth knowing before trusting it. DirExists and IsGitRepo answer with
+// a bare bool here and with an error as well on boundedGit, so an
+// unbounded call to either does not build. The other four have identical
+// signatures on both types, so `deps.git().RepoRoot(ctx, dir)` compiles
+// and passes -- demonstrated in review, which is also where the claim that
+// the compiler enforced all six came from and was wrong.
 type GitSource interface {
 	DirExists(path string) bool
 	IsGitRepo(dir string) bool
@@ -196,6 +221,16 @@ type Deps struct {
 	// Now is nil for time.Now -- only used to stamp the per-project memory
 	// a successful create records.
 	Now func() time.Time
+
+	// CheckDeadline overrides preflightCheckDeadline, the bound on every
+	// question the pre-flight asks git (#272). Zero --
+	// which is what production leaves it, since there is nothing to tune --
+	// means the constant. See Deps.checks, the one place either is read.
+	//
+	// It follows app.Model.checkDeadline's own pattern rather than becoming
+	// a [timeouts] key or a flag: a test needs a seam so it does not sit
+	// through thirty seconds, and nothing else needs one.
+	CheckDeadline time.Duration
 }
 
 func (d Deps) stdout() io.Writer {
@@ -245,6 +280,17 @@ func (d Deps) repoConfig() func(string) config.RepoConfig {
 // read only for `--prompt -`, and only because the caller asked -- and
 // never panics: progress goes to Stderr one line per step, the result to
 // Stdout.
+//
+// ctx may be cancellable and must NOT carry a deadline of its own. A
+// cancel is what a signal becomes (#252) and reaches everything it should.
+// A deadline does not: the pre-flight's own bound would honour it on the
+// git call and not on the wait, so a question the caller's deadline killed
+// would come back as an ordinary error and be read as its own negative --
+// a branch that is free, a repository with no root. checks.go's bounded
+// has the mechanism and what a caller wanting otherwise would need. Said
+// here as well as there because this is where a caller looks; the one
+// in-module caller (cmd/herdr-draft's runCreate) passes
+// context.WithCancel of Background. Raised in review.
 func Run(ctx context.Context, args []string, env Env, deps Deps) int {
 	req, err := parseArgs(args)
 	switch {
@@ -268,21 +314,21 @@ func Run(ctx context.Context, args []string, env Env, deps Deps) int {
 func run(ctx context.Context, req request, env Env, deps Deps) int {
 	resolved, err := resolveRequest(ctx, req, env, deps)
 	if err != nil {
-		return usageError(deps.stderr(), err)
+		return refuse(deps.stderr(), err)
 	}
 
 	// Built once as a CHECK, with an `auto` account still unpicked: every
 	// refusal plan.Build can make is a refusal the pick below must not be
 	// spent on (#145).
 	if _, err := plan.Build(resolved.input); err != nil {
-		return usageError(deps.stderr(), err)
+		return refuse(deps.stderr(), err)
 	}
 	// `auto` with no picker to ask is a fault in the command or the config,
 	// so it is reported here, ahead of the probe, as it was when the pick ran
 	// inside resolveRequest: with herdr also down, exit 3 would tell the
 	// caller to stop when the remedy is to fix the invocation.
 	if err := requirePicker(resolved.input, accountPicker(resolved.tiers.cfg, deps)); err != nil {
-		return usageError(deps.stderr(), err)
+		return refuse(deps.stderr(), err)
 	}
 
 	// The reachability probe (spec §13's exit 3) comes after every check
@@ -296,7 +342,7 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 
 	cl := &clauthOnce{src: deps.Clauth}
 	if err := refuseWhatTheFormRefuses(ctx, resolved, deps, cl); err != nil {
-		return usageError(deps.stderr(), err)
+		return refuse(deps.stderr(), err)
 	}
 
 	// The pick is the LAST pre-flight step, as it is in the form's
@@ -306,7 +352,7 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	// states for its exit 2/3/4.
 	in, warnings, err := resolveAccount(ctx, resolved.input, accountPicker(resolved.tiers.cfg, deps), req.dryRun)
 	if err != nil {
-		return usageError(deps.stderr(), err)
+		return refuse(deps.stderr(), err)
 	}
 	for _, w := range warnings {
 		// One prefixed line each, however the picker wrapped it.
@@ -316,7 +362,7 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 
 	ops, err := plan.Build(resolved.input)
 	if err != nil {
-		return usageError(deps.stderr(), err)
+		return refuse(deps.stderr(), err)
 	}
 	if req.dryRun {
 		// --dry-run stops here (#209), with every refusal above already
@@ -377,7 +423,16 @@ func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Dep
 	// exists only on a remote is refused too, as the form refuses it: herdr
 	// would make an unrelated local branch of the same name from the base.
 	if in.UseWorktree && in.Branch != "" {
-		if exists, err := deps.git().BranchExists(ctx, in.ProjectDir, in.Branch); err == nil && exists {
+		exists, err := deps.checks().BranchExists(ctx, in.ProjectDir, in.Branch)
+		// A real error is still discarded, deliberately and as before: a
+		// git that answers "I cannot tell" leaves the branch to herdr,
+		// which refuses a checkout that is genuinely taken. A question
+		// NOBODY answered is the other thing (#272) -- reading it as "the
+		// branch is free" is how a create walks into old work.
+		if errors.Is(err, errCheckTimedOut) {
+			return err
+		}
+		if err == nil && exists {
 			return fmt.Errorf("branch %q already exists, locally or on a remote; pass --branch with a new name", in.Branch)
 		}
 	}
@@ -673,9 +728,23 @@ func remember(resolved resolution, now time.Time) {
 	_ = config.SaveProjects(stateDir, projects)
 }
 
-// usageError reports a pre-flight refusal and returns ExitUsage, so every
-// such site is one `return usageError(...)` and they all read identically.
-func usageError(stderr io.Writer, err error) int {
+// refuse reports a pre-flight refusal and returns its exit code, so every
+// such site is one `return refuse(...)` and they all read identically.
+//
+// Two codes, because a pre-flight refusal has two kinds and only one of
+// them is the caller's to fix. ExitUsage is the ordinary one, whose
+// documented remedy is "fix the command and re-run". A question the
+// filesystem or git never answered is ExitCheckTimedOut: nothing in the
+// command would change the answer, and calling it usage sends the caller
+// looking for a typo that is not there (#272).
+//
+// Sorted HERE rather than at each site, so a check added later cannot
+// forget: there is one place to get it right, and errors.Is finds the
+// timeout through however the site wrapped it.
+func refuse(stderr io.Writer, err error) int {
 	fmt.Fprintf(stderr, "herdr-draft create: %v\n", err)
+	if errors.Is(err, errCheckTimedOut) {
+		return ExitCheckTimedOut
+	}
 	return ExitUsage
 }
