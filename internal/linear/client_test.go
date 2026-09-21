@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 func readFixture(t *testing.T, path string) []byte {
@@ -321,5 +323,52 @@ func TestLoadCacheMissingFileErrors(t *testing.T) {
 	_, _, err := LoadCache(t.TempDir())
 	if err == nil {
 		t.Fatal("LoadCache: got nil error, want error for missing cache file")
+	}
+}
+
+// TestDefaultEndpointIsLinearsPublicAPI pins what every installed binary
+// talks to. defaultEndpoint is a var rather than a const so that
+// hack/live's own build can point it at a stub with `-X` (#302), which
+// makes its source value the thing a user's install depends on -- so it is
+// asserted here rather than trusted.
+func TestDefaultEndpointIsLinearsPublicAPI(t *testing.T) {
+	if want := "https://api.linear.app/graphql"; defaultEndpoint != want {
+		t.Errorf("defaultEndpoint = %q, want Linear's public API %q", defaultEndpoint, want)
+	}
+}
+
+// TestNoInstalledBinaryCanBeRedirected is the other half of #302's
+// promise: the seam that lets `just live` send the issue query to a stub
+// is reachable from the linker and from nothing else, and in particular
+// not from the build that runs on a user's machine.
+//
+// herdr runs herdr-plugin.toml's [[build]] at install time. A -X there
+// naming this variable would send every user's Linear key to whatever it
+// said, from a file that arrives with the plugin -- so this reads the REAL
+// manifest, the same way internal/herdrc's manifest tests do, and refuses
+// any build argument that mentions the variable at all.
+func TestNoInstalledBinaryCanBeRedirected(t *testing.T) {
+	path := filepath.Join("..", "..", "herdr-plugin.toml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var m struct {
+		Build []struct {
+			Command []string `toml:"command"`
+		} `toml:"build"`
+	}
+	if err := toml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	if len(m.Build) == 0 {
+		t.Fatal("herdr-plugin.toml declares no [[build]] -- this test has nothing to guard")
+	}
+	for _, b := range m.Build {
+		for _, arg := range b.Command {
+			if strings.Contains(arg, "defaultEndpoint") {
+				t.Errorf("herdr-plugin.toml's [[build]] %q sets defaultEndpoint -- an installed binary would send the user's Linear key there", b.Command)
+			}
+		}
 	}
 }

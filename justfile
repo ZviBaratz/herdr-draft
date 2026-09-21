@@ -146,9 +146,28 @@ smoke repo:
 # nothing, spends no account quota and cannot submit anything real. That is
 # what makes it safe to run in a loop while reading a screen.
 #
+# It drives its OWN binary, not bin/herdr-draft (#302). Linear is the one
+# input a scratch HOME cannot stub, because the endpoint is compiled in:
+# so this links a copy with `-X` pointing internal/linear's defaultEndpoint
+# at a loopback port, and drive.py serves hack/live/linear-issues.json
+# there. That copy differs from `just build`'s by that one string -- and
+# says so, since `go version -m` prints the -ldflags it was linked with.
+# It goes under $TMPDIR, never bin/, for two reasons: `just smoke` runs
+# bin/herdr-draft against the REAL Linear and must never pick this one up,
+# and this one sends whatever Linear key it holds to a loopback port, which
+# is fine for the stub's fake key and wrong for anyone's real one. Do not
+# run it by hand.
+#
+# A fresh free port on every run, which costs a relink -- measured at
+# 0.4s -- rather than a fixed port that a second run, or anything else on
+# the machine, could already hold. The port is freed between being picked
+# and drive.py binding it, and drive.py says so plainly if something took
+# it in that window.
+#
 # The venv lives OUTSIDE the tree drive.py manages, because `--fresh`
 # deletes that tree and rebuilding the venv on every pass is the slowest
-# thing here by an order of magnitude.
+# thing here by an order of magnitude. The linked binary lives outside it
+# for the same reason.
 #
 #     just live --size 101x30
 #     just live --size 57x18 --keys tab,tab,tab --row -1
@@ -176,7 +195,6 @@ smoke repo:
 live *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
-    just build
     venv="${TMPDIR:-/var/tmp}/herdr-draft-live-venv"
     # Probed by IMPORTING pyte, not by the interpreter existing: a first
     # run interrupted between `venv` and `pip install` leaves an
@@ -196,7 +214,12 @@ live *ARGS:
             exit 1
         }
     fi
+    livebin="${TMPDIR:-/var/tmp}/herdr-draft-live-bin"
+    mkdir -p "$livebin"
+    port="$("$venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+    go build -ldflags "-X main.build=$(git describe --tags --always --dirty 2>/dev/null || echo '') -X github.com/ZviBaratz/herdr-draft/internal/linear.defaultEndpoint=http://127.0.0.1:${port}/graphql" \
+        -o "$livebin/herdr-draft" ./cmd/herdr-draft
     set -f
     set -- {{ARGS}}
     [[ "${1:-}" == "--" ]] && shift
-    exec "$venv/bin/python" hack/live/drive.py "$@"
+    exec "$venv/bin/python" hack/live/drive.py --binary "$livebin/herdr-draft" --linear-port "$port" "$@"
