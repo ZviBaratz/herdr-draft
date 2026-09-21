@@ -644,6 +644,17 @@ without the popup. It drives herdr exclusively through the public CLI
   terminal's own foreground, which pins it to the same luminance band the
   ANSI red is in.
 
+  The dim tier has the same floor, 3:1 on the same three grounds, because
+  it is not only placeholders: `DimText` draws every row's label and most
+  of the secondary text on screen, and it was 2.23:1 on solarized-light's
+  focused row (#299). It is raised the same way, with one difference — it
+  is never walked past the theme's own `Text`, so a label cannot end up
+  louder than the value beside it. Two builtins move, solarized-light and
+  tokyo-night-day, and the default theme does not. On solarized-light the
+  floor and the dim/bright difference cannot both hold, because its own
+  `Text` is only 3.14:1 on its focused row, so there the labels read at
+  nearly the brightness of the values and their column tells them apart.
+
 ### Robustness
 
 - **Degradation over refusal.** Only an unparseable plugin context, an

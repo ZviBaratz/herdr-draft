@@ -1010,3 +1010,243 @@ func TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing(t *testing.T) {
 		})
 	}
 }
+
+// dimTextGrounds is every ground a dim word is measured on: the three the
+// semantic floor uses, for the reason floorContrast gives.
+func dimTextGrounds(p Palette) []struct {
+	where string
+	value Color
+} {
+	return []struct {
+		where string
+		value Color
+	}{
+		{"an unfocused row or the panel", p.PanelBG},
+		{"a focused stack row", p.ActiveRowBG},
+		{"a picker's cursor row", p.SurfaceFill(p.PanelBG)},
+	}
+}
+
+// TestBuiltinPalettes_DimTextIsLegibleOnEveryGround is #299. DimText draws
+// every row's label -- the only way to tell which row the cursor is on --
+// and most of the rest of what it draws is the only rendering of something
+// somebody reads. Before this floor it was 2.23:1 on solarized-light's
+// focused row and 2.77:1 on tokyo-night-day's, and the default theme was
+// never near it (5.65:1), so no frame could have shown either.
+//
+// The exemption is terminal's, for the reason every other floor in this
+// file gives.
+func TestBuiltinPalettes_DimTextIsLegibleOnEveryGround(t *testing.T) {
+	for name := range builtinPalettes {
+		t.Run(name, func(t *testing.T) {
+			palette, ok := Builtin(name)
+			if !ok {
+				t.Fatalf("Builtin(%q) not found", name)
+			}
+			if _, unknown := palette.PanelBG.(lipgloss.NoColor); unknown {
+				if name != "terminal" {
+					t.Fatalf("PanelBG is NoColor: only the terminal palette may be exempt from the dim-text floor")
+				}
+				return
+			}
+			for _, ground := range dimTextGrounds(palette) {
+				got, ok := contrastRatio(palette.DimText, ground.value)
+				if !ok {
+					t.Errorf("DimText on %s is unmeasurable", ground.where)
+					continue
+				}
+				if got < DimTextContrastFloor-contrastAssertionEpsilon {
+					t.Errorf("DimText on %s = %.3f:1, want >= %.2f:1 -- a label nobody can read does not say which row this is (#299)",
+						ground.where, got, DimTextContrastFloor)
+				}
+			}
+		})
+	}
+}
+
+// TestBuiltinPalettes_DimTextClampNeverPassesText is the ceiling, over the
+// builtins: wherever the clamp moved DimText, the dim tier is still the
+// dimmer of the two on every ground. A label raised past its value has not
+// been fixed, it has been swapped with the value.
+//
+// It is relative -- asserted only where the clamp MOVED the colour -- and
+// the reason is a theme rather than caution: kanagawa-lotus ships a
+// DimText with more contrast than its Text in herdr's own values (#309),
+// and the clamp only ever raises, so an absolute "DimText is never past
+// Text" would fail on a colour this package never touched. That is the same
+// shape as TestBuiltinPalettes_ClampDoesNotCloseAGapItDidNotCreate, for the
+// same kind of reason.
+//
+// Over the builtins this does not pin the ceiling on its own: at
+// dimTextMixStep, solarized-light's walk reaches the floor one step before
+// it would reach Text, so the ceiling never has to fire.
+// TestRaiseDimText_StopsShortOfText is the test that does. What this one
+// catches is a coarser step, which jumps that theme straight past its Text
+// (2.974:1, then 3.313:1 against a Text of 3.137:1).
+func TestBuiltinPalettes_DimTextClampNeverPassesText(t *testing.T) {
+	for name := range builtinPalettes {
+		t.Run(name, func(t *testing.T) {
+			raw := builtinPalettes[name]
+			palette, ok := Builtin(name)
+			if !ok {
+				t.Fatalf("Builtin(%q) not found", name)
+			}
+			if colorEqual(palette.DimText, raw.DimText) {
+				return // the theme's own choice, inverted or not
+			}
+			for _, ground := range dimTextGrounds(palette) {
+				dim, dimOK := contrastRatio(palette.DimText, ground.value)
+				text, textOK := contrastRatio(palette.Text, ground.value)
+				if !dimOK || !textOK {
+					t.Errorf("DimText or Text on %s is unmeasurable", ground.where)
+					continue
+				}
+				if dim > text {
+					t.Errorf("the clamp moved DimText %v -> %v, which is %.3f:1 on %s against Text's %.3f:1 -- the dim tier is now the louder one (#299)",
+						raw.DimText, palette.DimText, dim, ground.where, text)
+				}
+			}
+		})
+	}
+}
+
+// TestRaiseDimText_StopsShortOfText pins the ceiling by itself, on a ground
+// where the floor is out of reach: this Text is under 3:1 on it, so every
+// colour that clears the floor out-contrasts Text. A clamp with no ceiling
+// walks straight past it and reports success.
+//
+// What it must do instead is take the best point short of Text and stop --
+// better than it was handed, never louder than Text, and not claiming the
+// floor. A second case with room under Text pins the ordinary path next to
+// it, so the ceiling cannot be satisfied by never raising at all.
+func TestRaiseDimText_StopsShortOfText(t *testing.T) {
+	ground := lipgloss.Color("#202020")
+	grounds := []Color{ground}
+	cases := []struct {
+		name         string
+		text, dim    Color
+		floorInReach bool
+	}{
+		{"Text under the floor", lipgloss.Color("#666666"), lipgloss.Color("#404040"), false},
+		{"room under Text", lipgloss.Color("#b0b0b0"), lipgloss.Color("#404040"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			textRatio, _ := contrastRatio(tc.text, ground)
+			if (textRatio >= DimTextContrastFloor) != tc.floorInReach {
+				t.Fatalf("fixture Text is %.3f:1 on the ground -- the case needs it %s the floor", textRatio, map[bool]string{true: "above", false: "under"}[tc.floorInReach])
+			}
+			if clearsFloor(tc.dim, grounds, DimTextContrastFloor) {
+				t.Fatalf("fixture DimText already clears the floor -- nothing would be walked")
+			}
+
+			got := raiseDimText(tc.dim, grounds, tc.text, DimTextContrastFloor)
+
+			if outContrasts(got, tc.text, grounds) {
+				r, _ := contrastRatio(got, ground)
+				t.Errorf("raiseDimText = %v at %.3f:1, past Text's %.3f:1 -- the ceiling did not hold", got, r, textRatio)
+			}
+			if colorEqual(got, tc.dim) {
+				t.Errorf("raiseDimText left %v where it was, with room to raise it short of Text", tc.dim)
+			}
+			if before, after := worstRatio(tc.dim, grounds), worstRatio(got, grounds); after < before {
+				t.Errorf("raiseDimText went from %.3f:1 to %.3f:1 -- a clamp that cannot help must not hurt", before, after)
+			}
+			if clears := clearsFloor(got, grounds, DimTextContrastFloor); clears != tc.floorInReach {
+				r, _ := contrastRatio(got, ground)
+				t.Errorf("raiseDimText = %v at %.3f:1: clears the floor = %v, want %v", got, r, clears, tc.floorInReach)
+			}
+		})
+	}
+}
+
+// TestFloorContrast_KeepsLegibleDimTextUnchanged is the fidelity half. herdr
+// picked these colours and fifteen of the seventeen measurable builtins
+// picked them legibly, so every one that already clears the floor comes
+// back byte-identical. catppuccin is asserted by name as well, because it
+// is what every golden frame renders on: this is where "#299 moved no
+// frames" stops being true if a future edit lowers its DimText.
+func TestFloorContrast_KeepsLegibleDimTextUnchanged(t *testing.T) {
+	if _, ok := builtinPalettes["catppuccin"]; !ok {
+		t.Fatal("catppuccin missing from builtinPalettes")
+	}
+	for name, raw := range builtinPalettes {
+		palette, ok := Builtin(name)
+		if !ok {
+			t.Fatalf("Builtin(%q) not found", name)
+		}
+		grounds := []Color{palette.PanelBG, palette.ActiveRowBG, palette.SurfaceFill(palette.PanelBG)}
+		legible := clearsFloor(raw.DimText, grounds, DimTextContrastFloor)
+		if name == "catppuccin" && !legible {
+			t.Fatalf("catppuccin's own DimText no longer clears the floor -- this test's premise, and every golden frame, has moved")
+		}
+		if legible && !colorEqual(palette.DimText, raw.DimText) {
+			t.Errorf("%s: DimText = %v, want the theme's own %v unchanged -- it already clears the floor", name, palette.DimText, raw.DimText)
+		}
+	}
+}
+
+// TestLoadHerdrPalette_FloorsAnIllegibleDimTextOverride is the case a table
+// edit could not have reached, as its semantic twin above is: a `dim_text`
+// in herdr-draft's own `[palette]`, or `subtext0` in herdr's
+// `[theme.custom]`, goes through the same clamp a builtin does.
+func TestLoadHerdrPalette_FloorsAnIllegibleDimTextOverride(t *testing.T) {
+	illegible := "#191927" // a hair off catppuccin's #181825 PanelBG
+
+	got := floorContrast(Resolve(Default(), map[string]string{"dim_text": illegible}))
+
+	if colorEqual(got.DimText, lipgloss.Color(illegible)) {
+		t.Fatalf("an illegible [palette] dim_text survived unfloored: %v", got.DimText)
+	}
+	for _, ground := range dimTextGrounds(got) {
+		ratio, ok := contrastRatio(got.DimText, ground.value)
+		if !ok {
+			t.Fatalf("floored DimText is unmeasurable on %s", ground.where)
+		}
+		if ratio < DimTextContrastFloor-contrastAssertionEpsilon {
+			t.Errorf("floored override is %.3f:1 on %s, want >= %.2f:1", ratio, ground.where, DimTextContrastFloor)
+		}
+	}
+	if outContrasts(got.DimText, got.Text, []Color{got.PanelBG, got.ActiveRowBG, got.SurfaceFill(got.PanelBG)}) {
+		t.Errorf("floored override %v is louder than Text %v", got.DimText, got.Text)
+	}
+}
+
+// TestFloorContrast_MeasuresDimTextAgainstTheRaisedActiveRowBG is
+// TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG for the dim tier:
+// DimText is measured on the focused row's fill as floorContrast RAISES it,
+// not on the selection_bg it started as. The fixture is that test's, with a
+// grey dim tier in place of its red: #777777 clears the floor on the raw
+// #242424 and fails on the #363636 it is raised to.
+func TestFloorContrast_MeasuresDimTextAgainstTheRaisedActiveRowBG(t *testing.T) {
+	raw := Palette{
+		PanelBG:     lipgloss.Color("#202020"),
+		Text:        lipgloss.Color("#ffffff"),
+		Surface:     lipgloss.Color("#000000"), // clears SurfaceFillContrastFloor unaided
+		ActiveRowBG: lipgloss.Color("#242424"), // 1.05:1, well under ActiveRowContrastFloor
+		DimText:     lipgloss.Color("#777777"),
+	}
+
+	if ratio, _ := contrastRatio(raw.DimText, raw.ActiveRowBG); ratio < DimTextContrastFloor {
+		t.Fatalf("fixture DimText is %.3f:1 on the RAW fill -- it must pass there for the wrong order to be silent", ratio)
+	}
+	// The raised fill has to be the ONLY ground that can raise it -- the
+	// guard #149 taught the semantic version of this test to carry.
+	for _, ground := range []Color{raw.PanelBG, raw.SurfaceFill(raw.PanelBG)} {
+		if ratio, _ := contrastRatio(raw.DimText, ground); ratio < DimTextContrastFloor {
+			t.Fatalf("fixture DimText is %.3f:1 on %v -- it must clear every ground but the focused fill, or this test is not about ordering", ratio, ground)
+		}
+	}
+
+	got := floorContrast(raw)
+
+	if ratio, _ := contrastRatio(raw.DimText, got.ActiveRowBG); ratio >= DimTextContrastFloor {
+		t.Fatalf("fixture DimText is %.3f:1 on the FLOORED fill -- it must fail there for this test to measure anything", ratio)
+	}
+	if colorEqual(got.DimText, raw.DimText) {
+		t.Errorf("DimText came back unraised: floorContrast measured it against the raw selection_bg, not the fill it floored")
+	}
+	if ratio, _ := contrastRatio(got.DimText, got.ActiveRowBG); ratio < DimTextContrastFloor-contrastAssertionEpsilon {
+		t.Errorf("raised DimText is %.3f:1 on the floored fill, want >= %.2f:1", ratio, DimTextContrastFloor)
+	}
+}
