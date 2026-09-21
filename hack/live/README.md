@@ -26,10 +26,12 @@ one. Dump the screen before clicking.
 `just live` builds the binary, makes a venv with the pinned `pyte` (the pin is
 the justfile's `pyte_version`, and lives nowhere else), and runs `drive.py`.
 Nothing is installed into the repository or onto your machine; the venv sits
-under `$TMPDIR`. `hack/` is not a Go package and nothing here is on the
+under `$TMPDIR`. The `python3` it is made from must be 3.11 or later, for
+`tomllib` (see the refusals below). `hack/` is not a Go package and nothing here is on the
 `[[build]]` path that runs on a user's machine at install time.
 
-It reaches **no real herdr, no real Linear and no real clauth**, and creates
+Through `just live` it reaches **no real herdr, no real Linear and no real
+clauth** (the stub section below has the one way a direct run can), and creates
 nothing outside its own scratch tree, so it is safe to run in a loop while you
 read a screen. What it cannot do is the other half of the smoke matrix: the
 popup (which has no pane id, so nothing can send keys to it) and a submit that
@@ -82,6 +84,31 @@ Three things follow, and all three are on purpose:
   before anything is written. It also refuses `--linear-port` without an
   explicit `--binary`, because the default `bin/herdr-draft` is not linked to
   the stub and would send the stub's key to the real Linear.
+- **"Sets `api_key_cmd`" means what `internal/config` reads, so the config is
+  parsed, not grepped** (#314). The first version matched lines starting
+  `api_key_cmd =`, and let through the three other spellings TOML has for the
+  same key: an inline table (`linear = { api_key_cmd = … }`), a dotted key
+  (`linear.api_key_cmd = …`) and a quoted one (`"api_key_cmd" = …`). Each
+  delivered its command's output to the loopback port. Two properties of
+  BurntSushi/toml shape the check that replaced it. It matches a key to a field
+  with `strings.EqualFold` when no exact match exists, so `[LINEAR]
+  API_KEY_CMD` counts, and the check compares with `casefold()`. And it reads
+  TOML 1.1, which `tomllib` does not. A newline inside an inline table is valid
+  to the binary and an error to the driver. So a config `tomllib` cannot parse
+  is **refused** too, since the driver cannot tell what it sets. A comment
+  or a string that merely mentions `api_key_cmd` is not refused, and neither
+  is a `[linear]` that is not a table, which the binary refuses to load.
+  `just live-selftest` holds every one of those cases.
+- **The config is read once, and the bytes checked are the bytes installed.**
+  A run can wait on another run's lock between the check and building the
+  tree, for as long as that run lasts. Reading the path a second time would
+  install whatever the file said by then. A file that is not UTF-8 is refused
+  like any other the driver cannot parse, and `--linear-port` accepts
+  1–65535 only: a `0` used to read as "no stub" and skip both refusals.
+- **The `api_key_cmd` refusal holds without the stub too.** Without the stub
+  such a config hands the default binary a real key for the real Linear, or
+  hands a stub-linked binary run by hand a real key for a loopback port. The
+  `--binary` requirement is the stub's alone.
 - **The stub refuses what should never reach it anyway.** Any key but its own,
   and any query but the one `internal/linear` sends, gets a GraphQL error the
   form shows as the row's reason. With the refusals above, no route through the
@@ -91,6 +118,9 @@ Three things follow, and all three are on purpose:
 
 Run `drive.py` directly without `--linear-port` and there is no stub and no
 key, so the issue row is absent — the honest state for a run with no Linear.
+The one exception is a `--config` carrying an inline `api_key`. Nothing
+refuses that without the stub, and the default binary will use it against
+the real Linear, so pass such a config only through `just live`.
 
 ## The stub `herdr`'s envelope
 
@@ -220,9 +250,11 @@ chooses where a pty read ends. **`just live-selftest`** covers the rest: it
 feeds `emulator()` byte strings directly, with no binary, pty or stub, and
 compares each screen with what a terminal shows. The cases are SU and SD with
 and without margins, DL and IL, the kitty sequences and the ignored ones cut
-at every byte, and 2,000 seeded scrolls against a plain list of lines. It takes
-well under a second, so run it after touching `emulator()` or `pyte_version`.
-It is not part of `just check`, which must not need Python.
+at every byte, and 2,000 seeded scrolls against a plain list of lines. It also
+holds the two Linear refusals above to every config case they name, since no
+walk exercises a refusal either. It takes well under a second, so run it after
+touching `emulator()`, `refuse_real_linear` or `pyte_version`. It is not part
+of `just check`, which must not need Python.
 
 Two runs at once used to corrupt each other through the shared scratch tree
 as well as the shared binary. A run now holds a lock beside `--root` for its

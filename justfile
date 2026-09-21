@@ -234,6 +234,10 @@ live *ARGS: _live-venv
 # can choose where a read ends. Run it after touching drive.py's
 # `emulator()`, or after moving pyte_version.
 #
+# It also holds drive.py's two Linear refusals to every config spelling
+# internal/config reads as api_key_cmd (#314), which no walk reaches
+# either. Run it after touching `refuse_real_linear`.
+#
 # Like `live` it is not part of `just check`, which must not need Python.
 #
 # `-B` because the way to prove a case pins something is to mutate
@@ -243,7 +247,7 @@ live *ARGS: _live-venv
 # surviving. Nothing else imports drive.py, so with this there is never a
 # cached copy of it to go stale.
 
-# The emulator's own tests, fed bytes directly. Fast; needs python3.
+# drive.py's own tests: the emulator fed bytes, and the Linear refusals. Fast; needs python3.
 live-selftest: _live-venv
     @"{{live_venv}}/bin/python" -B hack/live/selftest.py
 
@@ -257,12 +261,19 @@ live-selftest: _live-venv
 # which is what this did until #312's review: a venv built for the old
 # pin went on passing that probe after pyte_version moved, so
 # live-selftest reported the new pin green while testing the old one.
+# The probe also asks for Python 3.11, since drive.py imports tomllib
+# (#314). Otherwise a venv made from an older python3 passes the pyte
+# check and then fails on import with a bare ModuleNotFoundError.
 _live-venv:
     #!/usr/bin/env bash
     set -euo pipefail
     venv="{{live_venv}}"
-    if ! "$venv/bin/python" -c 'import importlib.metadata as m, sys; sys.exit(m.version("pyte") != "{{pyte_version}}")' >/dev/null 2>&1; then
+    if ! "$venv/bin/python" -c 'import importlib.metadata as m, sys; sys.exit(m.version("pyte") != "{{pyte_version}}" or sys.version_info < (3, 11))' >/dev/null 2>&1; then
         command -v python3 >/dev/null 2>&1 || { echo "just live and just live-selftest need python3" >&2; exit 1; }
+        python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
+            echo "just live and just live-selftest need python3 3.11 or later, for tomllib; this one is $(python3 -V 2>&1)" >&2
+            exit 1
+        }
         rm -rf "$venv"
         echo "creating $venv with pyte {{pyte_version}}"
         python3 -m venv "$venv" || {

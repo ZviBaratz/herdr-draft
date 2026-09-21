@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
-"""The emulator's own tests: drive.emulator() fed bytes, screen read back.
+"""drive.py's own tests: the emulator fed bytes, and the Linear refusals.
 
     just live-selftest
 
-No binary, no pty, no stub -- every case is a byte string handed straight
+No binary, no pty, no stub. Most cases are a byte string handed straight
 to the stream `emulator(cols, rows)` returns, and the screen compared with
 what a terminal shows. The expected screens come from the probes that found
 #305's bugs and from the sequences' definitions, never from reading back
-what the code under test produced.
+what the code under test produced. The rest hand refuse_real_linear configs
+whose meaning was checked against internal/config's own loader (#314).
 
 It stays out of `just check` and CI, as everything under hack/ does (#290):
 the gate must not start needing Python.
 """
 
+import argparse
+import contextlib
+import io
 import os
 import random
+import shutil
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import drive  # noqa: E402
@@ -294,6 +301,220 @@ class SplitReads(unittest.TestCase):
         for chunks in every_split(b"", CSI + b"3;2H", b"X"):
             with self.subTest(chunks=chunks):
                 self.assertEqual(screen(6, 4, *chunks), ["", "", " X", ""])
+
+
+# The command every refused config below would run. Never executed here,
+# and a FAKE key if it were: nothing in this file may name a real one.
+FAKE_CMD = '["sh", "-c", "echo lin_api_FAKE_selftest"]'
+
+# U+212A KELVIN SIGN. Go's strings.EqualFold folds it to `k`, so a quoted
+# key spelled with it is api_key_cmd to internal/config. Built with chr()
+# rather than written as an escape, so no tool on the way can turn it into
+# a raw rune or a plain `K` without it showing.
+KELVIN = chr(0x212A)
+
+
+class RefuseRealLinear(unittest.TestCase):
+    """drive.refuse_real_linear: with the stub on, the only Linear key a
+    run holds is the stub's (#314).
+
+    Every config in `refused` is one internal/config decodes into
+    Linear.APIKeyCmd -- each was checked against config.Load, not assumed
+    from the TOML spec. BurntSushi/toml matches a key to its field with
+    strings.EqualFold when no exact match exists, which is why the case
+    and Kelvin-sign spellings are here: a check on the exact key
+    `linear.api_key_cmd` would pass them."""
+
+    def refusal(self, body=None, binary_given=True, linear_port=9):
+        """What refuse_real_linear says about a config holding `body` --
+        str or bytes; None for no --config at all. Empty when it lets the
+        run go ahead."""
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        args = argparse.Namespace(binary_given=binary_given, linear_port=linear_port,
+                                  config=None if body is None else "test.toml")
+        try:
+            drive.refuse_real_linear(args, body)
+        except SystemExit as e:
+            return str(e.code)
+        return ""
+
+    refused = {
+        "a [linear] table": "[linear]\napi_key_cmd = %s\n",
+        "indented": "[linear]\n  api_key_cmd = %s\n",
+        "an inline table": "linear = { api_key_cmd = %s }\n",
+        "a dotted key": "linear.api_key_cmd = %s\n",
+        "a quoted key": '[linear]\n"api_key_cmd" = %s\n',
+        "a literal-quoted key": "[linear]\n'api_key_cmd' = %s\n",
+        "a quoted table name": '["linear"]\napi_key_cmd = %s\n',
+        "a dotted key with a quoted part": "linear.'api_key_cmd' = %s\n",
+        "an upper-case key": "[linear]\nAPI_KEY_CMD = %s\n",
+        "an upper-case table": "[LINEAR]\napi_key_cmd = %s\n",
+        "a mixed-case dotted key": "Linear.Api_Key_Cmd = %s\n",
+        "a Kelvin-sign key": '[linear]\n"api_%sey_cmd" = %%s\n' % KELVIN,
+        "beside an inline api_key": '[linear]\napi_key = "lin_api_FAKE_inline"\napi_key_cmd = %s\n',
+        # Two tables that are one to internal/config. The command is in the
+        # SECOND, which is what a check reading only the first match misses.
+        "in the second of two linear tables": '[linear]\napi_key = "lin_api_FAKE_inline"\n[LINEAR]\napi_key_cmd = %s\n',
+    }
+
+    def test_every_spelling_internal_config_reads_is_refused(self):
+        for name, body in self.refused.items():
+            with self.subTest(name):
+                self.assertRegex(self.refusal(body % FAKE_CMD), r"sets \[linear\] api_key_cmd")
+
+    def test_a_config_tomllib_cannot_read_is_refused(self):
+        # The first is valid TOML 1.1 -- a newline inside an inline table --
+        # which BurntSushi/toml decodes into APIKeyCmd and tomllib rejects.
+        # Refusing what this side cannot read is what keeps that disagreement
+        # from being a way through.
+        for name, body in {
+            "a multi-line inline table": "linear = { api_key_cmd = %s,\n}\n" % FAKE_CMD,
+            "not TOML at all": "[linear\n",
+            "not UTF-8": b"[linear]\napi_key = \"\xff\"\n",
+        }.items():
+            with self.subTest(name):
+                self.assertRegex(self.refusal(body), r"cannot read .* as TOML")
+
+    def test_an_inline_api_key_alone_goes_ahead(self):
+        # The driver's LINEAR_API_KEY beats an inline key, so the stub's
+        # key is still the one sent.
+        self.assertEqual(self.refusal('[linear]\napi_key = "lin_api_FAKE_inline"\n'), "")
+
+    def test_a_mention_internal_config_does_not_read_goes_ahead(self):
+        for name, body in {
+            "a comment": "[linear]\n# api_key_cmd = %s\n",
+            "a trailing comment": '[linear]\napi_key = "lin_api_FAKE_inline"  # not api_key_cmd = %s\n',
+            "a line inside a multi-line string": '[linear]\nprompt_template = """\napi_key_cmd = %s\n"""\n',
+            "another table": "[other]\napi_key_cmd = %s\n",
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(self.refusal(body % FAKE_CMD), "")
+
+    def test_a_linear_that_is_not_a_table_goes_ahead(self):
+        # config.Load fails each of these with "type mismatch for
+        # config.LinearConfig", so the binary refuses to open and runs no
+        # key command: there is nothing here to refuse, and nothing to
+        # crash on either.
+        for name, body in {
+            "a number": "linear = 5\n",
+            "a string": 'linear = "api_key_cmd"\n',
+            "an array of tables": "[[linear]]\napi_key_cmd = %s\n" % FAKE_CMD,
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(self.refusal(body), "")
+
+    def test_no_config_goes_ahead(self):
+        self.assertEqual(self.refusal(None), "")
+
+    def test_the_stub_without_a_linked_binary_is_refused(self):
+        # Even with a config that would pass: the default bin/herdr-draft
+        # sends the stub's key to the real Linear.
+        for body in (None, '[linear]\napi_key = "lin_api_FAKE_inline"\n'):
+            with self.subTest(body=body):
+                self.assertRegex(self.refusal(body, binary_given=False), r"--linear-port needs --binary")
+
+    def test_without_the_stub_only_api_key_cmd_is_refused(self):
+        # No stub means no key the default binary could misdeliver, so it
+        # needs no --binary. api_key_cmd is still a real key, stub or not.
+        inline = '[linear]\napi_key = "lin_api_FAKE_inline"\n'
+        self.assertEqual(self.refusal(inline, binary_given=False, linear_port=None), "")
+        self.assertRegex(self.refusal(self.refused["an inline table"] % FAKE_CMD, binary_given=False, linear_port=None),
+                         r"sets \[linear\] api_key_cmd")
+
+
+class MainRefusesFirst(unittest.TestCase):
+    """main() refuses before writing anything, only with the stub on, and
+    installs the config it checked -- not whatever the path holds by the
+    time the tree is built."""
+
+    # An executable that exists, so a run that is NOT refused gets past
+    # the binary check and on to the tree: with a missing binary every
+    # run stops before hold_root, and "nothing was written" holds whatever
+    # the refusal does.
+    BINARY = "/bin/true"
+
+    def setUp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        self.root = os.path.join(d, "root")
+        self.config = os.path.join(d, "config.toml")
+        with open(self.config, "w") as f:
+            f.write("linear = { api_key_cmd = %s }\n" % FAKE_CMD)
+
+    def main(self, *argv):
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                drive.main(["--root", self.root] + list(argv))
+        except SystemExit as e:
+            return str(e.code)
+        self.fail("drive.main ran to the end")
+
+    def test_with_the_stub_on(self):
+        for argv, refusal in (
+            (["--linear-port", "9", "--binary", self.BINARY, "--config", self.config],
+             r"sets \[linear\] api_key_cmd"),
+            (["--linear-port", "9"], r"--linear-port needs --binary"),
+            (["--linear-port", "9", "--binary", self.BINARY, "--config", self.config + ".missing"],
+             r"cannot read .*\.missing"),
+        ):
+            with self.subTest(argv=argv):
+                self.assertRegex(self.main(*argv), refusal)
+                self.assertFalse(os.path.exists(self.root), "wrote the scratch tree before refusing")
+                self.assertFalse(os.path.exists(self.root + ".lock"), "took the lock before refusing")
+
+    def test_only_1_to_65535_is_a_port(self):
+        # A falsy 0 once read as "no stub". The Arabic-Indic nine passes
+        # str.isdigit() and int() alike.
+        for p in ("0", "65536", "-1", "+9", "\u0669"):
+            with self.subTest(port=p):
+                self.assertEqual(self.main("--linear-port", p, "--binary", self.BINARY), "2")
+                self.assertFalse(os.path.exists(self.root))
+
+    def test_with_the_stub_off(self):
+        # api_key_cmd is refused here too. Without the stub it gives the
+        # default binary a real key for the real Linear, or gives a
+        # stub-linked --binary run by hand a real key for a loopback port.
+        # Neither is a run this driver exists for.
+        self.assertRegex(self.main("--binary", self.BINARY, "--config", self.config),
+                         r"sets \[linear\] api_key_cmd")
+        self.assertFalse(os.path.exists(self.root))
+        self.assertFalse(os.path.exists(self.root + ".lock"))
+        # The binary requirement is the stub's alone: with no stub and a
+        # clean config, it gets as far as looking for the binary.
+        with open(self.config, "w") as f:
+            f.write('[linear]\napi_key = "lin_api_FAKE_inline"\n')
+        self.assertRegex(self.main("--config", self.config, "--binary", "/nonexistent/herdr-draft"),
+                         r"no binary at")
+        self.assertFalse(os.path.exists(self.root))
+
+    def test_installs_the_config_it_checked(self):
+        # hold_root can wait on another run for as long as that run lasts.
+        # Anything that rereads the path after it installs whatever the
+        # file says THEN -- here, an api_key_cmd written during the wait.
+        checked = b'[linear]\napi_key = "lin_api_FAKE_inline"\n'
+        with open(self.config, "wb") as f:
+            f.write(checked)
+
+        def hold_root(root):
+            with open(self.config, "w") as f:
+                f.write("[linear]\napi_key_cmd = %s\n" % FAKE_CMD)
+
+        class Stop(Exception):
+            pass
+
+        def start_stub_linear(port, fixture):
+            raise Stop()
+
+        with mock.patch.object(drive, "hold_root", hold_root), \
+                mock.patch.object(drive, "start_stub_linear", start_stub_linear):
+            with self.assertRaises(Stop):
+                drive.main(["--root", self.root, "--linear-port", "9", "--binary", self.BINARY,
+                            "--config", self.config])
+        dest = os.path.join(self.root, "cfg", "config.toml")
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), checked)
+        self.assertEqual(os.stat(dest).st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":
