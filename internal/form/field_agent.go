@@ -36,7 +36,8 @@ import (
 // shown directly as chips before a "more…" chip takes over for the rest --
 // see the file doc's design note. Sized to comfortably fit spec §12's own
 // example config (`favorites = ["claude", "codex"]`) plus a little room to
-// grow before the row needs horizontal scrolling ChipRow doesn't have.
+// grow. ChipRow does scroll a row too wide for its panel (#300), but a
+// chooser read at a glance beats one scrolled through, so the cap stays.
 const agentFavoriteChips = 3
 
 const (
@@ -135,8 +136,10 @@ func (f *AgentField) Update(msg tea.Msg) tea.Cmd {
 	}
 	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
 		// The wheel scrolls the kind list (v2 spec §7: "the wheel
-		// scrolls the panel unconditionally") -- the favorite chip row is
-		// a small, always-fully-visible set with nothing to scroll.
+		// scrolls the panel unconditionally") -- never the favorite chip
+		// row. That row does scroll at a narrow width now (#300), but by
+		// keeping the cursor chip on screen as ←→ move it, which leaves
+		// nothing for a wheel to do there.
 		switch wheelDelta(wheel) {
 		case -1:
 			f.picker.CursorPrev()

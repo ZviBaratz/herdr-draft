@@ -139,10 +139,12 @@ func TestChipRow_SelectedOnEmptyChipsDoesNotPanic(t *testing.T) {
 	_ = c.View(-3)
 }
 
-// modelChips is the options row's model line as it ships -- five chips,
-// 41 cells in full -- which is the row #300 was measured on: at 36
-// columns its panel line read `inherit · fable · opu` whatever the cursor
-// was on.
+// modelChips is the options row's model line WITHOUT its trailing free-text
+// `other` chip -- five chips, 41 cells in full. The row #300 was measured
+// on ships with six (OptionsField.newLine appends `other` to any free-text
+// line); five keeps the hand-worked widths below short, and `other` adds
+// nothing a sixth ordinary chip would not. At 36 columns that line read
+// `inherit · fable · opu` whatever the cursor was on.
 func modelChips() []Chip {
 	return []Chip{
 		{ID: "inherit", Label: "inherit"},
@@ -173,8 +175,11 @@ func chipRowAt(t *testing.T, i, w int) string {
 // anything beyond `opu`.
 //
 // So the row scrolls, far enough to show the cursor chip WHOLE. Run at
-// every cursor position and every width from 20 cells -- room for the
-// widest chip with a cut marker on both sides -- up past the row's full 41.
+// every cursor position and every width from the cursor chip's own -- its
+// label and leading pad, which is the least that can show it -- up past
+// the row's full 41. The bottom of that range is chipWindow's last
+// branch, where the cut markers yield to the chip rather than pushing it
+// off the edge.
 //
 // "Whole" is read off the "·"-separated pieces, not as the padded
 // " label " the row draws: the row's last cell is a padding space, which
@@ -182,7 +187,7 @@ func chipRowAt(t *testing.T, i, w int) string {
 // has no trailing space and is still whole.
 func TestChipRow_TheCursorChipIsAlwaysOnScreen(t *testing.T) {
 	for i, chip := range modelChips() {
-		for w := 20; w <= 45; w++ {
+		for w := lipgloss.Width(" " + chip.Label); w <= 45; w++ {
 			got := chipRowAt(t, i, w)
 			if !chipsOn(got)[chip.Label] {
 				t.Errorf("cursor on %q at width %d: the row is %q, want the cursor chip on screen whole", chip.Label, w, got)
@@ -210,8 +215,13 @@ func TestChipRow_ACutIsMarkedAndNoChipIsCutInHalf(t *testing.T) {
 	for _, c := range modelChips() {
 		whole[c.Label] = true
 	}
+	// From 15, where every cursor position has room for its chip and every
+	// marker it is owed: sonnet, cut on both sides, is the widest such
+	// case at 8 + 4 + 4 - 1. Below that the markers yield (see
+	// TestChipRow_BelowTheFloorTheMarkersYieldToTheChip) and "a cut is
+	// always marked" is deliberately no longer promised.
 	for i := range modelChips() {
-		for w := 20; w < 40; w++ {
+		for w := 15; w < 40; w++ {
 			got := chipRowAt(t, i, w)
 			for _, piece := range strings.Split(got, "·") {
 				if p := strings.TrimSpace(piece); p != "" && !whole[p] {
@@ -277,15 +287,70 @@ func chipsOn(row string) map[string]bool {
 //	from fable, 34. So the window starts at opus.
 func TestChipRow_AScrolledRowShowsAsMuchAsFits(t *testing.T) {
 	for _, tc := range []struct {
-		cursor int
-		want   string
+		cursor, width int
+		want          string
 	}{
-		{0, "inherit · fable · opus · …"},
-		{4, "… · opus · sonnet · haiku"},
+		{0, 30, "inherit · fable · opus · …"},
+		{4, 30, "… · opus · sonnet · haiku"},
+		// The boundary itself, which neither case above is near:
+		// inherit·fable·opus plus a right cut is exactly 27, so it fits
+		// at 27 and does not at 26. A window that stops one chip short
+		// of what fits wastes a chip exactly as the pad miscount did.
+		{0, 27, "inherit · fable · opus · …"},
+		{0, 26, "inherit · fable · …"},
 	} {
-		got := strings.TrimSpace(chipRowAt(t, tc.cursor, 30))
+		got := strings.TrimSpace(chipRowAt(t, tc.cursor, tc.width))
 		if got != tc.want {
-			t.Errorf("cursor on chip %d at width 30: the row is %q, want %q", tc.cursor, got, tc.want)
+			t.Errorf("cursor on chip %d at width %d: the row is %q, want %q", tc.cursor, tc.width, got, tc.want)
+		}
+	}
+}
+
+// modeChips is a permission-mode line, whose `accept-edits` is the widest
+// chip in the form (14 cells drawn): the one #303's review found cut in
+// half below the floor, reading `… · accept-edit` at 30 columns.
+func modeChips() []Chip {
+	return []Chip{
+		{ID: "inherit", Label: "inherit"},
+		{ID: "manual", Label: "manual"},
+		{ID: "plan", Label: "plan"},
+		{ID: "accept-edits", Label: "accept-edits"},
+		{ID: "bypass", Label: "bypass"},
+	}
+}
+
+// TestChipRow_BelowTheFloorTheMarkersYieldToTheChip pins chipWindow's last
+// branch. Below the width the cursor chip needs with every cut marker it
+// is owed, the first version still drew both markers, and the left one
+// pushed the chip off the edge: the defect #300 exists to remove, back
+// again one regime down. The markers now go first -- right, then left --
+// so the chip is whole down to its own width.
+//
+// With the cursor on accept-edits (index 3, cut on both sides) the widths
+// are worked by hand: the chip needs 13 cells without its final pad, a
+// cut marker 4, so both markers need 21, the left one alone 17, and none
+// 13.
+func TestChipRow_BelowTheFloorTheMarkersYieldToTheChip(t *testing.T) {
+	render := func(w int) string {
+		c := NewChipRow(testPalette())
+		c.SetChips(modeChips())
+		for n := 0; n < 3; n++ {
+			c.Next()
+		}
+		return ansi.Strip(c.View(w))
+	}
+	for _, tc := range []struct {
+		from, to int
+		want     string
+	}{
+		{21, 21, "… · accept-edits · …"},
+		{17, 20, "… · accept-edits"},
+		{13, 16, "accept-edits"},
+	} {
+		for w := tc.from; w <= tc.to; w++ {
+			if got := strings.TrimSpace(render(w)); got != tc.want {
+				t.Errorf("cursor on accept-edits at width %d: the row is %q, want %q", w, got, tc.want)
+			}
 		}
 	}
 }

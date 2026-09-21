@@ -216,10 +216,10 @@ func (c *ChipRow) MarkedView(width int, zonePrefix string) string {
 	for i, chip := range c.chips {
 		widths[i] = lipgloss.Width(chipLabel(chip))
 	}
-	lo, hi := chipWindow(widths, c.cursor, width)
+	lo, hi, leftCut, rightCut := chipWindow(widths, c.cursor, width)
 
 	var row strings.Builder
-	if lo > 0 {
+	if leftCut {
 		row.WriteString(dim.Render(chipCut))
 		row.WriteString(dim.Render("·"))
 	}
@@ -240,7 +240,7 @@ func (c *ChipRow) MarkedView(width int, zonePrefix string) string {
 			row.WriteString(dim.Render("·"))
 		}
 	}
-	if hi < len(c.chips)-1 {
+	if rightCut {
 		row.WriteString(dim.Render("·"))
 		row.WriteString(dim.Render(chipCut))
 	}
@@ -290,16 +290,25 @@ var chipCut = " " + Ellipsis + " "
 // in step with SetChips, SelectID or a resize, and nothing a render at one
 // width can leave behind for a render at another. The price is that
 // moving LEFT from the far end snaps back to the start as soon as the
-// start fits again, rather than easing back a chip at a time; with rows of
-// five chips that is a jump of at most a few, and a predictable one.
+// start fits again, rather than easing back a chip at a time; the longest
+// rows in the form are six chips, so that is a jump of a few at most, and
+// a predictable one. A click can re-window the row under the pointer for
+// the same reason: the window follows the cursor wherever it lands.
 //
-// Below the width the cursor chip needs with a cut marker either side,
-// no window fits and this returns the cursor chip alone; widthStyle's hard
-// clip is the backstop there, as sizes.go says it is for any composed line.
-func chipWindow(widths []int, cursor, width int) (lo, hi int) {
+// leftCut and rightCut say which ends carry a marker, and they are not
+// simply lo > 0 and hi < n-1. Below the width the cursor chip needs with
+// every marker it is owed, the markers go BEFORE the chip does: first the
+// right one, then the left, because a marker that pushes the cursor chip
+// off the edge brings back the very defect this exists to remove -- the
+// first version drew both regardless, and at 30 columns the options
+// panel's mode line read `… · accept-edit`. So down to the cursor chip's
+// own width the chip is whole and a cut may go unmarked; below that there
+// is no honest answer left and widthStyle's hard clip is the backstop, as
+// sizes.go says it is for any composed line.
+func chipWindow(widths []int, cursor, width int) (lo, hi int, leftCut, rightCut bool) {
 	n := len(widths)
 	if n == 0 {
-		return 0, -1
+		return 0, -1, false, false
 	}
 	cutWidth := lipgloss.Width(chipCut) + 1 // the marker and its separator
 	// cost is what showing chips lo..hi needs, which is one cell LESS
@@ -308,6 +317,8 @@ func chipWindow(widths []int, cursor, width int) (lo, hi int) {
 	// glyph. Counting it made a row that fits with a cell to spare look
 	// one cell too wide, and placement-floor-37x12 traded its whole
 	// `split here` chip for a marker to save a space nobody could see.
+	// That rests on a chip having no background of its own -- the cursor
+	// chip is foreground and bold only -- so a clipped pad hides nothing.
 	cost := func(lo, hi int) int {
 		total := hi - lo - 1 // separators between the chips shown, less the final pad
 		for i := lo; i <= hi; i++ {
@@ -322,7 +333,7 @@ func chipWindow(widths []int, cursor, width int) (lo, hi int) {
 		return total
 	}
 	if cost(0, n-1) <= width {
-		return 0, n - 1
+		return 0, n - 1, false, false
 	}
 	lo = 0
 	for lo < cursor && cost(lo, cursor) > width {
@@ -332,5 +343,26 @@ func chipWindow(widths []int, cursor, width int) (lo, hi int) {
 	for hi+1 < n && cost(lo, hi+1) <= width {
 		hi++
 	}
-	return lo, hi
+	leftCut, rightCut = lo > 0, hi < n-1
+	if cost(lo, hi) <= width {
+		return lo, hi, leftCut, rightCut
+	}
+	// No window fits with its markers: lo == hi == cursor here, and the
+	// markers yield to the chip, right one first.
+	alone := widths[cursor] - 1
+	if rightCut && alone+cutWidth+boolWidth(leftCut, cutWidth) > width {
+		rightCut = false
+	}
+	if leftCut && alone+cutWidth > width {
+		leftCut = false
+	}
+	return lo, hi, leftCut, rightCut
+}
+
+// boolWidth is w when on, else nothing.
+func boolWidth(on bool, w int) int {
+	if on {
+		return w
+	}
+	return 0
 }

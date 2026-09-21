@@ -85,7 +85,11 @@
 // marks each cut end with a `…` standing where the hidden chips would be,
 // and never draws a chip in half (widgets/chiprow.go's chipWindow). A row
 // that fits is drawn exactly as before, which is why no golden frame at an
-// ordinary width moved.
+// ordinary width moved. The order of what gives way when even that does
+// not fit is part of the rule: the markers go before the cursor chip does,
+// so a cut can go unmarked below the width the chip and its markers need,
+// and only below the cursor chip's OWN width does the silent clip above
+// take over.
 package form
 
 import (
