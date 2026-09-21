@@ -75,7 +75,13 @@ just build   # go build -o bin/herdr-draft ./cmd/herdr-draft
 just test    # go test ./...
 just unused  # staticcheck -checks U1000 -tests=false ./...
 just check   # gofmt -l . (empty) && go vet ./... && just unused && go test ./...
+just live    # the real form under a pty, every input stubbed, screen to stdout
+just live-selftest  # that driver's terminal emulator alone, fed bytes; <1s
 ```
+
+The last two need `python3` and sit outside `just check` and CI on
+purpose — `hack/live/README.md` has why, the usage, and the ways a pty
+reading can still mislead you.
 
 Single package/test: `go test ./internal/plan/...` or
 `go test ./internal/app/ -run TestHandleSubmit`.
@@ -602,8 +608,10 @@ Layering, outermost to innermost:
   "branch name" — through fifteen green commits, because every fixture had
   a title already typed. `go test ./...` passing is not evidence the screen
   is right. Build it and run it (`docs/manual-smoke.md`'s Route B runs the
-  real form in an ordinary pane, no popup needed), and when a change moves
-  a state no frame pins, add the frame.
+  real form in an ordinary pane, no popup needed; `just live` runs the form
+  under a pty with nothing real behind it and prints the screen at any
+  size you name), and when a change moves a state no frame pins, add the
+  frame.
 - **Frames record bytes, not perceptibility**, which is the same lesson one
   layer down and the one v3 exists for: v2 drew its rules and its focused-row
   fill at a contrast ratio of **1.07:1**, correctly, at the right width, and
