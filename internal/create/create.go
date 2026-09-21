@@ -60,15 +60,34 @@ import (
 // reachability probe, run after every check that needs no herdr.
 //
 // ExitCheckTimedOut is the third, and the one that is NOT the caller's to
-// fix (#272): a question the pre-flight asked the filesystem or git that
-// did not answer inside its budget -- a stalled mount, in practice.
-// Deliberately not ExitUsage, whose remedy is "fix the command and
+// fix: a question the pre-flight asked that did not answer inside its
+// budget. Deliberately not ExitUsage, whose remedy is "fix the command and
 // re-run", and whose existing occupant is "project directory does not
 // exist": a directory nobody could CHECK is the other thing, and #202
 // named the distinction "unknown is not invalid". Deliberately not
 // ExitUnreachable either, which says herdr is down and would send a caller
 // to look at a herdr that is fine. Nothing was created, and nothing on
 // stdout, as for the two above.
+//
+// It covers two kinds of question, and the second widened it (#141). #272
+// brought git: does this directory exist, is it a repository, and the four
+// beside them -- a stalled mount, in practice. #141 brought the two the
+// pre-flight asks OUTSIDE the machine, both of them only under --issue:
+// the api_key_cmd that resolves the Linear key, and the fetch itself.
+//
+// One code rather than two, because what the caller does first is the same
+// for both -- stop, and read the line, which names the question. What it
+// does NEXT differs, and the line is what says which: a stalled mount
+// answers a retry exactly as it answered the first time, while Linear or a
+// credential helper may well answer the next one. That distinction lives
+// in the message and in the skill document's exit-5 paragraph, not in a
+// sixth code, because a caller that branched on the code would still have
+// to read the line to know which mount or which service.
+//
+// A clauth read that runs out is deliberately NOT here. Its check only
+// qualifies a session that will be created either way, so it prints a line
+// and the create carries on -- the posture every other clauth failure
+// already takes. See timedOut.
 //
 // ExitFailed and ExitNothingCreated are the plan's own: it started, and it
 // failed. They split on what the failure can be shown to have left behind
@@ -734,18 +753,36 @@ func remember(resolved resolution, now time.Time) {
 //
 // Two codes, because a pre-flight refusal has two kinds and only one of
 // them is the caller's to fix. ExitUsage is the ordinary one, whose
-// documented remedy is "fix the command and re-run". A question the
-// filesystem or git never answered is ExitCheckTimedOut: nothing in the
-// command would change the answer, and calling it usage sends the caller
-// looking for a typo that is not there (#272).
+// documented remedy is "fix the command and re-run". A question that never
+// got an answer is ExitCheckTimedOut: nothing in the command would change
+// it, and calling it usage sends the caller looking for a typo that is not
+// there (#272).
 //
 // Sorted HERE rather than at each site, so a check added later cannot
 // forget: there is one place to get it right, and errors.Is finds the
 // timeout through however the site wrapped it.
 func refuse(stderr io.Writer, err error) int {
 	fmt.Fprintf(stderr, "herdr-draft create: %v\n", err)
-	if errors.Is(err, errCheckTimedOut) {
+	if timedOut(err) {
 		return ExitCheckTimedOut
 	}
 	return ExitUsage
+}
+
+// timedOut is the whole of what ExitCheckTimedOut answers to, and TWO
+// sentinels is still one place rather than two (#141).
+//
+// The first is this package's own, for the git questions checks.go bounds.
+// The second belongs to internal/linear, which bounds its own two calls --
+// api_key_cmd and the assignedIssues fetch -- because the popup needs the
+// same bound and has no `bounded` to put it in. Converting linear's error
+// into a checkTimeout at the call site was the alternative and is worse:
+// that is exactly the "sort it at each site" refuse exists to avoid, and it
+// would restate a budget this package does not own.
+//
+// clauth deliberately has no sentinel here, because nothing sorts on it: a
+// clauth read that ran out prints its line and the create carries on, the
+// same posture every other clauth failure already takes.
+func timedOut(err error) bool {
+	return errors.Is(err, errCheckTimedOut) || errors.Is(err, linear.ErrTimeout)
 }

@@ -1899,6 +1899,98 @@ phantom, because it matches the shell running the `pgrep` too; match on
 `ps -eo args=` exactly, and check `ppid=1`, since an unrelated `sleep 600`
 with a live parent is not yours.
 
+### Three external calls with no deadline (#141) — 2026-09-20
+
+`origin/main` at `12603be` and this branch on top of it, both built with a
+plain `go build`. The base tree was extracted with `git archive origin/main
+| tar -x`, not checked out — no second worktree, no branch, nothing left in
+the live install.
+
+**It needs no herdr, no session, no account and no repository of anyone
+else's**, which is what makes it the cheapest recorded run here. `$HERDR_BIN_PATH`
+points at a stub that answers `workspace list` with
+`{"result":{"workspaces":[]}}` and **refuses every other subcommand**,
+`$HOME` is a scratch directory, and every `create` is a `--dry-run`, so
+nothing in the sequence could create anything even if the bound were wrong
+about it.
+
+**The lever is one line of `config.toml`**, which is the part worth
+knowing: #272 needed a `git` wrapper first on `PATH` because "nothing you
+can type makes a filesystem stall". A credential helper that never answers
+is simply
+
+```toml
+[linear]
+api_key_cmd = ["sleep", "600"]
+```
+
+and a clauth that never answers is a `#!/bin/sh` + `sleep 600` named
+`clauth`, first on `PATH`. 600s in both, so the stall outlives the whole
+sequence rather than merely the deadline — #272's trap, and the one that
+costs a real session when you get it wrong.
+
+The popup half runs under `pty.fork()` with an explicit `TIOCSWINSZ` of
+101×30; without a window size it emits capability queries and draws
+nothing, which reads as a hang and is not one.
+
+#### `api_key_cmd`, headless
+
+| | `origin/main` at `12603be` | this branch |
+|---|---|---|
+| `create --issue ENG-1 --dry-run --json` | **never came back.** Killed by a 90s wall clock, no output, no exit code of its own | `exit=5` after **60.2s** |
+| stderr on that refusal | — | `herdr-draft create: --issue ENG-1: resolve linear api key: api_key_cmd gave no answer within 1m0s` |
+| stdout | — | **empty**, as for exit 2 and exit 3 |
+
+#### `api_key_cmd`, the popup
+
+| | `origin/main` | this branch |
+|---|---|---|
+| first byte painted | **never**, in 95s of watching — 0 bytes | **60.1s** |
+| the `issue` row | — | `issue      unavailable  api_key_cmd gave no answer within 1m0s` |
+| the rest of the form | — | present and usable: `title`, `prompt`, `project`, `worktree`, `placement`, `agent`, `options`, and the footer |
+
+That second row is the whole decision on screen. The popup degrades the one
+row that needed the key and opens; it does not refuse.
+
+#### clauth, headless — bounded, and deliberately not a refusal
+
+| | `origin/main` | this branch |
+|---|---|---|
+| `create --account alpha-1 --dry-run --json` | **never came back.** Killed at 90s, no output | **`exit=0`** after **32.2s** |
+| stdout | — | the dry-run object, with `account_usage` **absent** |
+| stderr | — | `herdr-draft create: could not check whether alpha-1 can be used: clauth status --json: no answer within 30s` |
+
+Note the 32.2s against a thirty-second budget: the extra two are
+`cliWaitDelay`, spent because the stub's `sleep 600` grandchild is still
+holding the stdout pipe after the kill. That is the delay doing its job and
+is visible here in a way no unit test shows.
+
+#### Controls — the strongest half
+
+With every lever removed, the two binaries agree exactly.
+
+| control | result |
+|---|---|
+| `create --dry-run --json`, no `api_key_cmd`, no `clauth` on `PATH` | both `exit=0`; the two objects are **byte-identical**, 695 bytes |
+| the popup, same conditions | both paint at **0.0s**, 3013 bytes each, and every rendered row is **byte-identical** |
+
+So the difference between the two binaries is the bound and nothing else.
+
+**Re-confirmed at the final head**, nine commits later, after the arm order
+had been refactored into a pure classifier: `exit=5` after 60.1s, stdout
+empty, byte-identical stderr. Worth doing rather than assuming, because
+"that refactor changed no behaviour" is the claim a recorded run exists to
+stop anyone having to take on trust.
+
+Teardown: probe directory removed; `pgrep -x herdr-draft` 0; no orphaned
+`sleep 600` with `ppid=1`. No account quota spent and no pick made — the
+picker was never configured. Note for anyone re-running: `pgrep -f 'sleep
+600'` reports a phantom because it matches the shell running the `pgrep`
+too; match on `ps -eo args=` and check `ppid=1`. And `pgrep -x` silently
+matches nothing for a name over 15 characters, which `herdr-draft-main` is
+-- it says so, on stderr, and a teardown check that only reads stdout will
+read that as "none left".
+
 ### A check that never answers (#202) — 2026-09-20
 
 herdr 0.9.0. `main` at `517c5a8` and `zvi/fix-202-check-deadline` on top of

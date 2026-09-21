@@ -994,7 +994,7 @@ func findIssue(ctx context.Context, req request, cfg config.Config, env Env, dep
 	if !req.set["issue"] || strings.TrimSpace(req.issue) == "" {
 		return nil, nil
 	}
-	src, err := deps.linear(cfg, env.ConfigDir)
+	src, err := deps.linear(ctx, cfg, env.ConfigDir)
 	if err != nil {
 		return nil, fmt.Errorf("--issue %s: %w", req.issue, err)
 	}
@@ -1018,11 +1018,16 @@ func findIssue(ctx context.Context, req request, cfg config.Config, env Env, dep
 // caller supplied one, otherwise a real client built from the user's own
 // configured API key. (nil, nil) means Linear is not configured at all,
 // which is the same distinction app.Bootstrap draws.
-func (d Deps) linear(cfg config.Config, configDir string) (IssueSource, error) {
+//
+// ctx reaches api_key_cmd, which bounds itself on top of it
+// (linear.keyCmdTimeout) -- so a signal still stops the helper and a
+// timeout arrives here as an error carrying linear.ErrTimeout, which
+// refuse sorts to ExitCheckTimedOut.
+func (d Deps) linear(ctx context.Context, cfg config.Config, configDir string) (IssueSource, error) {
 	if d.Linear != nil {
 		return d.Linear, nil
 	}
-	key, err := linear.ResolveAPIKey(cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, configDir)
+	key, err := linear.ResolveAPIKey(ctx, cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, configDir)
 	if err != nil {
 		return nil, err
 	}

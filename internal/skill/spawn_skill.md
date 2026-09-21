@@ -524,7 +524,7 @@ before you create, with the two choices above.
 | 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, a branch name git cannot use, and a pinned account whose credential clauth reports dead (`broken`) | fix the command and re-run |
 | 3 | herdr is unreachable, found before anything started | nothing was created; stop |
 | 4 | the plan started, and its first step failed before making anything | nothing exists and there is nothing to clean up; the error says why the step failed, so report it, or re-run once it is dealt with |
-| 5 | a check did not answer in time, most likely a stalled filesystem | nothing was created and nothing in the command would change it; the line says which check, so report that rather than retrying into the same mount |
+| 5 | a question the command asked did not answer in time | nothing was created and nothing in the command would change it; the line names which question. A stalled mount answers a retry exactly as it answered the first time, so report it; something outside — Linear, or a credential helper — may answer the next time, so one retry is reasonable |
 
 `--json` prints one object instead of a human line, and is the right
 choice whenever you are going to act on the result. Note that on exit 2,
@@ -536,10 +536,20 @@ at all.
 **Exit 5 is the one that is not yours to fix.** Every question the command
 asks git — does this directory exist, is it a repository, does this branch
 already exist — gives up after thirty seconds rather than waiting for good,
-which is what stops a create on a stalled network mount from sitting there
-with no output and no exit code while you wait for it. Nothing was created.
-Re-running with a different flag will not help; say which check timed out
-and leave the mount to whoever owns it.
+and so do the two it asks outside the machine: the command that resolves
+your Linear API key, after sixty, and the Linear fetch behind `--issue`,
+after thirty. Without those a create on a stalled network mount, or behind
+a proxy that accepts the connection and never answers, sat there with no
+output and no exit code while you waited for it. Nothing was created,
+either way.
+
+**Read the line before you decide what to do,** because the two kinds want
+opposite things. A stalled mount will answer a retry exactly as it answered
+the first one, so report which check timed out and leave the mount to
+whoever owns it. Something outside — Linear not answering, or a credential
+helper waiting on an approval nobody gave — may well answer next time, so
+one retry is reasonable before you escalate. Re-running with a *different
+flag* helps in neither case.
 
 **Check `launch_options` and `agent_args` against what the user
 approved.** `launch_options` is what the agent was started with for each

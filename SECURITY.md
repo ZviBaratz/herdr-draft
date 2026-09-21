@@ -29,7 +29,10 @@ same way.
   directly, with no shell, so nothing in it is word-split or glob-expanded,
   and it carries a `//nolint:gosec` at the call site precisely because
   running it is the feature rather than an oversight
-  (`internal/linear/client.go`).
+  (`internal/linear/client.go`). Every call is bounded by a 60-second
+  deadline — longer than the picker's below, because this is the one
+  command here that may legitimately be waiting on you to approve a prompt.
+  It runs at most once per popup and once per `create --issue`.
 - `[clauth] picker` is an executable implementing the [account picker
   protocol](README.md#account-picker-protocol), and it runs more often than
   the other two. Opening the popup runs it twice — a probe, then a
@@ -57,7 +60,9 @@ the file and its actual mode rather than failing vaguely
 the secret out of the file.
 
 The key is sent only to Linear's own GraphQL endpoint, and the issues it
-returns are cached in your plugin state directory.
+returns are cached in your plugin state directory. That request is bounded
+by a 30-second deadline, so a proxy that accepts the connection and never
+answers cannot hold the popup or a `create` open indefinitely.
 
 ### It passes your values to subprocesses as argv
 
@@ -186,7 +191,8 @@ code 3.
 ### What it does not do
 
 - No network access of its own except Linear's GraphQL API, and only when
-  you have configured a key. It does, separately, make **git** talk to the
+  you have configured a key — bounded, as above, by a 30-second deadline.
+  It does, separately, make **git** talk to the
   network on your behalf: opening the form on a git repository fires a
   background `git fetch --prune` there — once per repository per form open,
   with no user action — which contacts that repository's default remote (the
