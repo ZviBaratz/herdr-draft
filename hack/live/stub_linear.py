@@ -24,8 +24,10 @@ import sys
 import threading
 
 # STUB_LINEAR_KEY is the only Linear key the driven binary ever holds, and it
-# is fake on purpose: drive.py's child environment is an allow-list, so no
-# real key can arrive by inheritance, and this one is set by drive.py itself.
+# is fake on purpose. drive.py's child environment is an allow-list, so no
+# real key arrives by inheritance, and drive.py sets this one itself -- which
+# beats an inline api_key in a config, but NOT an api_key_cmd, so drive.py
+# refuses a config carrying one while the stub is on (refuse_real_linear).
 # drive.py imports it from here so the two cannot disagree.
 STUB_LINEAR_KEY = "lin_api_herdr_draft_live_stub_not_a_real_key"
 

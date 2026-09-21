@@ -80,6 +80,32 @@ sys.path.insert(0, HERE)
 from stub_linear import STUB_LINEAR_KEY  # noqa: E402 -- the one fake key, defined once
 
 
+def refuse_real_linear(args):
+    """The two ways a run with the stub on stops holding only the stub's key.
+
+    internal/linear's ResolveAPIKey takes api_key_cmd FIRST, then the
+    environment, then an inline api_key. The driver sets the environment,
+    so an inline key always loses to the stub's -- but an api_key_cmd in a
+    --config wins over it, and handed a real config.toml that is a real key
+    sent to a loopback port. And the stub is only reached by a binary LINKED
+    to it: with the default bin/herdr-draft the stub's key goes to the real
+    Linear instead. Both are refused rather than worked around, so the key
+    this run holds is the stub's without exception.
+    """
+    if not args.binary_given:
+        raise SystemExit(
+            "drive.py: --linear-port needs --binary: only a binary linked to that port reaches the stub,\n"
+            "           and the default bin/herdr-draft would send the stub's key to the real Linear.\n"
+            "           `just live` passes both.")
+    if args.config:
+        with open(args.config) as f:
+            if any(re.match(r"\s*api_key_cmd\s*=", line) for line in f):
+                raise SystemExit(
+                    "drive.py: %s sets [linear] api_key_cmd, which internal/linear prefers to any other key --\n"
+                    "           with the stub on it would send whatever that command prints to a loopback port.\n"
+                    "           Drop it from the config you pass here." % args.config)
+
+
 def start_stub_linear(port, fixture_path):
     """Start stub_linear.py on 127.0.0.1:port and wait until it listens.
 
@@ -187,21 +213,64 @@ def emulator(cols, rows):
 
     class Screen(pyte.Screen):
         def scroll_up(self, count=None, **_):
-            self._scroll(count or 1, 1)
+            top, bottom = self.margins or Margins(0, self.lines - 1)
+            self._shift(top, bottom, count or 1)
 
         def scroll_down(self, count=None, **_):
-            self._scroll(count or 1, -1)
-
-        def _scroll(self, n, sign):
             top, bottom = self.margins or Margins(0, self.lines - 1)
+            self._shift(top, bottom, -(count or 1))
+
+        # DL and IL go through _shift too, for the same bug. Neither was
+        # seen in any walk -- Bubble Tea's renderer (ultraviolet) emits DL
+        # only when a scroll region reaches the bottom row, and the form's
+        # footer keeps its regions off it -- but pyte's own versions leave
+        # a stale row the moment it does, and a driver that is wrong only
+        # on a path nobody has walked yet is still a driver that is wrong.
+        # pyte's carriage return after each is kept; that part it gets right.
+        def delete_lines(self, count=None):
+            top, bottom = self.margins or Margins(0, self.lines - 1)
+            if top <= self.cursor.y <= bottom:
+                self._shift(self.cursor.y, bottom, count or 1)
+                self.carriage_return()
+
+        def insert_lines(self, count=None):
+            top, bottom = self.margins or Margins(0, self.lines - 1)
+            if top <= self.cursor.y <= bottom:
+                self._shift(self.cursor.y, bottom, -(count or 1))
+                self.carriage_return()
+
+        def _shift(self, top, bottom, n):
+            """Rows top..bottom move up by n (down if n < 0); rows with
+            nothing moving into them are left absent, which reads blank."""
             region = {y: self.buffer.pop(y) for y in list(self.buffer) if top <= y <= bottom}
             for y in range(top, bottom + 1):
-                if y + sign * n in region:
-                    self.buffer[y] = region[y + sign * n]
+                if y + n in region:
+                    self.buffer[y] = region[y + n]
             self.dirty.update(range(top, bottom + 1))
 
     class Stream(pyte.ByteStream):
+        """pyte's stream with SU/SD mapped, and the kitty keyboard
+        protocol's `CSI = … u` / `CSI > … u` / `CSI < … u` removed first.
+
+        pyte's parser does not know a CSI that opens with `=`, abandons it,
+        and DRAWS the rest as text: the form's exit sequence left
+        `▌ title      un0;1ued` on the last frame (#305's review). The
+        sequences only set, push or pop keyboard flags, so dropping them
+        changes nothing a terminal would show. A read can end mid-sequence,
+        so a trailing fragment that could still become one is held back
+        for the next feed rather than passed on half-parsed.
+        """
+
         csi = dict(pyte.ByteStream.csi, S="scroll_up", T="scroll_down")
+        _kitty = re.compile(rb"\x1b\[[=<>][0-9;]*u")
+        _partial = re.compile(rb"\x1b(\[([=<>][0-9;]*)?)?$")
+        _carry = b""
+
+        def feed(self, data):
+            data = self._carry + data
+            m = self._partial.search(data)
+            self._carry, data = (data[m.start():], data[:m.start()]) if m else (b"", data)
+            super().feed(self._kitty.sub(b"", data))
 
     screen = Screen(cols, rows)
     return screen, Stream(screen)
@@ -422,6 +491,26 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
 KEEP = ("LANG", "LANGUAGE", "TZ", "TMPDIR")
 
 
+def hold_root(root):
+    """Take the scratch tree for this run, waiting for any other run on it.
+
+    Two runs at once share everything under --root: the second wipes the
+    state directory and rewrites the config under the first. So a run
+    takes an exclusive flock on a file BESIDE the tree -- beside, so that
+    --fresh deleting the tree cannot delete the lock another run is
+    holding -- and keeps it until it exits. The kernel releases it however
+    the process ends, SIGKILL included.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(root)), exist_ok=True)
+    f = open(os.path.abspath(root) + ".lock", "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("drive.py: another run is using %s -- waiting for it" % root, file=sys.stderr)
+        fcntl.flock(f, fcntl.LOCK_EX)
+    return f
+
+
 def child_env(root, home, state, repo, cols, rows, linear_key=None):
     """herdr's five variables, a locale, and nothing else of yours.
 
@@ -498,7 +587,14 @@ def run_once(args, env_for, cols, rows):
                 t.click(value[0], value[1], args.settle)
         lines = t.lines()
         rc = 0
-        if args.check_repaint:
+        if args.check_repaint and t.exited(0) is not None:
+            # The form has already left -- a walk ending in esc, ⌃C or a
+            # submit -- so nothing is left to repaint, and resizing pyte on
+            # its own drops the top line and shifts every row: a mismatch
+            # on every row that says nothing about the reading.
+            print("drive.py: %dx%d: the form exited during the walk, so there is no repaint to check against"
+                  % (t.cols, t.rows), file=sys.stderr)
+        elif args.check_repaint:
             full = t.full_repaint()
             differ = [i for i, (a, b) in enumerate(zip(lines, full)) if a != b]
             if differ:
@@ -552,7 +648,7 @@ def main(argv):
                    help="print row N instead of the screen; negative counts from the bottom, so -1 is the footer")
     p.add_argument("--line", action="append", default=[], metavar="SUBSTR",
                    help="print every row containing SUBSTR instead of the screen")
-    p.add_argument("--binary", default=os.path.join(REPO, "bin", "herdr-draft"),
+    p.add_argument("--binary", default=None,
                    help="the binary to drive (default: this repo's bin/herdr-draft)")
     p.add_argument("--root", default=os.path.join(os.environ.get("TMPDIR", "/var/tmp"), "herdr-draft-live"),
                    help="scratch tree: HOME, the stubs, the plugin dirs and a throwaway repo")
@@ -577,6 +673,11 @@ def main(argv):
                    help="seconds to wait after launch, before the first action (default 1.5)")
     p.set_defaults(actions=[])
     args = p.parse_args(argv)
+    args.binary_given = args.binary is not None
+    if not args.binary_given:
+        args.binary = os.path.join(REPO, "bin", "herdr-draft")
+    if args.linear_port:
+        refuse_real_linear(args)  # before anything is written to the scratch tree
 
     try:
         import pyte  # noqa: F401
@@ -588,6 +689,7 @@ def main(argv):
     if not os.path.isfile(args.binary) or not os.access(args.binary, os.X_OK):
         raise SystemExit("drive.py: no binary at %s -- run `just build`" % args.binary)
 
+    lock = hold_root(args.root)  # noqa: F841 -- held for this process's life
     home, state, repo = build_tree(args.root, args.fresh, args.keep_state, args.config, args.herdr)
     if args.repo:
         repo = os.path.abspath(args.repo)

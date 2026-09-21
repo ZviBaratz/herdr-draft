@@ -156,13 +156,24 @@ smoke repo:
 # bin/herdr-draft against the REAL Linear and must never pick this one up,
 # and this one sends whatever Linear key it holds to a loopback port, which
 # is fine for the stub's fake key and wrong for anyone's real one. Do not
-# run it by hand.
+# run it by hand -- which the recipe makes hard to do by accident, since it
+# deletes each run's copy on the way out.
 #
 # A fresh free port on every run, which costs a relink -- measured at
-# 0.4s -- rather than a fixed port that a second run, or anything else on
-# the machine, could already hold. The port is freed between being picked
-# and drive.py binding it, and drive.py says so plainly if something took
-# it in that window.
+# 0.4s with a warm cache -- rather than a fixed port that a second run, or
+# anything else on the machine, could already hold. The port is freed
+# between being picked and drive.py binding it, and drive.py says so
+# plainly if something took it in that window.
+#
+# And a fresh BINARY on every run, for the same reason one layer down.
+# The first version linked every run to one path, so a second `just live`
+# started a moment after the first relinked it between the first run's
+# link and its exec: the first form then dialled the second run's port,
+# found nothing, and printed an unavailable issue row with exit 0 -- three
+# trials in three. Each run now links into its own directory and deletes
+# it on the way out, which is why this runs drive.py rather than exec'ing
+# it. The scratch tree under --root is shared too; drive.py takes a lock on
+# it for the length of the run.
 #
 # The venv lives OUTSIDE the tree drive.py manages, because `--fresh`
 # deletes that tree and rebuilding the venv on every pass is the slowest
@@ -214,12 +225,13 @@ live *ARGS:
             exit 1
         }
     fi
-    livebin="${TMPDIR:-/var/tmp}/herdr-draft-live-bin"
-    mkdir -p "$livebin"
+    mkdir -p "${TMPDIR:-/var/tmp}/herdr-draft-live-bin"
+    livebin="$(mktemp -d "${TMPDIR:-/var/tmp}/herdr-draft-live-bin/run.XXXXXX")"
+    trap 'rm -rf "$livebin"' EXIT
     port="$("$venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
     go build -ldflags "-X main.build=$(git describe --tags --always --dirty 2>/dev/null || echo '') -X github.com/ZviBaratz/herdr-draft/internal/linear.defaultEndpoint=http://127.0.0.1:${port}/graphql" \
         -o "$livebin/herdr-draft" ./cmd/herdr-draft
     set -f
     set -- {{ARGS}}
     [[ "${1:-}" == "--" ]] && shift
-    exec "$venv/bin/python" hack/live/drive.py --binary "$livebin/herdr-draft" --linear-port "$port" "$@"
+    "$venv/bin/python" hack/live/drive.py --binary "$livebin/herdr-draft" --linear-port "$port" "$@"

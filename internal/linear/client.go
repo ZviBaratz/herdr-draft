@@ -45,8 +45,8 @@ const assignedIssuesQuery = `  { viewer { assignedIssues(
 // is redirected only if whoever BUILT it asked for that -- and
 // herdr-plugin.toml's [[build]], which is what builds every installed
 // copy, never does. TestNoInstalledBinaryCanBeRedirected reads the real
-// manifest to keep it that way, and TestDefaultEndpointIsLinearsPublicAPI
-// pins the value that build gets.
+// manifest to keep it that way, and TestClientDefaultEndpoint pins the
+// value that build gets.
 var defaultEndpoint = "https://api.linear.app/graphql"
 
 // Issue is one Linear issue returned by AssignedIssues, shaped for the form

@@ -139,10 +139,14 @@ func TestAssignedIssuesNonOKStatus(t *testing.T) {
 }
 
 // TestClientDefaultEndpoint asserts Client.Endpoint defaults to Linear's
-// public GraphQL endpoint when empty -- verified indirectly by confirming a
-// Client with no Endpoint set does not send its request to the test server
-// (it targets the real default instead, which this test never lets happen
-// since it substitutes a nil-safe check on the constant).
+// public GraphQL endpoint when empty, and pins that value.
+//
+// The second half matters more than it looks. defaultEndpoint is a var
+// rather than a const so that hack/live's own build can point it at a stub
+// with `-X` (#302), which makes its SOURCE value the thing every installed
+// binary depends on -- herdr's [[build]] links with no -X, so this is
+// exactly what a user's install talks to. TestNoInstalledBinaryCanBeRedirected
+// is the other half: that no build a user runs changes it.
 func TestClientDefaultEndpoint(t *testing.T) {
 	c := &Client{}
 	if c.endpoint() != defaultEndpoint {
@@ -323,17 +327,6 @@ func TestLoadCacheMissingFileErrors(t *testing.T) {
 	_, _, err := LoadCache(t.TempDir())
 	if err == nil {
 		t.Fatal("LoadCache: got nil error, want error for missing cache file")
-	}
-}
-
-// TestDefaultEndpointIsLinearsPublicAPI pins what every installed binary
-// talks to. defaultEndpoint is a var rather than a const so that
-// hack/live's own build can point it at a stub with `-X` (#302), which
-// makes its source value the thing a user's install depends on -- so it is
-// asserted here rather than trusted.
-func TestDefaultEndpointIsLinearsPublicAPI(t *testing.T) {
-	if want := "https://api.linear.app/graphql"; defaultEndpoint != want {
-		t.Errorf("defaultEndpoint = %q, want Linear's public API %q", defaultEndpoint, want)
 	}
 }
 
