@@ -96,7 +96,10 @@ def refuse_real_linear(args, config):
     The api_key_cmd half runs WITHOUT the stub too. There it gives the
     default binary a real key for the real Linear, or gives a stub-linked
     --binary run by hand a real key for a loopback port with nothing
-    behind it. Neither is a run this driver exists for.
+    behind it. Neither is a run this driver exists for. Without the stub
+    an inline api_key is refused for the same reason (#318): the driver
+    sets no LINEAR_API_KEY then, so nothing outranks it. With the stub on
+    it stays allowed, because the stub's LINEAR_API_KEY wins.
 
     The config is PARSED, not matched line by line (#314). A line regex
     let through `linear = { api_key_cmd = [...] }`, `linear.api_key_cmd =
@@ -137,6 +140,11 @@ def refuse_real_linear(args, config):
                 "drive.py: %s sets [linear] api_key_cmd, which internal/linear prefers to any other key --\n"
                 "           with the stub on it would send whatever that command prints to a loopback port.\n"
                 "           Drop it from the config you pass here." % args.config)
+        if args.linear_port is None and any(k.casefold() == "api_key" for table in tables for k in table):
+            raise SystemExit(
+                "drive.py: %s sets [linear] api_key without the stub, and with no LINEAR_API_KEY nothing outranks it --\n"
+                "           the binary would use it against the real Linear. Drop it, or run through `just live`,\n"
+                "           whose stub key wins over it." % args.config)
 
 
 def start_stub_linear(port, fixture_path):

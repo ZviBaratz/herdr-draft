@@ -414,13 +414,31 @@ class RefuseRealLinear(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertRegex(self.refusal(body, binary_given=False), r"--linear-port needs --binary")
 
-    def test_without_the_stub_only_api_key_cmd_is_refused(self):
+    def test_without_the_stub_no_linear_key_goes_through(self):
         # No stub means no key the default binary could misdeliver, so it
-        # needs no --binary. api_key_cmd is still a real key, stub or not.
-        inline = '[linear]\napi_key = "lin_api_FAKE_inline"\n'
-        self.assertEqual(self.refusal(inline, binary_given=False, linear_port=None), "")
-        self.assertRegex(self.refusal(self.refused["an inline table"] % FAKE_CMD, binary_given=False, linear_port=None),
-                         r"sets \[linear\] api_key_cmd")
+        # needs no --binary. But it also means no LINEAR_API_KEY, so an
+        # inline api_key is no longer outranked: the binary would use it
+        # against the real Linear (#318). api_key_cmd is a real key either
+        # way.
+        def stub_off(body):
+            return self.refusal(body, binary_given=False, linear_port=None)
+
+        self.assertRegex(stub_off(self.refused["an inline table"] % FAKE_CMD), r"sets \[linear\] api_key_cmd")
+        for name, body in {
+            "a [linear] table": '[linear]\napi_key = "lin_api_FAKE_inline"\n',
+            "upper case": '[LINEAR]\nAPI_KEY = "lin_api_FAKE_inline"\n',
+            "an inline table": 'linear = { api_key = "lin_api_FAKE_inline" }\n',
+            "a dotted, quoted key": 'linear."api_key" = "lin_api_FAKE_inline"\n',
+        }.items():
+            with self.subTest(name):
+                self.assertRegex(stub_off(body), r"sets \[linear\] api_key without the stub")
+        for name, body in {
+            "no key at all": '[linear]\nprompt_template = "lin_api_FAKE_not_a_key"\n',
+            "api_key under another table": '[other]\napi_key = "lin_api_FAKE_inline"\n',
+            "api_key in a comment": '[linear]\n# api_key = "lin_api_FAKE_inline"\n',
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(stub_off(body), "")
 
 
 class MainRefusesFirst(unittest.TestCase):
@@ -480,10 +498,17 @@ class MainRefusesFirst(unittest.TestCase):
                          r"sets \[linear\] api_key_cmd")
         self.assertFalse(os.path.exists(self.root))
         self.assertFalse(os.path.exists(self.root + ".lock"))
-        # The binary requirement is the stub's alone: with no stub and a
-        # clean config, it gets as far as looking for the binary.
+        # So is an inline api_key, which nothing outranks without the stub.
         with open(self.config, "w") as f:
             f.write('[linear]\napi_key = "lin_api_FAKE_inline"\n')
+        self.assertRegex(self.main("--binary", self.BINARY, "--config", self.config),
+                         r"sets \[linear\] api_key without the stub")
+        self.assertFalse(os.path.exists(self.root))
+        self.assertFalse(os.path.exists(self.root + ".lock"))
+        # The binary requirement is the stub's alone: with no stub and a
+        # config naming no key, it gets as far as looking for the binary.
+        with open(self.config, "w") as f:
+            f.write('[linear]\nprompt_template = "x"\n')
         self.assertRegex(self.main("--config", self.config, "--binary", "/nonexistent/herdr-draft"),
                          r"no binary at")
         self.assertFalse(os.path.exists(self.root))

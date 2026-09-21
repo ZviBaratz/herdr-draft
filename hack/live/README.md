@@ -30,8 +30,7 @@ under `$TMPDIR`. The `python3` it is made from must be 3.11 or later, for
 `tomllib` (see the refusals below). `hack/` is not a Go package and nothing here is on the
 `[[build]]` path that runs on a user's machine at install time.
 
-Through `just live` it reaches **no real herdr, no real Linear and no real
-clauth** (the stub section below has the one way a direct run can), and creates
+It reaches **no real herdr, no real Linear and no real clauth**, and creates
 nothing outside its own scratch tree, so it is safe to run in a loop while you
 read a screen. What it cannot do is the other half of the smoke matrix: the
 popup (which has no pane id, so nothing can send keys to it) and a submit that
@@ -107,8 +106,10 @@ Three things follow, and all three are on purpose:
   1–65535 only: a `0` used to read as "no stub" and skip both refusals.
 - **The `api_key_cmd` refusal holds without the stub too.** Without the stub
   such a config hands the default binary a real key for the real Linear, or
-  hands a stub-linked binary run by hand a real key for a loopback port. The
-  `--binary` requirement is the stub's alone.
+  hands a stub-linked binary run by hand a real key for a loopback port. An
+  inline `api_key` is refused on a stub-off run for the same reason (#318),
+  since only the stub's `LINEAR_API_KEY` outranks it. The `--binary`
+  requirement is the stub's alone.
 - **The stub refuses what should never reach it anyway.** Any key but its own,
   and any query but the one `internal/linear` sends, gets a GraphQL error the
   form shows as the row's reason. With the refusals above, no route through the
@@ -118,9 +119,10 @@ Three things follow, and all three are on purpose:
 
 Run `drive.py` directly without `--linear-port` and there is no stub and no
 key, so the issue row is absent — the honest state for a run with no Linear.
-The one exception is a `--config` carrying an inline `api_key`. Nothing
-refuses that without the stub, and the default binary will use it against
-the real Linear, so pass such a config only through `just live`.
+A `--config` carrying an inline `api_key` is refused on such a run (#318):
+with no `LINEAR_API_KEY` set, nothing outranks it, and the default binary
+would use it against the real Linear. Through `just live` the same config is
+fine, because the stub's key wins.
 
 ## The stub `herdr`'s envelope
 
