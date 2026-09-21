@@ -82,7 +82,7 @@ from stub_linear import STUB_LINEAR_KEY  # noqa: E402 -- the one fake key, defin
 
 
 def refuse_real_linear(args, config):
-    """The two ways a run with the stub on stops holding only the stub's key.
+    """Every way a run could hand the binary a Linear key that is not the stub's.
 
     internal/linear's ResolveAPIKey takes api_key_cmd FIRST, then the
     environment, then an inline api_key. The driver sets the environment,
@@ -96,7 +96,10 @@ def refuse_real_linear(args, config):
     The api_key_cmd half runs WITHOUT the stub too. There it gives the
     default binary a real key for the real Linear, or gives a stub-linked
     --binary run by hand a real key for a loopback port with nothing
-    behind it. Neither is a run this driver exists for.
+    behind it. Neither is a run this driver exists for. Without the stub
+    an inline api_key is refused for the same reason (#318): the driver
+    sets no LINEAR_API_KEY then, so nothing outranks it. With the stub on
+    it stays allowed, because the stub's LINEAR_API_KEY wins.
 
     The config is PARSED, not matched line by line (#314). A line regex
     let through `linear = { api_key_cmd = [...] }`, `linear.api_key_cmd =
@@ -128,8 +131,8 @@ def refuse_real_linear(args, config):
             doc = tomllib.loads(config.decode("utf-8"))
         except (UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
             raise SystemExit(
-                "drive.py: cannot read %s as TOML (%s), so cannot tell whether it sets [linear] api_key_cmd.\n"
-                "           herdr-draft reads TOML 1.1, which tomllib does not, so it may well set it.\n"
+                "drive.py: cannot read %s as TOML (%s), so cannot tell whether it sets a [linear] key.\n"
+                "           herdr-draft reads TOML 1.1, which tomllib does not, so it may well set one.\n"
                 "           Pass a config tomllib can read." % (args.config, e))
         tables = [v for k, v in doc.items() if k.casefold() == "linear" and isinstance(v, dict)]
         if any(k.casefold() == "api_key_cmd" for table in tables for k in table):
@@ -137,6 +140,11 @@ def refuse_real_linear(args, config):
                 "drive.py: %s sets [linear] api_key_cmd, which internal/linear prefers to any other key --\n"
                 "           with the stub on it would send whatever that command prints to a loopback port.\n"
                 "           Drop it from the config you pass here." % args.config)
+        if args.linear_port is None and any(k.casefold() == "api_key" for table in tables for k in table):
+            raise SystemExit(
+                "drive.py: %s sets [linear] api_key without the stub, and with no LINEAR_API_KEY nothing outranks it --\n"
+                "           the binary would use it against the real Linear. Drop it, or run through `just live`,\n"
+                "           whose stub key wins over it." % args.config)
 
 
 def start_stub_linear(port, fixture_path):
@@ -496,8 +504,8 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
     # the state wipe exists to prevent, and the config is the same hazard.
     dest = os.path.join(root, "cfg", "config.toml")
     if config is not None:
-        # The bytes main() read, and refuse_real_linear checked when the
-        # stub is on -- never the path again. Written, then chmod 0600:
+        # The bytes main() read, and refuse_real_linear checked -- never
+        # the path again. Written, then chmod 0600:
         # internal/linear refuses an inline api_key in a file readable by
         # anyone else, and a copy that landed at the umask once turned a
         # 0600 source into an unavailable issue row.
@@ -540,9 +548,15 @@ def hold_root(root):
     --fresh deleting the tree cannot delete the lock another run is
     holding -- and keeps it until it exits. The kernel releases it however
     the process ends, SIGKILL included.
+
+    The lock is named from the REAL path. Named from abspath, a symlinked
+    --root gave one tree two locks, and two runs could then share it --
+    including a stub-off run starting its binary on the config a stub run
+    had just written there (#318's review).
     """
-    os.makedirs(os.path.dirname(os.path.abspath(root)), exist_ok=True)
-    f = open(os.path.abspath(root) + ".lock", "w")
+    real = os.path.realpath(root)
+    os.makedirs(os.path.dirname(real), exist_ok=True)
+    f = open(real + ".lock", "w")
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
