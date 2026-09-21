@@ -985,6 +985,11 @@ Everything in v2 §14 still applies. v3 adds and changes:
   typed; the same trap is set one axis over, with the opening state pinned at
   exactly one size. Opening-state × degradation is a product of two axes and
   one cell of it is covered.
+
+  > **Amended, draw-first spec §9.1 (#293, 2026-09-21; approved, not yet
+  > implemented).** The form gains a second opening state, with the Linear
+  > key, clauth and the picker still out, and it is pinned at the same four
+  > sizes.
 - **Tests that break by design** are listed in the implementation plan; the
   four that index frame lines by hand — `form_test.go:918`,
   `field_rows_test.go:181-183`, `form_test.go:930-961`, `sizes_test.go:31-33`
