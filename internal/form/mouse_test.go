@@ -464,3 +464,47 @@ func TestMouseZones_AWheelPickRetiresAHeldBase(t *testing.T) {
 		t.Errorf("Base() after a refresh naming the held ref = %q, want the user's own %q", got, "develop")
 	}
 }
+
+// TestMouseZones_AChipScrolledOutOfViewHasNoClickTarget is #300's click
+// half. A chip row that scrolls draws only the chips it has room for, so
+// only those register a zone -- and the question worth pinning is what
+// happens to a chip that WAS on screen and is not now. bubblezone prunes
+// every zone a Scan did not see (manager.go's zoneWorker, v2.0.0: "Assume
+// previous iterations are cleared"), so a hidden chip is unclickable by
+// construction rather than by anyone remembering to clear it; this is what
+// would say so if that stopped being true.
+//
+// The effort line is the one options-floor-36x12 pins: seeded to xhigh, it
+// scrolls to `… · high · xhigh · …` at 36 columns. `low` is off screen and
+// must not answer; `high` is on screen and must.
+func TestMouseZones_AChipScrolledOutOfViewHasNoClickTarget(t *testing.T) {
+	f := NewOptionsField(theme.Default())
+	f.SetKind("claude", KindOptions{
+		Specs: claudeSpecs(), Seed: map[string]string{"effort": "xhigh", "permission_mode": "plan"},
+		SeedSource: "config.toml",
+	})
+	m := fieldFrame(theme.Default(), f)
+
+	// Rendered wide first, so every effort chip has a zone to lose.
+	_ = m.ViewAt(80, 24)
+	syncZones()
+	if widgets.Zones.Get("chip:options:effort:low").IsZero() {
+		t.Fatal("at 80 columns the effort row's `low` chip has no zone -- this test needs a width where it is drawn")
+	}
+
+	_ = m.ViewAt(36, 12)
+	syncZones()
+	if zi := widgets.Zones.Get("chip:options:effort:low"); !zi.IsZero() {
+		t.Errorf("at 36 columns `low` is scrolled out of view, but still has a click target at %d,%d", zi.StartX, zi.StartY)
+	}
+	zi := widgets.Zones.Get("chip:options:effort:high")
+	if zi.IsZero() {
+		t.Fatal("at 36 columns `high` is on screen but has no click target")
+	}
+
+	next, _ := m.Update(clickAt(zi.StartX, zi.StartY))
+	_ = next.(Model)
+	if got := f.Values()["effort"]; got != "high" {
+		t.Errorf("effort after clicking the on-screen `high` chip = %q, want %q", got, "high")
+	}
+}
