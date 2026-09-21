@@ -325,13 +325,14 @@ class RefuseRealLinear(unittest.TestCase):
     and Kelvin-sign spellings are here: a check on the exact key
     `linear.api_key_cmd` would pass them."""
 
-    def refusal(self, body=None, binary_given=True):
+    def refusal(self, body=None, binary_given=True, linear_port=9):
         """What refuse_real_linear says about a config holding `body` --
         str or bytes; None for no --config at all. Empty when it lets the
         run go ahead."""
         if isinstance(body, str):
             body = body.encode("utf-8")
-        args = argparse.Namespace(binary_given=binary_given, config=None if body is None else "test.toml")
+        args = argparse.Namespace(binary_given=binary_given, linear_port=linear_port,
+                                  config=None if body is None else "test.toml")
         try:
             drive.refuse_real_linear(args, body)
         except SystemExit as e:
@@ -413,6 +414,14 @@ class RefuseRealLinear(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertRegex(self.refusal(body, binary_given=False), r"--linear-port needs --binary")
 
+    def test_without_the_stub_only_api_key_cmd_is_refused(self):
+        # No stub means no key the default binary could misdeliver, so it
+        # needs no --binary. api_key_cmd is still a real key, stub or not.
+        inline = '[linear]\napi_key = "lin_api_FAKE_inline"\n'
+        self.assertEqual(self.refusal(inline, binary_given=False, linear_port=None), "")
+        self.assertRegex(self.refusal(self.refused["an inline table"] % FAKE_CMD, binary_given=False, linear_port=None),
+                         r"sets \[linear\] api_key_cmd")
+
 
 class MainRefusesFirst(unittest.TestCase):
     """main() refuses before writing anything, only with the stub on, and
@@ -454,15 +463,28 @@ class MainRefusesFirst(unittest.TestCase):
                 self.assertFalse(os.path.exists(self.root), "wrote the scratch tree before refusing")
                 self.assertFalse(os.path.exists(self.root + ".lock"), "took the lock before refusing")
 
-    def test_port_zero_is_not_a_port(self):
-        # A falsy port once skipped the refusal outright.
-        self.assertEqual(self.main("--linear-port", "0", "--binary", self.BINARY, "--config", self.config), "2")
-        self.assertFalse(os.path.exists(self.root))
+    def test_only_1_to_65535_is_a_port(self):
+        # A falsy 0 once read as "no stub". The Arabic-Indic nine passes
+        # str.isdigit() and int() alike.
+        for p in ("0", "65536", "-1", "+9", "\u0669"):
+            with self.subTest(port=p):
+                self.assertEqual(self.main("--linear-port", p, "--binary", self.BINARY), "2")
+                self.assertFalse(os.path.exists(self.root))
 
     def test_with_the_stub_off(self):
-        # No stub, no key, nothing to refuse: it gets as far as looking
-        # for the binary, which is still before the tree is written.
-        self.assertRegex(self.main("--binary", "/nonexistent/herdr-draft", "--config", self.config),
+        # api_key_cmd is refused here too. Without the stub it gives the
+        # default binary a real key for the real Linear, or gives a
+        # stub-linked --binary run by hand a real key for a loopback port.
+        # Neither is a run this driver exists for.
+        self.assertRegex(self.main("--binary", self.BINARY, "--config", self.config),
+                         r"sets \[linear\] api_key_cmd")
+        self.assertFalse(os.path.exists(self.root))
+        self.assertFalse(os.path.exists(self.root + ".lock"))
+        # The binary requirement is the stub's alone: with no stub and a
+        # clean config, it gets as far as looking for the binary.
+        with open(self.config, "w") as f:
+            f.write('[linear]\napi_key = "lin_api_FAKE_inline"\n')
+        self.assertRegex(self.main("--config", self.config, "--binary", "/nonexistent/herdr-draft"),
                          r"no binary at")
         self.assertFalse(os.path.exists(self.root))
 

@@ -93,6 +93,11 @@ def refuse_real_linear(args, config):
     Linear instead. Both are refused rather than worked around, so the key
     this run holds is the stub's without exception.
 
+    The api_key_cmd half runs WITHOUT the stub too. There it gives the
+    default binary a real key for the real Linear, or gives a stub-linked
+    --binary run by hand a real key for a loopback port with nothing
+    behind it. Neither is a run this driver exists for.
+
     The config is PARSED, not matched line by line (#314). A line regex
     let through `linear = { api_key_cmd = [...] }`, `linear.api_key_cmd =
     [...]` and a quoted key, and internal/config reads all three. Two facts
@@ -113,7 +118,7 @@ def refuse_real_linear(args, config):
     install whatever the file said by then, and hold_root can wait on
     another run for as long as that run lasts.
     """
-    if not args.binary_given:
+    if args.linear_port is not None and not args.binary_given:
         raise SystemExit(
             "drive.py: --linear-port needs --binary: only a binary linked to that port reaches the stub,\n"
             "           and the default bin/herdr-draft would send the stub's key to the real Linear.\n"
@@ -590,7 +595,7 @@ def size(text):
 
 def port(text):
     # Not merely an int: a falsy 0 once skipped the Linear refusals.
-    if not text.isdigit() or not 1 <= int(text) <= 65535:
+    if not (text.isascii() and text.isdigit()) or not 1 <= int(text) <= 65535:
         raise argparse.ArgumentTypeError("a port is 1-65535")
     return int(text)
 
@@ -725,8 +730,7 @@ def main(argv):
                 config = f.read()
         except OSError as e:
             raise SystemExit("drive.py: cannot read %s: %s" % (args.config, e.strerror))
-    if args.linear_port is not None:
-        refuse_real_linear(args, config)  # before anything is written to the scratch tree
+    refuse_real_linear(args, config)  # before anything is written to the scratch tree
 
     try:
         import pyte  # noqa: F401
