@@ -160,6 +160,34 @@ func TestIssueField_SetIssuesRefreshPreservesSelectionByID(t *testing.T) {
 	}
 }
 
+// TestIssueField_SetIssuesRefreshKeepsADroppedChosenIssue is the half of
+// #322 the picker's own same-version contract does not cover (draw-first
+// spec §5.2). When the refresh no longer carries the chosen issue,
+// widgets.Picker.SetItems falls back to the old cursor INDEX, which would
+// silently show whatever issue now sits there as the chosen one. So the
+// field keeps the chosen issue in its list.
+func TestIssueField_SetIssuesRefreshKeepsADroppedChosenIssue(t *testing.T) {
+	f := NewIssueField(theme.Default())
+	f.SetIssues(1, sampleIssues())
+	f.Update(key(tea.KeyDown, 0)) // none -> ENG-1
+	f.Update(key(tea.KeyDown, 0)) // ENG-1 -> ENG-2
+	if got := f.Selected(); got == nil || got.Identifier != "ENG-2" {
+		t.Fatalf("setup: Selected() = %+v, want ENG-2", got)
+	}
+
+	f.SetIssues(1, []linear.Issue{sampleIssues()[0], {Identifier: "ENG-3", Title: "new"}})
+
+	if got := f.Selected(); got == nil || got.Identifier != "ENG-2" {
+		t.Fatalf("Selected() after a same-version refresh that dropped it = %+v, want ENG-2 kept", got)
+	}
+	if cmd := f.Update(key(tea.KeyUp, 0)); cmd == nil {
+		t.Fatal("moving off the kept issue emitted nothing, want an IssueChosenMsg")
+	}
+	if got := f.Selected(); got == nil || got.Identifier == "ENG-2" {
+		t.Fatalf("Selected() after moving up = %+v, want a different issue", got)
+	}
+}
+
 func TestIssueField_RowShowsStatusAndEstimateHint(t *testing.T) {
 	f := NewIssueField(theme.Default())
 	f.Focus()

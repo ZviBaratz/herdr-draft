@@ -1285,7 +1285,8 @@ func (m Model) refreshLinearCmd() tea.Cmd {
 // pick an issue would undo the very degradation this comment describes.
 //
 // A success clears any previous reason, so a transient failure followed by
-// a working refresh does not leave a stale explanation on screen.
+// a working refresh does not leave a stale explanation on screen. And it
+// keeps whatever issue the user already picked (see the SetIssues call).
 func (m Model) handleLinearResult(msg linearResultMsg) (Model, tea.Cmd) {
 	if m.issue == nil {
 		return m, nil
@@ -1295,7 +1296,13 @@ func (m Model) handleLinearResult(msg linearResultMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.issue.SetRefreshError("")
-	m.issueItemsVersion++
+	// The SAME version, not a new one (#322, draw-first spec §5.2): a
+	// newer version resets the picker's cursor to `none`, dropping an
+	// issue picked from the cache-rendered list while the title, branch
+	// and prompt it seeded stay. At the same version SetIssues keeps the
+	// pick by identifier, and keeps the issue itself in the field's list if
+	// Linear no longer returned it -- which is why the cache and
+	// m.linearIssues below take msg.issues, not the field's list.
 	m.issue.SetIssues(m.issueItemsVersion, msg.issues)
 	m.linearIssues = msg.issues                  // see Model.linearIssues' own doc comment (handleClearRequested's reseed source).
 	_ = linear.SaveCache(m.stateDir, msg.issues) // best-effort; state is loss-tolerant (spec §12).

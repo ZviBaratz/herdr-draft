@@ -569,9 +569,12 @@ func (m *Model) populateAccountRow() {
 // short line IssueField.SetUnavailable renders on its hint row. The
 // package's own "resolve linear api key: " prefix is dropped -- the field
 // is already labeled "Issue:" and the user is looking at the Linear field;
-// repeating it costs cells the actual cause needs.
+// repeating it costs cells the actual cause needs. It flattens, as
+// clauthUnavailableReason does, because runKeyCmd puts api_key_cmd's
+// stderr in the error, that stderr can be multi-line, and this is a single
+// row (#323).
 func linearUnavailableReason(err error) string {
-	return strings.TrimPrefix(err.Error(), "resolve linear api key: ")
+	return flattenReason(strings.TrimPrefix(err.Error(), "resolve linear api key: "))
 }
 
 // clauthUnavailableReason turns a clauth load failure into the short line

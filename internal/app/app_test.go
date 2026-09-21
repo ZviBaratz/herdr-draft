@@ -2970,3 +2970,73 @@ func TestHandleClearRequested_ResetsTheReap(t *testing.T) {
 		t.Error("the toggle survived ⌃R ⌃R, want it back on the resolved keep")
 	}
 }
+
+// TestLinearResult_RefreshKeepsTheIssuePickedFromTheCache is #322
+// (draw-first spec §5.2). An issue picked from the cache-rendered list
+// before the refresh lands must still be the chosen one after it: the
+// refresh used to land at a higher issueItemsVersion, which reset the
+// picker's cursor to `none` while the title, branch and prompt the pick
+// had seeded stayed put -- a row disagreeing with the fields it seeded.
+//
+// Both shapes of refresh are covered. One still carries the issue and
+// keeps it by identifier; the other dropped it, and there a same-version
+// refresh on its own would fall back to the old INDEX and quietly show a
+// different issue as chosen, so the field keeps the chosen issue in its
+// list. Neither may fire an IssueChosenMsg -- nothing was chosen -- and
+// the cache and m.linearIssues still take exactly what Linear returned.
+func TestLinearResult_RefreshKeepsTheIssuePickedFromTheCache(t *testing.T) {
+	cached := []linear.Issue{
+		{Identifier: "ENG-1", Title: "first"},
+		{Identifier: "ENG-2", Title: "picked from the cache"},
+	}
+	for _, tc := range []struct {
+		name  string
+		fresh []linear.Issue
+	}{
+		{"the refresh still carries it", []linear.Issue{
+			{Identifier: "ENG-3", Title: "new"},
+			{Identifier: "ENG-2", Title: "picked from the cache"},
+			{Identifier: "ENG-1", Title: "first"},
+		}},
+		{"the refresh dropped it", []linear.Issue{
+			{Identifier: "ENG-1", Title: "first"},
+			{Identifier: "ENG-3", Title: "new"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModel(t, testSetup{Linear: &fakeLinear{}, LinearCache: cached})
+			m.issue.Update(key(tea.KeyDown, 0)) // none -> ENG-1
+			m.issue.Update(key(tea.KeyDown, 0)) // ENG-1 -> ENG-2
+			if got := m.issue.Selected(); got == nil || got.Identifier != "ENG-2" {
+				t.Fatalf("setup: Selected() = %+v, want ENG-2", got)
+			}
+
+			m2, cmd := m.handleLinearResult(linearResultMsg{issues: tc.fresh})
+			m = m2
+
+			if got := m.issue.Selected(); got == nil || got.Identifier != "ENG-2" {
+				t.Fatalf("Selected() after the refresh = %+v, want ENG-2 still chosen", got)
+			}
+			if row := m.issue.Row(80); !strings.Contains(row, "ENG-2") {
+				t.Errorf("issue row after the refresh = %q, want it to name ENG-2", row)
+			}
+			if cmd != nil {
+				if msg := cmd(); msg != nil {
+					if _, ok := msg.(form.IssueChosenMsg); ok {
+						t.Errorf("the refresh emitted %+v, want no IssueChosenMsg: nothing was chosen", msg)
+					}
+				}
+			}
+			if !reflect.DeepEqual(m.linearIssues, tc.fresh) {
+				t.Errorf("m.linearIssues = %+v, want exactly what Linear returned %+v", m.linearIssues, tc.fresh)
+			}
+			saved, _, err := linear.LoadCache(m.stateDir)
+			if err != nil {
+				t.Fatalf("LoadCache: %v", err)
+			}
+			if !reflect.DeepEqual(saved, tc.fresh) {
+				t.Errorf("saved cache = %+v, want exactly what Linear returned %+v", saved, tc.fresh)
+			}
+		})
+	}
+}

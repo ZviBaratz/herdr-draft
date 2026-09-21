@@ -322,6 +322,10 @@ So:
 `linear.SaveCache` and `m.linearIssues` still take exactly what Linear
 returned.
 
+> **Implemented ahead of the rest, #324 (2026-09-21).** The bug is on `main`
+> without this design, so `handleLinearResult` already lands at the same
+> version and `IssueField.SetIssues` keeps a dropped chosen issue (#322).
+
 ### 5.3 clauth
 
 The stale case is the existing `reloadClauthCmd`, fired from `Init`.
@@ -453,6 +457,10 @@ keeps its contract.
 - **`linearUnavailableReason` flattens**, as `clauthUnavailableReason`
   already does. Today a multi-line `api_key_cmd` stderr reaches a one-line
   row unflattened.
+
+  > **Implemented ahead of the rest, #324 (2026-09-21).** It already
+  > flattens, through `flattenReason`, because the bug is on `main` without
+  > this design (#323).
 
 ## 7. ⌃S and ⌃R⌃R during a load
 
