@@ -179,8 +179,10 @@ that belonged there. This driver printed all of it as if the form had drawn
 it. The form was right. `drive.py`'s `emulator` adds both scrolls, written
 straight onto pyte's buffer, because pyte's own `delete_lines` has a second
 bug on the same path (a never-written blank line moving up leaves the old row
-in place) — and routes DL and IL through the same code, because they share
-that bug. No walk has emitted either yet; Bubble Tea's renderer uses DL only
+in place) — and routes DL through the same code for that reason. IL goes
+through it too, for symmetry rather than repair: pyte's `insert_lines` pops
+every row it passes, bottom up, so it has no such bug (#312), and
+`just live-selftest` checks that on plain pyte. No walk has emitted either yet; Bubble Tea's renderer uses DL only
 for a scroll region that reaches the bottom row, which the form's footer never
 lets happen. A driver that is wrong only on a path nobody has walked is still
 wrong.
@@ -212,6 +214,15 @@ intermediate height — so read the rows before concluding. A walk that ends the
 form — `esc`, `⌃C`, a submit — has nothing left to repaint, so the check is
 skipped with a note rather than run: resizing pyte alone drops its top line and
 reports every row as different, which the first version did.
+
+That check covers only what a walk reaches, and no walk emits DL or IL or
+chooses where a pty read ends. **`just live-selftest`** covers the rest: it
+feeds `emulator()` byte strings directly, with no binary, pty or stub, and
+compares each screen with what a terminal shows. The cases are SU and SD with
+and without margins, DL and IL, the kitty sequences and the ignored ones cut
+at every byte, and 2,000 seeded scrolls against a plain list of lines. It takes
+well under a second, so run it after touching `emulator()` or `pyte_version`.
+It is not part of `just check`, which must not need Python.
 
 Two runs at once used to corrupt each other through the shared scratch tree
 as well as the shared binary. A run now holds a lock beside `--root` for its

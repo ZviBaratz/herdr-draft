@@ -201,10 +201,10 @@ def emulator(cols, rows):
     and this was not.
 
     They are written straight onto the buffer rather than through pyte's
-    delete_lines / insert_lines, which have a bug of their own: they move a
-    line only if its SOURCE is in pyte's sparse buffer, so a never-written
-    blank line moving up leaves the line it should have replaced exactly
-    as it was -- the same stale row by another route. Here the region is
+    delete_lines, which has a bug of its own: it moves a line only if its
+    SOURCE is in pyte's sparse buffer, so a never-written blank line moving
+    up leaves the line it should have replaced exactly as it was -- the
+    same stale row by another route. Here the region is
     lifted out whole and put back shifted, and a row with nothing to put
     back is simply absent, which pyte reads as blank.
     """
@@ -220,12 +220,17 @@ def emulator(cols, rows):
             top, bottom = self.margins or Margins(0, self.lines - 1)
             self._shift(top, bottom, -(count or 1))
 
-        # DL and IL go through _shift too, for the same bug. Neither was
-        # seen in any walk -- Bubble Tea's renderer (ultraviolet) emits DL
-        # only when a scroll region reaches the bottom row, and the form's
-        # footer keeps its regions off it -- but pyte's own versions leave
-        # a stale row the moment it does, and a driver that is wrong only
-        # on a path nobody has walked yet is still a driver that is wrong.
+        # DL goes through _shift too, for the same bug. It was not seen in
+        # any walk -- Bubble Tea's renderer (ultraviolet) emits DL only when
+        # a scroll region reaches the bottom row, and the form's footer
+        # keeps its regions off it -- but pyte's own version leaves a stale
+        # row the moment it does, and a driver that is wrong only on a path
+        # nobody has walked yet is still a driver that is wrong.
+        #
+        # IL goes through _shift beside it, for symmetry rather than
+        # repair: pyte's insert_lines pops every row it passes, bottom up,
+        # so no destination keeps its old row (#312). selftest.py's
+        # PytePremises checks both halves of that on plain pyte.
         # pyte's carriage return after each is kept; that part it gets right.
         def delete_lines(self, count=None):
             top, bottom = self.margins or Margins(0, self.lines - 1)
