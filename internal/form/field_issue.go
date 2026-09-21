@@ -324,15 +324,35 @@ func (f *IssueField) issueByID(id string) *linear.Issue {
 // the current selection by issue identifier, inherited from
 // widgets.Picker.SetItems' own same-version contract; a strictly newer
 // version resets the cursor to the "none" row.
+//
+// A same-version call that no longer carries the chosen issue keeps it,
+// appended to the list (#322, draw-first spec §5.2): the picker's
+// fallback for a vanished ID is the old cursor INDEX, which would silently
+// show whichever issue now sits there as the chosen one, with no
+// IssueChosenMsg to reseed the title, branch and prompt the real pick
+// seeded. The caller's slice is not modified.
 func (f *IssueField) SetIssues(version int, issues []linear.Issue) {
 	if f.haveVersion && version < f.version {
 		return
 	}
 	isNew := !f.haveVersion || version > f.version
+	if chosen := f.Selected(); !isNew && chosen != nil && !hasIssue(issues, chosen.Identifier) {
+		issues = append(issues[:len(issues):len(issues)], *chosen)
+	}
 	f.haveVersion = true
 	f.version = version
 	f.issues = issues
 	f.refreshItems(isNew)
+}
+
+// hasIssue reports whether issues carries one identified as id.
+func hasIssue(issues []linear.Issue, id string) bool {
+	for _, iss := range issues {
+		if iss.Identifier == id {
+			return true
+		}
+	}
+	return false
 }
 
 // refreshItems rebuilds the picker's item list from f.issues (the "none"

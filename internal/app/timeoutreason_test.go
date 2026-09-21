@@ -33,6 +33,14 @@ func TestTimeoutReasonsRenderAsOneCleanLine(t *testing.T) {
 			want:   "api_key_cmd gave no answer within 1m0s",
 		},
 		{
+			// #323: runKeyCmd puts the command's stderr in the error, and
+			// a credential helper's stderr can run to several lines.
+			name:   "api_key_cmd's multi-line stderr, on the issue row",
+			reason: linearUnavailableReason,
+			msg:    "resolve linear api key: run api_key_cmd: exit status 1: [ERROR] 2026/09/21 not signed in\n  run `op signin`\r\n\tto continue",
+			want:   "run api_key_cmd: exit status 1: [ERROR] 2026/09/21 not signed in run `op signin` to continue",
+		},
+		{
 			name:   "the assignedIssues fetch, on the issue panel",
 			reason: linearRefreshReason,
 			msg:    "linear assigned issues: no answer within 30s",
