@@ -566,32 +566,78 @@ Layering, outermost to innermost:
   layer down and the one v3 exists for: v2 drew its rules and its focused-row
   fill at a contrast ratio of **1.07:1**, correctly, at the right width, and
   invisibly. A green fixture says nothing about whether a colour can be seen.
-  Anything that marks a region — a rule, a fill, an input background — needs
-  a **measured** floor against the ground it is actually drawn on, over all
-  eighteen builtins, in `internal/theme/contrast_test.go` beside
-  `ActiveRowContrastFloor` and `InputFillContrastFloor`. Note "the ground it
-  is actually drawn on": an input is only rendered while its field is
+  Anything that marks a region — a rule, a fill, an input background, a
+  picker's cursor row, a secondary button's face — needs a **measured** floor
+  against the ground it is actually drawn on, over all eighteen builtins, in
+  `internal/theme/contrast_test.go` beside `ActiveRowContrastFloor`,
+  `InputFillContrastFloor` and `SurfaceFillContrastFloor`. Note "the ground
+  it is actually drawn on": an input is only rendered while its field is
   focused, so it sits on `ActiveRowBG`, not `PanelBG` — and on the default
   theme those two happen to be byte-identical to `Surface`, which is how a
-  flat-`Surface` input fill would have shipped invisible a second time.
+  flat-`Surface` input fill would have shipped invisible a second time. The
+  same trap took the last two regions one field over (#149): `Surface` on
+  `PanelBG` is under 1.25:1 on **twelve of the seventeen** measurable
+  builtins and 1.40:1 on catppuccin, so twelve themes shipped a highlighted
+  picker row with no band and a cancel button with no face.
   **A colour that carries a word needs the same thing, and it is a second
-  class rather than the same one** (#273). Those three floors are 1.25:1
+  class rather than the same one** (#273, #277). Those four floors are 1.25:1
   and 1.6:1, which is right for an edge the eye has to catch and nowhere
-  near legible; `SemanticTextContrastFloor` is 3:1 because `Danger` and
-  `Warning` are the *only* rendering of the words a refusal is made of, so
-  "the words already say what they mean" is true and does not help. A word
-  reaches **three** grounds, not two — `PanelBG`, `ActiveRowBG`, and the
-  `Surface` a picker repaints its cursor row with — and which of them is
-  worst is the theme's business, not the form's: `ActiveRowBG` is worst on
-  most builtins and dracula clears 3:1 on both of the others while
-  measuring 2.91:1 on `Surface`. Two things follow for a clamp on a
-  foreground. It walks toward **black or white**, not toward `Text` the way
-  `ensureContrast` does: a theme's `Text` is often a desaturated grey, and
-  walking solarized's red and orange toward its `#839496` arrived at two
-  browns 24 apart, which is the convergence such a clamp is accused of.
+  near legible; `SemanticTextContrastFloor` is 3:1 and covers five fields —
+  `Danger`, `Warning`, `Success`, `Branch` and `Accent` — each the *only*
+  rendering of some word, so "the words already say what they mean" is true
+  and does not help. **3:1 rather than WCAG's 4.5:1 body-text figure is a
+  measurement rather than a concession**, and `Branch` is where that was
+  settled, since a branch name is content read character by character and so
+  the hardest case for a large-text figure: no builtin's own `Text` falls
+  below 3:1 on any ground, while three fall below 4.5:1 — solarized-light at
+  3.14:1 on its focused row, tokyo-night-day 3.51, solarized 4.29. 3:1
+  therefore sits under every theme's own body text without reaching any of
+  it, which is where a floor belongs, while 4.5:1 would hold a branch name to
+  a higher standard than the title beside it and walk 11 of the 17 branch
+  colours, one of them 96 units in sRGB. A word reaches **three** grounds,
+  not two — `PanelBG`, `ActiveRowBG`, and the `SurfaceFill(PanelBG)` a picker
+  repaints its cursor row with — and which of them is worst is the theme's
+  business, not the form's: `ActiveRowBG` is worst on most builtins and
+  dracula clears 3:1 on both of the others while measuring 2.91:1 on the
+  cursor row. Name that third ground by the expression and not by `Surface`:
+  dracula is one of the five builtins whose `Surface` is *not* raised, so
+  the figure is right under a name that stopped being right. Two things
+  follow for a clamp on a foreground. It walks toward **black or white**,
+  not toward `Text` the way `ensureContrast` does: a theme's `Text` is
+  often a desaturated grey, and walking solarized's red and orange toward
+  its `#839496` arrived at two browns 24 apart, which is the convergence
+  such a clamp is accused of.
   And `floorContrast` raises `ActiveRowBG` **before** it uses it as a
   ground, because a word measured against the raw `selection_bg` is
-  measured against a fill four builtins never draw.
+  measured against a fill four builtins never draw — and it computes the
+  cursor fill rather than reading `Surface` for the same reason, because raw
+  `Surface` is a fill twelve of them never draw.
+- **A change that moves a shared value can hand another test a SECOND
+  reason to pass, and none of the signals you normally trust will say so.**
+  #149 repointed the third ground the semantic-text floor measures words on,
+  from the `Surface` field to the fill a picker actually paints.
+  `TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG` stayed green and
+  should not have: its fixture's `Surface` *was* its `PanelBG`, so the new
+  expression raised it to a value on which that fixture's own `Danger`
+  measured 2.505:1. The raise the test attributes to `ActiveRowBG` now had a
+  second cause, so it would have passed under exactly the wrong ordering it
+  exists to catch. A green suite conceals this, `-race` is silent about it,
+  and the diff of the file containing the test is empty. So after moving a
+  value other tests measure against, re-derive their **premises** rather than
+  re-running them, and where a test says "X is the reason", give it a guard
+  asserting X is the **only** reason — a loop over the other inputs
+  asserting each one passes. That guard is three lines and it fails loudly
+  the next time somebody moves a ground.
+  The other half is that the moved value needs a fixture of its own.
+  Reverting that one expression left all seventeen packages green, because
+  over the eighteen builtins the old and new ground lists happen to agree on
+  every outcome — and they only happen to, since `floorContrast` also runs
+  on a `[palette]` override and a custom herdr theme, where nothing
+  constrains them to. Expect the discriminating fixture to be awkward: both
+  candidate grounds here are "the panel walked toward `Text`", so they
+  coincide whenever `ActiveRowBG` needs raising at all, and separating them
+  took a palette whose focused row is *darker* than its panel, which no real
+  theme is (`TestFloorContrast_MeasuresAgainstThePaintedCursorFill`).
 - **A test-only symbol is kept by a `//lint:ignore`, not by hope.**
   `just unused` runs with `-tests=false`, so anything only a test calls
   reads as dead. Two symbols are kept that way on purpose and each carries
