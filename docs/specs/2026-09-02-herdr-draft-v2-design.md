@@ -375,6 +375,13 @@ cells.
 
 - **Loading.** The row reads `loading…` in dim; the panel says what is being
   read (`reading branches…`, `fetching assigned issues…`). Nothing blocks.
+
+  > **Amended, draw-first spec §6 (#293, 2026-09-21; approved, not yet
+  > implemented).** That design is the first to specify it, for `issue`
+  > (`waiting for api_key_cmd…`, `fetching assigned issues…`) and `account`
+  > (`reading clauth profiles…`). The row reads `loading…` only when there
+  > is nothing to pick. With a cached list the row keeps its value, and the
+  > phase is on the panel.
 - **Unavailable with a reason.** `unavailable  no API key`, with the panel
   naming the config key that fixes it.
 - **Absent by design.** Linear unconfigured, or fewer than two clauth
@@ -387,6 +394,12 @@ cells.
   > `project`, `worktree`, `placement`, `agent` — six rows in the stack,
   > plus Create on the footer. `assembled-minimal-80x24` is the frame that
   > pins it.
+
+  > **Amended, draw-first spec §3.2 and §4.2 (#293, 2026-09-21; approved,
+  > not yet implemented).** Linear unconfigured stays a static check. Fewer
+  > than two clauth profiles is one only when clauth's status file is fresh.
+  > Otherwise the row is drawn `loading…`, and an answer of fewer than two
+  > profiles leaves it in place with a reason.
 - **Nothing to choose.** An empty panel list speaks in the field's own terms
   (`no branches yet`, `no assigned issues`), never a bare `no matches`.
 
@@ -778,6 +791,13 @@ prompts.
 > every other failure of theirs already did. The budgets are the same on
 > both paths — a shorter one before the draw would report a working
 > credential helper as broken, which is worse than the wait it saves.
+
+> **Amended, draw-first spec §3, §4.2 and §5.6 (#293, 2026-09-21; approved,
+> not yet implemented).** In the popup none of the three waits before the
+> draw any more. A key failure with a cached issue list puts its reason on
+> the panel rather than the row, and the list stays pickable. The budgets
+> are unchanged, so the last sentence above still gives their reason, but
+> there is no "before the draw" left for them to apply to.
 
 `main.go` dispatches on `os.Args[1]`: absent means the popup, exactly as
 today; an unknown verb prints usage and exits 2.
