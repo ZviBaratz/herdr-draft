@@ -654,6 +654,18 @@ Layering, outermost to innermost:
   measured against a fill four builtins never draw — and it computes the
   cursor fill rather than reading `Surface` for the same reason, because raw
   `Surface` is a fill twelve of them never draw.
+  **The dim tier is the same class with a ceiling** (#299).
+  `DimTextContrastFloor` is 3:1 on the same three grounds, and
+  `raiseDimText` never walks `DimText` past `Text`: a dim tier raised above
+  the bright one has not been fixed, it has been swapped with it. Measure
+  that as signed luminance, not sRGB distance, which has no direction —
+  the semantic clamp at 4.5:1 moves solarized-light's labels *further* from
+  its `Text` (43.4 → 45.5) by walking them past it. The most a dim tier can
+  differ from `Text` while clearing a floor is `Text`'s worst ratio divided
+  by the floor. On solarized-light that is 1.046:1, which is why that walk
+  steps at 1%: a 5% step jumps the whole window. The ceiling is relative
+  (it stops the walk crossing `Text`, and lowers nothing), because
+  kanagawa-lotus ships a `DimText` louder than its `Text` (#309).
 - **A change that moves a shared value can hand another test a SECOND
   reason to pass, and none of the signals you normally trust will say so.**
   #149 repointed the third ground the semantic-text floor measures words on,

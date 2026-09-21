@@ -131,6 +131,11 @@ type Palette struct {
 	Accent  Color
 	PanelBG Color
 	Text    Color
+	// DimText is the subdued tier: every row's label, and most of the
+	// secondary text on the screen -- panel hints and statuses, provenance,
+	// the reasons on the submit view. Every palette this package hands out
+	// has had it raised to DimTextContrastFloor on the same grounds as the
+	// five semantic colours, and never past Text (#299).
 	DimText Color
 	// Overlay0 draws the rules and is the middle text tier -- panel column
 	// headings, badges, the scrollbar thumb. Without it the palette jumps
@@ -518,7 +523,8 @@ const InputFillContrastFloor = 1.25
 // exactly what ActiveRowContrastFloor is for, one region over. The words
 // drawn ON these fills are a different question with a different answer:
 // they are Text, DimText and the picker's tones, and SemanticTextContrastFloor
-// measures the toned ones against this fill as one of its three grounds.
+// and DimTextContrastFloor measure the toned and the dim ones against this
+// fill as one of their three grounds.
 //
 // Measured, Surface against PanelBG is under this floor on TWELVE of the
 // seventeen measurable builtins: one-dark and rose-pine at 1.07:1,
@@ -594,6 +600,45 @@ const SurfaceFillContrastFloor = 1.25
 // ActiveRowContrastFloor says. Do not lower this to make something pass.
 const SemanticTextContrastFloor = 3.0
 
+// DimTextContrastFloor is the minimum WCAG contrast ratio between DimText and
+// every ground a dim word is drawn on (#299). It is the same 3:1 as
+// SemanticTextContrastFloor, and its own constant for the reason
+// InputFillContrastFloor gives. Unlike the semantic floor it comes with a
+// ceiling, which raiseDimText enforces.
+//
+// DimText is not a placeholder tier, which is the assumption that kept it
+// unmeasured. It draws the label column -- the only way to tell which row
+// the cursor is on -- and most of what it draws besides is the only
+// rendering of something somebody reads: panel statuses and hints,
+// provenance, the reasons on the submit view, the path an unsent prompt was
+// saved to. Before this floor it was 2.23:1 on solarized-light's focused
+// row and 2.77:1 on tokyo-night-day's.
+//
+// 3:1 is not only the cheaper figure here, it is the highest one a DIM tier
+// can take. A dim tier has to stay dimmer than Text, so its floor has to sit
+// under every theme's own body text, and Text measures 3.14:1 on
+// solarized-light's focused row, 3.51:1 on tokyo-night-day's and 4.29:1 on
+// solarized's. At 4.5:1 there is no colour on those three that both clears
+// the floor and stays dimmer than their Text -- measured by searching the
+// whole sRGB cube, not by a walk that happened to miss.
+//
+// What 3:1 costs is paid on one theme, and it is worth saying which. The most
+// a dim tier can differ from Text while clearing a floor is Text's worst
+// ratio divided by that floor: on solarized-light that is 1.046:1, against
+// the 1.409:1 herdr gave it. Its panel-to-Text range is 4.13:1, and a
+// visible focused row plus a legible dim word spend all but 4.6% of it, so
+// there the floor and the dim/bright distinction cannot both hold. The floor
+// wins because the distinction has a second carrier almost everywhere it
+// matters -- the label column's position, italics or a self-describing word
+// on the placeholders -- and legibility has none. No choice of ground
+// rescues it: with solarized-light's panel at pure white, DimText still has
+// only 3.16:1 of range to spend, and a band plus a floor needs 3.75.
+//
+// At 3:1 two builtins move, solarized-light and tokyo-night-day, and
+// catppuccin, the default, is not one of them (5.65:1 on its worst ground),
+// so no golden frame moves. terminal is exempt, as it is from every floor.
+const DimTextContrastFloor = 3.0
+
 // contrastMixStep is how coarsely walkToward steps, for both clamps built on
 // it. It is deliberately coarse: a fine search would land a clamped theme a
 // hair over the floor, which is compliant but still marginal, and 5% steps
@@ -601,6 +646,14 @@ const SemanticTextContrastFloor = 3.0
 // No builtin needs more than four of them to raise a background, or more
 // than five to raise a word (catppuccin-latte's peach, and nord's red).
 const contrastMixStep = 0.05
+
+// dimTextMixStep is raiseDimText's step, and it is finer than
+// contrastMixStep because that walk has a ceiling as well as a floor, and
+// the band between them can be narrower than a 5% step. On solarized-light
+// it is: a 5% mix jumps from 2.974:1 straight to 3.313:1, which is already
+// past that theme's own Text on its focused row (3.14:1), so the walk
+// would have nowhere to stop. At 1% it lands on #6e7c7e at 3.05:1.
+const dimTextMixStep = 0.01
 
 // floorContrast raises the fields v3 spec §5.3 puts a floor under. It runs on
 // every palette this package hands a caller (Builtin, and so Default, plus
@@ -616,6 +669,10 @@ const contrastMixStep = 0.05
 // ActiveRowBG's, and against three grounds rather than one: each is the only
 // rendering of some word, and a word reaches every ground this form paints
 // (#273, #277). See SemanticTextContrastFloor and raiseSemanticText.
+//
+// DimText is floored against the same three (#299), by a clamp of its own
+// that will not walk it past Text. See DimTextContrastFloor and
+// raiseDimText.
 func floorContrast(p Palette) Palette {
 	p.ActiveRowBG = ensureContrast(p.PanelBG, p.ActiveRowBG, p.Text, ActiveRowContrastFloor)
 
@@ -647,6 +704,20 @@ func floorContrast(p Palette) Palette {
 	p.Success = raiseSemanticText(p.Success, grounds, SemanticTextContrastFloor)
 	p.Branch = raiseSemanticText(p.Branch, grounds, SemanticTextContrastFloor)
 	p.Accent = raiseSemanticText(p.Accent, grounds, SemanticTextContrastFloor)
+
+	// The same grounds, and the same ordering constraint, for the same
+	// reason. DimText reaches the third one on a single site today -- the
+	// disabled `remove it` button, since a picker's cursor row repaints its
+	// columns in Text -- and it is listed anyway, because the list is what a
+	// dim word CAN be drawn on, not only where one is drawn today.
+	//
+	// The input fills are left out on purpose, and not because nothing dim
+	// is drawn on them: placeholders and blurred text are. The theme's own
+	// Text is under this floor on InputFill(ActiveRowBG) on two builtins
+	// (solarized-light 2.46:1, tokyo-night-day 2.66:1), so no dim value can
+	// clear it without passing Text. That is a defect in the fill, not in
+	// the tier (#307).
+	p.DimText = raiseDimText(p.DimText, grounds, p.Text, DimTextContrastFloor)
 	return p
 }
 
@@ -749,7 +820,9 @@ func ensureContrast(bg, fg, toward Color, floor float64) Color {
 // until it does (#273). It is ensureContrast's mirror image and shares its
 // walk: that one raises a BACKGROUND away from the panel behind it, this one
 // raises a FOREGROUND away from the backgrounds it is drawn on, and there is
-// still one clamp in this package rather than two.
+// still one clamp in this package rather than two. raiseDimText is the one
+// foreground clamp that walks on its own, because it needs a ceiling this
+// walk has no place for.
 //
 // Which end moves is the whole difference, and it is not a detail. Walking
 // the ground would repaint the row, so the word's own color would survive
@@ -840,20 +913,82 @@ func raiseSemanticText(fg Color, grounds []Color, floor float64) Color {
 // when no point on that segment clears the floor.
 func bestAlong(from, toward Color, grounds []Color) Color {
 	best, bestRatio := from, worstRatio(from, grounds)
-	fromR, fromG, fromB, _ := rgb8(from)
-	towardR, towardG, towardB, _ := rgb8(toward)
 	for f := contrastMixStep; f < 1; f += contrastMixStep {
-		mixed := color.RGBA{
-			R: mixChannel(fromR, towardR, f),
-			G: mixChannel(fromG, towardG, f),
-			B: mixChannel(fromB, towardB, f),
-			A: 0xff,
+		mixed := mixToward(from, toward, f)
+		if r := worstRatio(mixed, grounds); r > bestRatio {
+			best, bestRatio = mixed, r
+		}
+	}
+	return best
+}
+
+// raiseDimText is raiseSemanticText for the tier that has to stay dim
+// (#299): fg when it already clears floor against every ground, and
+// otherwise fg walked toward black or white -- farthestEnd, for the reason
+// raiseSemanticText gives -- until it does, but never past text. A step
+// that would out-contrast text on any ground ends the walk, because a dim
+// tier drawn brighter than the bright one has inverted the thing it exists
+// for: every label louder than the value beside it.
+//
+// The ceiling is why this is its own clamp rather than raiseSemanticText
+// with a different floor, and the measurement is solarized-light: that
+// clamp, unchanged, walks its #839496 to #697678, which is 3.31:1 on the
+// focused row where the theme's own Text is 3.14:1. With the ceiling it
+// stops at #6e7c7e, 3.05:1 -- legible, and still (only just) the dimmer of
+// the two. The band from the floor to that Text, 3.00 to 3.14:1, is all the
+// room the theme has; see DimTextContrastFloor.
+//
+// The ceiling stops the walk from CROSSING text; it does not lower a fg that
+// is already past it. kanagawa-lotus ships that way in herdr's own values
+// (#309), and it clears the floor, so it never reaches the walk at all.
+//
+// When nothing short of the ceiling clears the floor -- a Text that is
+// itself under it, which only an override produces -- this returns the best
+// point it reached, fg included, for the reason bestAlong gives: a clamp
+// that cannot help must not hurt. It does not clear the floor then, and
+// nothing would that keeps the tier dimmer than Text.
+//
+// An unmeasurable fg, text or ground returns fg untouched, which is the
+// terminal palette.
+func raiseDimText(fg Color, grounds []Color, text Color, floor float64) Color {
+	for _, c := range append([]Color{fg, text}, grounds...) {
+		if _, _, _, ok := rgb8(c); !ok {
+			return fg
+		}
+	}
+	if clearsFloor(fg, grounds, floor) {
+		return fg
+	}
+
+	end := farthestEnd(grounds)
+	best, bestRatio := fg, worstRatio(fg, grounds)
+	for f := dimTextMixStep; f < 1; f += dimTextMixStep {
+		mixed := mixToward(fg, end, f)
+		if outContrasts(mixed, text, grounds) {
+			break
+		}
+		if clearsFloor(mixed, grounds, floor) {
+			return mixed
 		}
 		if r := worstRatio(mixed, grounds); r > bestRatio {
 			best, bestRatio = mixed, r
 		}
 	}
 	return best
+}
+
+// outContrasts reports whether c reads with more contrast than ref on any
+// of grounds -- whether c, meant to be the quieter of the two, has become
+// the louder one somewhere.
+func outContrasts(c, ref Color, grounds []Color) bool {
+	for _, g := range grounds {
+		cr, cOK := contrastRatio(c, g)
+		rr, rOK := contrastRatio(ref, g)
+		if cOK && rOK && cr > rr {
+			return true
+		}
+	}
+	return false
 }
 
 // worstRatio is c's contrast against the ground it reads worst on. An
@@ -896,10 +1031,10 @@ func farthestEnd(grounds []Color) Color {
 	return white
 }
 
-// walkToward is the single mix both clamps above are made of: it steps from
-// `from` toward `toward` in contrastMixStep increments and returns the first
-// mix that clears floor against every ground, or `toward` itself when none
-// does.
+// walkToward is the single walk ensureContrast and raiseSemanticText are
+// made of: it steps from `from` toward `toward` in contrastMixStep
+// increments and returns the first mix that clears floor against every
+// ground, or `toward` itself when none does.
 //
 // It starts at contrastMixStep rather than at zero because both callers have
 // already established that `from` does not clear the floor.
@@ -910,20 +1045,26 @@ func farthestEnd(grounds []Color) Color {
 // grounds at once, where the segment can miss all of them; raiseSemanticText
 // handles its own give-up rather than trusting this one.
 func walkToward(from, toward Color, grounds []Color, floor float64) Color {
-	fromR, fromG, fromB, _ := rgb8(from)
-	towardR, towardG, towardB, _ := rgb8(toward)
 	for f := contrastMixStep; f < 1; f += contrastMixStep {
-		mixed := color.RGBA{
-			R: mixChannel(fromR, towardR, f),
-			G: mixChannel(fromG, towardG, f),
-			B: mixChannel(fromB, towardB, f),
-			A: 0xff,
-		}
-		if clearsFloor(mixed, grounds, floor) {
+		if mixed := mixToward(from, toward, f); clearsFloor(mixed, grounds, floor) {
 			return mixed
 		}
 	}
 	return toward
+}
+
+// mixToward is the point a fraction f of the way from `from` to `toward`,
+// channel by channel. Both colours must be measurable; every caller has
+// checked that before it starts walking.
+func mixToward(from, toward Color, f float64) Color {
+	fromR, fromG, fromB, _ := rgb8(from)
+	towardR, towardG, towardB, _ := rgb8(toward)
+	return color.RGBA{
+		R: mixChannel(fromR, towardR, f),
+		G: mixChannel(fromG, towardG, f),
+		B: mixChannel(fromB, towardB, f),
+		A: 0xff,
+	}
 }
 
 // clearsFloor reports whether c meets floor against every one of grounds. An
