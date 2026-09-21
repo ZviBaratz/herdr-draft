@@ -216,7 +216,7 @@ func TestPopup_TheRelistAsksNothingAboutABaseNobodyChose(t *testing.T) {
 }
 
 // TestPopup_AProjectChangeRetiresAChosenBaseCheck: both schedulers share
-// baseSettleVersion, so the question the newer project raises replaces the
+// reqs.baseSettle, so the question the newer project raises replaces the
 // one the re-list raised. The older answer is about a project the form has
 // left, and moving the base -- or putting its note on the panel -- from
 // there would be #194's stale-answer hole reopened on this path.

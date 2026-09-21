@@ -213,7 +213,7 @@ func frameSetup(full bool) testSetup {
 func resolveDirCheck(t *testing.T, m Model) Model {
 	t.Helper()
 	next, _ := m.handleDirResult(dirResultMsg{
-		req:       request{version: m.dirReqVersion, key: m.dir.Value()},
+		req:       request{version: m.reqs.dir, key: m.dir.Value()},
 		dirExists: true,
 		isGitRepo: true,
 	})
@@ -568,7 +568,7 @@ func TestAssembledForm_WhileTheProjectCheckIsOut(t *testing.T) {
 			m := newTestModel(t, frameSetup(true))
 			if tc.land != nil {
 				land := *tc.land
-				land.req = request{version: m.dirReqVersion, key: m.dir.Value()}
+				land.req = request{version: m.reqs.dir, key: m.dir.Value()}
 				next, _ := m.handleDirResult(land)
 				m = next
 			}
@@ -594,8 +594,8 @@ func TestAssembledForm_WhenTheOtherChecksTimeOut(t *testing.T) {
 		m.resolved.BaseRef = "release/1.2"
 		m.worktree.OfferBase("release/1.2")
 		m.worktree.SetBase("release/1.2")
-		m.baseSettleVersion++
-		next, _ := m.handleBaseSettled(baseSettledMsg{version: m.baseSettleVersion, timedOut: true})
+		m.reqs.baseSettle++
+		next, _ := m.handleBaseSettled(baseSettledMsg{version: m.reqs.baseSettle, timedOut: true})
 		m = next
 		m.form.FocusByID("worktree")
 
@@ -605,7 +605,7 @@ func TestAssembledForm_WhenTheOtherChecksTimeOut(t *testing.T) {
 	t.Run("title", func(t *testing.T) {
 		m := fillFrameModel(newAssembledModel(t, true), true)
 		next, _ := m.handleTitleResult(titleResultMsg{
-			req:      request{version: m.titleReqVersion, key: m.title.Value()},
+			req:      request{version: m.reqs.title, key: m.title.Value()},
 			branch:   m.worktree.Branch(),
 			timedOut: true,
 		})

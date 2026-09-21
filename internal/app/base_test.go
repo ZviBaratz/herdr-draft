@@ -214,7 +214,7 @@ func TestPopup_AnAnswerForAnEarlierResolutionIsDropped(t *testing.T) {
 	m := baseModel(t, "old-branch", map[string]string{"/repo-a old-branch": "3d4e5f6"})
 
 	next, _ := m.Update(baseSettledMsg{
-		version:  m.baseSettleVersion - 1,
+		version:  m.reqs.baseSettle - 1,
 		resolved: m.resolved.WithoutBase(),
 		note:     `ignoring base "old-branch" from projects.json: stale`,
 	})
@@ -235,7 +235,7 @@ func TestPopup_AnAnswerAfterTheUserChoseIsDropped(t *testing.T) {
 	m.baseTouched = true
 
 	next, _ := m.Update(baseSettledMsg{
-		version:  m.baseSettleVersion,
+		version:  m.reqs.baseSettle,
 		resolved: m.resolved.WithoutBase(),
 		note:     `ignoring base "old-branch" from projects.json`,
 	})

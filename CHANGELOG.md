@@ -145,6 +145,24 @@ without the popup. It drives herdr exclusively through the public CLI
   the form is frozen until it has: a second `⌃S` used to spend a second
   pick, a `⌃R ⌃R` had the pick submit the rebuilt form, and an edit reached
   the session unchecked. `esc` and the Cancel button still cancel.
+- **`⌃R ⌃R` discards the answers the form you cleared was still waiting
+  for** (#201). A clear rebuilds the whole form, and every check the old one
+  had in flight lands afterwards. Each source numbers its requests and drops
+  anything but the newest, but the numbering restarted at zero, so the first
+  check the rebuilt form issued carried the same number as one the discarded
+  form was already out under — and the guard, which compares nothing else,
+  accepted both, in arrival order. A repository's branch list, a directory
+  listing, the account picker's preview and a clauth reload could each land
+  from the form you cleared: the branch list also rewrites the branch shown
+  in the header, the directory listing can change which project a submit
+  would use, and since #200 a clauth answer rewrites the account row's
+  state and the reason on it. The project row's and the title check's
+  numbering already carried across, because a submit waits for those two.
+  All seven do now — including the check of whether the base you picked
+  still names a commit, which a clear was expected not to reach and does,
+  as soon as the once-per-repo fetch re-lists: a `⌃S` held for that check
+  could be released by the answer to the one before the clear, and the
+  session created from a base nothing had checked.
 - **A branch git cannot hold is refused where the branch is shown** (#199).
   The `worktree` panel names what is wrong with it on the line under the
   branch, and a submit lands the cursor in the branch input to fix it. The

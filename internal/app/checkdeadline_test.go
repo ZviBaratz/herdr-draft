@@ -120,7 +120,7 @@ func runWithin(t *testing.T, cmd tea.Cmd) tea.Msg {
 func TestDirCheck_AnswersUnknownWhenTheFilesystemDoesNot(t *testing.T) {
 	m := hungModel(t)
 
-	msg := runWithin(t, m.runDirCheck(request{version: m.dirReqVersion, key: "/stalled"}))
+	msg := runWithin(t, m.runDirCheck(request{version: m.reqs.dir, key: "/stalled"}))
 
 	res, ok := msg.(dirResultMsg)
 	if !ok {
@@ -164,7 +164,7 @@ func TestSubmit_ACheckThatTimesOutRefusesRatherThanCreating(t *testing.T) {
 
 	// The check for the value the row now holds, answering that it never
 	// answered.
-	next, _ = m.Update(dirResultMsg{req: request{version: m.dirReqVersion, key: "/stalled"}, timedOut: true})
+	next, _ = m.Update(dirResultMsg{req: request{version: m.reqs.dir, key: "/stalled"}, timedOut: true})
 	m = next.(Model)
 
 	if m.submitting {
@@ -195,7 +195,7 @@ func TestDirRow_ATimedOutCheckDoesNotReadAsAMissingDirectory(t *testing.T) {
 
 	unknown := settledRepoForm(t, newFakeGit())
 	retypeProject(&unknown, "/stalled")
-	next, _ := unknown.Update(dirResultMsg{req: request{version: unknown.dirReqVersion, key: "/stalled"}, timedOut: true})
+	next, _ := unknown.Update(dirResultMsg{req: request{version: unknown.reqs.dir, key: "/stalled"}, timedOut: true})
 	unknown = next.(Model)
 
 	missingRow, unknownRow := dirRow(missing), dirRow(unknown)
@@ -239,7 +239,7 @@ func TestTitleCheck_AnswersUnknownWhenGitDoesNot(t *testing.T) {
 	m := hungModel(t)
 
 	msg := runWithin(t, m.runTitleCheck(titleDebounceMsg{
-		req:        request{version: m.titleReqVersion, key: "Fix pagination"},
+		req:        request{version: m.reqs.title, key: "Fix pagination"},
 		branch:     "zvi/fix-pagination",
 		dir:        "/repo",
 		worktreeOn: true,
@@ -277,7 +277,7 @@ func TestSubmit_ATimedOutTitleCheckRefusesRatherThanCreating(t *testing.T) {
 	}
 
 	next, _ = m.Update(titleResultMsg{
-		req:      request{version: m.titleReqVersion, key: m.title.Value()},
+		req:      request{version: m.reqs.title, key: m.title.Value()},
 		branch:   m.worktree.Branch(),
 		timedOut: true,
 	})
@@ -464,9 +464,9 @@ func TestBaseSettle_ATimedOutTierAnswerIsDroppedOnceTheUserHasChosen(t *testing.
 	m := settledRepoForm(t, newFakeGit())
 	m.resolved.BaseRef = "old-branch"
 	m.baseTouched = true
-	m.baseSettleVersion++
+	m.reqs.baseSettle++
 
-	next, _ := m.Update(baseSettledMsg{version: m.baseSettleVersion, timedOut: true})
+	next, _ := m.Update(baseSettledMsg{version: m.reqs.baseSettle, timedOut: true})
 	m = next.(Model)
 
 	if m.baseUnknown() {
@@ -489,7 +489,7 @@ func TestSubmit_ACheckThatAnswersAfterATimeoutReleasesTheSubmit(t *testing.T) {
 
 	cmds := retypeProject(&m, "/slow")
 	m = landTitle(t, m, cmds)
-	next, _ := m.Update(dirResultMsg{req: request{version: m.dirReqVersion, key: "/slow"}, timedOut: true})
+	next, _ := m.Update(dirResultMsg{req: request{version: m.reqs.dir, key: "/slow"}, timedOut: true})
 	m = next.(Model)
 	if !m.dirUnknown {
 		t.Fatal("test setup: the timed-out check left no unknown to clear")
@@ -522,8 +522,8 @@ func TestBaseSettle_AnAnswerAfterATimeoutTakesTheRefusalBack(t *testing.T) {
 
 	// The same question, asked again and answered: the base still names a
 	// commit, so nothing is dropped and nothing is left to say.
-	m.baseSettleVersion++
-	next, _ := m.Update(baseSettledMsg{version: m.baseSettleVersion, resolved: m.resolved})
+	m.reqs.baseSettle++
+	next, _ := m.Update(baseSettledMsg{version: m.reqs.baseSettle, resolved: m.resolved})
 	m = next.(Model)
 
 	if m.baseUnknown() {
@@ -544,8 +544,8 @@ func timedOutBaseSettle(t *testing.T, ref string) Model {
 	m.resolved.BaseRef = ref
 	m.worktree.OfferBase(ref)
 	m.worktree.SetBase(ref)
-	m.baseSettleVersion++
-	next, _ := m.Update(baseSettledMsg{version: m.baseSettleVersion, timedOut: true})
+	m.reqs.baseSettle++
+	next, _ := m.Update(baseSettledMsg{version: m.reqs.baseSettle, timedOut: true})
 	m = next.(Model)
 	if !m.baseUnknown() {
 		t.Fatalf("test setup: the timed-out base check for %s recorded no unknown", ref)
@@ -614,7 +614,7 @@ func TestBaseSettle_ASuccessfulListDoesNotWipeTheUnknownsReason(t *testing.T) {
 	m := timedOutBaseSettle(t, "main")
 
 	next, _ := m.Update(baseResultMsg{
-		req:  request{version: m.baseReqVersion, key: m.dir.Value()},
+		req:  request{version: m.reqs.base, key: m.dir.Value()},
 		refs: []string{"main", "feature"},
 		head: "main",
 	})

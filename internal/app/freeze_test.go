@@ -309,7 +309,7 @@ func TestSubmit_APreviewDuringThePickLeavesItsPendingNote(t *testing.T) {
 	}
 
 	next, _ := m.Update(pickerPreviewMsg{
-		req: request{version: m.pickerReqVersion, key: m.dir.Value()},
+		req: request{version: m.reqs.picker, key: m.dir.Value()},
 		res: picker.Result{Profile: "alpha-2"},
 	})
 	m = next.(Model)

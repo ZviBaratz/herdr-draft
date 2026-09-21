@@ -304,7 +304,7 @@ func TestRepoConfig_StaleResultIsDropped(t *testing.T) {
 	before := m.placement.Value()
 
 	stale := dirResultMsg{
-		req:        request{version: m.dirReqVersion - 1, key: "/repo-old"},
+		req:        request{version: m.reqs.dir - 1, key: "/repo-old"},
 		dirExists:  true,
 		isGitRepo:  true,
 		memoryKey:  "/repo-old",
@@ -326,7 +326,7 @@ func TestRepoConfig_StaleResultIsDropped(t *testing.T) {
 	// ...and the CURRENT version still applies, so the guard is rejecting
 	// staleness rather than everything.
 	fresh := stale
-	fresh.req.version = m.dirReqVersion
+	fresh.req.version = m.reqs.dir
 	next, _ = m.Update(fresh)
 	m = next.(Model)
 	if got := m.placement.Value(); got != plan.PlacementTabHere {
