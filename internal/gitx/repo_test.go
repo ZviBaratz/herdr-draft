@@ -691,7 +691,7 @@ func TestFetchPrune(t *testing.T) {
 }
 
 // TestRepoRoot_LinkedWorktreeSharesTheOriginRoot is the required test for
-// spec §10's per-project memory key: a linked worktree and its origin must
+// v2 spec §10's per-project memory key: a linked worktree and its origin must
 // resolve to ONE root, or every worktree of a repository gets its own
 // projects.json entry and the feature does nothing for exactly the people
 // most likely to use it.

@@ -48,7 +48,7 @@ func TestResolve_UnknownKeysAreIgnored(t *testing.T) {
 }
 
 // TestResolve_V2PaletteKeys covers the four fields the v2 form added
-// (spec §7): each must be reachable from a `[palette]` override, and
+// (v2 spec §7): each must be reachable from a `[palette]` override, and
 // active_row_bg must accept the underscore-optional spelling the rest of
 // applyOverrideKey's multi-word keys do.
 func TestResolve_V2PaletteKeys(t *testing.T) {

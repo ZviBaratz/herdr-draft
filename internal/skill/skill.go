@@ -36,12 +36,13 @@ const (
 // binPath is baked in rather than left as a bare command name because the
 // binary is NOT on PATH: it lives inside the plugin's install root, which
 // herdr owns. Finding that root takes a `herdr plugin list --json` lookup
-// (its `plugin_root`; spec §2.2's claim that there was no such lookup is
-// corrected there, #167), and the binary printing the document already
-// knows the answer, so it says so and no agent has to repeat the lookup.
-// The consequence is deliberate: the rendered file is machine-specific,
-// and is regenerated after an upgrade, when its version is stale, or after
-// a switch between a GitHub install and a linked one, which moves it.
+// (its `plugin_root`; spawn-skill spec §2.2's claim that there was no
+// such lookup is corrected there, #167), and the binary printing the
+// document already knows the answer, so it says so and no agent has to
+// repeat the lookup. The consequence is deliberate: the rendered file is
+// machine-specific, and is regenerated after an upgrade, when its version
+// is stale, or after a switch between a GitHub install and a linked one,
+// which moves it.
 func Render(binPath, version string) string {
 	out := strings.ReplaceAll(spawnSkillDoc, binPlaceholder, binPath)
 	return strings.ReplaceAll(out, versionPlaceholder, version)

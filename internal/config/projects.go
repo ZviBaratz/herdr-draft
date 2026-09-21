@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// projectsFileName is spec §10's per-project memory file, alongside
+// projectsFileName is v2 spec §10's per-project memory file, alongside
 // recents.json and last-used.json under $HERDR_PLUGIN_STATE_DIR.
 const projectsFileName = "projects.json"
 
@@ -21,7 +21,7 @@ const projectsFileName = "projects.json"
 // from the tiers below.
 const projectsSchemaVersion = 1
 
-// maxProjectEntries is spec §10's cap. Beyond it, the least recently SEEN
+// maxProjectEntries is v2 spec §10's cap. Beyond it, the least recently SEEN
 // entry is evicted -- seen, not written: a project you keep opening keeps
 // its memory even if you have not created a session in it lately.
 const maxProjectEntries = 50

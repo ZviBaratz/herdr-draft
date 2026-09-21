@@ -74,7 +74,7 @@ func ExpandTilde(path string) string {
 }
 
 // CanonicalKey normalizes a project directory into the stable identity
-// per-project memory is keyed on (spec §10): tilde-expanded, made
+// per-project memory is keyed on (v2 spec §10): tilde-expanded, made
 // absolute, symlinks resolved, cleaned, with no trailing separator.
 //
 // Every step exists to keep ONE project from acquiring several

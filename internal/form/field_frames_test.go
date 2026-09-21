@@ -585,8 +585,8 @@ func TestFrames_OptionsPanel(t *testing.T) {
 }
 
 // buildOptionsInertForm is a kind that declares nothing, reached by a
-// click since Tab skips it: spec §7.1's one dim row, and a panel that says
-// why and still shows the kind's extra_args.
+// click since Tab skips it: agent-options spec §7.1's one dim row, and a
+// panel that says why and still shows the kind's extra_args.
 func buildOptionsInertForm(palette theme.Palette) Model {
 	f := NewOptionsField(palette)
 	f.SetKind("codex", KindOptions{ExtraArgs: []string{"--full-auto"}})

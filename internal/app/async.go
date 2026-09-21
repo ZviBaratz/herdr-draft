@@ -244,7 +244,7 @@ type dirResultMsg struct {
 	req       request
 	dirExists bool
 	isGitRepo bool
-	// memoryKey is the projects.json key for this directory (spec §10):
+	// memoryKey is the projects.json key for this directory (v2 spec §10):
 	// the repository root when it is a repo, so a linked worktree and its
 	// origin share one memory, and the canonical absolute path otherwise.
 	// "" when the directory does not exist -- there is nothing to remember
@@ -253,7 +253,7 @@ type dirResultMsg struct {
 	// rev-parse` and a symlink walk.
 	memoryKey string
 	// repoConfig is the selected project's committed .herdr-draft.toml
-	// (spec §11), read in the same background call for the same reason the
+	// (v2 spec §11), read in the same background call for the same reason the
 	// memory key is: both hang off the repository root this check already
 	// resolves, and both are inputs to the SINGLE defaults.Resolve that
 	// applyProjectDefaults runs when this lands.
@@ -318,9 +318,9 @@ func (m Model) runDirCheck(req request) tea.Cmd {
 		res, ok := awaitCheck(lt, deadline, func(ctx context.Context) dirResultMsg {
 			exists := git.DirExists(path)
 			isRepo := exists && git.IsGitRepo(path)
-			// Resolved ONCE and used twice: it is a `git rev-parse`, and both
-			// spec §10's memory key and spec §11's committed config are
-			// questions about the same repository.
+			// Resolved ONCE and used twice: it is a `git rev-parse`, and
+			// both v2 spec §10's memory key and v2 spec §11's committed
+			// config are questions about the same repository.
 			root := projectRepoRoot(ctx, git, path, exists, isRepo)
 			return dirResultMsg{
 				req:        req,
@@ -377,7 +377,7 @@ func projectRepoRoot(ctx context.Context, git gitSource, path string, exists, is
 	return root
 }
 
-// projectMemoryKey resolves spec §10's per-project memory key for path,
+// projectMemoryKey resolves v2 spec §10's per-project memory key for path,
 // which must already be tilde-expanded: the ORIGIN repository root when
 // one resolved (projectRepoRoot -- so every worktree of one repository
 // shares a single entry rather than accumulating one each), the canonical
@@ -409,13 +409,13 @@ func (m Model) handleDirDebounce(msg dirDebounceMsg) (Model, tea.Cmd) {
 
 // handleDirResult applies a directory-validity result: DirField's own
 // inline (invalid)/(direct) marker, WorktreeField's git-target gate, and
-// spec §10's layered defaults re-resolved for the project this directory
+// v2 spec §10's layered defaults re-resolved for the project this directory
 // belongs to (applyProjectDefaults, which also owns the worktree on/off
 // toggle -- see WorktreeField.SetOn's own doc comment on why that can only
 // be applied once the target is known to be a usable git repo).
 //
 // The defaults are re-applied on EVERY project change, not once per form
-// open: the top two tiers are per-project (projects.json and spec §11's
+// open: the top two tiers are per-project (projects.json and v2 spec §11's
 // committed .herdr-draft.toml), so a new project genuinely has a new
 // answer. What keeps that from fighting the user is the touched rule
 // (Model.worktreeTouched and friends), which replaced the one-shot flag
@@ -429,7 +429,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	if msg.timedOut {
 		// Unknown, not invalid (#202). Nothing else here runs: every
 		// answer this handler applies -- the worktree row's git target,
-		// the lane, spec §10's per-project defaults -- would be applying
+		// the lane, v2 spec §10's per-project defaults -- would be applying
 		// a zero value as though it were a verdict, and the point of the
 		// refusal below is that nothing is decided on a guess. The
 		// PREVIOUS project's answers stay where they are for the same
@@ -1544,7 +1544,7 @@ func (m Model) handlePickerCommit(msg pickerCommitMsg) (Model, tea.Cmd) {
 	return m.WithAccount(msg.res).beginSubmit()
 }
 
-// --- clauth: reload on account focus (spec §11) ---------------------------
+// --- clauth: reload on account focus (spec §8) ----------------------------
 
 // clauthResultMsg is versioned like every other async source in this file
 // (fix round 1: rapid re-focus of Account could otherwise let a slow
@@ -1558,11 +1558,12 @@ type clauthResultMsg struct {
 	err     error
 }
 
-// reloadClauthCmd re-loads clauth's status feed -- spec §11: "load at open
-// and on account focus." The open-time load happens synchronously in
-// Bootstrap/New (it gates whether AccountField is even constructed, a
-// static precondition that must be known before the form renders); this
-// is the focus-triggered reload (see reactToChanges' own FocusedID diff).
+// reloadClauthCmd re-loads clauth's status feed -- spec §8 reads clauth
+// "form-open + on account focus". The open-time load happens
+// synchronously in Bootstrap/New (it gates whether AccountField is even
+// constructed, a static precondition that must be known before the form
+// renders); this is the focus-triggered reload (see reactToChanges' own
+// FocusedID diff).
 //
 // Returns nil when m.deps.Clauth is nil -- defense in depth alongside
 // New's own Deps.Clauth != nil gate on constructing AccountField at all
@@ -1622,7 +1623,7 @@ func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
 
 // recoverAccountRow applies a reload to a row that is currently
 // unavailable: clauth was installed and broken when the popup opened, the
-// row said so, and focusing it (spec §11) has just asked clauth again.
+// row said so, and focusing it (spec §8) has just asked clauth again.
 //
 // Until #200 the answer went nowhere. handleClauthResult loaded the
 // profiles and nothing cleared the state, so the row kept reading
@@ -2032,12 +2033,12 @@ type statePersistedMsg struct{}
 // plugin state dir (spec §12): the project directory into recents.json's
 // most-recently-used list, the agent kind/placement/worktree toggle into
 // last-used.json, and the same three plus the base ref into projects.json
-// under THIS project's key (spec §10), so the next form-open defaults to
+// under THIS project's key (v2 spec §10), so the next form-open defaults to
 // what the user actually launched with last time -- globally, and more
 // specifically here. Called only on a fully successful submit -- a failed
 // one says nothing about what the user wants next.
 //
-// last-used.json keeps being written exactly as before: it is now spec
+// last-used.json keeps being written exactly as before: it is now v2 spec
 // §10's global fallback tier rather than the only memory, which is what
 // makes per-project memory a pure addition with no migration step and no
 // data loss for anyone upgrading.

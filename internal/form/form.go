@@ -432,11 +432,11 @@ func (m Model) Init() tea.Cmd {
 // the app layer, added in Task 20: unlike form.go's setter-oriented
 // surface (Setup.Sections, each field's own SetXxx methods), nothing in
 // this package previously let the app layer observe WHICH section is
-// currently focused at all -- needed for spec §11's "clauth: load ... on
-// account focus", which the app layer can only react to by polling this
-// after every Update and diffing against what it last saw (the same
-// before/after-comparison discipline every Section's own Update already
-// uses for its own value, applied here one level up).
+// currently focused at all -- needed for spec §8's "clauth profiles ...
+// form-open + on account focus", which the app layer can only react to by
+// polling this after every Update and diffing against what it last saw
+// (the same before/after-comparison discipline every Section's own Update
+// already uses for its own value, applied here one level up).
 func (m Model) FocusedID() string {
 	if m.ring == nil {
 		return ""

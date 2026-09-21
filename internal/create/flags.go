@@ -1,4 +1,4 @@
-// flags.go parses `herdr-draft create`'s command line -- spec §13's flag
+// flags.go parses `herdr-draft create`'s command line -- v2 spec §13's flag
 // list, which mirrors the form's own fields one for one.
 package create
 
@@ -16,7 +16,7 @@ import (
 // errHelpRequested marks an explicit `-h`/`--help`, which is not a usage
 // error: the usage goes to stdout and the process exits 0, the way Go's
 // own flag package treats it. Only an UNKNOWN verb or a malformed flag
-// exits 2 (spec §13).
+// exits 2 (v2 spec §13).
 var errHelpRequested = flag.ErrHelp
 
 // onFailureKeep/onFailureClean are `--on-failure`'s two values. Keep is
@@ -28,7 +28,7 @@ const (
 )
 
 // promptStdin is the `--prompt` value that reads the prompt from stdin
-// (spec §13). A literal "-" is the established shell convention and the
+// (v2 spec §13). A literal "-" is the established shell convention and the
 // only value a prompt could not otherwise be, since a real prompt
 // beginning with "-" is written by piping it in.
 const promptStdin = "-"
@@ -59,7 +59,7 @@ type request struct {
 	dryRun bool
 
 	// worktree is the --worktree/--no-worktree pair as one tri-state: nil
-	// when neither was given, so spec §10's resolved default stands.
+	// when neither was given, so v2 spec §10's resolved default stands.
 	worktree *bool
 
 	// reap is --reap/--no-reap as one tri-state, the worktree pair's shape
@@ -84,7 +84,7 @@ type request struct {
 // createUsage is `herdr-draft create --help`. Hand-written rather than
 // flag.PrintDefaults': the --worktree/--no-worktree pair is one decision
 // with two spellings, and the default column is a lie for every flag whose
-// real default comes from spec §10's resolver rather than from this file.
+// real default comes from v2 spec §10's resolver rather than from this file.
 const createUsage = `usage: herdr-draft create [flags]
 
 Create a herdr session without opening the popup. Every flag left unset

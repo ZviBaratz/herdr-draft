@@ -1,5 +1,5 @@
 // resolve.go turns a parsed command line plus the layered defaults into
-// the plan.Input the form would have produced from the same inputs (spec
+// the plan.Input the form would have produced from the same inputs (v2 spec
 // §13). It is the half of this package the equivalence test pins.
 package create
 
@@ -41,7 +41,7 @@ const clauthActive = "active"
 // have it.
 const clauthAuto = "auto"
 
-// tiers is every source spec §10's resolver consumes, already loaded, plus
+// tiers is every source v2 spec §10's resolver consumes, already loaded, plus
 // the two facts about the project directory that decide which of them
 // apply and where a successful create records itself.
 type tiers struct {
@@ -55,7 +55,7 @@ type tiers struct {
 	// projectDir is the resolved, absolute project directory every tier
 	// above was loaded for.
 	projectDir string
-	// projectKey is spec §10's per-project memory key: the repository root
+	// projectKey is v2 spec §10's per-project memory key: the repository root
 	// when the project is a repo, its canonical path otherwise. "" when the
 	// directory has no identity to remember.
 	projectKey string
@@ -138,9 +138,10 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		return resolution{}, err
 	}
 	for _, note := range t.repo.Notes {
-		// Spec §11 puts these in the focused row's panel. There is no panel
-		// here, and a repository key that was refused has to be visible
-		// somewhere or the person who committed it will conclude it works.
+		// v2 spec §11 puts these in the focused row's panel. There is no
+		// panel here, and a repository key that was refused has to be
+		// visible somewhere or the person who committed it will conclude
+		// it works.
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s: %s\n", config.RepoConfigFileName, note)
 	}
 
@@ -346,7 +347,7 @@ func loadTiers(ctx context.Context, cfg config.Config, env Env, deps Deps, proje
 // pane's shell (herdr:src/pane.rs, apply_pane_launch_env) but exports
 // HERDR_PLUGIN_CONFIG_DIR/HERDR_PLUGIN_STATE_DIR only to a launched PLUGIN
 // (herdr:src/app/api/plugins/env.rs) -- which is exactly the difference
-// spec §13 is about. So an empty config directory is the normal case here,
+// v2 spec §13 is about. So an empty config directory is the normal case here,
 // and it must mean "there is none": config.Load joins its argument with
 // "config.toml", so passing "" would read a file of that name out of the
 // caller's own working directory -- a project's own config.toml, parsed as
@@ -419,7 +420,7 @@ func loadMemory(stateDir string) (config.State, config.Projects) {
 // survive being followed is worse than none.
 //
 // Silence in any case would be worse than a line on stderr: the whole
-// point of spec §13 is that the command and the form produce the same
+// point of v2 spec §13 is that the command and the form produce the same
 // session, and one that quietly resolved from different inputs would
 // produce a different session with nothing anywhere saying why.
 func usablePluginEnv(env Env, stderr io.Writer) Env {
@@ -973,7 +974,7 @@ type explicitPrompt struct {
 // promptText resolves the initial prompt: --prompt (with "-" already read
 // from stdin by readPrompt) or, failing that, the prompt a chosen Linear
 // issue seeds through the USER's own template -- never a repository's,
-// which spec §11 forbids for exactly the reason it would be effective: it
+// which v2 spec §11 forbids for exactly the reason it would be effective: it
 // would become the agent's first instruction.
 func promptText(prompt explicitPrompt, issue *linear.Issue, cfg config.Config) string {
 	if prompt.given {
@@ -1035,7 +1036,7 @@ func (d Deps) linear(cfg config.Config, configDir string) (IssueSource, error) {
 // $HERDR_PLUGIN_CONTEXT_JSON wins field by field -- `herdr-draft create`
 // run as a plugin should use the richer context rather than ignore it --
 // and the three per-pane variables fill in whatever it does not carry,
-// which for a plain shell inside a pane is all of it (spec §13).
+// which for a plain shell inside a pane is all of it (v2 spec §13).
 func herdrContext(env Env) (herdrc.Context, error) {
 	var ctx herdrc.Context
 	if strings.TrimSpace(env.ContextJSON) != "" {
@@ -1057,7 +1058,7 @@ func herdrContext(env Env) (herdrc.Context, error) {
 	return ctx, nil
 }
 
-// requireContext is spec §13's lazy context requirement: only tab-here and
+// requireContext is v2 spec §13's lazy context requirement: only tab-here and
 // split-here need to know where "here" is. The message names the missing
 // variable exactly, because "missing context" tells a script author
 // nothing they can act on.
@@ -1166,12 +1167,13 @@ func workspaceByID(workspaces []herdrc.WorkspaceInfo, id string) (plan.Space, bo
 }
 
 // provenanceFlag, provenanceWorktree, provenanceCheckout and
-// provenanceExtraArgs are the provenance values spec §10's tier names cannot
-// express: a value the caller gave outright on the command line, the one
-// value a worktree decides by itself (placement spec §14: a worktree
-// session's placement is its own space), the base a linked checkout
-// supplies when none was chosen -- its own commit (#171) -- and a session
-// option left on inherit that [agents.extra_args] passes anyway (#209).
+// provenanceExtraArgs are the provenance values v2 spec §10's tier names
+// cannot express: a value the caller gave outright on the command line,
+// the one value a worktree decides by itself (placement spec §14: a
+// worktree session's placement is its own space), the base a linked
+// checkout supplies when none was chosen -- its own commit (#171) -- and
+// a session option left on inherit that [agents.extra_args] passes anyway
+// (#209).
 const (
 	provenanceFlag      = "flag"
 	provenanceWorktree  = "worktree"
@@ -1180,7 +1182,7 @@ const (
 )
 
 // provenanceOf turns the resolver's own tier attribution into the string
-// map --json prints (spec §10: "the resolver reports which tier supplied
+// map --json prints (v2 spec §10: "the resolver reports which tier supplied
 // each value, which is what lets ... `create --json` print its
 // provenance"). Callers overwrite individual entries as explicit flags
 // take over.

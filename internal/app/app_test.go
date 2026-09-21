@@ -307,7 +307,7 @@ type testSetup struct {
 	// and poking the field.
 	ClauthUnavailable string
 	LinearCache       []linear.Issue
-	// RepoConfig stands in for config.LoadRepoConfig (spec §11), so a test
+	// RepoConfig stands in for config.LoadRepoConfig (v2 spec §11), so a test
 	// gets a deterministic .herdr-draft.toml without putting one on disk.
 	// nil leaves Deps.RepoConfig nil, which is the production reader --
 	// see repoConfigModel and TestRepoConfig_ProductionLoaderReadsTheFile
@@ -497,7 +497,7 @@ func TestDirResult_AppliesWorktreeDefaultOnceAndReChecksTitle(t *testing.T) {
 
 	// A SECOND git-repo result for a different path resolves the same
 	// default (no per-project memory here), so the toggle does not move and
-	// there is nothing to re-check. Before spec §10's per-project memory
+	// there is nothing to re-check. Before v2 spec §10's per-project memory
 	// this was enforced by a one-shot worktreeDefaultApplied flag; now it
 	// falls out of the value being unchanged, which is the behavior that
 	// actually mattered -- see
@@ -1466,8 +1466,8 @@ func TestLinearResult_SuccessClearsAPreviousError(t *testing.T) {
 	}
 }
 
-// TestReactToChanges_AccountFocusReloadsClauth pins spec §11's own "load
-// at open and on account focus": focusing AccountField must schedule a
+// TestReactToChanges_AccountFocusReloadsClauth pins spec §8's own
+// "form-open + on account focus": focusing AccountField must schedule a
 // fresh clauth reload, and its result must reach AccountField.SetProfiles.
 func TestReactToChanges_AccountFocusReloadsClauth(t *testing.T) {
 	initial := clauth.Status{Schema: 1, Profiles: []clauth.Profile{{Name: "a"}, {Name: "b"}}}
@@ -2032,7 +2032,7 @@ func TestBrowsingIsReachableByTypingThroughUpdate(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	m = next.(Model)
 	m.Init()
-	// v2 opens focus on the title (spec §8), so reaching the project row
+	// v2 opens focus on the title (v2 spec §8), so reaching the project row
 	// is now a deliberate move -- exactly as it is for a real user.
 	if cmd := m.form.FocusByID("dir"); cmd != nil {
 		cmd()

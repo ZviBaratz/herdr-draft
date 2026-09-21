@@ -469,7 +469,7 @@ func (w *WorktreeField) noteBasePicked() {
 }
 
 // BasePicked reports whether the user has picked a base row themselves,
-// the HEAD row included -- spec §10's touched-versus-preselected rule for
+// the HEAD row included -- v2 spec §10's touched-versus-preselected rule for
 // the one field that cannot answer it from its own value (#262).
 //
 // The app layer reads this off the concrete type -- the Section interface
@@ -641,7 +641,7 @@ func (w *WorktreeField) SetBaseItems(version int, refs []string) {
 }
 
 // SetBase selects ref in the base picker, "" meaning the HEAD row -- the
-// mirror of Base(), and the setter spec §10's per-project memory needs in
+// mirror of Base(), and the setter v2 spec §10's per-project memory needs in
 // order to put a remembered base back on screen.
 //
 // A ref the current candidate pool does not (yet) hold is REMEMBERED and

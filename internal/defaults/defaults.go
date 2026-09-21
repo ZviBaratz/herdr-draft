@@ -1,5 +1,5 @@
 // Package defaults resolves herdr-draft's layered creation defaults
-// (spec §10). It is pure: every tier is passed in already loaded, so the
+// (v2 spec §10). It is pure: every tier is passed in already loaded, so the
 // form (internal/app) and the headless command resolve identically and
 // neither can drift from the other. This is the ONLY place the precedence
 // chain exists.
@@ -7,7 +7,7 @@
 // Before this package the chain lived inline in app.New -- three separate
 // two-call ladders (placement, agent kind, worktree toggle), each
 // expressing "config.toml, then last-used.json" in its own idiom, with no
-// way for anything but the form to reach them. Extracting it is spec §10's
+// way for anything but the form to reach them. Extracting it is v2 spec §10's
 // first piece of work, and its acceptance criterion was that
 // internal/app's four `assembled-*` golden frames stay byte-identical.
 package defaults
@@ -24,7 +24,7 @@ import (
 // Tier names where a resolved value came from, so callers can attribute it
 // (the focused row's panel renders "from .herdr-draft.toml"; `create
 // --json` prints its provenance). The constants are ordered by precedence:
-// a LATER tier overrides an earlier one, which is spec §10's "precedence,
+// a LATER tier overrides an earlier one, which is v2 spec §10's "precedence,
 // highest first" list read bottom-up.
 type Tier int
 
@@ -113,7 +113,7 @@ type Sources struct {
 	Global config.State
 	// Repo is the selected project's committed .herdr-draft.toml
 	// (TierRepoConfig), already through config.LoadRepoConfig's own
-	// allow-list -- spec §11's trust model is enforced THERE, not here.
+	// allow-list -- v2 spec §11's trust model is enforced THERE, not here.
 	// Its zero value means "no repo config", which is what a non-repo
 	// project, an absent file and a malformed one all look like.
 	//
@@ -194,7 +194,7 @@ type Resolved struct {
 	// a candidate list naming it has landed.
 	BaseRef string
 	// LinearBranchName reports whether a chosen Linear issue's own
-	// branchName owns the branch (spec §11's repo-config key of the same
+	// branchName owns the branch (v2 spec §11's repo-config key of the same
 	// name). True unless a repo config says otherwise, and false means the
 	// branch is derived from the TITLE with BranchPrefix, exactly as it is
 	// in manual mode -- the app layer's reading of a key the spec names
@@ -296,7 +296,7 @@ func Resolve(s Sources) Resolved {
 	r.setAgentKind(&r.AgentKind, s.Global.LastKind, TierGlobalMemory, s.KnownAgentKinds)
 
 	// --- TierRepoConfig: .herdr-draft.toml -------------------------------
-	// The repository's committed default (spec §11). It sits here, above
+	// The repository's committed default (v2 spec §11). It sits here, above
 	// last-used.json and below projects.json, because a team's committed
 	// default should beat whatever the user last did in some OTHER
 	// repository and lose to what they last did in THIS one.
@@ -419,10 +419,10 @@ func kindKnown(known []string, kind string) bool {
 // Unlike the app-layer helper this replaced, "new-space" parses as a REAL
 // value rather than as "nothing to apply": a tier that says "new-space"
 // explicitly is expressing a choice, and under the old shape it silently
-// lost to a LOWER tier's "tab-here" -- so a config.toml default_placement of
-// "tab-here" could not be overridden by a last-used.json of "new-space",
-// contradicting spec §10's own precedence. See PlacementValue for the write
-// side.
+// lost to a LOWER tier's "tab-here" -- so a config.toml default_placement
+// of "tab-here" could not be overridden by a last-used.json of
+// "new-space", contradicting v2 spec §10's own precedence. See
+// PlacementValue for the write side.
 func ParsePlacement(s string) (plan.Placement, bool) {
 	switch s {
 	case "new-space":

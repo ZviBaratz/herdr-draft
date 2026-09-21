@@ -1,7 +1,12 @@
 # herdr-draft — asking the agent to mark its pane ready for pane-reaper
 
 - **Date:** 2026-09-17
-- **Status:** approved by the owner 2026-09-17 (§11 resolved). Not yet implemented.
+- **Status:** approved by the owner 2026-09-17 (§11 resolved), and
+  implemented. Every amendment below is in the tree: the sentence and its
+  rule (`internal/plan/reap.go`), `⌃X` in the prompt
+  (`internal/form/keys.go`), the `[reaper]` table and its resolved value
+  (`internal/defaults`), `[reaper]` on `.herdr-draft.toml`'s deny-list,
+  and `--reap`/`--no-reap` on `create`.
 - **Amends:** v2 spec §6 (the `prompt` row's value cell), v2 spec §8 (the key
   grammar gains `⌃X` in the prompt), v2 spec §10 (one more resolved value,
   with a short chain), v2 spec §11 (one more forbidden table), v2 spec §13

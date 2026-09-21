@@ -14,7 +14,7 @@ func boolp(b bool) *bool { return &b }
 // skip-an-unknown-kind rule without pinning the full 23.
 var knownKinds = []string{"claude", "codex", "gemini"}
 
-// TestResolve_Precedence is spec §10's precedence chain, one case per
+// TestResolve_Precedence is v2 spec §10's precedence chain, one case per
 // (field, winning tier) pair: each case stacks every tier BELOW the winner
 // with a different value, so a case can only pass if the tier that is
 // supposed to win actually does.
@@ -220,7 +220,7 @@ func TestResolve_Precedence(t *testing.T) {
 			},
 		},
 		{
-			// Spec §11's whole allowed surface arriving at once, with
+			// v2 spec §11's whole allowed surface arriving at once, with
 			// every tier below it stacked differently, so nothing here can
 			// pass by accident. branch_prefix is the one the repo tier
 			// takes from config.toml, which no other tier can.
@@ -251,7 +251,7 @@ func TestResolve_Precedence(t *testing.T) {
 			wantWorktree:     true,
 			wantPlacement:    plan.PlacementSplitHere,
 			// A repository does not choose which agent runs on your
-			// machine (spec §11's forbidden list), so the agent kind stays
+			// machine (v2 spec §11's forbidden list), so the agent kind stays
 			// last-used.json's.
 			wantAgentKind:           "gemini",
 			wantBaseRef:             "trunk",
@@ -268,7 +268,7 @@ func TestResolve_Precedence(t *testing.T) {
 			},
 		},
 		{
-			// The other side of spec §10's tier 1-vs-2 ordering: what you
+			// The other side of v2 spec §10's tier 1-vs-2 ordering: what you
 			// last did in THIS repository outranks what the repository
 			// itself ships, because it is both deliberate and recent while
 			// the committed default is what a NEW checkout starts from.
@@ -613,7 +613,7 @@ func TestTierString(t *testing.T) {
 
 // TestTierOrderIsPrecedence pins the ordering the whole package depends on:
 // Resolve applies tiers in ascending constant order and lets the last
-// writer win, so the constants ARE spec §10's precedence list.
+// writer win, so the constants ARE v2 spec §10's precedence list.
 func TestTierOrderIsPrecedence(t *testing.T) {
 	ordered := []Tier{TierBuiltin, TierUserConfig, TierGlobalMemory, TierRepoConfig, TierProjectMemory}
 	for i := 1; i < len(ordered); i++ {

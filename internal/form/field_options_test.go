@@ -123,8 +123,8 @@ func TestOptionsField_ATypedSeedLandsOnOther(t *testing.T) {
 	}
 }
 
-// The part grammar (spec §7.2, the worktree panel's): ↑↓ between parts,
-// ←→ along the focused part's chips.
+// The part grammar (agent-options spec §7.2, the worktree panel's): ↑↓
+// between parts, ←→ along the focused part's chips.
 func TestOptionsField_PartGrammar(t *testing.T) {
 	f := newClaudeOptions(t, nil)
 	f.Focus()
@@ -276,8 +276,9 @@ func TestOptionsField_TypingOnAClosedLineIsIgnored(t *testing.T) {
 	}
 }
 
-// The name input refuses an edit that would make an invalid id (spec
-// §7.2): a leading dash is how a value becomes a flag.
+// The name input refuses an edit that would make an invalid id
+// (agent-options spec §7.2): a leading dash is how a value becomes a
+// flag.
 func TestOptionsField_NameRefusesAnInvalidEdit(t *testing.T) {
 	f := newClaudeOptions(t, nil)
 	f.Focus()
@@ -296,8 +297,8 @@ func TestOptionsField_NameRefusesAnInvalidEdit(t *testing.T) {
 	}
 }
 
-// Spec §7.2: a kind's choices persist for the life of the popup, so a trip
-// through another agent kind and back restores them.
+// Agent-options spec §7.2: a kind's choices persist for the life of the
+// popup, so a trip through another agent kind and back restores them.
 func TestOptionsField_AKindsChoicesSurviveARoundTrip(t *testing.T) {
 	f := newClaudeOptions(t, map[string]string{"effort": "high"})
 	f.Focus()
@@ -312,8 +313,9 @@ func TestOptionsField_AKindsChoicesSurviveARoundTrip(t *testing.T) {
 	}
 }
 
-// Spec §7.1's inert row: a kind that declares nothing costs one dim line,
-// no focus stop, and ignores input even when a click focuses it.
+// Agent-options spec §7.1's inert row: a kind that declares nothing costs
+// one dim line, no focus stop, and ignores input even when a click
+// focuses it.
 func TestOptionsField_AKindWithNothingDeclaredIsInert(t *testing.T) {
 	f := NewOptionsField(theme.Default())
 	f.SetKind("codex", KindOptions{ExtraArgs: []string{"--full-auto"}})
@@ -338,8 +340,9 @@ func TestOptionsField_AKindWithNothingDeclaredIsInert(t *testing.T) {
 	}
 }
 
-// Spec §7.1/§7.2: extra_args' own pin is what an inherited option launches
-// with, so the row shows it (dim) and the hint names where it comes from.
+// Agent-options spec §7.1/§7.2: extra_args' own pin is what an inherited
+// option launches with, so the row shows it (dim) and the hint names
+// where it comes from.
 func TestOptionsField_ExtraArgsPinShowsThroughInherit(t *testing.T) {
 	f := NewOptionsField(theme.Default())
 	f.SetKind("claude", KindOptions{

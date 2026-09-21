@@ -138,11 +138,10 @@ const (
 // `lipgloss.NewStyle().Background(bg).Width(w).Inline(true).Render(...)`
 // applied to a string containing one inner Foreground(...).Render(...)
 // span: the text between that span and the line's padding renders with
-// NO background code at all). Spec §7 requires "panel background
-// painted explicitly across the full popup area (do not rely on
-// terminal-default bg inside the popup PTY)" -- a background that visibly
-// drops out after the first accent-colored span in a line would violate
-// exactly that.
+// NO background code at all). Spec §7 requires "panel background fill
+// (explicitly painted — do not rely on terminal-default bg mapping
+// inside the popup PTY)" -- a background that visibly drops out after the
+// first accent-colored span in a line would violate exactly that.
 //
 // The fix, verified against the same kind of real-bytes inspection:
 // reassert bg's own SGR "set background" code (built via

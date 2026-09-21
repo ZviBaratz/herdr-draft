@@ -124,8 +124,8 @@ type Input struct {
 	// declare, which neither caller can produce.
 	AgentOptions agentopts.Values
 	// AccountPin is a clauth account pin, or "" for the active/unpinned
-	// account. Pinning is only valid when AgentKind == "claude" (spec
-	// §6.7); Build rejects any other combination.
+	// account. Pinning is only valid when AgentKind == "claude" (spec §6
+	// field 7); Build rejects any other combination.
 	AccountPin string
 	// AccountLaunch selects how AccountPin reaches the pane; the zero value is
 	// LaunchClauthStart. Consulted only when AccountPin is set and AgentKind
@@ -301,7 +301,7 @@ type Op struct {
 const defaultSplitDirection = "right"
 
 // claudeAgentKind is the only AgentKind for which account pinning
-// (Input.AccountPin) is meaningful (spec §6.7).
+// (Input.AccountPin) is meaningful (spec §6 field 7).
 const claudeAgentKind = "claude"
 
 // Build maps a completed creation form to an ordered list of herdr

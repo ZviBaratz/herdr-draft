@@ -45,7 +45,7 @@ func TestProjectsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestProjectsOnDiskShape pins the file format spec §10 documents, so a
+// TestProjectsOnDiskShape pins the file format v2 spec §10 documents, so a
 // change to it is a deliberate act rather than a struct-tag accident: this
 // file is read by a future herdr-draft, and by anyone debugging one.
 func TestProjectsOnDiskShape(t *testing.T) {
@@ -88,8 +88,8 @@ func TestProjectsOnDiskShape(t *testing.T) {
 	}
 }
 
-// TestProjectsEvictsLeastRecentlySeenAtTheCap pins spec §10's "capped at 50
-// entries, evicting least-recently-seen".
+// TestProjectsEvictsLeastRecentlySeenAtTheCap pins v2 spec §10's "capped
+// at 50 entries, evicting least-recently-seen".
 func TestProjectsEvictsLeastRecentlySeenAtTheCap(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	p := Projects{}
@@ -155,10 +155,11 @@ func TestProjectsTouchedIgnoresAnEmptyKey(t *testing.T) {
 	}
 }
 
-// TestLoadProjectsDiscardsUnusableFiles pins spec §10's "corrupt or missing
-// file discarded silently, like every other state file": every one of these
-// must yield an empty Projects and a nil error, never a failure the rest of
-// the app has to handle.
+// TestLoadProjectsDiscardsUnusableFiles applies spec §12's loss-tolerance
+// rule -- "corrupt/missing state files are discarded silently" -- to v2
+// spec §10's projects.json: every one of these must yield an empty
+// Projects and a nil error, never a failure the rest of the app has to
+// handle.
 func TestLoadProjectsDiscardsUnusableFiles(t *testing.T) {
 	cases := []struct {
 		name    string

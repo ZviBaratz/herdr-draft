@@ -7,7 +7,7 @@
 // therefore carry different trust. config.toml is the user's own; this one
 // arrives with `git clone`.
 //
-// Spec §11's trust model, quoted, because it is the requirement rather
+// v2 spec §11's trust model, quoted, because it is the requirement rather
 // than a guideline:
 //
 //	A file that arrives with `git clone` may only choose among values the
@@ -33,13 +33,13 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 )
 
-// RepoConfigFileName is spec §11's committed repo-level config. It is read
+// RepoConfigFileName is v2 spec §11's committed repo-level config. It is read
 // from the repository ROOT -- gitx.RepoRoot's answer, which derives from
 // `--git-common-dir` rather than `--show-toplevel`, so a linked worktree
 // and its origin read one and the same file.
 const RepoConfigFileName = ".herdr-draft.toml"
 
-// repoAllowedKeys is spec §11's allow-list, and the single source of truth
+// repoAllowedKeys is v2 spec §11's allow-list, and the single source of truth
 // for what a repository may set: it drives BOTH the "is this key ignored?"
 // classification below AND value extraction (repoString/repoBool refuse a
 // key that is not in here). Nothing is read out of the file by any other
@@ -51,7 +51,7 @@ const RepoConfigFileName = ".herdr-draft.toml"
 // [clauth]), and keeping the allowed surface flat means a table header in
 // the file is always, by construction, something to reject.
 //
-// CHANGING THIS SET IS A TRUST-BOUNDARY CHANGE. Read spec §11 first, and
+// CHANGING THIS SET IS A TRUST-BOUNDARY CHANGE. Read v2 spec §11 first, and
 // see TestRepoAllowedKeysIsExactlyTheSpecList, which pins it.
 var repoAllowedKeys = map[string]bool{
 	"branch_prefix":      true,
@@ -62,7 +62,7 @@ var repoAllowedKeys = map[string]bool{
 }
 
 // repoDeniedKey is one entry on the explicit deny list: a key (or whole
-// table) spec §11 names as forbidden, with the short reason the note
+// table) v2 spec §11 names as forbidden, with the short reason the note
 // carries. The reason is the point -- "ignored" alone teaches nobody where
 // the trust boundary is.
 type repoDeniedKey struct {
@@ -74,7 +74,7 @@ type repoDeniedKey struct {
 	reason string
 }
 
-// repoDeniedKeys is spec §11's forbidden list, in the spec's own order.
+// repoDeniedKeys is v2 spec §11's forbidden list, in the spec's own order.
 //
 // It is NOT what makes a key be ignored -- repoAllowedKeys is, and
 // anything absent from it is ignored whether or not it appears here. This
@@ -98,8 +98,8 @@ var repoDeniedKeys = []repoDeniedKey{
 }
 
 // init enforces the one invariant that keeps the two lists honest: nothing
-// spec §11 forbids may appear on the allow-list, as itself or as a child of
-// a forbidden table.
+// v2 spec §11 forbids may appear on the allow-list, as itself or as a
+// child of a forbidden table.
 //
 // This is the guard against the realistic future mistake -- a contributor
 // who wants `prompt_template` to work adds it to repoAllowedKeys and
@@ -111,13 +111,13 @@ func init() {
 	for _, d := range repoDeniedKeys {
 		if repoAllowedKeys[d.key] {
 			panic("config: " + RepoConfigFileName + " key " + d.key +
-				" is both allowed and forbidden -- see spec §11's trust model")
+				" is both allowed and forbidden -- see v2 spec §11's trust model")
 		}
 		for k := range repoAllowedKeys {
 			if strings.HasPrefix(k, d.key+".") {
 				panic("config: " + RepoConfigFileName + " key " + k +
 					" is allowed but sits inside the forbidden table " + d.key +
-					" -- see spec §11's trust model")
+					" -- see v2 spec §11's trust model")
 			}
 		}
 	}
@@ -137,7 +137,7 @@ func init() {
 //
 // The zero value is a valid "no repo config": every field unset, no notes.
 type RepoConfig struct {
-	// BranchPrefix is spec §11's `branch_prefix`, ALREADY validated:
+	// BranchPrefix is v2 spec §11's `branch_prefix`, ALREADY validated:
 	// LoadRepoConfig runs it through gitx.ValidateBranchPrefix and drops a
 	// rejected one to "" with the reason on Notes, so what reaches
 	// defaults.Resolve is either usable or absent. Dropping to "" is what
@@ -146,21 +146,21 @@ type RepoConfig struct {
 	// own rejected-prefix fallback, which is a different question with a
 	// different answer.
 	BranchPrefix string
-	// DefaultWorktree is spec §11's `default_worktree`.
+	// DefaultWorktree is v2 spec §11's `default_worktree`.
 	DefaultWorktree *bool
-	// DefaultPlacement is spec §11's `default_placement`, in config.toml's
+	// DefaultPlacement is v2 spec §11's `default_placement`, in config.toml's
 	// own vocabulary ("new-space"/"tab-here"/"split-here"). An
 	// unrecognized value is not rejected here: defaults.ParsePlacement
 	// already treats one as "this tier supplies nothing".
 	DefaultPlacement string
-	// DefaultBase is spec §11's `default_base`: the default base ref for a
+	// DefaultBase is v2 spec §11's `default_base`: the default base ref for a
 	// worktree branch. It reaches `herdr worktree create --base <value>`
 	// as argv, which is a `git clone`-delivered value meeting a flag
 	// parser -- closed at the runner boundary (internal/herdrc's argv
 	// hardening), not here, so that one rule covers every flag rather than
 	// one validator per field.
 	DefaultBase string
-	// LinearBranchName is spec §11's `linear_branch_name`: whether a
+	// LinearBranchName is v2 spec §11's `linear_branch_name`: whether a
 	// chosen Linear issue's own branchName owns the branch. nil (the key
 	// is absent) leaves the built-in true.
 	LinearBranchName *bool
@@ -355,13 +355,13 @@ func repoBool(raw map[string]any, key string, notes *[]string) *bool {
 //
 // That panic is the second half of the fail-closed design (init is the
 // first): extraction is impossible without an allow-list entry, and an
-// allow-list entry for anything spec §11 forbids panics at init. A
+// allow-list entry for anything v2 spec §11 forbids panics at init. A
 // contributor therefore cannot make a forbidden key take effect by editing
 // one place, and neither edit can be silent.
 func lookupAllowed(raw map[string]any, key string) (any, bool) {
 	if !repoAllowedKeys[key] {
 		panic("config: " + RepoConfigFileName + " key " + key +
-			" is read but not on the allow-list -- see spec §11's trust model")
+			" is read but not on the allow-list -- see v2 spec §11's trust model")
 	}
 	v, ok := raw[key]
 	return v, ok

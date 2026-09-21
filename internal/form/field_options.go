@@ -112,7 +112,7 @@ type OptionsField struct {
 	kind  string
 	state *kindState
 	// kinds keeps every kind this popup has shown, so going claude ->
-	// codex -> claude restores the choices made (spec §7.2).
+	// codex -> claude restores the choices made (agent-options spec §7.2).
 	kinds map[string]*kindState
 	part  int
 
@@ -131,7 +131,8 @@ func (f *OptionsField) ID() string { return "options" }
 func (f *OptionsField) Label() string { return optionsRowLabel }
 
 // Enabled reports whether the selected kind declares anything to choose.
-// One that does not keeps its row (spec §7.1) but takes no focus stop.
+// One that does not keeps its row (agent-options spec §7.1) but takes no
+// focus stop.
 func (f *OptionsField) Enabled() bool { return len(f.state.lines) > 0 }
 
 // Kind is the agent kind the field currently shows.
@@ -272,7 +273,7 @@ func (f *OptionsField) Blur() {
 	f.syncNameFocus()
 }
 
-// Update is the worktree panel's grammar (spec §7.2):
+// Update is the worktree panel's grammar (agent-options spec §7.2):
 //
 //   - ↑↓ move between parts, clamped.
 //   - ←→ move the chips of a chip part. On a name part they, and every
@@ -338,9 +339,9 @@ func (f *OptionsField) Update(msg tea.Msg) tea.Cmd {
 }
 
 // updateName forwards msg to l's name input and refuses the edit if it
-// leaves an invalid value behind (spec §7.2): a paste of `--foo` or a
-// leading dash never lands. An empty input is always allowed -- it is how
-// a name is cleared -- and sends nothing.
+// leaves an invalid value behind (agent-options spec §7.2): a paste of
+// `--foo` or a leading dash never lands. An empty input is always allowed
+// -- it is how a name is cleared -- and sends nothing.
 func (f *OptionsField) updateName(l *optionLine, msg tea.Msg) tea.Cmd {
 	before := l.name.Value()
 	cmd := l.name.Update(msg)
@@ -419,10 +420,10 @@ func (f *OptionsField) rowValue(l *optionLine) (text string, dim bool) {
 	return "", false
 }
 
-// Row states what the session will launch with (spec §7.1): the chosen
-// options joined by " · ", extra_args' pins dim where an option inherits,
-// `<kind>'s own settings` when nothing is set anywhere, and `none for
-// <kind>` for a kind that declares nothing.
+// Row states what the session will launch with (agent-options spec §7.1):
+// the chosen options joined by " · ", extra_args' pins dim where an
+// option inherits, `<kind>'s own settings` when nothing is set anywhere,
+// and `none for <kind>` for a kind that declares nothing.
 //
 // Segments are laid down whole while they fit; the first that does not is
 // cut at its tail and ends the row, so what survives a narrow window is
@@ -479,7 +480,7 @@ func (f *OptionsField) kindName() string {
 }
 
 // hint is the dim sentence under the parts: what the focused part will
-// send (spec §7.2).
+// send (agent-options spec §7.2).
 func (f *OptionsField) hint() string {
 	part, ok := f.current()
 	if !ok {
@@ -537,9 +538,9 @@ func (f *OptionsField) extraArgsLine() string {
 
 // Panel is one part per option, then -- as room allows, and given up
 // bottom-first -- the hint, the extra_args line, the notes and the
-// provenance line (spec §7.2). The parts go last, and when even they
-// outnumber the rows, the ones kept are a window around the cursor, so the
-// part being changed is never the one cut.
+// provenance line (agent-options spec §7.2). The parts go last, and when
+// even they outnumber the rows, the ones kept are a window around the
+// cursor, so the part being changed is never the one cut.
 func (f *OptionsField) Panel(width, h int) string {
 	if h < 1 {
 		h = 1
