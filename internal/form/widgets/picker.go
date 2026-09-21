@@ -999,6 +999,15 @@ func (p *Picker) MarkedView(width, height int, zonePrefix string) string {
 	// bar is inert rather than selecting the row behind it -- the bar is
 	// not draggable either (v3 spec §8.5's stated non-goal), so there is
 	// nothing for a press on it to mean.
+	//
+	// The cursor row's fill below is palette.SurfaceFill(PanelBG) and not
+	// the Surface field (#149). A picker is always composed into the
+	// detail panel, which form.go paints PanelBG end to end, and raw
+	// Surface is under SurfaceFillContrastFloor against PanelBG on twelve
+	// of the seventeen measurable builtins -- 1.07:1 on rose-pine, where
+	// the cursor row had no visible band at all. catppuccin is 1.40:1, so
+	// the default theme and every golden frame in this repository are
+	// unaffected, which is how it shipped.
 	inner := width - lay.bar
 	lines := make([]string, height)
 
@@ -1019,7 +1028,7 @@ func (p *Picker) MarkedView(width, height int, zonePrefix string) string {
 		}
 		marked := Zones.Mark(zoneID, rendered)
 		if cursor {
-			lines[row] = PaintLine(marked, inner, p.palette.Surface) + bar
+			lines[row] = PaintLine(marked, inner, p.palette.SurfaceFill(p.palette.PanelBG)) + bar
 			continue
 		}
 		lines[row] = widthStyle(inner).Render(marked) + bar

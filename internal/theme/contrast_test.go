@@ -258,6 +258,71 @@ func TestBuiltinPalettes_InputFillIsVisibleOnBothGrounds(t *testing.T) {
 	}
 }
 
+// TestBuiltinPalettes_SurfaceFillIsVisibleOnThePanel is #149, and it is a
+// REGION floor rather than a word floor -- the sibling of
+// ActiveRowContrastFloor and InputFillContrastFloor, not of
+// SemanticTextContrastFloor. Both regions it covers are a fill whose edge
+// the eye has to catch, and both carry a second signal that survives the
+// fill going missing: the picker's cursor row keeps its marker glyph and
+// its bold text, and the cancel button keeps its label. The words drawn on
+// them are Text, DimText and the picker's tones, which have floors of their
+// own. 1.25:1, for the reason InputFillContrastFloor gives, and its own
+// constant for the reason InputFillContrastFloor gives too.
+//
+// What it guards is v2's invisible-rule defect in a third field. Surface on
+// PanelBG is under 1.25:1 on TWELVE of the seventeen measurable builtins --
+// one-dark and rose-pine at 1.07, one-light 1.09, rose-pine-dawn 1.10,
+// vesper 1.11, solarized-light 1.14, solarized 1.15, kanagawa 1.16,
+// tokyo-night 1.17, gruvbox-light 1.21, kanagawa-lotus and nord 1.24 -- and
+// the default theme is not one of them (catppuccin is 1.40), which is
+// exactly how twelve themes shipped a cursor row with no band and a cancel
+// button that reads as plain text through a green suite.
+func TestBuiltinPalettes_SurfaceFillIsVisibleOnThePanel(t *testing.T) {
+	for name := range builtinPalettes {
+		t.Run(name, func(t *testing.T) {
+			palette, ok := Builtin(name)
+			if !ok {
+				t.Fatalf("Builtin(%q) not found", name)
+			}
+			// The same missing-data exemption as everywhere else in this
+			// file: terminal's Surface is herdr's Color::Reset, and
+			// widgets.PaintLine declines to paint a NoColor at all, so
+			// there is no fill on screen to measure.
+			if _, inherit := palette.Surface.(lipgloss.NoColor); inherit {
+				if name != "terminal" {
+					t.Fatalf("Surface is NoColor: only the terminal palette may be exempt")
+				}
+				return
+			}
+
+			got, ok := contrastRatio(palette.SurfaceFill(palette.PanelBG), palette.PanelBG)
+			if !ok {
+				t.Fatalf("the surface fill is unmeasurable against PanelBG")
+			}
+			if got < SurfaceFillContrastFloor-contrastAssertionEpsilon {
+				t.Errorf("a Surface-filled region on the panel is %.3f:1 against it, want >= %.2f:1 -- a band nobody can see is not a band (#149)",
+					got, SurfaceFillContrastFloor)
+			}
+		})
+	}
+}
+
+// TestSurfaceFill_KeepsSurfaceWhereItIsAlreadyLegible is the fidelity half,
+// and the reason #149 is a floor and not a repaint: herdr fills its own
+// secondary button and selected row with surface0, so where surface0 is
+// visible against the panel we use surface0 and the screen matches herdr's.
+// catppuccin is the case that matters -- it is the default and what every
+// golden frame renders on, at 1.40:1 against its own PanelBG.
+func TestSurfaceFill_KeepsSurfaceWhereItIsAlreadyLegible(t *testing.T) {
+	palette := Default()
+	if ratio, _ := contrastRatio(palette.Surface, palette.PanelBG); ratio < SurfaceFillContrastFloor {
+		t.Fatalf("catppuccin's Surface is %.3f:1 against its panel -- this fixture needs a theme that clears the floor unaided", ratio)
+	}
+	if got := palette.SurfaceFill(palette.PanelBG); !colorEqual(got, palette.Surface) {
+		t.Errorf("SurfaceFill = %v, want Surface %v unchanged where it is already legible", got, palette.Surface)
+	}
+}
+
 // TestInputFill_KeepsSurfaceWhereItIsAlreadyLegible is the fidelity half of
 // InputFill's contract, and the reason it is not simply "always mix": herdr
 // fills its own inputs with surface0, so where surface0 is visible against
@@ -304,11 +369,46 @@ func TestRGB8_RecoversChannelsExactly(t *testing.T) {
 //
 // All three grounds are asserted because a word reaches all three: a stack
 // row is filled PanelBG, or ActiveRowBG while its field is focused
-// (form.go's composeRows), and a picker's cursor row is repainted Surface
-// inside the panel (widgets/picker.go). ActiveRowBG is the one a REFUSAL
-// produces, because a refused submit moves focus to the row carrying the
-// word -- but it is not always the worst: dracula clears 3:1 on both of the
-// other two and measures 2.91:1 on Surface.
+// (form.go's composeRows), and a picker's cursor row is repainted inside
+// the panel (widgets/picker.go). ActiveRowBG is the one a REFUSAL produces,
+// because a refused submit moves focus to the row carrying the word -- but
+// it is not always the worst: dracula clears 3:1 on both of the other two
+// and measures 2.91:1 on the cursor row.
+//
+// The third ground is SurfaceFill(PanelBG) rather than the Surface field,
+// and since #149 that is what the picker actually paints. Measuring against
+// raw Surface would be measuring against a value twelve builtins never
+// draw, which is the same defect
+// TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG pins one field
+// over.
+//
+// #277 added three more fields, and each is a different argument for the
+// same floor. Success carries field_account.go's picker badge and
+// submitview.go's done glyph. Accent carries the focus gutter and the
+// running step's glyph, where "distinguishable" would be bar enough, but it
+// also carries words: widgets/picker.go's matchStyle repaints the runes a
+// query matched, and widgets/chiprow.go renders the active chip's label in
+// it. Accent is a BACKGROUND as well -- the `create` button's fill, under a
+// label knocked out in panelContrastFG, which is PanelBG. That is this same
+// pair reversed, so flooring Accent against PanelBG floors the button's own
+// label at the same time: the two uses pull together rather than against
+// each other.
+//
+// Branch is the one that asked for a different number and got this one. It
+// is not a marker -- a branch name is content, read character by character
+// to check it, which is the case WCAG's 3:1 large-text figure is least
+// defensible for. What decided it is the theme's OWN body text, measured on
+// these same three grounds: Text bottoms out at 3.14:1 (solarized-light, on
+// its focused row), with tokyo-night-day at 3.51:1 and solarized at 4.29:1
+// -- three of the seventeen draw ordinary words below 4.5:1, and one-dark
+// at 4.56:1 and kanagawa-lotus at 4.65:1 sit just over it. A 4.5:1 floor on
+// Branch would hold a
+// branch name to a higher standard than the title beside it, and charge 11
+// of the 17 their branch hue to do it: solarized's #d33682 walks 96 units in
+// sRGB to #e586b4, rose-pine-dawn's 76, nord's 63. At 3:1 it is three
+// builtins and at most 36 units, and the floor lands just under every
+// builtin's own worst body text -- which is where a floor belongs, catching
+// the outliers rather than redesigning the theme.
 func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 	for name := range builtinPalettes {
 		t.Run(name, func(t *testing.T) {
@@ -341,6 +441,9 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 			}{
 				{"Danger", palette.Danger},
 				{"Warning", palette.Warning},
+				{"Success", palette.Success},
+				{"Branch", palette.Branch},
+				{"Accent", palette.Accent},
 			} {
 				for _, ground := range []struct {
 					where string
@@ -348,7 +451,7 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 				}{
 					{"an unfocused row or the panel", palette.PanelBG},
 					{"a focused stack row", palette.ActiveRowBG},
-					{"a picker's cursor row", palette.Surface},
+					{"a picker's cursor row", palette.SurfaceFill(palette.PanelBG)},
 				} {
 					got, ok := contrastRatio(field.value, ground.value)
 					if !ok {
@@ -356,7 +459,7 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 						continue
 					}
 					if got < SemanticTextContrastFloor-contrastAssertionEpsilon {
-						t.Errorf("%s on %s = %.3f:1, want >= %.2f:1 -- a word nobody can read is not a refusal (#273)",
+						t.Errorf("%s on %s = %.3f:1, want >= %.2f:1 -- a word nobody can read says nothing (#273, #277)",
 							field.name, ground.where, got, SemanticTextContrastFloor)
 					}
 				}
@@ -372,6 +475,13 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 // the case that matters most -- it is the default, and it is what every
 // golden frame in this repository renders on, so a raise here would move
 // frames in two packages and change the screen most users see.
+//
+// All five are asserted, not the two #273 floored, because that is what
+// makes "#277 moved no frames" a measurement rather than an observation
+// about the day it was run: catppuccin's Success, Branch and Accent measure
+// 8.46:1, 6.19:1 and 5.97:1 on their worst ground, so extending the clamp
+// to them could not have moved a frame, and this is where that stops being
+// true if a future edit lowers one of the three.
 func TestFloorContrast_KeepsLegibleSemanticsUnchanged(t *testing.T) {
 	raw, ok := builtinPalettes["catppuccin"]
 	if !ok {
@@ -379,11 +489,19 @@ func TestFloorContrast_KeepsLegibleSemanticsUnchanged(t *testing.T) {
 	}
 	got := Default()
 
-	if !colorEqual(got.Danger, raw.Danger) {
-		t.Errorf("Danger = %v, want catppuccin's own %v unchanged", got.Danger, raw.Danger)
-	}
-	if !colorEqual(got.Warning, raw.Warning) {
-		t.Errorf("Warning = %v, want catppuccin's own %v unchanged", got.Warning, raw.Warning)
+	for _, tc := range []struct {
+		name     string
+		was, now Color
+	}{
+		{"Danger", raw.Danger, got.Danger},
+		{"Warning", raw.Warning, got.Warning},
+		{"Success", raw.Success, got.Success},
+		{"Branch", raw.Branch, got.Branch},
+		{"Accent", raw.Accent, got.Accent},
+	} {
+		if !colorEqual(tc.now, tc.was) {
+			t.Errorf("%s = %v, want catppuccin's own %v unchanged", tc.name, tc.now, tc.was)
+		}
 	}
 }
 
@@ -407,7 +525,7 @@ func TestRaiseSemanticText_RaisesAnIllegibleValue(t *testing.T) {
 	if colorEqual(palette.Warning, raw.Warning) {
 		t.Fatalf("raiseSemanticText left an illegible value alone: %v", palette.Warning)
 	}
-	for _, ground := range []Color{palette.PanelBG, palette.ActiveRowBG, palette.Surface} {
+	for _, ground := range []Color{palette.PanelBG, palette.ActiveRowBG, palette.SurfaceFill(palette.PanelBG)} {
 		ratio, ok := contrastRatio(palette.Warning, ground)
 		if !ok {
 			t.Fatalf("raised Warning is unmeasurable against %v", ground)
@@ -469,15 +587,15 @@ func TestRaiseSemanticText_UnmeasurableInputsPassThrough(t *testing.T) {
 // The fixture here is synthetic anyway, because it isolates the simpler half
 // -- a value skipped outright rather than raised short -- and states it
 // without depending on any theme's numbers staying put. Its Danger clears
-// the floor on the raw #141414 and fails on the #282828 that ensureContrast
-// raises that to.
+// the floor on the raw #242424 (3.226:1) and fails on the #363636 that
+// ensureContrast raises that to (2.512:1).
 func TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG(t *testing.T) {
 	raw := Palette{
-		PanelBG:     lipgloss.Color("#101010"),
+		PanelBG:     lipgloss.Color("#202020"),
 		Text:        lipgloss.Color("#ffffff"),
-		Surface:     lipgloss.Color("#101010"),
-		ActiveRowBG: lipgloss.Color("#141414"), // 1.05:1, well under ActiveRowContrastFloor
-		Danger:      lipgloss.Color("#cc0000"),
+		Surface:     lipgloss.Color("#000000"), // 1.29:1 on the panel: clears SurfaceFillContrastFloor unaided
+		ActiveRowBG: lipgloss.Color("#242424"), // 1.05:1, well under ActiveRowContrastFloor
+		Danger:      lipgloss.Color("#e60000"),
 		Warning:     lipgloss.Color("#ffcc00"), // comfortably legible; not the subject
 	}
 
@@ -485,6 +603,17 @@ func TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG(t *testing.T) {
 	// Danger, so assert that before asserting which one floorContrast took.
 	if ratio, _ := contrastRatio(raw.Danger, raw.ActiveRowBG); ratio < SemanticTextContrastFloor {
 		t.Fatalf("fixture Danger is %.3f:1 on the RAW fill -- it must pass there for the wrong order to be silent", ratio)
+	}
+	// And ActiveRowBG has to be the ONLY ground that can raise it, or the
+	// test would pass under the wrong order for the wrong reason. This
+	// guard is here because that is exactly what #149 did to the earlier
+	// fixture: its Surface was its PanelBG, so SurfaceFill raised it to
+	// #282828, on which the same Danger measured 2.505:1 -- a second
+	// reason, masking the first.
+	for _, ground := range []Color{raw.PanelBG, raw.SurfaceFill(raw.PanelBG)} {
+		if ratio, _ := contrastRatio(raw.Danger, ground); ratio < SemanticTextContrastFloor {
+			t.Fatalf("fixture Danger is %.3f:1 on %v -- it must clear every ground but the focused fill, or this test is not about ordering", ratio, ground)
+		}
 	}
 
 	got := floorContrast(raw)
@@ -494,6 +623,69 @@ func TestFloorContrast_MeasuresAgainstTheRaisedActiveRowBG(t *testing.T) {
 	}
 	if colorEqual(got.Danger, raw.Danger) {
 		t.Errorf("Danger came back unraised: floorContrast measured it against the raw selection_bg, not the fill it floored")
+	}
+}
+
+// TestFloorContrast_MeasuresAgainstThePaintedCursorFill is the test above's
+// twin, one ground over, and #149 is what made it necessary: the third
+// ground a word is measured against is the fill widgets/picker.go repaints
+// its cursor row with, and since #149 that is SurfaceFill(PanelBG) rather
+// than the Surface field. Name the field instead and a word is measured
+// against a value twelve of the seventeen builtins never draw -- the same
+// defect as measuring against a raw selection_bg, and it went unguarded in
+// #149's first draft: reverting that one expression left the whole suite
+// green, because over the eighteen builtins the two ground lists happen to
+// agree on every outcome.
+//
+// They only happen to. floorContrast also runs on a [palette] override and
+// a custom herdr theme, where nothing constrains Surface to sit near the
+// value its raise lands on. This fixture is such a palette, and it isolates
+// the simpler half exactly as the test above does -- a value skipped
+// outright rather than raised short:
+//
+//	Surface      #343434  1.060:1 on the panel, so the fill IS raised
+//	SurfaceFill  #454545  what a cursor row is actually painted
+//	Danger       #868686  3.419:1 on the raw Surface, 2.633:1 on the fill
+//
+// Its focused row is DARKER than its panel, which no builtin is, and that
+// is the point rather than a curiosity: a raised fill is the panel walked
+// toward Text, and so is a floored ActiveRowBG, so whenever ActiveRowBG
+// needs flooring the two grounds coincide and ActiveRowBG alone forces the
+// raise. Separating them takes an ActiveRowBG that clears its own floor
+// without being walked -- here #000000 at 1.591:1 -- and is gentler on the
+// word than the fill is.
+func TestFloorContrast_MeasuresAgainstThePaintedCursorFill(t *testing.T) {
+	raw := Palette{
+		PanelBG:     lipgloss.Color("#303030"),
+		Text:        lipgloss.Color("#ffffff"),
+		Surface:     lipgloss.Color("#343434"), // 1.06:1 on the panel, under SurfaceFillContrastFloor
+		ActiveRowBG: lipgloss.Color("#000000"), // 1.59:1: clears its own floor untouched
+		Danger:      lipgloss.Color("#868686"),
+		Warning:     lipgloss.Color("#ffcc00"), // comfortably legible; not the subject
+	}
+	fill := raw.SurfaceFill(raw.PanelBG)
+	if colorEqual(fill, raw.Surface) {
+		t.Fatalf("the fixture's Surface is not raised -- it must be, or both ground lists name the same value")
+	}
+
+	// The cursor fill has to be the ONLY ground that can raise this Danger,
+	// or the test would pass without measuring the thing it is named for.
+	for _, ground := range []Color{raw.PanelBG, raw.Surface, raw.ActiveRowBG} {
+		if ratio, _ := contrastRatio(raw.Danger, ground); ratio < SemanticTextContrastFloor {
+			t.Fatalf("fixture Danger is %.3f:1 on %v -- it must clear every ground but the painted fill, or this test is not about the fill", ratio, ground)
+		}
+	}
+	if ratio, _ := contrastRatio(raw.Danger, fill); ratio >= SemanticTextContrastFloor {
+		t.Fatalf("fixture Danger is %.3f:1 on the PAINTED fill -- it must fail there for this test to measure anything", ratio)
+	}
+
+	got := floorContrast(raw)
+
+	if colorEqual(got.Danger, raw.Danger) {
+		t.Errorf("Danger came back unraised: floorContrast measured it against the Surface field, not the fill a picker paints its cursor row with (#149)")
+	}
+	if ratio, _ := contrastRatio(got.Danger, fill); ratio < SemanticTextContrastFloor-contrastAssertionEpsilon {
+		t.Errorf("raised Danger is %.3f:1 on the painted fill, want >= %.2f:1", ratio, SemanticTextContrastFloor)
 	}
 }
 
@@ -511,13 +703,86 @@ func TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride(t *testing.T) {
 	if colorEqual(got.Danger, lipgloss.Color(illegible)) {
 		t.Fatalf("an illegible [palette] override survived unfloored: %v", got.Danger)
 	}
-	for _, ground := range []Color{got.PanelBG, got.ActiveRowBG, got.Surface} {
+	for _, ground := range []Color{got.PanelBG, got.ActiveRowBG, got.SurfaceFill(got.PanelBG)} {
 		ratio, ok := contrastRatio(got.Danger, ground)
 		if !ok {
 			t.Fatalf("floored Danger is unmeasurable against %v", ground)
 		}
 		if ratio < SemanticTextContrastFloor-contrastAssertionEpsilon {
 			t.Errorf("floored override is %.3f:1 against %v, want >= %.2f:1", ratio, ground, SemanticTextContrastFloor)
+		}
+	}
+}
+
+// TestTerminalPalette_FocusedRowCarriesAnInheritedForeground is the one
+// floor in this file that measures a SINGLE palette, and the reason is that
+// terminal is the only one whose foreground is unknown: herdr gives that
+// theme Color::Reset for text and panel_bg alike, so the words on a focused
+// row are drawn in whatever the host terminal's own foreground is. The
+// other seventeen have a Text this package can read, and their focused rows
+// are covered by ActiveRowContrastFloor against a PanelBG it can read too.
+//
+// What is asserted is the property #7f7f7f was actually chosen for, which
+// is nowhere written down as a floor: an unknown foreground is near-black
+// or near-white -- the host's background is equally unknown and a terminal
+// nobody can read is not a terminal -- so the fill has to carry BOTH. A mid
+// grey does, at 4.00:1 against white and 5.25:1 against black.
+//
+// SemanticTextContrastFloor and not 4.5:1, and the choice has to be said
+// out loud here because the subject is ordinary body text rather than a
+// one-word marker, which is the case that constant's own doc argues 3:1 is
+// weakest for. Asserted at 4.5 this test FAILS on its own subject: #7f7f7f
+// is 4.00:1 to white, and the carrying band tightens from [0.1000, 0.3000]
+// to [0.1750, 0.1833], which its 0.2122 is outside. That is not a reason to
+// pick the floor that passes. It is the impossibility below getting worse:
+// at a body-text figure, no fill carries the inherited foreground at all,
+// let alone the red as well. 3:1 is used because it is the floor this
+// package actually enforces on words, and because the conclusion the test
+// exists for only gets stronger at any higher one.
+//
+// This is a guard, not a fix, and the defect it guards is the one #276 is
+// open on: that same fill draws terminal's #ff0000 Danger at 1.00:1, so the
+// word `invalid` is invisible on the focused project row of that theme.
+// #276's candidate fix is to repoint this field, and the measurement here
+// is why that cannot be it. Carrying an unknown foreground of either
+// polarity at SemanticTextContrastFloor pins the fill's relative luminance
+// to [0.1000, 0.3000]; #ff0000's relative luminance is 0.2126, inside that
+// same band; and two luminances both inside it can differ by at most
+// 2.333:1. There is no fill. What the candidates cost, measured: #363636
+// gives the red 3.02:1 and takes a dark inherited foreground to 1.74:1,
+// #e5e5e5 gives it 3.17:1 and takes a light one to 1.26:1 -- one word
+// legible and every other word on the row gone.
+//
+// And the ANSI set is inconsistent with itself even setting the inherited
+// foreground aside: Accent's #0000ee needs a fill of luminance >= 0.2852
+// and Success's #00cd00 one of <= 0.1122, so no single fill carries those
+// two either, whatever is done about the red.
+func TestTerminalPalette_FocusedRowCarriesAnInheritedForeground(t *testing.T) {
+	palette, ok := Builtin("terminal")
+	if !ok {
+		t.Fatal("Builtin(\"terminal\") not found")
+	}
+	// The premise, asserted rather than assumed: if herdr ever gives this
+	// theme a Text and a panel_bg this package can read, the floors above
+	// stop exempting it and this test has nothing left to say.
+	if _, inherit := palette.Text.(lipgloss.NoColor); !inherit {
+		t.Fatalf("the terminal palette's Text is %v, not NoColor -- this test's premise has changed", palette.Text)
+	}
+
+	for _, inherited := range []struct {
+		where string
+		value Color
+	}{
+		{"a light foreground on a dark terminal", lipgloss.Color("#ffffff")},
+		{"a dark foreground on a light terminal", lipgloss.Color("#000000")},
+	} {
+		got, ok := contrastRatio(inherited.value, palette.ActiveRowBG)
+		if !ok {
+			t.Fatalf("the focused row's fill is unmeasurable against %s", inherited.where)
+		}
+		if got < SemanticTextContrastFloor-contrastAssertionEpsilon {
+			t.Errorf("%s reads at %.3f:1 on the focused row, want >= %.2f:1 -- every ordinary word on that row is drawn in it, and trading them for one semantic colour is not a fix for #276",
+				inherited.where, got, SemanticTextContrastFloor)
 		}
 	}
 }
@@ -560,6 +825,75 @@ func TestBuiltinPalettes_ClampedSemanticsStayDistinct(t *testing.T) {
 			if d < semanticSeparationFloor {
 				t.Errorf("Danger %v and Warning %v are %.1f apart in sRGB, want >= %.1f -- two refusals that look alike say less than one (#273)",
 					palette.Danger, palette.Warning, d, semanticSeparationFloor)
+			}
+		})
+	}
+}
+
+// TestBuiltinPalettes_ClampDoesNotCloseAGapItDidNotCreate is the test above
+// generalised to the five fields #277 left floored, and it is a different
+// assertion rather than three more rows because the absolute one cannot be
+// made over all ten pairs: rose-pine draws Branch and Accent in the same
+// #c4a7e7 and vesper draws Warning and Accent in the same #ffc799, by their
+// own choice and before this package touches anything. A floor over every
+// pair would fail on those two themes for a defect they do not have.
+//
+// So the promise here is relative: a pair the theme itself kept apart must
+// still be apart after the clamp. That is exactly #273's convergence
+// objection, scoped to the part of it this package is answerable for --
+// five colours walking toward one end of one ramp is five chances to
+// collide, and the Danger/Warning pair above is only one of them.
+//
+// Measured across the eighteen, over all ten pairs: the clamp narrows 73 of
+// them, by up to 49.9 units (catppuccin-latte's Warning and Success, 201.8
+// to 151.9), so "it barely moves anything" is not the defence -- the
+// relative rule is. The closest it leaves a pair it narrowed is
+// rose-pine-dawn's Danger and Warning at 23.0, three units over the floor,
+// with nord's next at 24.5; both are pairs semanticSeparationFloor's own
+// doc already records.
+//
+// The closest non-identical pair of all is vesper's, at 18.0 -- Branch
+// beside Accent and Warning beside Branch, untouched by the clamp and
+// under the floor before it ran. That is the second reason this assertion
+// has to be relative rather than absolute, and it is not the same reason as
+// the byte-identical pairs above: a theme may draw two semantics close
+// together as well as identically, and neither is a defect this package
+// introduced.
+func TestBuiltinPalettes_ClampDoesNotCloseAGapItDidNotCreate(t *testing.T) {
+	for name := range builtinPalettes {
+		t.Run(name, func(t *testing.T) {
+			raw := builtinPalettes[name]
+			palette, ok := Builtin(name)
+			if !ok {
+				t.Fatalf("Builtin(%q) not found", name)
+			}
+			fields := []struct {
+				name     string
+				was, now Color
+			}{
+				{"Danger", raw.Danger, palette.Danger},
+				{"Warning", raw.Warning, palette.Warning},
+				{"Success", raw.Success, palette.Success},
+				{"Branch", raw.Branch, palette.Branch},
+				{"Accent", raw.Accent, palette.Accent},
+			}
+			for i := range fields {
+				for j := i + 1; j < len(fields); j++ {
+					a, b := fields[i], fields[j]
+					before, ok := srgbDistance(a.was, b.was)
+					if !ok || before < semanticSeparationFloor {
+						continue // unmeasurable, or the theme's own choice
+					}
+					after, ok := srgbDistance(a.now, b.now)
+					if !ok {
+						t.Errorf("%s or %s became unmeasurable", a.name, b.name)
+						continue
+					}
+					if after < semanticSeparationFloor {
+						t.Errorf("%s %v and %s %v started %.1f apart in sRGB and the clamp left them %.1f (%v, %v), want >= %.1f -- a clamp may not close a gap it did not create (#277)",
+							a.name, a.was, b.name, b.was, before, after, a.now, b.now, semanticSeparationFloor)
+					}
+				}
 			}
 		})
 	}
@@ -617,6 +951,24 @@ func TestFarthestEnd_PicksTheDirectionWithRoomLeft(t *testing.T) {
 // same ramp, so Danger and Warning came back byte-identical white -- #273's
 // own convergence objection, arriving on the tier
 // TestBuiltinPalettes_ClampedSemanticsStayDistinct cannot see.
+//
+// All five floored fields are checked since #277, and the second promise is
+// why it matters that they are: five colours giving up at one end of one
+// ramp is five chances to collide, not one. catppuccin is the right base
+// for it because its five are all distinct to begin with, which is not true
+// of every builtin -- rose-pine's Branch and Accent are the same #c4a7e7 by
+// the theme's own choice, and vesper's Warning and Accent the same #ffc799.
+//
+// Note how weak the second promise is, and that the weakness is honest
+// rather than an oversight: it asserts the five are not BYTE-identical, not
+// that they are still told apart. On the #c0c0c0 fixture all five do give
+// up, and they land on five near-whites within about 7 units of each other
+// in sRGB -- distinct, and indistinguishable. bestAlong cannot promise more
+// than it does: the give-up path is reached exactly when no point on any of
+// the five segments clears the floor, and on that tier there is nothing
+// left to spend. semanticSeparationFloor is the assertion that a clamp
+// which SUCCEEDS keeps its colours apart; this one is only that a clamp
+// which fails does not answer for two fields with one value.
 func TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing(t *testing.T) {
 	// Chosen by measurement, not by taste: a mid grey Surface that no walk
 	// from either semantic can clear 3:1 against while still clearing the
@@ -625,26 +977,35 @@ func TestRaiseSemanticText_AGiveUpIsNeverWorseThanDoingNothing(t *testing.T) {
 		t.Run(surface, func(t *testing.T) {
 			raw := Resolve(Default(), map[string]string{"surface": surface})
 			got := floorContrast(raw)
-			grounds := []Color{got.PanelBG, got.ActiveRowBG, got.Surface}
+			grounds := []Color{got.PanelBG, got.ActiveRowBG, got.SurfaceFill(got.PanelBG)}
 
 			if clearsFloor(got.Danger, grounds, SemanticTextContrastFloor) {
 				t.Skipf("this fixture no longer gives up -- it needs a Surface no walk can clear")
 			}
-			for _, tc := range []struct {
+			fields := []struct {
 				name     string
 				was, now Color
 			}{
 				{"Danger", raw.Danger, got.Danger},
 				{"Warning", raw.Warning, got.Warning},
-			} {
+				{"Success", raw.Success, got.Success},
+				{"Branch", raw.Branch, got.Branch},
+				{"Accent", raw.Accent, got.Accent},
+			}
+			for _, tc := range fields {
 				before, after := worstRatio(tc.was, grounds), worstRatio(tc.now, grounds)
 				if after < before {
 					t.Errorf("%s went from %.3f:1 to %.3f:1 (%v -> %v): a clamp that cannot help must not hurt",
 						tc.name, before, after, tc.was, tc.now)
 				}
 			}
-			if colorEqual(got.Danger, got.Warning) {
-				t.Errorf("Danger and Warning both gave up at %v -- two refusals that are the same colour say less than one", got.Danger)
+			for i := range fields {
+				for j := i + 1; j < len(fields); j++ {
+					if colorEqual(fields[i].now, fields[j].now) {
+						t.Errorf("%s and %s both gave up at %v -- two semantics that are the same colour say less than one",
+							fields[i].name, fields[j].name, fields[i].now)
+					}
+				}
 			}
 		})
 	}

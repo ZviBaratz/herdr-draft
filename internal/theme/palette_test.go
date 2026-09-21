@@ -235,6 +235,12 @@ name = "dracula"
 	}
 }
 
+// The accent value carries the same requirement peach does below, since
+// #277: accent reaches Accent, which floorContrast now raises, so a value
+// chosen only for being distinctive would come back a different color and
+// this would stop being a statement about routing. #aaaaaa is 3.94:1
+// against the worst of the three grounds this config produces -- including
+// the #101010 panel_bg it sets two lines down -- so it survives untouched.
 func TestLoadHerdrPaletteFrom_CustomOverridesBuiltin(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -243,12 +249,12 @@ func TestLoadHerdrPaletteFrom_CustomOverridesBuiltin(t *testing.T) {
 name = "dracula"
 
 [theme.custom]
-accent = "#202020"
+accent = "#aaaaaa"
 panel_bg = "#101010"
 `)
 
 	got := LoadHerdrPaletteFrom(path, nil)
-	wantAccent := parseHexColorForTest(t, "#202020")
+	wantAccent := parseHexColorForTest(t, "#aaaaaa")
 	wantPanelBG := parseHexColorForTest(t, "#101010")
 	if !colorEqual(got.Accent, wantAccent) {
 		t.Errorf("Accent = %v, want %v (from [theme.custom])", got.Accent, wantAccent)
@@ -269,12 +275,14 @@ panel_bg = "#101010"
 // concern and the value has to clear the contrast floor to stay a pure
 // routing assertion.
 //
-// peach carries the same requirement since #273: it reaches Warning, which
-// floorContrast now raises, so a value chosen only for being distinctive
-// would come back a different color and this would stop being a statement
-// about routing. #cccccc is 6.14:1 against the worst of dracula's three
-// grounds -- including the Surface this same file overrides to #111111 --
-// so it survives untouched. floorContrast raising an illegible one is
+// peach carries the same requirement since #273, and mauve since #277: they
+// reach Warning and Branch, which floorContrast now raises, so a value
+// chosen only for being distinctive would come back a different color and
+// this would stop being a statement about routing. #cccccc is 6.14:1 and
+// #bbbbbb 5.14:1 against the worst of dracula's three grounds -- including
+// the Surface this same file overrides to #111111 -- so both survive
+// untouched, and they stay two different greys so a crossed route still
+// shows. floorContrast raising an illegible one is
 // TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride's job.
 func TestLoadHerdrPaletteFrom_V2CustomKeys(t *testing.T) {
 	dir := t.TempDir()
@@ -286,7 +294,7 @@ name = "dracula"
 [theme.custom]
 surface0 = "#111111"
 peach = "#cccccc"
-mauve = "#444444"
+mauve = "#bbbbbb"
 `)
 
 	got := LoadHerdrPaletteFrom(path, nil)
@@ -299,7 +307,7 @@ mauve = "#444444"
 	}{
 		{"surface0", "Surface", "#111111", got.Surface},
 		{"peach", "Warning", "#cccccc", got.Warning},
-		{"mauve", "Branch", "#444444", got.Branch},
+		{"mauve", "Branch", "#bbbbbb", got.Branch},
 	}
 	for _, tc := range cases {
 		want := parseHexColorForTest(t, tc.hex)
@@ -371,6 +379,12 @@ active_row_bg = "#555555"
 	}
 }
 
+// Both accent values clear the semantic-text floor against the three
+// grounds this config produces, for the reason the test above gives: the
+// draft override is the one asserted, so it is the one that must survive
+// floorContrast untouched, and the [theme.custom] value stays legible too
+// so that a routing defect shows up as the wrong grey rather than as a
+// raised one.
 func TestLoadHerdrPaletteFrom_DraftOverrideWinsOverCustomAndBuiltin(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -379,14 +393,14 @@ func TestLoadHerdrPaletteFrom_DraftOverrideWinsOverCustomAndBuiltin(t *testing.T
 name = "dracula"
 
 [theme.custom]
-accent = "#202020"
+accent = "#aaaaaa"
 panel_bg = "#101010"
 `)
 
-	draftOverrides := map[string]string{"accent": "#303030"}
+	draftOverrides := map[string]string{"accent": "#dddddd"}
 	got := LoadHerdrPaletteFrom(path, draftOverrides)
 
-	wantAccent := parseHexColorForTest(t, "#303030")
+	wantAccent := parseHexColorForTest(t, "#dddddd")
 	if !colorEqual(got.Accent, wantAccent) {
 		t.Errorf("Accent = %v, want %v (draft override must win)", got.Accent, wantAccent)
 	}
