@@ -17,14 +17,20 @@ staticcheck_version := "2026.2.1"
 # machine-readable place, and nothing else in the repo names the number.
 #
 # It is not a dependency of this project in any sense a user meets. It is
-# installed on demand into a venv under a scratch directory, by the `live`
-# recipe below and nowhere else; `hack/` is not a Go package, [[build]]
+# installed on demand into a venv under a scratch directory, by the
+# `_live-venv` recipe below and nowhere else, for `live` and
+# `live-selftest`; `hack/` is not a Go package, [[build]]
 # builds ./cmd/herdr-draft, and `just check`'s four steps never reach
 # either. Nothing here may narrow who can install the plugin -- which is
 # the same rule the staticcheck note above states, and the reason a second
 # language in the tree is acceptable while a second go.mod requirement
 # would need arguing.
 pyte_version := "0.8.2"
+
+# live_venv is that scratch venv. A backtick rather than just's own
+# env_var_or_default, so an empty TMPDIR falls back exactly as the shell's
+# ${TMPDIR:-/var/tmp} does in the recipes that share the directory.
+live_venv := `echo "${TMPDIR:-/var/tmp}/herdr-draft-live-venv"`
 
 test:
     go test ./...
@@ -203,17 +209,56 @@ smoke repo:
 # error that names the flags you got right.
 
 # Route B under a pty: the real form, stubbed inputs, screen to stdout.
-live *ARGS:
+live *ARGS: _live-venv
     #!/usr/bin/env bash
     set -euo pipefail
-    venv="${TMPDIR:-/var/tmp}/herdr-draft-live-venv"
-    # Probed by IMPORTING pyte, not by the interpreter existing: a first
-    # run interrupted between `venv` and `pip install` leaves an
-    # executable python with nothing in it, and a guard that only checks
-    # for the binary never repairs it -- it just tells you to run the
-    # command that failed.
+    venv="{{live_venv}}"
+    mkdir -p "${TMPDIR:-/var/tmp}/herdr-draft-live-bin"
+    livebin="$(mktemp -d "${TMPDIR:-/var/tmp}/herdr-draft-live-bin/run.XXXXXX")"
+    trap 'rm -rf "$livebin"' EXIT
+    port="$("$venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+    go build -ldflags "-X main.build=$(git describe --tags --always --dirty 2>/dev/null || echo '') -X github.com/ZviBaratz/herdr-draft/internal/linear.defaultEndpoint=http://127.0.0.1:${port}/graphql" \
+        -o "$livebin/herdr-draft" ./cmd/herdr-draft
+    set -f
+    set -- {{ARGS}}
+    [[ "${1:-}" == "--" ]] && shift
+    "$venv/bin/python" hack/live/drive.py --binary "$livebin/herdr-draft" --linear-port "$port" "$@"
+
+# live-selftest is drive.py's terminal emulator on its own: the fixes #305
+# made to pyte (SU and SD, DL and IL, the kitty keyboard sequences it would
+# draw as text, a sequence cut in two by a read) fed byte strings and
+# compared with what a terminal shows. No binary, no pty, no stub, well
+# under a second. `just live` checks every reading against a full repaint,
+# but only on the paths a walk reaches -- and no walk emits DL or IL, or
+# can choose where a read ends. Run it after touching drive.py's
+# `emulator()`, or after moving pyte_version.
+#
+# Like `live` it is not part of `just check`, which must not need Python.
+#
+# `-B` because the way to prove a case pins something is to mutate
+# emulator() and run this again, and a .pyc is trusted by source mtime,
+# in whole seconds, and size: two one-byte mutations inside the same
+# second ran the FIRST one's bytecode and reported the second as
+# surviving. Nothing else imports drive.py, so with this there is never a
+# cached copy of it to go stale.
+
+# The emulator's own tests, fed bytes directly. Fast; needs python3.
+live-selftest: _live-venv
+    "{{live_venv}}/bin/python" -B hack/live/selftest.py
+
+# _live-venv makes that venv with the pinned pyte, and repairs it.
+#
+# Probed by IMPORTING pyte, not by the interpreter existing: a first
+# run interrupted between `venv` and `pip install` leaves an
+# executable python with nothing in it, and a guard that only checks
+# for the binary never repairs it -- it just tells you to run the
+# command that failed.
+_live-venv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    venv="{{live_venv}}"
     if ! "$venv/bin/python" -c 'import pyte' >/dev/null 2>&1; then
-        command -v python3 >/dev/null 2>&1 || { echo "just live needs python3" >&2; exit 1; }
+        command -v python3 >/dev/null 2>&1 || { echo "just live and just live-selftest need python3" >&2; exit 1; }
         rm -rf "$venv"
         echo "creating $venv with pyte {{pyte_version}}"
         python3 -m venv "$venv" || {
@@ -225,13 +270,3 @@ live *ARGS:
             exit 1
         }
     fi
-    mkdir -p "${TMPDIR:-/var/tmp}/herdr-draft-live-bin"
-    livebin="$(mktemp -d "${TMPDIR:-/var/tmp}/herdr-draft-live-bin/run.XXXXXX")"
-    trap 'rm -rf "$livebin"' EXIT
-    port="$("$venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-    go build -ldflags "-X main.build=$(git describe --tags --always --dirty 2>/dev/null || echo '') -X github.com/ZviBaratz/herdr-draft/internal/linear.defaultEndpoint=http://127.0.0.1:${port}/graphql" \
-        -o "$livebin/herdr-draft" ./cmd/herdr-draft
-    set -f
-    set -- {{ARGS}}
-    [[ "${1:-}" == "--" ]] && shift
-    "$venv/bin/python" hack/live/drive.py --binary "$livebin/herdr-draft" --linear-port "$port" "$@"

@@ -213,6 +213,15 @@ form — `esc`, `⌃C`, a submit — has nothing left to repaint, so the check i
 skipped with a note rather than run: resizing pyte alone drops its top line and
 reports every row as different, which the first version did.
 
+That check covers only what a walk reaches, and no walk emits DL or IL or
+chooses where a pty read ends. **`just live-selftest`** covers the rest: it
+feeds `emulator()` byte strings directly, with no binary, pty or stub, and
+compares each screen with what a terminal shows. The cases are SU and SD with
+and without margins, DL and IL, the kitty sequences and the ignored ones cut
+at every byte, and 2,000 seeded scrolls against a plain list of lines. It takes
+well under a second, so run it after touching `emulator()` or `pyte_version`.
+It is not part of `just check`, which must not need Python.
+
 Two runs at once used to corrupt each other through the shared scratch tree
 as well as the shared binary. A run now holds a lock beside `--root` for its
 whole length; a second one says it is waiting and then runs.
