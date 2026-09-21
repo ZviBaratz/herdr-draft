@@ -44,6 +44,7 @@ var foreignFlags = map[string]bool{
 	"--help":   true, // create's, but not in its FlagSet
 	"--source": true, // herdr agent read
 	"--format": true, // herdr agent read
+	"--check":  true, // herdr-draft skill (#311); TestSkillsSelfCheckAcceptsItself holds it
 }
 
 // createFlags is every flag create really accepts, from the FlagSet
@@ -138,6 +139,44 @@ func TestSkillNamesEveryExitCode(t *testing.T) {
 	// Guards the loop above against the constants being renumbered.
 	if ExitOK != 0 || ExitFailed != 1 || ExitUsage != 2 || ExitUnreachable != 3 || ExitNothingCreated != 4 || ExitCheckTimedOut != 5 {
 		t.Fatal("create's exit codes moved; this test's literals must move with them")
+	}
+}
+
+// TestSkillsSelfCheckAcceptsItself holds the self-check the document
+// opens with to the verb it names (#311). foreignFlags lets `--check`
+// through the drift guard on the document's word alone, so this is what
+// makes that word true: the command the reader is told to run exists,
+// takes the path the way the document spells it, and passes the document
+// it was run on. A check that failed a fresh copy would teach every reader
+// to ignore it.
+func TestSkillsSelfCheckAcceptsItself(t *testing.T) {
+	const bin, version, installed = "/x/bin/herdr-draft", "0.0.0-test", "/home/u/.claude/skills/spawn/SKILL.md"
+	doc := skill.Render(bin, version)
+
+	cmd := `"` + bin + `" skill --check ~/.claude/skills/spawn/SKILL.md`
+	if !strings.Contains(doc, cmd) {
+		t.Fatalf("the document no longer tells its reader to run %s -- if the self-check moved, move this test with it", cmd)
+	}
+
+	var stdout, stderr strings.Builder
+	exe := func() (string, error) { return bin, nil }
+	read := func(string) ([]byte, error) { return []byte(doc), nil }
+	if code := skill.Run([]string{"--check", installed}, &stdout, &stderr, exe, read, version); code != 0 {
+		t.Errorf("skill --check on a fresh render = %d, want 0\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	// The document promises the word the reader looks for.
+	if !strings.Contains(doc, "says `current`") || !strings.Contains(stdout.String(), "current") {
+		t.Errorf("the document and the verb disagree about the word for a current copy: %q", stdout.String())
+	}
+}
+
+// TestSkillFooterNamesTheDigest holds the footer's claim that the skill
+// value it shows is one `version` also prints. The half on this side is
+// that the rendered stamp IS skill.Digest(); main's
+// TestVersionPrintsTheSkillDigest is the other half.
+func TestSkillFooterNamesTheDigest(t *testing.T) {
+	if want := "Generated from herdr-draft 0.0.0-test, skill " + skill.Digest() + "."; !strings.Contains(renderedSkill(), want) {
+		t.Errorf("the footer does not read %q", want)
 	}
 }
 

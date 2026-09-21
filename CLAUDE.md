@@ -133,7 +133,8 @@ Layering, outermost to innermost:
   `$HERDR_PLUGIN_STATE_DIR` / `$HERDR_BIN_PATH`, construct production
   `Deps`, call `app.Bootstrap`, run the `tea.Program`. `create` hands the
   rest of the command line to `internal/create`; `skill` prints the
-  agent-facing document from `internal/skill`; `help`/`-h`/`--help`
+  agent-facing document from `internal/skill`, or with `--check <path>`
+  compares an installed copy against it; `help`/`-h`/`--help`
   prints usage and `version`/`--version`/`-V` the build line, both to
   stdout with exit 0; anything else prints usage to stderr and exits 2.
   `dispatch` takes the popup and both verbs as injected funcs so routing is
@@ -227,11 +228,13 @@ Layering, outermost to innermost:
   (`<picker> --dir <path> --json [--strict] [--dry-run]`) to whatever
   executable is configured, rather than depending on any one tool.
 - **`internal/skill`** — not a client: the embedded `spawn_skill.md` that
-  `herdr-draft skill` prints, and the renderer that stamps the binary path
-  and version into it. No interface and no I/O beyond the writer it is
-  handed, and it imports nothing else from this module, because prose about
-  the CLI must not depend on the code the CLI drives; the tests holding
-  that prose to the code live in `internal/create`.
+  `herdr-draft skill` prints, the renderer that stamps the binary path,
+  version and content digest into it, and `--check` (#311). No interface
+  and no I/O beyond what `Run` is handed (the writers, `os.Executable`,
+  and the `os.ReadFile` that `--check` reads through), and it imports
+  nothing else from this module, because prose about the CLI must not
+  depend on the code the CLI drives; the tests holding that prose to the
+  code live in `internal/create`.
 
 ### Load-bearing conventions
 

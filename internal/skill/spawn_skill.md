@@ -48,6 +48,22 @@ test "${HERDR_ENV:-}" = 1
 If that fails you are not inside herdr, nothing below applies, and you
 should say so rather than improvise.
 
+Then check that this file is current, because it is a copy printed by the
+binary at some point and nothing refreshes it:
+
+```bash
+"{{HERDR_DRAFT_BIN}}" skill --check ~/.claude/skills/spawn/SKILL.md
+```
+
+Use the path you loaded this skill from if it is not that one; Claude Code
+names the skill's base directory when it loads it, and the file is
+`SKILL.md` there. The command exits 0 and says `current`, or exits
+non-zero and says why the copy is stale, with the command that regenerates
+it. A stale copy can be missing flags, exit codes and advice the binary
+now has. Tell the user it is stale and pass on that command; do not run it
+yourself, because it writes into their Claude configuration. Then carry on,
+and trust `create --help` over this file wherever the two disagree.
+
 ## 2. Export the plugin environment, in the same command
 
 **This is the step that goes wrong.** herdr gives the three
@@ -659,9 +675,13 @@ through herdr's own skill, or through this one with `--no-worktree
 
 ---
 
-Generated from herdr-draft {{VERSION}}. Compare that against what
-`"{{HERDR_DRAFT_BIN}}" version` prints; if they differ, this file is stale.
-To regenerate it:
+Generated from herdr-draft {{VERSION}}, skill {{DIGEST}}. The skill value
+is a sha256 of this document's source, taken before the binary path and the
+version were filled in, so it changes whenever the text does, even within
+one version. `"{{HERDR_DRAFT_BIN}}" version` prints both; if either differs,
+this file is stale. `"{{HERDR_DRAFT_BIN}}" skill --check <this file>`
+compares the whole file, path included, and exits 0 only when it is
+current. To regenerate it:
 
 ```bash
 mkdir -p ~/.claude/skills/spawn

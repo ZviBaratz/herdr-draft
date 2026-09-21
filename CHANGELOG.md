@@ -421,6 +421,19 @@ without the popup. It drives herdr exclusively through the public CLI
   (#209). It also carries
   the absolute path of the binary that printed it, which is why the emitted
   file is machine-specific and is regenerated after an upgrade.
+- **An installed skill can tell that it is stale within one version**
+  (#311). The footer used to stamp only the version, which stays `0.1.0`
+  while the document changes underneath — it changed 26 times in six days,
+  and an installed copy missing exit 5 entirely still matched
+  `herdr-draft version`. The footer now also carries a digest of the
+  skill's source, which `herdr-draft version` prints on a `skill` line.
+  `herdr-draft skill --check <path>` compares an installed copy against
+  what the binary would print and exits 0 only when they match. It exits
+  1 when they don't, saying whether the source, the version or the binary
+  path moved, or the file was edited, and giving the regenerate command.
+  The skill runs that check on itself as its first step and tells the user
+  when it is stale. Neither the check nor the agent writes into
+  `~/.claude`.
 
 ### Where values come from
 

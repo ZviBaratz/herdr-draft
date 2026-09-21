@@ -54,6 +54,8 @@ usage:
   herdr-draft                 open the new-session popup (how herdr launches it)
   herdr-draft create [flags]  create a session without the popup
   herdr-draft skill           print the agent skill; see README
+  herdr-draft skill --check <path>
+                              exit 0 if <path> is what "skill" would print
   herdr-draft version         print the version
   herdr-draft help            print this
 
@@ -92,6 +94,11 @@ func versionString() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "herdr-draft %s\n", herdrc.Version)
 	fmt.Fprintf(&b, "  plugin id  %s\n", herdrc.PluginID)
+	// The spawn skill's digest, which an installed copy carries in its
+	// footer and names as the thing to compare against this line (#311):
+	// within one version it is the only value here that moves when the
+	// skill's text does.
+	fmt.Fprintf(&b, "  skill      %s\n", skill.Digest())
 	if build != "" {
 		fmt.Fprintf(&b, "  build      %s\n", build)
 	}
@@ -134,7 +141,7 @@ func clauthStatusFilePath() string {
 
 func main() {
 	os.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr, runPopup, runCreate,
-		func() int { return runSkill(os.Stdout, os.Stderr) }))
+		func(args []string) int { return runSkill(args, os.Stdout, os.Stderr) }))
 }
 
 // dispatch routes a command line to its verb and returns the process exit
@@ -149,7 +156,7 @@ func main() {
 // stdout and exit 0, the way asking a program for its help always should,
 // and the way Go's own flag package treats -h. Only a verb this binary
 // does not have exits 2.
-func dispatch(args []string, stdout, stderr io.Writer, popup func() int, createVerb func(args []string) int, skillVerb func() int) int {
+func dispatch(args []string, stdout, stderr io.Writer, popup func() int, createVerb func(args []string) int, skillVerb func(args []string) int) int {
 	if len(args) == 0 {
 		return popup()
 	}
@@ -157,7 +164,7 @@ func dispatch(args []string, stdout, stderr io.Writer, popup func() int, createV
 	case "create":
 		return createVerb(args[1:])
 	case "skill":
-		return skillVerb()
+		return skillVerb(args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -268,13 +275,14 @@ func runProgram(stderr io.Writer, lt *app.Lifetime, run func() error) int {
 	return 0
 }
 
-// runSkill is the production `skill` verb: the real executable path and
-// the real version. Writers are parameters rather than os.Stdout/os.Stderr
-// captured inside, so TestRunSkillStampsTheBuildersVersion can pin the one
-// thing skill.Run itself cannot -- that this call site passes
-// herdrc.Version and not some other string.
-func runSkill(stdout, stderr io.Writer) int {
-	return skill.Run(stdout, stderr, os.Executable, herdrc.Version)
+// runSkill is the production `skill` verb: the real executable path, the
+// real version and, for `--check`, the real file. Writers are parameters
+// rather than os.Stdout/os.Stderr captured inside, so
+// TestRunSkillStampsTheBuildersVersion and TestRunSkillChecksTheRealFile
+// can pin the things skill.Run itself cannot -- that this call site passes
+// herdrc.Version and not some other string, and a reader that reads.
+func runSkill(args []string, stdout, stderr io.Writer) int {
+	return skill.Run(args, stdout, stderr, os.Executable, os.ReadFile, herdrc.Version)
 }
 
 // signalWatch is what SIGINT and SIGTERM mean to `create` (#252), and the

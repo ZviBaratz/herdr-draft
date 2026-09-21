@@ -249,6 +249,25 @@ outliving Atrium").
 
 Reconsider if the version stamp shows staleness is a real problem.
 
+> **Amendment, 2026-09-21 (#311).** It did. Within one unreleased version
+> the stamp cannot move: `spawn_skill.md` changed 26 times in six days,
+> and an installed copy missing exit 5 entirely still matched
+> `herdr-draft version`. **`--check` is reversed; `--install` stays
+> rejected.** The paragraph above argues against *writing* into
+> `~/.claude/`, and `skill --check <path>` only reads: it compares the file
+> at `<path>` with what this binary would print and exits 0 when they
+> match, 1 when they do not, and 2 when it cannot answer. The read is
+> handed to `skill.Run` as `os.ReadFile` by `main`, the same way
+> `os.Executable` already was. The footer gains a second stamp beside the
+> version: a digest of the embedded source, taken before the path and
+> version are filled in. That keeps it free of circularity and makes it
+> one value per build, and `herdr-draft version` prints it. The rendered
+> skill now runs `--check` on itself as its first step, and on a stale
+> copy tells the user the regenerate command rather than running it. So
+> §3.1 item 2's "comparable against `herdr-draft version`" now covers the
+> digest too, and §3's "no flags, no `--install`, no `--check`" is
+> superseded for `--check`.
+
 ### 3.4 Rejected: `--plugin-dir` injection
 
 herdr-draft could append `--plugin-dir` to the agent argv it already
