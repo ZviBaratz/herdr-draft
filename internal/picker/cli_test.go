@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -337,5 +338,73 @@ func TestACancelledPickKillsThePicker(t *testing.T) {
 	time.Sleep(time.Until(start.Add(1600 * time.Millisecond)))
 	if _, statErr := os.Stat(ledger); statErr == nil {
 		t.Fatal("the picker wrote its ledger after its caller was cancelled -- an account recorded for a session nobody created")
+	}
+}
+
+// --- a picker whose child outlives it (#291) ---------------------------------
+
+// A picker that ANSWERED and left a child holding its stdout pipe is a
+// picker that worked. exec.ErrWaitDelay is returned only when "no Cancel
+// call has occurred, and the command has otherwise exited with a successful
+// status" (go1.26.4 src/os/exec/exec.go), so it must come back as the pick it
+// printed -- not as "could not start", which is what the default arm used to
+// call it, two seconds after the answer had arrived.
+//
+// The deadline is left at thirty seconds and only the grace is shrunk, so
+// ctx.Err() is nil here: this is the issue's own case, the one that needs no
+// timing luck to reach. The combination with an expired deadline is pinned
+// by TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone, without a clock.
+func TestAPickerWhoseChildHoldsThePipeStillAnswered(t *testing.T) {
+	bin := scriptPicker(t, "sleep 3 &\ncat <<'STUBOUT'\n"+stubPicked+"\nSTUBOUT\n")
+	prev := pickerWaitDelay
+	pickerWaitDelay = 100 * time.Millisecond
+	t.Cleanup(func() { pickerWaitDelay = prev })
+
+	got, err := CLI{Bin: bin}.Pick(context.Background(), "/p/thing", Options{})
+	if err != nil {
+		t.Fatalf("Pick = %v, want the pick the picker printed before its child outlived it", err)
+	}
+	if got.Profile != "alpha-1" || got.ConfigDir != "/tmp/dirs/alpha-1" {
+		t.Fatalf("Pick = %+v, want alpha-1", got)
+	}
+}
+
+// THE PIN for the order of run's cases, carrying no timing at all -- the
+// sibling of linear's and clauth's tables of the same name. linear's
+// classifyRun comment has the argument and the measurements, including why
+// the rows where the command answered AND the context is done are a real
+// band rather than a race, and why a table beats a real subprocess landing
+// in that band on a loaded machine.
+func TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone(t *testing.T) {
+	exited := &exec.ExitError{}
+	for _, tc := range []struct {
+		name   string
+		runErr error
+		ctxErr error
+		want   runOutcome
+	}{
+		{"answered, nothing wrong", nil, nil, outcomeAnswered},
+		{"answered while the deadline was expiring", nil, context.DeadlineExceeded, outcomeAnswered},
+		{"answered while the caller was cancelling", nil, context.Canceled, outcomeAnswered},
+		{"drain overstayed the grace, nothing wrong", exec.ErrWaitDelay, nil, outcomeAnswered},
+		{"drain overstayed the grace AND the deadline", exec.ErrWaitDelay, context.DeadlineExceeded, outcomeAnswered},
+		{"drain overstayed the grace, caller cancelled mid-drain", exec.ErrWaitDelay, context.Canceled, outcomeAnswered},
+		// The shape TestAHangingPickerIsNotARefusal exists for: killed,
+		// cmd.Run reports -1, and that must not reach Pick as a refusal.
+		{"killed by the deadline while running", exited, context.DeadlineExceeded, outcomeTimedOut},
+		// Exited 0 before Process.Wait could reap it, so cmd.Run returns the
+		// CONTEXT error rather than an *ExitError -- see linear.classifyRun.
+		{"exited 0 but was reaped after the deadline", context.DeadlineExceeded, context.DeadlineExceeded, outcomeTimedOut},
+		{"killed by the caller", exited, context.Canceled, outcomeCancelled},
+		// The protocol's refusals, and the codes outside it: an exit code
+		// worth interpreting, which only a run nothing interrupted has.
+		{"exited non-zero on its own", exited, nil, outcomeExited},
+		{"not on PATH", &exec.Error{Name: "nosuch", Err: exec.ErrNotFound}, nil, outcomeNotStarted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyRun(tc.runErr, tc.ctxErr); got != tc.want {
+				t.Errorf("classifyRun(%v, %v) = %d, want %d", tc.runErr, tc.ctxErr, got, tc.want)
+			}
+		})
 	}
 }

@@ -193,8 +193,14 @@ var pickerTimeout = 30 * time.Second
 //
 // Two seconds of grace, so a picker that is merely being killed still gets to
 // flush whatever it had written; after that Wait closes the pipes and returns
-// regardless. Nothing is lost by it: run() has already decided, on ctx.Err(),
-// that this invocation produced no usable answer.
+// regardless. Nothing is lost by it on that path: the kill means the run has
+// already produced no usable answer.
+//
+// The grace also runs on the OTHER path, and that one is not a failure
+// (#291). It starts whenever the picker exits, killed or not, so a picker
+// that answers and exits 0 while a child still holds the pipe comes back
+// from cmd.Run as exec.ErrWaitDelay two seconds later -- with its answer in
+// the buffer. classifyRun reads that as the answer it is.
 var pickerWaitDelay = 2 * time.Second
 
 // run executes the picker and separates "did not run" from "ran and exited
@@ -215,34 +221,90 @@ func (c CLI) run(ctx context.Context, dir string, opts Options) (code int, stdou
 
 	runErr := cmd.Run()
 
-	// The deadline is checked BEFORE the exit code, and that order is
-	// load-bearing rather than tidy. exec.CommandContext kills the process
-	// when the context is done, and cmd.Run then reports a perfectly ordinary
-	// *exec.ExitError carrying code -1 ("signal: killed") -- measured, not
-	// assumed. Read in exit-code order, a hung picker would therefore arrive
-	// at Pick as a refusal with an impossible code, so the timeout added to
-	// stop a hang would have turned it into "picker refused: picker exited
-	// -1": a deadlock reported as a decision. Nothing timed out here refused
-	// anything.
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		if errors.Is(ctxErr, context.DeadlineExceeded) {
-			return 0, nil, nil, fmt.Errorf("picker %s: no answer within %s%s", c.Bin, pickerTimeout, stderrNote(errBuf.Bytes()))
-		}
-		return 0, nil, nil, fmt.Errorf("picker %s: %w", c.Bin, ctxErr)
-	}
-
-	var exitErr *exec.ExitError
-	switch {
-	case runErr == nil:
+	switch classifyRun(runErr, ctx.Err()) {
+	case outcomeAnswered:
 		return 0, out.Bytes(), errBuf.Bytes(), nil
-	case errors.As(runErr, &exitErr):
+	case outcomeTimedOut:
+		return 0, nil, nil, fmt.Errorf("picker %s: no answer within %s%s", c.Bin, pickerTimeout, stderrNote(errBuf.Bytes()))
+	case outcomeCancelled:
+		return 0, nil, nil, fmt.Errorf("picker %s: %w", c.Bin, ctx.Err())
+	case outcomeExited:
+		var exitErr *exec.ExitError
+		errors.As(runErr, &exitErr)
 		return exitErr.ExitCode(), out.Bytes(), errBuf.Bytes(), nil
 	default:
-		// Could not start: not on PATH, not executable, context cancelled.
-		// Never a refusal -- nothing refused anything.
+		// Could not start: not on PATH, not executable. Never a refusal --
+		// nothing refused anything.
 		if note := strings.TrimSpace(errBuf.String()); note != "" {
 			return 0, nil, nil, fmt.Errorf("picker %s: %w: %s", c.Bin, runErr, flatten(note))
 		}
 		return 0, nil, nil, fmt.Errorf("picker %s: %w", c.Bin, runErr)
+	}
+}
+
+// runOutcome is what one picker invocation amounted to.
+type runOutcome int
+
+const (
+	outcomeAnswered runOutcome = iota
+	outcomeTimedOut
+	outcomeCancelled
+	outcomeExited
+	outcomeNotStarted
+)
+
+// classifyRun turns what cmd.Run returned, plus the context's own state,
+// into one of five outcomes. It is a pure function of those two errors so
+// that the ORDER of the cases -- which is the whole behaviour here -- can be
+// asserted without arranging a real subprocess to land inside a window a
+// loaded machine can miss.
+//
+// It is linear.classifyRun's four cases with the last one split in two,
+// because only this package has an exit code worth reading: a picker that
+// exited non-zero on its own is answering in the protocol's codes, and one
+// that never started is not. linear's comment carries the full argument;
+// what follows is the part that decides a picker's outcome.
+//
+// An ANSWER IN HAND BEATS A CONTEXT THAT IS DONE, so the first case is read
+// before the deadline. exec.ErrWaitDelay means the picker SUCCEEDED -- it is
+// returned only when "no Cancel call has occurred, and the command has
+// otherwise exited with a successful status" (go1.26.4 src/os/exec/exec.go)
+// -- and a nil runErr can arrive with the deadline already expired, because
+// once Process.Wait has reaped the child nothing watches the context. Both
+// are a real two-second band at the shipped 30s/2s: a picker that answers
+// between 28s and 30s with a child on the pipe. Reading the deadline first,
+// as run did until #291, reports that working picker as one that never
+// answered -- and reporting a working picker as unusable is the error
+// pickerTimeout's own comment ranks worst.
+//
+// A run the deadline AFFECTED cannot reach the first case: killed while
+// running gives an *exec.ExitError, and exited 0 but reaped after the
+// deadline gives the context error itself. Neither is nil or ErrWaitDelay.
+//
+// Otherwise the DEADLINE is read before the exit code, and that order is
+// load-bearing rather than tidy. exec.CommandContext kills the process when
+// the context is done, and cmd.Run then reports a perfectly ordinary
+// *exec.ExitError carrying code -1 ("signal: killed") -- measured, not
+// assumed. Read in exit-code order, a hung picker would therefore arrive at
+// Pick as a refusal with an impossible code, so the timeout added to stop a
+// hang would have turned it into "picker refused: picker exited -1": a
+// deadlock reported as a decision. Nothing timed out here refused anything.
+//
+// It is read as DeadlineExceeded specifically: a caller that was CANCELLED
+// reports context.Canceled, and calling that a timeout would be false
+// (#272).
+func classifyRun(runErr, ctxErr error) runOutcome {
+	var exitErr *exec.ExitError
+	switch {
+	case runErr == nil || errors.Is(runErr, exec.ErrWaitDelay):
+		return outcomeAnswered
+	case errors.Is(ctxErr, context.DeadlineExceeded):
+		return outcomeTimedOut
+	case ctxErr != nil:
+		return outcomeCancelled
+	case errors.As(runErr, &exitErr):
+		return outcomeExited
+	default:
+		return outcomeNotStarted
 	}
 }
