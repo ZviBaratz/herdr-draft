@@ -514,7 +514,7 @@ const keyCmdPrefix = "resolve linear api key"
 // cmd.Run then reports an ordinary *exec.ExitError carrying -1, so
 // exit-code-first would turn a deadlock into `run api_key_cmd: signal:
 // killed` -- a deadlock reported as a decision, which is precisely what
-// picker.CLI.run's own ordering comment exists to prevent.
+// picker.classifyRun's own ordering comment exists to prevent.
 //
 // It is read as DeadlineExceeded specifically and never as `ctx.Err() != nil`.
 // A caller that was CANCELLED reports context.Canceled, and calling a ⌃C a
@@ -644,9 +644,10 @@ const (
 // The deadline is then read before the exit code, and as DeadlineExceeded
 // SPECIFICALLY rather than `ctxErr != nil`: exec.CommandContext kills the
 // process and cmd.Run reports an ordinary *exec.ExitError carrying -1, so
-// exit-code-first turns a deadlock into `signal: killed` -- picker.CLI.run's
-// own documented hazard -- and a caller that was CANCELLED reports
-// context.Canceled, which is not a timeout and must not say it was (#272).
+// exit-code-first turns a deadlock into `signal: killed` --
+// picker.classifyRun's own documented hazard -- and a caller that was
+// CANCELLED reports context.Canceled, which is not a timeout and must not
+// say it was (#272).
 func classifyRun(runErr, ctxErr error) runOutcome {
 	switch {
 	case runErr == nil || errors.Is(runErr, exec.ErrWaitDelay):

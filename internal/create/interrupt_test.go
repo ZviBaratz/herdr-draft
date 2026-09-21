@@ -40,6 +40,37 @@ func TestTheAccountPickRunsOnTheCallersContext(t *testing.T) {
 	}
 }
 
+// The same cancel, with a pick that ANSWERS anyway -- which picker.CLI does
+// for a picker that exited 0 before the signal and was only draining a
+// child's pipe (#291). The test above cannot see this: its fake refuses, so
+// the refusal stops the run before the seam is reached, with or without a
+// check there. Here nothing stops it except the seam asking the context
+// itself, and without that a signalled create would start a plan that main's
+// re-raise kills mid-creation.
+func TestAnAnsweredPickDoesNotCarryACancelledCreateAcrossTheSeam(t *testing.T) {
+	h := newHarness(t)
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}}
+	h.deps.Picker = p
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	code := h.runCtx(ctx, "--title", "fix login", "--account", "auto", "--no-worktree")
+
+	if len(p.calls) != 1 {
+		t.Fatalf("picker calls = %d, want the one commit pick -- this test is about a pick that answered", len(p.calls))
+	}
+	if code == ExitOK {
+		t.Fatal("a create whose context was cancelled before the seam created a session anyway")
+	}
+	if h.createdAnything() {
+		t.Fatalf("a create cancelled before the seam created something: %v", h.runner.calls)
+	}
+	if !errors.Is(p.sawErr, context.Canceled) {
+		t.Fatalf("the pick saw %v, want context.Canceled -- the premise is a pick that answered on a cancelled context", p.sawErr)
+	}
+}
+
 // And the other side, which is the half that keeps this safe to do at all:
 // plan.Execute does NOT inherit that cancellation. A pre-flight abort has
 // created nothing, so it is free; an Execute abort would tear the pipeline
