@@ -730,10 +730,23 @@ GitHub install and `herdr plugin link` moves it. **Regenerate the copy
 after any upgrade anyway**, with the same three lines: what it says about
 the command changes with the version.
 
-The file carries the version it was generated from, in its last section.
-If that does not match `herdr-draft version`, the copy is stale.
+The file carries the version it was generated from and a digest of the
+skill's text, in its last section. `herdr-draft version` prints both. The
+digest is what catches a change *within* a version, which is the common
+case when running from `main`. To check a copy without comparing by eye:
+
+```bash
+"$root/bin/herdr-draft" skill --check ~/.claude/skills/spawn/SKILL.md
+```
+
+It exits 0 when the file is exactly what this binary would print. When it
+isn't, it exits 1, says what moved and prints the command that regenerates
+it. Exit 2 means there is no verdict: bad arguments, a file it could not
+read, or a binary that could not work out its own path. The skill runs this check on itself before a spawn and tells you when
+the copy is stale; it does not regenerate the file itself.
 
 `herdr-draft skill` writes nothing anywhere: it prints, and you redirect.
+`--check` only reads.
 If it cannot work out its own path it still prints a usable document —
 naming the plain command `herdr-draft` — and says so on **stderr**, so a
 redirect never puts a warning inside the file.

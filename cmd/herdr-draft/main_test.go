@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +20,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/create"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
+	"github.com/ZviBaratz/herdr-draft/internal/skill"
 	"testing"
 )
 
@@ -127,7 +130,7 @@ func TestDispatch(t *testing.T) {
 			code := dispatch(tc.args, &stdout, &stderr,
 				func() int { popupRan = true; return 0 },
 				func(args []string) int { createRan, createArgs = true, args; return 0 },
-				func() int { t.Fatal("the skill verb ran"); return 0 },
+				func([]string) int { t.Fatal("the skill verb ran"); return 0 },
 			)
 
 			if code != tc.wantCode {
@@ -201,10 +204,11 @@ func TestVersionStringOmitsAnUnstampedBuild(t *testing.T) {
 // better on its own than as a fourth "want" column.
 func TestDispatchRoutesSkill(t *testing.T) {
 	var stdout, stderr strings.Builder
+	var got []string
 	called := 0
-	skillVerb := func() int { called = 1; return 0 }
+	skillVerb := func(args []string) int { called++; got = args; return 0 }
 
-	code := dispatch([]string{"skill"}, &stdout, &stderr,
+	code := dispatch([]string{"skill", "--check", "/p/SKILL.md"}, &stdout, &stderr,
 		func() int { t.Fatal("popup ran for `skill`"); return 0 },
 		func([]string) int { t.Fatal("create ran for `skill`"); return 0 },
 		skillVerb)
@@ -214,6 +218,10 @@ func TestDispatchRoutesSkill(t *testing.T) {
 	}
 	if called != 1 {
 		t.Error("dispatch did not route `skill` to the skill verb")
+	}
+	// The verb's own arguments, and only those (#311).
+	if want := []string{"--check", "/p/SKILL.md"}; !slices.Equal(got, want) {
+		t.Errorf("the skill verb got %q, want %q", got, want)
 	}
 }
 
@@ -225,12 +233,47 @@ func TestDispatchRoutesSkill(t *testing.T) {
 func TestRunSkillStampsTheBuildersVersion(t *testing.T) {
 	var stdout, stderr strings.Builder
 
-	if code := runSkill(&stdout, &stderr); code != 0 {
+	if code := runSkill(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("runSkill = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), herdrc.Version) {
 		t.Errorf("the rendered skill does not carry herdrc.Version (%q) -- "+
 			"an installed copy would never look stale", herdrc.Version)
+	}
+}
+
+// TestRunSkillChecksTheRealFile pins what skill.Run cannot: that this call
+// site hands --check a reader that reads the file (#311). Every test in
+// package skill passes with a reader that serves a string.
+func TestRunSkillChecksTheRealFile(t *testing.T) {
+	var doc strings.Builder
+	if code := runSkill(nil, &doc, io.Discard); code != 0 {
+		t.Fatalf("runSkill = %d, want 0", code)
+	}
+	path := filepath.Join(t.TempDir(), "SKILL.md")
+	if err := os.WriteFile(path, []byte(doc.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code := runSkill([]string{"--check", path}, &stdout, &stderr); code != 0 {
+		t.Errorf("runSkill --check on what it just printed = %d, want 0\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	if err := os.WriteFile(path, []byte(doc.String()+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if code := runSkill([]string{"--check", path}, &stdout, io.Discard); code != 1 {
+		t.Errorf("runSkill --check on an edited copy = %d, want 1: %s", code, stdout.String())
+	}
+}
+
+// TestVersionPrintsTheSkillDigest is the other half of the footer's claim
+// that `version` prints the skill value it carries (#311); package create's
+// TestSkillFooterNamesTheDigest holds the footer to skill.Digest().
+func TestVersionPrintsTheSkillDigest(t *testing.T) {
+	if want := "  skill      " + skill.Digest() + "\n"; !strings.Contains(versionString(), want) {
+		t.Errorf("versionString() = %q, want a line %q", versionString(), want)
 	}
 }
 

@@ -48,6 +48,31 @@ test "${HERDR_ENV:-}" = 1
 If that fails you are not inside herdr, nothing below applies, and you
 should say so rather than improvise.
 
+Then check that this file is current, because it is a copy printed by the
+binary at some point and nothing refreshes it:
+
+```bash
+"{{HERDR_DRAFT_BIN}}" skill --check ~/.claude/skills/spawn/SKILL.md
+```
+
+Use the path you loaded this skill from if it is not that one; Claude Code
+names the skill's base directory when it loads it, and the file is
+`SKILL.md` there. Three outcomes:
+
+- **It exits 0 and says `current`.** Carry on; there is nothing to report.
+- **It says `stale`.** It also says why, and prints the command that
+  regenerates the file. A stale copy can be missing flags, exit codes and
+  advice the binary now has, so run `"{{HERDR_DRAFT_BIN}}" create --help`
+  and trust it over this file wherever the two disagree. Do not run the
+  regenerate command yourself, because it writes into the user's Claude
+  configuration. Tell the user the copy is stale and pass that command
+  on, in the one question section 7 has you ask, and carry on.
+- **It prints a usage message or an error instead.** Then there was no
+  verdict: the file could not be read, or the binary is older than this
+  copy and does not know `skill --check`. Say so in the same question, and do
+  not suggest regenerating, since an older binary would print an older
+  skill. Rely on `create --help` as above.
+
 ## 2. Export the plugin environment, in the same command
 
 **This is the step that goes wrong.** herdr gives the three
@@ -659,9 +684,16 @@ through herdr's own skill, or through this one with `--no-worktree
 
 ---
 
-Generated from herdr-draft {{VERSION}}. Compare that against what
-`"{{HERDR_DRAFT_BIN}}" version` prints; if they differ, this file is stale.
-To regenerate it:
+Generated from herdr-draft {{VERSION}}, skill {{DIGEST}}. The skill value
+is the first twelve hex digits of a sha256 of this document's source, taken before the binary path and the
+version were filled in, so it changes whenever the text does, even within
+one version. `"{{HERDR_DRAFT_BIN}}" skill --check <this file>` is the
+check that decides: it compares the whole file with what the binary would
+print, including the binary path written into it, and exits 0 only when
+they match. `"{{HERDR_DRAFT_BIN}}" version` prints the same two values, if
+you would rather compare by eye; if either differs, this file is stale. To
+regenerate it where it is usually installed (use the path you loaded it
+from if it is elsewhere):
 
 ```bash
 mkdir -p ~/.claude/skills/spawn
