@@ -12,6 +12,20 @@
 # pin a linter they never run. A dev tool must not narrow who can install.
 staticcheck_version := "2026.2.1"
 
+# pyte_version pins the terminal emulator hack/live/drive.py reads the
+# screen with, on exactly the terms staticcheck_version is pinned on: one
+# machine-readable place, and nothing else in the repo names the number.
+#
+# It is not a dependency of this project in any sense a user meets. It is
+# installed on demand into a venv under a scratch directory, by the `live`
+# recipe below and nowhere else; `hack/` is not a Go package, [[build]]
+# builds ./cmd/herdr-draft, and `just check`'s four steps never reach
+# either. Nothing here may narrow who can install the plugin -- which is
+# the same rule the staticcheck note above states, and the reason a second
+# language in the tree is acceptable while a second go.mod requirement
+# would need arguing.
+pyte_version := "0.8.2"
+
 test:
     go test ./...
 
@@ -123,3 +137,66 @@ smoke repo:
     echo "esc leaves without creating"
     echo
     exec "$bin"
+
+# live drives the real form under a pty and prints what a terminal would
+# show -- docs/manual-smoke.md's Route B, automated as far as it goes.
+#
+# Unlike `smoke` this needs no herdr, no pane and no repository of yours:
+# every input the form reads is a stub under a scratch HOME, so it creates
+# nothing, spends no account quota and cannot submit anything real. That is
+# what makes it safe to run in a loop while reading a screen.
+#
+# The venv lives OUTSIDE the tree drive.py manages, because `--fresh`
+# deletes that tree and rebuilding the venv on every pass is the slowest
+# thing here by an order of magnitude.
+#
+#     just live --size 101x30
+#     just live --size 57x18 --keys tab,tab,tab --row -1
+#
+# COMMAS, not spaces, in --keys through this recipe. `{{ARGS}}` is a
+# space-joined string that the shell then re-splits, so a quoted
+# `--keys 'tab tab tab'` arrives as three arguments and argparse refuses
+# the last two. drive.py splits key tokens on either separator, so the
+# comma form is the one that survives both callers; `python3
+# hack/live/drive.py --keys 'tab tab tab'` is fine directly. The same
+# limit applies to any other flag whose value has a space in it, which is
+# why --type and --line are worth running directly when they do.
+#
+# `set -f` is not decoration either. Without it the shell globs {{ARGS}}
+# on the way past, and a key token like `tab*3` silently becomes a
+# filename that happens to match -- the same shape as #72's unquoted
+# model id and #209's `[1m]`.
+#
+# A leading `--` is swallowed rather than passed on: just does not need
+# one before a recipe's own flags, but typing it is the reflex, and
+# argparse's answer to a stray `--` here is an unrecognised-argument
+# error that names the flags you got right.
+
+# Route B under a pty: the real form, stubbed inputs, screen to stdout.
+live *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just build
+    venv="${TMPDIR:-/var/tmp}/herdr-draft-live-venv"
+    # Probed by IMPORTING pyte, not by the interpreter existing: a first
+    # run interrupted between `venv` and `pip install` leaves an
+    # executable python with nothing in it, and a guard that only checks
+    # for the binary never repairs it -- it just tells you to run the
+    # command that failed.
+    if ! "$venv/bin/python" -c 'import pyte' >/dev/null 2>&1; then
+        command -v python3 >/dev/null 2>&1 || { echo "just live needs python3" >&2; exit 1; }
+        rm -rf "$venv"
+        echo "creating $venv with pyte {{pyte_version}}"
+        python3 -m venv "$venv" || {
+            echo "could not create a venv -- on Debian/Ubuntu that is the python3-venv package" >&2
+            exit 1
+        }
+        "$venv/bin/pip" install --quiet "pyte=={{pyte_version}}" || {
+            echo "could not install pyte {{pyte_version}} -- the half-built venv has been left at $venv" >&2
+            exit 1
+        }
+    fi
+    set -f
+    set -- {{ARGS}}
+    [[ "${1:-}" == "--" ]] && shift
+    exec "$venv/bin/python" hack/live/drive.py "$@"
