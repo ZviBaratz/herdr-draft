@@ -162,9 +162,10 @@ func (c *ChipRow) SelectAt(msg tea.MouseMsg, zonePrefix string) (Chip, bool) {
 	return Chip{}, false
 }
 
-// View renders the chip row into width cells (space-padded, clipped on
-// overflow). width <= 0 renders "" rather than panicking or leaving content
-// unclipped (see widthStyle in picker.go). It is MarkedView with an empty
+// View renders the chip row into width cells, space-padded. A row too wide
+// for width SCROLLS rather than clipping: see chipWindow (#300). width <= 0
+// renders "" rather than panicking or leaving content unclipped (see
+// widthStyle in picker.go). It is MarkedView with an empty
 // zone prefix (Zones.Mark's own empty-id no-op, see its doc comment) --
 // the zero-dependency rendering path every existing widget-level test and
 // every raw (non-field-Section) golden-frame fixture in this package
@@ -187,6 +188,15 @@ func (c *ChipRow) View(width int) string {
 // a second line, only when non-empty -- by the FocusHint of the chip
 // under the cursor: the generalized focused-hint mechanism ported from
 // Atrium's chiprow.go:107-138 (see the file header).
+//
+// Only the chips chipWindow puts on screen are drawn, so only they are
+// marked. A chip scrolled out of view therefore has no zone, and one that
+// WAS on screen last render loses its zone too: bubblezone drops every
+// zone a Scan did not see (manager.go's zoneWorker at v2.0.0), so a click
+// where a hidden chip used to be selects nothing.
+//
+// The FocusHint line is a HINT in sizes.go's sense and still clips
+// silently; only the chip line scrolls.
 func (c *ChipRow) MarkedView(width int, zonePrefix string) string {
 	if width <= 0 {
 		return ""
@@ -202,23 +212,37 @@ func (c *ChipRow) MarkedView(width int, zonePrefix string) string {
 	plain := lipgloss.NewStyle().Foreground(c.palette.Text)
 	active := lipgloss.NewStyle().Foreground(c.palette.Accent).Bold(true)
 
-	var row strings.Builder
+	widths := make([]int, len(c.chips))
 	for i, chip := range c.chips {
-		label := " " + chip.Label + " "
+		widths[i] = lipgloss.Width(chipLabel(chip))
+	}
+	lo, hi, leftCut, rightCut := chipWindow(widths, c.cursor, width)
+
+	var row strings.Builder
+	if leftCut {
+		row.WriteString(dim.Render(chipCut))
+		row.WriteString(dim.Render("·"))
+	}
+	for i := lo; i <= hi; i++ {
+		chip := c.chips[i]
 		var rendered string
 		if i == c.cursor {
-			rendered = active.Render(label)
+			rendered = active.Render(chipLabel(chip))
 		} else {
-			rendered = plain.Render(label)
+			rendered = plain.Render(chipLabel(chip))
 		}
 		zoneID := ""
 		if zonePrefix != "" {
 			zoneID = zonePrefix + chip.ID
 		}
 		row.WriteString(Zones.Mark(zoneID, rendered))
-		if i < len(c.chips)-1 {
+		if i < hi {
 			row.WriteString(dim.Render("·"))
 		}
+	}
+	if rightCut {
+		row.WriteString(dim.Render("·"))
+		row.WriteString(dim.Render(chipCut))
 	}
 	line := rowStyle.Render(row.String())
 
@@ -227,4 +251,118 @@ func (c *ChipRow) MarkedView(width int, zonePrefix string) string {
 		return line + "\n" + rowStyle.Render(hintStyle.Render(hint))
 	}
 	return line
+}
+
+// chipLabel is a chip as the row draws it: its label padded by one space
+// each side, which is what the "·" separator sits between.
+func chipLabel(chip Chip) string {
+	return " " + chip.Label + " "
+}
+
+// chipCut stands where the chips a scrolled row does not show would be:
+// Ellipsis padded exactly like a chip, so a cut end reads as one more slot
+// in the row rather than as a label that lost its tail.
+var chipCut = " " + Ellipsis + " "
+
+// chipWindow picks the chips a row of the given rendered widths shows at
+// width, first and last inclusive, with the cursor chip always among them
+// (#300).
+//
+// A chip row is a CHOOSER, which is the case internal/form's sizes.go file
+// doc does not name. That doc lets a HINT line clip silently, because
+// running out of room there costs a suggestion the reader can live
+// without, and makes a VALUE cell elide with a marker, because a value
+// that loses an end is misread. A chooser's tail is neither: it is the
+// list of things the user can pick, and it holds the cursor. Hard-clipped
+// the way hints are, the options panel's model line read `inherit · fable
+// · opu` at 36 columns whatever the cursor was on, so from opus onward
+// the user was changing a value with the control they were operating
+// showing no cursor at all.
+//
+// So a row that fits is drawn whole and unchanged -- every golden frame
+// at an ordinary width is byte-identical -- and a row that does not
+// SCROLLS: it shows as much of its start as it can while still showing the
+// cursor chip whole, marks each cut end with chipCut, and never draws a
+// chip in half.
+//
+// It is stateless on purpose. The window is a pure function of the
+// widths, the cursor and the width, so there is no scroll offset to keep
+// in step with SetChips, SelectID or a resize, and nothing a render at one
+// width can leave behind for a render at another. The price is that
+// moving LEFT from the far end snaps back to the start as soon as the
+// start fits again, rather than easing back a chip at a time; the longest
+// rows in the form are six chips, so that is a jump of a few at most, and
+// a predictable one. A click can re-window the row under the pointer for
+// the same reason: the window follows the cursor wherever it lands.
+//
+// leftCut and rightCut say which ends carry a marker, and they are not
+// simply lo > 0 and hi < n-1. Below the width the cursor chip needs with
+// every marker it is owed, the markers go BEFORE the chip does: first the
+// right one, then the left, because a marker that pushes the cursor chip
+// off the edge brings back the very defect this exists to remove -- the
+// first version drew both regardless, and at 30 columns the options
+// panel's mode line read `… · accept-edit`. So down to the cursor chip's
+// own width the chip is whole and a cut may go unmarked; below that there
+// is no honest answer left and widthStyle's hard clip is the backstop, as
+// sizes.go says it is for any composed line.
+func chipWindow(widths []int, cursor, width int) (lo, hi int, leftCut, rightCut bool) {
+	n := len(widths)
+	if n == 0 {
+		return 0, -1, false, false
+	}
+	cutWidth := lipgloss.Width(chipCut) + 1 // the marker and its separator
+	// cost is what showing chips lo..hi needs, which is one cell LESS
+	// than they draw: whatever ends the row -- the last chip or the cut
+	// marker -- ends in its padding space, and clipping that loses no
+	// glyph. Counting it made a row that fits with a cell to spare look
+	// one cell too wide, and placement-floor-37x12 traded its whole
+	// `split here` chip for a marker to save a space nobody could see.
+	// That rests on a chip having no background of its own -- the cursor
+	// chip is foreground and bold only -- so a clipped pad hides nothing.
+	cost := func(lo, hi int) int {
+		total := hi - lo - 1 // separators between the chips shown, less the final pad
+		for i := lo; i <= hi; i++ {
+			total += widths[i]
+		}
+		if lo > 0 {
+			total += cutWidth
+		}
+		if hi < n-1 {
+			total += cutWidth
+		}
+		return total
+	}
+	if cost(0, n-1) <= width {
+		return 0, n - 1, false, false
+	}
+	lo = 0
+	for lo < cursor && cost(lo, cursor) > width {
+		lo++
+	}
+	hi = cursor
+	for hi+1 < n && cost(lo, hi+1) <= width {
+		hi++
+	}
+	leftCut, rightCut = lo > 0, hi < n-1
+	if cost(lo, hi) <= width {
+		return lo, hi, leftCut, rightCut
+	}
+	// No window fits with its markers: lo == hi == cursor here, and the
+	// markers yield to the chip, right one first.
+	alone := widths[cursor] - 1
+	if rightCut && alone+cutWidth+boolWidth(leftCut, cutWidth) > width {
+		rightCut = false
+	}
+	if leftCut && alone+cutWidth > width {
+		leftCut = false
+	}
+	return lo, hi, leftCut, rightCut
+}
+
+// boolWidth is w when on, else nothing.
+func boolWidth(on bool, w int) int {
+	if on {
+		return w
+	}
+	return 0
 }

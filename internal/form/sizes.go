@@ -74,6 +74,22 @@
 // imported by this very file. Everything else above still holds -- the
 // silent clip remains the backstop for a composed line as a whole, and
 // paintLine still runs last.
+//
+// A THIRD case, added by #300, which the two above do not name: a CHOOSER.
+// A chip row is neither a hint nor a value cell -- its tail is the list of
+// things the user can pick, and it holds the cursor. Clipped silently the
+// way a hint is, the options panel's model line read `inherit · fable ·
+// opu` at 36 columns whatever the cursor was on, so from opus onward the
+// user was changing a value with no cursor visible in the control they
+// were operating. So a chooser SCROLLS: it shows the cursor chip whole,
+// marks each cut end with a `…` standing where the hidden chips would be,
+// and never draws a chip in half (widgets/chiprow.go's chipWindow). A row
+// that fits is drawn exactly as before, which is why no golden frame at an
+// ordinary width moved. The order of what gives way when even that does
+// not fit is part of the rule: the markers go before the cursor chip does,
+// so a cut can go unmarked below the width the chip and its markers need,
+// and only below the cursor chip's OWN width does the silent clip above
+// take over.
 package form
 
 import (
