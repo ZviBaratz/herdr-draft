@@ -234,6 +234,10 @@ live *ARGS: _live-venv
 # can choose where a read ends. Run it after touching drive.py's
 # `emulator()`, or after moving pyte_version.
 #
+# It also holds drive.py's two Linear refusals to every config spelling
+# internal/config reads as api_key_cmd (#314), which no walk reaches
+# either. Run it after touching `refuse_real_linear`.
+#
 # Like `live` it is not part of `just check`, which must not need Python.
 #
 # `-B` because the way to prove a case pins something is to mutate
@@ -243,7 +247,7 @@ live *ARGS: _live-venv
 # surviving. Nothing else imports drive.py, so with this there is never a
 # cached copy of it to go stale.
 
-# The emulator's own tests, fed bytes directly. Fast; needs python3.
+# drive.py's own tests: the emulator fed bytes, and the Linear refusals. Fast; needs python3.
 live-selftest: _live-venv
     @"{{live_venv}}/bin/python" -B hack/live/selftest.py
 

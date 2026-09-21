@@ -37,6 +37,7 @@ import subprocess
 import sys
 import termios
 import time
+import tomllib
 
 MARKER = ".herdr-draft-live"
 
@@ -91,6 +92,18 @@ def refuse_real_linear(args):
     to it: with the default bin/herdr-draft the stub's key goes to the real
     Linear instead. Both are refused rather than worked around, so the key
     this run holds is the stub's without exception.
+
+    The config is PARSED, not matched line by line (#314). A line regex
+    let through `linear = { api_key_cmd = [...] }`, `linear.api_key_cmd =
+    [...]` and a quoted key, and internal/config reads all three. Two facts
+    about that reader decide the rest. BurntSushi/toml falls back to
+    strings.EqualFold when no key matches a field exactly, so `[LINEAR]
+    API_KEY_CMD` counts too. That is why this uses casefold(), which also
+    folds the Kelvin sign to `k` as EqualFold does. And that reader accepts
+    TOML 1.1, which tomllib does not: a newline inside an inline table is
+    valid to one and an error to the other. So a config tomllib cannot read
+    is refused as well, not taken to hold nothing: failing to read it here
+    says nothing about whether the binary can.
     """
     if not args.binary_given:
         raise SystemExit(
@@ -98,12 +111,20 @@ def refuse_real_linear(args):
             "           and the default bin/herdr-draft would send the stub's key to the real Linear.\n"
             "           `just live` passes both.")
     if args.config:
-        with open(args.config) as f:
-            if any(re.match(r"\s*api_key_cmd\s*=", line) for line in f):
+        with open(args.config, "rb") as f:
+            try:
+                doc = tomllib.load(f)
+            except tomllib.TOMLDecodeError as e:
                 raise SystemExit(
-                    "drive.py: %s sets [linear] api_key_cmd, which internal/linear prefers to any other key --\n"
-                    "           with the stub on it would send whatever that command prints to a loopback port.\n"
-                    "           Drop it from the config you pass here." % args.config)
+                    "drive.py: cannot read %s as TOML (%s), so cannot tell whether it sets [linear] api_key_cmd.\n"
+                    "           herdr-draft reads TOML 1.1, which tomllib does not, so it may well set it.\n"
+                    "           Pass a config tomllib can read." % (args.config, e))
+        tables = [v for k, v in doc.items() if k.casefold() == "linear" and isinstance(v, dict)]
+        if any(k.casefold() == "api_key_cmd" for table in tables for k in table):
+            raise SystemExit(
+                "drive.py: %s sets [linear] api_key_cmd, which internal/linear prefers to any other key --\n"
+                "           with the stub on it would send whatever that command prints to a loopback port.\n"
+                "           Drop it from the config you pass here." % args.config)
 
 
 def start_stub_linear(port, fixture_path):
