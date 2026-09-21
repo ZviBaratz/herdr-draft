@@ -69,7 +69,7 @@ names the skill's base directory when it loads it, and the file is
   on, in the one question section 7 has you ask, and carry on.
 - **It prints a usage message or an error instead.** Then there was no
   verdict: the file could not be read, or the binary is older than this
-  copy and does not know `--check`. Say so in the same question, and do
+  copy and does not know `skill --check`. Say so in the same question, and do
   not suggest regenerating, since an older binary would print an older
   skill. Rely on `create --help` as above.
 
@@ -685,7 +685,7 @@ through herdr's own skill, or through this one with `--no-worktree
 ---
 
 Generated from herdr-draft {{VERSION}}, skill {{DIGEST}}. The skill value
-is a sha256 of this document's source, taken before the binary path and the
+is the first twelve hex digits of a sha256 of this document's source, taken before the binary path and the
 version were filled in, so it changes whenever the text does, even within
 one version. `"{{HERDR_DRAFT_BIN}}" skill --check <this file>` is the
 check that decides: it compares the whole file with what the binary would

@@ -32,7 +32,7 @@ var spawnSkillDoc string
 // The three placeholders Render substitutes. Constants because each is
 // written in the markdown and read here, and a typo in one of them is not
 // a compile error -- it is a document that ships with `{{VERSION}}` in it.
-// TestRenderSubstitutesBothPlaceholders' `{{` check is what catches that.
+// TestRenderSubstitutesEveryPlaceholder's `{{` check is what catches that.
 const (
 	binPlaceholder     = "{{HERDR_DRAFT_BIN}}"
 	versionPlaceholder = "{{VERSION}}"
@@ -90,7 +90,8 @@ const fallbackBinName = "herdr-draft"
 // usage is the verb's own, printed on a usage error. Short because the
 // verb is: one form prints, one form checks.
 const usage = "usage: herdr-draft skill                   print the spawn skill\n" +
-	"       herdr-draft skill --check <path>    exit 0 if <path> is what this binary would print\n"
+	"       herdr-draft skill --check <path>    exit 0 if <path> is what this binary would print,\n" +
+	"                                           1 if it is stale, 2 if that cannot be answered\n"
 
 // Run is the `skill` verb. With no arguments it writes the rendered
 // document to stdout and returns 0. With `--check <path>` it compares the
@@ -112,12 +113,23 @@ func Run(args []string, stdout, stderr io.Writer, exe func() (string, error), re
 	case len(args) == 0:
 	case len(args) == 2 && args[0] == "--check":
 		checkPath = args[1]
+	case len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help"):
+		fmt.Fprint(stdout, usage)
+		return 0
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
 
 	bin, err := exe()
+	if err != nil && checkPath != "" {
+		// Every render names the binary's path, so without it there is
+		// nothing to compare against: checking the fallback name would call
+		// a correct copy stale and offer to replace its working path with a
+		// bare command name. Unknown is not stale.
+		fmt.Fprintf(stderr, "herdr-draft skill --check: could not resolve this binary's own path (%v), which the document names -- no verdict\n", err)
+		return 2
+	}
 	if err != nil {
 		bin = fallbackBinName
 		fmt.Fprintf(stderr,
@@ -170,7 +182,13 @@ func check(stdout, stderr io.Writer, readFile func(string) ([]byte, error), path
 	if len(why) == 0 {
 		why = append(why, "it has been edited since it was generated")
 	}
-	fmt.Fprintf(stdout, "%s: stale -- %s. Regenerate it:\n    \"%s\" skill > \"%s\"\n",
-		path, strings.Join(why, "; "), bin, path)
+	fmt.Fprintf(stdout, "%s: stale -- %s. Regenerate it:\n    %s skill > %s\n",
+		path, strings.Join(why, "; "), shellQuote(bin), shellQuote(path))
 	return 1
+}
+
+// shellQuote single-quotes s for a POSIX shell. The regenerate command is
+// printed to be pasted, and inside double quotes $ and ` still expand.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

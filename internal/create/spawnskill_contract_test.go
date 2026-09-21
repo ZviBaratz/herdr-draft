@@ -44,7 +44,7 @@ var foreignFlags = map[string]bool{
 	"--help":   true, // create's, but not in its FlagSet
 	"--source": true, // herdr agent read
 	"--format": true, // herdr agent read
-	"--check":  true, // herdr-draft skill (#311); TestSkillsSelfCheckAcceptsItself holds it
+	"--check":  true, // herdr-draft skill (#311); TestSkillNamesCheckOnlyForTheSkillVerb scopes it
 }
 
 // createFlags is every flag create really accepts, from the FlagSet
@@ -167,6 +167,21 @@ func TestSkillsSelfCheckAcceptsItself(t *testing.T) {
 	// The document promises the word the reader looks for.
 	if !strings.Contains(doc, "says `current`") || !strings.Contains(stdout.String(), "current") {
 		t.Errorf("the document and the verb disagree about the word for a current copy: %q", stdout.String())
+	}
+}
+
+// TestSkillNamesCheckOnlyForTheSkillVerb scopes foreignFlags' `--check`
+// entry, which on its own would let the flag through anywhere in the
+// document -- including attached to `create`, which has no such flag. The
+// review of #311 found that gap: every mention must be the skill verb's.
+func TestSkillNamesCheckOnlyForTheSkillVerb(t *testing.T) {
+	doc := strings.ReplaceAll(renderedSkill(), "`", "")
+	n := strings.Count(doc, "--check")
+	if n == 0 {
+		t.Fatal("the document never names --check -- if the self-check went, drop foreignFlags' entry with it")
+	}
+	if got := strings.Count(doc, "skill --check"); got != n {
+		t.Errorf("the document names --check %d times, only %d of them as `skill --check`", n, got)
 	}
 }
 

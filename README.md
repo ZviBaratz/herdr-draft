@@ -741,7 +741,8 @@ case when running from `main`. To check a copy without comparing by eye:
 
 It exits 0 when the file is exactly what this binary would print. When it
 isn't, it exits 1, says what moved and prints the command that regenerates
-it. The skill runs this check on itself before a spawn and tells you when
+it. Exit 2 means there is no verdict: bad arguments, a file it could not
+read, or a binary that could not work out its own path. The skill runs this check on itself before a spawn and tells you when
 the copy is stale; it does not regenerate the file itself.
 
 `herdr-draft skill` writes nothing anywhere: it prints, and you redirect.

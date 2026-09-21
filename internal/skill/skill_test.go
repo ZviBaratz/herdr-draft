@@ -2,12 +2,13 @@ package skill
 
 import (
 	"errors"
+	"io"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-func TestRenderSubstitutesBothPlaceholders(t *testing.T) {
+func TestRenderSubstitutesEveryPlaceholder(t *testing.T) {
 	out := Render("/opt/plugins/draft/bin/herdr-draft", "1.2.3")
 
 	if !strings.Contains(out, "/opt/plugins/draft/bin/herdr-draft") {
@@ -160,7 +161,7 @@ func TestCheckNamesWhyACopyIsStale(t *testing.T) {
 			}
 			// The fix travels with the verdict: the reader who has it can
 			// act without looking it up.
-			if !strings.Contains(stdout, `"/opt/bin/herdr-draft" skill > `) {
+			if !strings.Contains(stdout, `'/opt/bin/herdr-draft' skill > '/home/u/SKILL.md'`) {
 				t.Errorf("stdout = %q, want the regenerate command", stdout)
 			}
 			if stderr != "" {
@@ -198,4 +199,52 @@ func TestCheckRefusesWhatItCannotAnswer(t *testing.T) {
 // noRead is the reader for a Run that must not read anything.
 func noRead(t *testing.T) func(string) ([]byte, error) {
 	return func(p string) ([]byte, error) { t.Errorf("read %q without --check", p); return nil, nil }
+}
+
+// TestCheckWithoutItsOwnPathHasNoVerdict: every render names the binary's
+// path, so a check that could not learn it would compare a correct copy
+// against the fallback name, call it stale, and offer to regenerate it
+// with a bare command name in place of a working path. Unknown is not
+// stale.
+func TestCheckWithoutItsOwnPathHasNoVerdict(t *testing.T) {
+	var stdout, stderr strings.Builder
+	exe := func() (string, error) { return "", errors.New("no /proc") }
+	read := func(string) ([]byte, error) { return []byte(Render("/opt/bin/herdr-draft", "1.2.3")), nil }
+	if code := Run([]string{"--check", "/p"}, &stdout, &stderr, exe, read, "1.2.3"); code != 2 {
+		t.Errorf("--check without the binary's path = %d, want 2", code)
+	}
+	if stdout.String() != "" {
+		t.Errorf("stdout = %q, want no verdict", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "no /proc") {
+		t.Errorf("stderr = %q, want the reason", stderr.String())
+	}
+}
+
+// TestCheckQuotesTheRegenerateCommand: the command is printed to be
+// pasted, so a path is quoted for the shell it will be pasted into rather
+// than wrapped in double quotes, inside which $ and ` still expand.
+func TestCheckQuotesTheRegenerateCommand(t *testing.T) {
+	var stdout strings.Builder
+	exe := func() (string, error) { return "/opt/it's/herdr-draft", nil }
+	read := func(string) ([]byte, error) { return []byte("old"), nil }
+	Run([]string{"--check", "/p/a$HOME`x`.md"}, &stdout, io.Discard, exe, read, "1.2.3")
+	if want := `'/opt/it'\''s/herdr-draft' skill > '/p/a$HOME` + "`x`" + `.md'`; !strings.Contains(stdout.String(), want) {
+		t.Errorf("stdout = %q, want the command %s", stdout.String(), want)
+	}
+}
+
+// TestSkillHelpIsNotAUsageError: asking for help exits 0 with the usage on
+// stdout, as `herdr-draft --help` does.
+func TestSkillHelpIsNotAUsageError(t *testing.T) {
+	for _, arg := range []string{"-h", "--help", "help"} {
+		var stdout, stderr strings.Builder
+		exe := func() (string, error) { return "/opt/bin/herdr-draft", nil }
+		if code := Run([]string{arg}, &stdout, &stderr, exe, noRead(t), "1.2.3"); code != 0 {
+			t.Errorf("skill %s = %d, want 0", arg, code)
+		}
+		if !strings.Contains(stdout.String(), "--check <path>") || stderr.String() != "" {
+			t.Errorf("skill %s: stdout %q, stderr %q; want the usage on stdout", arg, stdout.String(), stderr.String())
+		}
+	}
 }

@@ -431,6 +431,8 @@ without the popup. It drives herdr exclusively through the public CLI
   what the binary would print and exits 0 only when they match. It exits
   1 when they don't, saying whether the source, the version or the binary
   path moved, or the file was edited, and giving the regenerate command.
+  It exits 2 when there is no verdict to give: bad arguments, an
+  unreadable file, or a binary that cannot resolve its own path.
   The skill runs that check on itself as its first step and tells the user
   when it is stale. Neither the check nor the agent writes into
   `~/.claude`.
