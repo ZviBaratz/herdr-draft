@@ -229,8 +229,8 @@ def emulator(cols, rows):
         #
         # IL goes through _shift beside it, for symmetry rather than
         # repair: pyte's insert_lines pops every row it passes, bottom up,
-        # so no destination keeps its old row, and it agreed with this one
-        # in 20,000 random cases where delete_lines disagreed in 302 (#312).
+        # so no destination keeps its old row (#312). selftest.py's
+        # PytePremises checks both halves of that on plain pyte.
         # pyte's carriage return after each is kept; that part it gets right.
         def delete_lines(self, count=None):
             top, bottom = self.margins or Margins(0, self.lines - 1)

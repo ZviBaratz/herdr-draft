@@ -172,13 +172,64 @@ class AgainstAModel(unittest.TestCase):
                 data += CSI + b"%d;%dr" % (top + 1, bottom + 1)
             cursor = rng.randint(0, rows - 1)
             op = rng.choice("SMTL")
-            count = rng.choice([0, 1, 2, 5])
-            data += CSI + b"%d;1H" % (cursor + 1) + CSI + (b"%d" % count if count else b"") + op.encode()
+            param = rng.choice([b"", b"0", b"1", b"2", b"5"])
+            count = int(param or 0)
+            data += CSI + b"%d;1H" % (cursor + 1) + CSI + param + op.encode()
             with self.subTest(data=data):
                 self.assertEqual(
                     screen(4, rows, data),
                     self.model(lines, top, bottom, cursor, op, count),
                 )
+
+
+class PytePremises(unittest.TestCase):
+    """What the emulator's comments say about pyte 0.8.2 itself, checked
+    on plain pyte, so a bump that changes one fails here, named, rather
+    than leaving a comment that has stopped being true."""
+
+    @staticmethod
+    def plain(cols, rows, data):
+        import pyte
+        s = pyte.Screen(cols, rows)
+        pyte.ByteStream(s).feed(data)
+        return [line.rstrip() for line in s.display]
+
+    def test_pyte_delete_lines_leaves_a_stale_row(self):
+        # The case DeleteInsertLines pins, on the code it replaces.
+        self.assertEqual(
+            self.plain(6, 4, at(1, b"A") + at(4, b"D") + CSI + b"1;1H" + CSI + b"1M"),
+            ["A", "", "D", ""],
+        )
+
+    def test_pyte_insert_lines_needs_no_override(self):
+        # IL goes through _shift for symmetry, not repair: pyte's own
+        # agrees with the model wherever the model test would take it.
+        rng = random.Random(312)
+        for _ in range(500):
+            rows = rng.randint(2, 8)
+            lines = [chr(65 + y) if rng.random() < 0.5 else "" for y in range(rows)]
+            data = b"".join(at(y + 1, line.encode()) for y, line in enumerate(lines) if line)
+            top, bottom = 0, rows - 1
+            if rng.random() < 0.5:
+                top = rng.randint(0, rows - 2)
+                bottom = rng.randint(top + 1, rows - 1)
+                data += CSI + b"%d;%dr" % (top + 1, bottom + 1)
+            cursor = rng.randint(0, rows - 1)
+            param = rng.choice([b"", b"0", b"1", b"2", b"5"])
+            data += CSI + b"%d;1H" % (cursor + 1) + CSI + param + b"L"
+            with self.subTest(data=data):
+                self.assertEqual(
+                    self.plain(4, rows, data),
+                    AgainstAModel.model(lines, top, bottom, cursor, "L", int(param or 0)),
+                )
+
+    def test_pyte_draws_csi_equals_and_less_than_as_text(self):
+        self.assertEqual(self.plain(10, 2, b"ab" + CSI + b"=0;1ucd")[0], "ab0;1ucd")
+        self.assertEqual(self.plain(10, 2, b"ab" + CSI + b"<ucd")[0], "abucd")
+
+    def test_pyte_already_swallows_csi_greater_than_u(self):
+        # Why dropping `>` from the kitty removal survives every mutation.
+        self.assertEqual(self.plain(10, 2, b"ab" + CSI + b">1ucd")[0], "abcd")
 
 
 def every_split(before, seq, after):
@@ -217,7 +268,6 @@ class IgnoredSequences(unittest.TestCase):
             CSI + b"?u",        # kitty keyboard query
             CSI + b"?2026$p",   # mode query
             CSI + b"?5W",       # tab-stop reset
-            CSI + b"?1049h",    # alternate screen
             CSI + b"?1003h",    # mouse, any motion
             CSI + b"?1006h",    # mouse, SGR reports
             CSI + b"?2004h",    # bracketed paste
@@ -225,6 +275,16 @@ class IgnoredSequences(unittest.TestCase):
             for chunks in every_split(b"before", seq, b"after"):
                 with self.subTest(chunks=chunks):
                     self.assertEqual(screen(20, 2, *chunks)[0], "beforeafter")
+
+    def test_the_alternate_screen_opens_blank_at_every_split(self):
+        # A terminal clears the alternate screen on the way in, so text
+        # drawn before `CSI ? 1049 h` is gone. pyte has no alternate screen
+        # and would keep it, which is why nothing is drawn first here: this
+        # pins what the emulator does with the sequence, on the only
+        # screen where that agrees with a terminal -- an empty one.
+        for chunks in every_split(b"", CSI + b"?1049h", b"after"):
+            with self.subTest(chunks=chunks):
+                self.assertEqual(screen(20, 2, *chunks)[0], "after")
 
 
 class SplitReads(unittest.TestCase):

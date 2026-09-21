@@ -14,7 +14,7 @@ staticcheck_version := "2026.2.1"
 
 # pyte_version pins the terminal emulator hack/live/drive.py reads the
 # screen with, on exactly the terms staticcheck_version is pinned on: one
-# machine-readable place, and nothing else in the repo names the number.
+# machine-readable place, and nothing else in the repo pins it.
 #
 # It is not a dependency of this project in any sense a user meets. It is
 # installed on demand into a venv under a scratch directory, by the
@@ -27,10 +27,11 @@ staticcheck_version := "2026.2.1"
 # would need arguing.
 pyte_version := "0.8.2"
 
-# live_venv is that scratch venv. A backtick rather than just's own
-# env_var_or_default, so an empty TMPDIR falls back exactly as the shell's
-# ${TMPDIR:-/var/tmp} does in the recipes that share the directory.
-live_venv := `echo "${TMPDIR:-/var/tmp}/herdr-draft-live-venv"`
+# live_venv is that scratch venv. Spelled so that an empty TMPDIR falls
+# back as the shell's ${TMPDIR:-/var/tmp} does in `live`, which
+# env('TMPDIR', '/var/tmp') alone would not -- and not as a backtick,
+# which just evaluates on every invocation, `just check` and CI included.
+live_venv := if env('TMPDIR', '') == '' { '/var/tmp/herdr-draft-live-venv' } else { env('TMPDIR') + '/herdr-draft-live-venv' }
 
 test:
     go test ./...
@@ -225,10 +226,10 @@ live *ARGS: _live-venv
     "$venv/bin/python" hack/live/drive.py --binary "$livebin/herdr-draft" --linear-port "$port" "$@"
 
 # live-selftest is drive.py's terminal emulator on its own: the fixes #305
-# made to pyte (SU and SD, DL and IL, the kitty keyboard sequences it would
-# draw as text, a sequence cut in two by a read) fed byte strings and
-# compared with what a terminal shows. No binary, no pty, no stub, well
-# under a second. `just live` checks every reading against a full repaint,
+# made to pyte (SU and SD, DL, the kitty keyboard sequences it would draw
+# as text, a sequence cut in two by a read), and IL beside them, fed byte
+# strings and compared with what a terminal shows. No binary, no pty, no
+# stub, well under a second. `just live` checks every reading against a full repaint,
 # but only on the paths a walk reaches -- and no walk emits DL or IL, or
 # can choose where a read ends. Run it after touching drive.py's
 # `emulator()`, or after moving pyte_version.
@@ -244,20 +245,23 @@ live *ARGS: _live-venv
 
 # The emulator's own tests, fed bytes directly. Fast; needs python3.
 live-selftest: _live-venv
-    "{{live_venv}}/bin/python" -B hack/live/selftest.py
+    @"{{live_venv}}/bin/python" -B hack/live/selftest.py
 
 # _live-venv makes that venv with the pinned pyte, and repairs it.
 #
-# Probed by IMPORTING pyte, not by the interpreter existing: a first
-# run interrupted between `venv` and `pip install` leaves an
-# executable python with nothing in it, and a guard that only checks
-# for the binary never repairs it -- it just tells you to run the
-# command that failed.
+# Probed by asking the venv's pyte for its VERSION, not by the
+# interpreter existing: a first run interrupted between `venv` and `pip
+# install` leaves an executable python with nothing in it, and a guard
+# that only checks for the binary never repairs it -- it just tells you
+# to run the command that failed. And not by importing pyte either,
+# which is what this did until #312's review: a venv built for the old
+# pin went on passing that probe after pyte_version moved, so
+# live-selftest reported the new pin green while testing the old one.
 _live-venv:
     #!/usr/bin/env bash
     set -euo pipefail
     venv="{{live_venv}}"
-    if ! "$venv/bin/python" -c 'import pyte' >/dev/null 2>&1; then
+    if ! "$venv/bin/python" -c 'import importlib.metadata as m, sys; sys.exit(m.version("pyte") != "{{pyte_version}}")' >/dev/null 2>&1; then
         command -v python3 >/dev/null 2>&1 || { echo "just live and just live-selftest need python3" >&2; exit 1; }
         rm -rf "$venv"
         echo "creating $venv with pyte {{pyte_version}}"

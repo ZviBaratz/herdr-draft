@@ -179,11 +179,10 @@ that belonged there. This driver printed all of it as if the form had drawn
 it. The form was right. `drive.py`'s `emulator` adds both scrolls, written
 straight onto pyte's buffer, because pyte's own `delete_lines` has a second
 bug on the same path (a never-written blank line moving up leaves the old row
-in place) — and routes DL through the same code, since DL is the path with that bug.
-IL goes through it too, for symmetry rather than repair: pyte's
-`insert_lines` pops every row it passes, bottom up, and agreed with the
-override in 20,000 random cases, while `delete_lines` disagreed in 302 (#312).
-No walk has emitted either yet; Bubble Tea's renderer uses DL only
+in place) — and routes DL through the same code for that reason. IL goes
+through it too, for symmetry rather than repair: pyte's `insert_lines` pops
+every row it passes, bottom up, so it has no such bug (#312), and
+`just live-selftest` checks that on plain pyte. No walk has emitted either yet; Bubble Tea's renderer uses DL only
 for a scroll region that reaches the bottom row, which the form's footer never
 lets happen. A driver that is wrong only on a path nobody has walked is still
 wrong.
