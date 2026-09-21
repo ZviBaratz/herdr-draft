@@ -103,7 +103,7 @@ Three things follow, and all three are on purpose:
   tree, for as long as that run lasts. Reading the path a second time would
   install whatever the file said by then. A file that is not UTF-8 is refused
   like any other the driver cannot parse, and `--linear-port` accepts
-  1–65535 only: a `0` used to read as "no stub" and skip both refusals.
+  1–65535 only: a `0` used to read as "no stub" and skip the refusals.
 - **The `api_key_cmd` refusal holds without the stub too.** Without the stub
   such a config hands the default binary a real key for the real Linear, or
   hands a stub-linked binary run by hand a real key for a loopback port. An

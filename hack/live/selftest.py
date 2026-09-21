@@ -16,6 +16,7 @@ the gate must not start needing Python.
 
 import argparse
 import contextlib
+import fcntl
 import io
 import os
 import random
@@ -429,6 +430,8 @@ class RefuseRealLinear(unittest.TestCase):
             "upper case": '[LINEAR]\nAPI_KEY = "lin_api_FAKE_inline"\n',
             "an inline table": 'linear = { api_key = "lin_api_FAKE_inline" }\n',
             "a dotted, quoted key": 'linear."api_key" = "lin_api_FAKE_inline"\n',
+            "a Kelvin-sign key": '[linear]\n"api_%sey" = "lin_api_FAKE_inline"\n' % KELVIN,
+            "the second of two linear tables": '[linear]\nprompt_template = "x"\n[LINEAR]\napi_key = "lin_api_FAKE_inline"\n',
         }.items():
             with self.subTest(name):
                 self.assertRegex(stub_off(body), r"sets \[linear\] api_key without the stub")
@@ -441,10 +444,30 @@ class RefuseRealLinear(unittest.TestCase):
                 self.assertEqual(stub_off(body), "")
 
 
+class HoldRoot(unittest.TestCase):
+    """One scratch tree, one lock, however --root spells it."""
+
+    def test_a_symlinked_root_takes_the_same_lock(self):
+        # Two spellings of one tree once took two locks, so a stub-off run
+        # could start its binary on the config a stub run had just written:
+        # an inline api_key, with no LINEAR_API_KEY to outrank it.
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        real = os.path.join(d, "real")
+        alias = os.path.join(d, "alias")
+        os.mkdir(real)
+        os.symlink(real, alias)
+        held = drive.hold_root(alias)
+        self.addCleanup(held.close)
+        with open(os.path.join(d, "real.lock"), "a") as other:
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 class MainRefusesFirst(unittest.TestCase):
-    """main() refuses before writing anything, only with the stub on, and
-    installs the config it checked -- not whatever the path holds by the
-    time the tree is built."""
+    """main() refuses before writing anything, and installs the config it
+    checked -- not whatever the path holds by the time the tree is
+    built."""
 
     # An executable that exists, so a run that is NOT refused gets past
     # the binary check and on to the tree: with a missing binary every
