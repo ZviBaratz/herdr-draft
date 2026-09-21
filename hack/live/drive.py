@@ -76,6 +76,66 @@ cat <<'JSON'
 JSON
 """
 
+sys.path.insert(0, HERE)
+from stub_linear import STUB_LINEAR_KEY  # noqa: E402 -- the one fake key, defined once
+
+
+def refuse_real_linear(args):
+    """The two ways a run with the stub on stops holding only the stub's key.
+
+    internal/linear's ResolveAPIKey takes api_key_cmd FIRST, then the
+    environment, then an inline api_key. The driver sets the environment,
+    so an inline key always loses to the stub's -- but an api_key_cmd in a
+    --config wins over it, and handed a real config.toml that is a real key
+    sent to a loopback port. And the stub is only reached by a binary LINKED
+    to it: with the default bin/herdr-draft the stub's key goes to the real
+    Linear instead. Both are refused rather than worked around, so the key
+    this run holds is the stub's without exception.
+    """
+    if not args.binary_given:
+        raise SystemExit(
+            "drive.py: --linear-port needs --binary: only a binary linked to that port reaches the stub,\n"
+            "           and the default bin/herdr-draft would send the stub's key to the real Linear.\n"
+            "           `just live` passes both.")
+    if args.config:
+        with open(args.config) as f:
+            if any(re.match(r"\s*api_key_cmd\s*=", line) for line in f):
+                raise SystemExit(
+                    "drive.py: %s sets [linear] api_key_cmd, which internal/linear prefers to any other key --\n"
+                    "           with the stub on it would send whatever that command prints to a loopback port.\n"
+                    "           Drop it from the config you pass here." % args.config)
+
+
+def start_stub_linear(port, fixture_path):
+    """Start stub_linear.py on 127.0.0.1:port and wait until it listens.
+
+    A separate process, so this one stays single-threaded when it forks
+    the pty child -- see stub_linear.py's own doc. Its stdin is a pipe
+    held open by this process: closing it stops the stub, and so does this
+    process dying, however it dies.
+    """
+    stub = subprocess.Popen(
+        [sys.executable, os.path.join(HERE, "stub_linear.py"), str(port), fixture_path],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    line = stub.stdout.readline().strip()
+    if line != "ready":
+        stub.wait()
+        raise SystemExit(
+            "drive.py: the stub Linear did not start: %s\n"
+            "           `just live` picks a free port and links the binary to it; if something took\n"
+            "           the port in between, run it again" % (stub.stderr.read().strip() or line or "no reason given"))
+    return stub
+
+
+def stop_stub_linear(stub):
+    stub.stdin.close()
+    try:
+        stub.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        stub.kill()
+        stub.wait()
+
+
 KEYS = {
     "tab": "\t",
     "shift-tab": "\x1b[Z",
@@ -126,13 +186,100 @@ class Ordered(argparse.Action):
         ns.actions.append((self.dest, value))
 
 
+def emulator(cols, rows):
+    """A pyte screen and stream, with the two scrolls pyte 0.8.2 lacks.
+
+    pyte has no SU (`CSI Ps S`) or SD (`CSI Ps T`) at all: its CSI table
+    maps neither, so both fall to `debug`, a no-op. Bubble Tea's renderer
+    uses SU to take lines out of the middle of the screen -- it scrolls the
+    region, then repaints only what differs from the SCROLLED screen -- so
+    in pyte the scroll never happened and the lines that should have left
+    stayed. Found on #302's first list that shrinks mid-screen: filtering
+    the issue picker from five issues to two left the last two rows of the
+    five-issue frame on screen, printed by this driver as if the form had
+    drawn them. A real terminal shows a clean screen; the form was right
+    and this was not.
+
+    They are written straight onto the buffer rather than through pyte's
+    delete_lines / insert_lines, which have a bug of their own: they move a
+    line only if its SOURCE is in pyte's sparse buffer, so a never-written
+    blank line moving up leaves the line it should have replaced exactly
+    as it was -- the same stale row by another route. Here the region is
+    lifted out whole and put back shifted, and a row with nothing to put
+    back is simply absent, which pyte reads as blank.
+    """
+    import pyte
+    from pyte.screens import Margins
+
+    class Screen(pyte.Screen):
+        def scroll_up(self, count=None, **_):
+            top, bottom = self.margins or Margins(0, self.lines - 1)
+            self._shift(top, bottom, count or 1)
+
+        def scroll_down(self, count=None, **_):
+            top, bottom = self.margins or Margins(0, self.lines - 1)
+            self._shift(top, bottom, -(count or 1))
+
+        # DL and IL go through _shift too, for the same bug. Neither was
+        # seen in any walk -- Bubble Tea's renderer (ultraviolet) emits DL
+        # only when a scroll region reaches the bottom row, and the form's
+        # footer keeps its regions off it -- but pyte's own versions leave
+        # a stale row the moment it does, and a driver that is wrong only
+        # on a path nobody has walked yet is still a driver that is wrong.
+        # pyte's carriage return after each is kept; that part it gets right.
+        def delete_lines(self, count=None):
+            top, bottom = self.margins or Margins(0, self.lines - 1)
+            if top <= self.cursor.y <= bottom:
+                self._shift(self.cursor.y, bottom, count or 1)
+                self.carriage_return()
+
+        def insert_lines(self, count=None):
+            top, bottom = self.margins or Margins(0, self.lines - 1)
+            if top <= self.cursor.y <= bottom:
+                self._shift(self.cursor.y, bottom, -(count or 1))
+                self.carriage_return()
+
+        def _shift(self, top, bottom, n):
+            """Rows top..bottom move up by n (down if n < 0); rows with
+            nothing moving into them are left absent, which reads blank."""
+            region = {y: self.buffer.pop(y) for y in list(self.buffer) if top <= y <= bottom}
+            for y in range(top, bottom + 1):
+                if y + n in region:
+                    self.buffer[y] = region[y + n]
+            self.dirty.update(range(top, bottom + 1))
+
+    class Stream(pyte.ByteStream):
+        """pyte's stream with SU/SD mapped, and the kitty keyboard
+        protocol's `CSI = … u` / `CSI > … u` / `CSI < … u` removed first.
+
+        pyte's parser does not know a CSI that opens with `=`, abandons it,
+        and DRAWS the rest as text: the form's exit sequence left
+        `▌ title      un0;1ued` on the last frame (#305's review). The
+        sequences only set, push or pop keyboard flags, so dropping them
+        changes nothing a terminal would show. A read can end mid-sequence,
+        so a trailing fragment that could still become one is held back
+        for the next feed rather than passed on half-parsed.
+        """
+
+        csi = dict(pyte.ByteStream.csi, S="scroll_up", T="scroll_down")
+        _kitty = re.compile(rb"\x1b\[[=<>][0-9;]*u")
+        _partial = re.compile(rb"\x1b(\[([=<>][0-9;]*)?)?$")
+        _carry = b""
+
+        def feed(self, data):
+            data = self._carry + data
+            m = self._partial.search(data)
+            self._carry, data = (data[m.start():], data[:m.start()]) if m else (b"", data)
+            super().feed(self._kitty.sub(b"", data))
+
+    screen = Screen(cols, rows)
+    return screen, Stream(screen)
+
+
 class Term:
     def __init__(self, binary, env, cwd, cols, rows):
-        import pyte
-
         self.cols, self.rows = cols, rows
-        self.screen = pyte.Screen(cols, rows)
-        self.stream = pyte.ByteStream(self.screen)
+        self.screen, self.stream = emulator(cols, rows)
 
         # openpty + fork rather than pty.fork(), so the window size is set
         # on the pty BEFORE the child exists. pty.fork() hands back a pty
@@ -182,6 +329,22 @@ class Term:
 
     def lines(self):
         return [l.rstrip() for l in self.screen.display]
+
+    def full_repaint(self):
+        """The screen after the program is made to redraw ALL of it.
+
+        A resize away and back -- two SIGWINCHes -- makes Bubble Tea paint
+        every line from scratch instead of the difference from its last
+        frame. That is ground truth for the current state that owes nothing
+        to how well this emulator applied the increments on the way there,
+        which is what makes it the check for them: pyte dropping SU showed
+        up as exactly such a disagreement, and nothing else did.
+        """
+        for rows in (self.rows + 1, self.rows):
+            self.screen.resize(rows, self.cols)
+            fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, self.cols, 0, 0))
+            self.pump(0.8)
+        return self.lines()
 
     def exited(self, grace=1.0):
         """The child's exit code, or None if it is still running.
@@ -286,14 +449,23 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
     if not ours:
         with open(marker, "w") as f:
             f.write("made by hack/live/drive.py\n")
+    # The config is decided afresh on EVERY run, exactly like the state
+    # directory. It used to be written when --config was passed and left
+    # alone otherwise, so one run's --config silently applied to every run
+    # after it: a config handing the binary a wrong Linear key went on
+    # putting the stub's refusal on screen for runs that never asked for
+    # it. A driver whose output depends on what you ran last is the thing
+    # the state wipe exists to prevent, and the config is the same hazard.
+    dest = os.path.join(root, "cfg", "config.toml")
     if config:
         # Copied, then chmod 0600: shutil.copyfile carries content and not
         # mode, so the copy lands at the umask -- and internal/linear
         # refuses an inline api_key in a file readable by anyone else, so a
         # 0600 source silently became an unavailable issue row.
-        dest = os.path.join(root, "cfg", "config.toml")
         shutil.copyfile(config, dest)
         os.chmod(dest, 0o600)
+    elif os.path.exists(dest):
+        os.remove(dest)
     repo = os.path.join(root, "repo")
     if not os.path.isdir(os.path.join(repo, ".git")):
         os.makedirs(repo, exist_ok=True)
@@ -319,7 +491,27 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
 KEEP = ("LANG", "LANGUAGE", "TZ", "TMPDIR")
 
 
-def child_env(root, home, state, repo, cols, rows):
+def hold_root(root):
+    """Take the scratch tree for this run, waiting for any other run on it.
+
+    Two runs at once share everything under --root: the second wipes the
+    state directory and rewrites the config under the first. So a run
+    takes an exclusive flock on a file BESIDE the tree -- beside, so that
+    --fresh deleting the tree cannot delete the lock another run is
+    holding -- and keeps it until it exits. The kernel releases it however
+    the process ends, SIGKILL included.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(root)), exist_ok=True)
+    f = open(os.path.abspath(root) + ".lock", "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("drive.py: another run is using %s -- waiting for it" % root, file=sys.stderr)
+        fcntl.flock(f, fcntl.LOCK_EX)
+    return f
+
+
+def child_env(root, home, state, repo, cols, rows, linear_key=None):
     """herdr's five variables, a locale, and nothing else of yours.
 
     Everything the form reads has to come from the scratch tree or it is
@@ -348,6 +540,9 @@ def child_env(root, home, state, repo, cols, rows):
             "tab_id": "tab-live", "focused_pane_id": "pane-live",
             "focused_pane_cwd": repo}),
     )
+    if linear_key:
+        # Set, not inherited: the one Linear key this child can hold.
+        env["LINEAR_API_KEY"] = linear_key
     return env
 
 
@@ -391,6 +586,33 @@ def run_once(args, env_for, cols, rows):
             elif kind == "click":
                 t.click(value[0], value[1], args.settle)
         lines = t.lines()
+        rc = 0
+        if args.check_repaint and t.exited(0) is not None:
+            # The form has already left -- a walk ending in esc, ⌃C or a
+            # submit -- so nothing is left to repaint, and resizing pyte on
+            # its own drops the top line and shifts every row: a mismatch
+            # on every row that says nothing about the reading.
+            print("drive.py: %dx%d: the form exited during the walk, so there is no repaint to check against"
+                  % (t.cols, t.rows), file=sys.stderr)
+        elif args.check_repaint:
+            full = t.full_repaint()
+            differ = [i for i, (a, b) in enumerate(zip(lines, full)) if a != b]
+            if differ:
+                # The screen printed below is still the INCREMENTAL one --
+                # what a terminal fed these bytes shows -- because which of
+                # the two is wrong is the question, not the answer. Either
+                # this emulator mishandled a sequence (pyte's missing SU was
+                # one) or the program's own incremental repaint is wrong,
+                # and both are findings. A picker that re-scrolls differently
+                # at the resize's intermediate height can also land here;
+                # read the rows before concluding.
+                sys.stdout.flush()
+                print("drive.py: %dx%d: the screen disagrees with a full repaint of the same state at rows %s"
+                      % (t.cols, t.rows, differ), file=sys.stderr)
+                for i in differ[:5]:
+                    print("drive.py:   %2d as painted  |%s|" % (i, lines[i]), file=sys.stderr)
+                    print("drive.py:   %2d full repaint |%s|" % (i, full[i]), file=sys.stderr)
+                rc = 1
         if args.row or args.line:
             for n in args.row:
                 if not -len(lines) <= n < len(lines):
@@ -403,7 +625,7 @@ def run_once(args, env_for, cols, rows):
         else:
             for i, line in enumerate(lines):
                 print("%2d %s" % (i, line))
-        return 0
+        return rc
     finally:
         t.close()
 
@@ -426,23 +648,36 @@ def main(argv):
                    help="print row N instead of the screen; negative counts from the bottom, so -1 is the footer")
     p.add_argument("--line", action="append", default=[], metavar="SUBSTR",
                    help="print every row containing SUBSTR instead of the screen")
-    p.add_argument("--binary", default=os.path.join(REPO, "bin", "herdr-draft"),
+    p.add_argument("--binary", default=None,
                    help="the binary to drive (default: this repo's bin/herdr-draft)")
     p.add_argument("--root", default=os.path.join(os.environ.get("TMPDIR", "/var/tmp"), "herdr-draft-live"),
                    help="scratch tree: HOME, the stubs, the plugin dirs and a throwaway repo")
     p.add_argument("--repo", help="drive the form at this repository instead of the throwaway one")
     p.add_argument("--config", metavar="FILE", help="install FILE as the plugin's config.toml")
+    p.add_argument("--linear-port", type=int, metavar="PORT",
+                   help="serve the stub Linear on this loopback port. Only a binary LINKED to that port "
+                        "talks to it -- `just live` does both halves; without this the issue row is absent")
+    p.add_argument("--linear", metavar="FILE", default=os.path.join(HERE, "linear-issues.json"),
+                   help="the assignedIssues response the stub Linear serves (default: hack/live/linear-issues.json)")
     p.add_argument("--herdr", metavar="FILE",
                    help="install FILE as the stub herdr instead of the built-in one -- which is how you "
                         "answer more subcommands, and how you reproduce the envelope failure the README describes")
     p.add_argument("--fresh", action="store_true", help="delete the whole scratch tree first")
     p.add_argument("--keep-state", action="store_true",
                    help="keep the plugin state dir, so last-used and per-project memory carry over between runs")
+    p.add_argument("--no-check-repaint", dest="check_repaint", action="store_false",
+                   help="skip comparing the screen with a forced full repaint of the same state -- "
+                        "faster, and the only guard against this emulator misreading an increment")
     p.add_argument("--settle", type=float, default=0.25, help="seconds to wait after each action (default 0.25)")
     p.add_argument("--open-settle", type=float, default=1.5,
                    help="seconds to wait after launch, before the first action (default 1.5)")
     p.set_defaults(actions=[])
     args = p.parse_args(argv)
+    args.binary_given = args.binary is not None
+    if not args.binary_given:
+        args.binary = os.path.join(REPO, "bin", "herdr-draft")
+    if args.linear_port:
+        refuse_real_linear(args)  # before anything is written to the scratch tree
 
     try:
         import pyte  # noqa: F401
@@ -454,18 +689,25 @@ def main(argv):
     if not os.path.isfile(args.binary) or not os.access(args.binary, os.X_OK):
         raise SystemExit("drive.py: no binary at %s -- run `just build`" % args.binary)
 
+    lock = hold_root(args.root)  # noqa: F841 -- held for this process's life
     home, state, repo = build_tree(args.root, args.fresh, args.keep_state, args.config, args.herdr)
     if args.repo:
         repo = os.path.abspath(args.repo)
     args.repo = repo
 
-    sizes = args.size or [(101, 30)]
-    rc = 0
-    for cols, rows in sizes:
-        if len(sizes) > 1:
-            print("=== %dx%d" % (cols, rows))
-        rc |= run_once(args, lambda c, r: child_env(args.root, home, state, repo, c, r), cols, rows)
-    return rc
+    stub = start_stub_linear(args.linear_port, args.linear) if args.linear_port else None
+    key = STUB_LINEAR_KEY if stub else None
+    try:
+        sizes = args.size or [(101, 30)]
+        rc = 0
+        for cols, rows in sizes:
+            if len(sizes) > 1:
+                print("=== %dx%d" % (cols, rows))
+            rc |= run_once(args, lambda c, r: child_env(args.root, home, state, repo, c, r, key), cols, rows)
+        return rc
+    finally:
+        if stub:
+            stop_stub_linear(stub)
 
 
 if __name__ == "__main__":

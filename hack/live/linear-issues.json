@@ -1,0 +1,65 @@
+{
+  "data": {
+    "viewer": {
+      "assignedIssues": {
+        "nodes": [
+          {
+            "identifier": "LIV-12",
+            "title": "Fix login redirect loop",
+            "branchName": "live/liv-12-fix-login-redirect-loop",
+            "url": "https://linear.app/example/issue/LIV-12",
+            "description": "Signing in from an expired session bounces between /login and /callback.",
+            "state": {"name": "In Progress", "type": "started"},
+            "estimate": 3,
+            "priority": 2,
+            "cycle": {"number": 4}
+          },
+          {
+            "identifier": "LIV-15",
+            "title": "Add dark mode to the settings page",
+            "branchName": "live/liv-15-add-dark-mode-to-the-settings-page",
+            "url": "https://linear.app/example/issue/LIV-15",
+            "description": "",
+            "state": {"name": "Todo", "type": "unstarted"},
+            "estimate": null,
+            "priority": 3,
+            "cycle": null
+          },
+          {
+            "identifier": "LIV-21",
+            "title": "Retry webhook deliveries with exponential backoff and a dead-letter queue",
+            "branchName": "live/liv-21-retry-webhook-deliveries",
+            "url": "https://linear.app/example/issue/LIV-21",
+            "description": "A title long enough to be elided in every column the picker has.",
+            "state": {"name": "In Review", "type": "started"},
+            "estimate": 5,
+            "priority": 1,
+            "cycle": {"number": 4}
+          },
+          {
+            "identifier": "LIV-27",
+            "title": "Paginate the audit log export",
+            "branchName": "live/liv-27-paginate-the-audit-log-export",
+            "url": "https://linear.app/example/issue/LIV-27",
+            "description": "",
+            "state": {"name": "Todo", "type": "unstarted"},
+            "estimate": 2,
+            "priority": 0,
+            "cycle": null
+          },
+          {
+            "identifier": "LIV-30",
+            "title": "Drop the legacy CSV importer",
+            "branchName": "live/liv-30-drop-the-legacy-csv-importer",
+            "url": "https://linear.app/example/issue/LIV-30",
+            "description": "",
+            "state": {"name": "In Progress", "type": "started"},
+            "estimate": 1,
+            "priority": 4,
+            "cycle": {"number": 5}
+          }
+        ]
+      }
+    }
+  }
+}

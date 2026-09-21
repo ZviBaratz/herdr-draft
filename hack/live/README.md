@@ -46,10 +46,51 @@ directory on every run. A screen that depends on whose key is in the shell is
 not evidence, and a screen dump that carries real issue titles is worse than
 useless in a PR.
 
-The visible consequence is that **the issue row is absent**: with no key, the
-form reports Linear unavailable and the row goes. That is the honest state for
-a hermetic run. Reading that row live needs a real key, which is exactly what
-this driver will not do on your behalf.
+## The stub Linear, and why it needs its own binary
+
+Linear is the one input a scratch `HOME` cannot stub: the endpoint is compiled
+in. So `just live` does not drive `bin/herdr-draft`. It links **its own copy**
+with `-X` pointing `internal/linear`'s `defaultEndpoint` at a loopback port
+(#302), and `stub_linear.py` serves `linear-issues.json` there. The issue row
+then renders five obviously fake `LIV-` issues — a filterable picker, three
+columns, an elided title and a count line — from a file committed next to this
+one, not from anyone's workspace.
+
+Three things follow, and all three are on purpose:
+
+- **The driven binary is not `just build`'s.** It differs by that one string,
+  and it says so: `go version -m` on it prints the `-ldflags` it was linked
+  with. Each run links its own copy into a fresh directory under
+  `$TMPDIR/herdr-draft-live-bin/` and deletes it on the way out — one shared
+  path let a second `just live` relink the first run's binary between its link
+  and its exec, and the first form then dialled the second run's port. An installed plugin is built by
+  `herdr-plugin.toml`'s `[[build]]`, which sets no `-X`; `internal/linear`'s
+  `TestNoInstalledBinaryCanBeRedirected` reads the real manifest to keep it so.
+- **It lives under `$TMPDIR`, never in `bin/`.** `just smoke` runs
+  `bin/herdr-draft` against the REAL Linear and must never pick this one up —
+  and this one sends whatever Linear key it holds to a loopback port. That is
+  right for the stub's fake key and wrong for anyone's real one. **Do not run it
+  by hand.**
+- **The only key it ever holds is the stub's, and that takes two refusals as
+  well as the allow-list.** `internal/linear`'s `ResolveAPIKey` prefers a
+  `[linear] api_key_cmd` to the environment, and the environment to an inline
+  `api_key`. The allow-list means nothing is inherited and the driver sets
+  `LINEAR_API_KEY` to the stub's own obviously fake key, which beats any inline
+  key — but a `--config` carrying `api_key_cmd` would beat the stub's, and
+  handed a real `config.toml` that is a real key sent to a loopback port. So
+  with the stub on, the driver **refuses** a config that sets `api_key_cmd`,
+  before anything is written. It also refuses `--linear-port` without an
+  explicit `--binary`, because the default `bin/herdr-draft` is not linked to
+  the stub and would send the stub's key to the real Linear.
+- **The stub refuses what should never reach it anyway.** Any key but its own,
+  and any query but the one `internal/linear` sends, gets a GraphQL error the
+  form shows as the row's reason. With the refusals above, no route through the
+  driver can deliver another key — this is the second line, not the first —
+  and the key itself is never printed: the stub logs nothing, and neither its
+  refusal nor `internal/linear`'s errors carry the `Authorization` header.
+
+Run `drive.py` directly without `--linear-port` and there is no stub and no
+key, so the issue row is absent — the honest state for a run with no Linear.
 
 ## The stub `herdr`'s envelope
 
@@ -125,6 +166,57 @@ stub.
 The stub answers `status --json` with two profiles, which is what puts
 `active · Max 20x · 5h 12%` on the account row.
 
+## Every reading checks itself
+
+pyte 0.8.2 has **no SU or SD** (`CSI Ps S`, `CSI Ps T`): its CSI table maps
+neither, so both fall to a silent no-op. Bubble Tea's renderer uses SU to take
+lines out of the middle of a screen — it scrolls the region and repaints only
+what differs from the scrolled result — so under pyte the scroll never
+happened and the lines that should have gone stayed. The first list here to
+shrink mid-screen was #302's issue picker: filtering five issues down to two
+left the old frame's last two rows on screen, and dropped `est 2` from a row
+that belonged there. This driver printed all of it as if the form had drawn
+it. The form was right. `drive.py`'s `emulator` adds both scrolls, written
+straight onto pyte's buffer, because pyte's own `delete_lines` has a second
+bug on the same path (a never-written blank line moving up leaves the old row
+in place) — and routes DL and IL through the same code, because they share
+that bug. No walk has emitted either yet; Bubble Tea's renderer uses DL only
+for a scroll region that reaches the bottom row, which the form's footer never
+lets happen. A driver that is wrong only on a path nobody has walked is still
+wrong.
+
+One more thing pyte gets wrong, and it is the opposite failure: it does not
+know a CSI that opens with `=`, abandons it, and **draws the rest as text**.
+The form's exit sequence sets kitty keyboard flags with `CSI = 0;1 u`, and the
+last frame read `▌ title      un0;1ued`. Those sequences only set, push or pop
+keyboard flags, so the emulator removes them before pyte sees them — including
+one cut in half by the pty read. Every other sequence the form was seen to
+emit that pyte does not handle was fed to it alone and left the screen
+unchanged: modifyOtherKeys (`CSI > 4 m`), the kitty keyboard query
+(`CSI ? u`), a mode query (`CSI ? 2026 $ p`), a tab-stop reset (`CSI ? 5 W`),
+and the private modes for the alternate screen, mouse and bracketed paste.
+
+That bug was invisible for the whole of #290, so **every reading is now
+compared with a full repaint of the same state.** A resize away and back makes
+the program draw every line from scratch, which is ground truth that owes
+nothing to how well the emulator applied the increments. If the two disagree
+the driver still prints what was painted, names the rows that differ on
+stderr, and exits 1. Measured on the emulator as #290 shipped it, one of
+twelve walks — the picker filter at 101x30 — disagrees, at exactly the rows
+above; with SU and SD, none do. It costs 1.5–2s per size (measured 1.5s
+here and about 2.0s on another run of the same machine); `--no-check-repaint`
+skips it. A disagreement is a finding either way: this emulator misread a
+sequence, or the program's own incremental repaint is wrong. One false alarm
+is possible — a picker that re-scrolls differently at the resize's
+intermediate height — so read the rows before concluding. A walk that ends the
+form — `esc`, `⌃C`, a submit — has nothing left to repaint, so the check is
+skipped with a note rather than run: resizing pyte alone drops its top line and
+reports every row as different, which the first version did.
+
+Two runs at once used to corrupt each other through the shared scratch tree
+as well as the shared binary. A run now holds a lock beside `--root` for its
+whole length; a second one says it is waiting and then runs.
+
 ## Why `pyte` and not a regex
 
 A Bubble Tea program repaints **partially**. Stripping ANSI out of the raw
@@ -134,7 +226,7 @@ terminal emulator, so what it holds is what a person would see. That is the
 same reason `docs/manual-smoke.md` warns that a `pane read` is one keystroke
 stale.
 
-## Four things that will mislead you anyway
+## Things that will mislead you anyway
 
 **A keystroke count is not a row count.** Tab skips inert rows, and which rows
 are inert depends on the form's own state — with the worktree on, the
@@ -156,6 +248,11 @@ project row's open does one `git fetch --prune` against that repo's real
 remote. It is the one flag that reaches the network — no credentials travel
 with it, since `SSH_AUTH_SOCK` is not inherited, so a private remote simply
 fails — and the throwaway repo the driver makes has no remote at all.
+
+**The config is per run, like the state.** `--config FILE` installs `FILE`
+for that run only. It used to persist, so one run's config silently applied
+to every run after it — a config handing the binary a wrong Linear key went
+on putting the stub's refusal on screen for runs that never asked for it.
 
 **State carries over unless you let it go.** The plugin's state directory holds
 `recents.json`, `last-used.json` and `projects.json`, so a second run would

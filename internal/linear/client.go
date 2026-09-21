@@ -35,7 +35,19 @@ const assignedIssuesQuery = `  { viewer { assignedIssues(
 
 // defaultEndpoint is Linear's public GraphQL API endpoint, used when
 // Client.Endpoint is empty.
-const defaultEndpoint = "https://api.linear.app/graphql"
+//
+// A var and not a const for ONE reason: so `just live` can link a copy of
+// the binary whose issue query goes to hack/live's stub instead (#302),
+// with `-ldflags -X .../internal/linear.defaultEndpoint=http://127.0.0.1:N/...`.
+// Nothing assigns it at runtime, and nothing may: that would be a setting,
+// and a setting that decides where the user's Linear key is sent is the
+// thing #302 chose not to add. The linker is the only way in, so a binary
+// is redirected only if whoever BUILT it asked for that -- and
+// herdr-plugin.toml's [[build]], which is what builds every installed
+// copy, never does. TestNoInstalledBinaryCanBeRedirected reads the real
+// manifest to keep it that way, and TestClientDefaultEndpoint pins the
+// value that build gets.
+var defaultEndpoint = "https://api.linear.app/graphql"
 
 // Issue is one Linear issue returned by AssignedIssues, shaped for the form
 // fields described in spec §10 (issue picker + seeding template). Estimate

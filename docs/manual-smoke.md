@@ -287,8 +287,9 @@ Route A is what proves the popup itself still works, which is cell 1's job.
 `hack/live/drive.py` runs the same binary under a pty, reads the screen with a
 terminal emulator, and prints it — at a size you name, after keys you name.
 Every input is a stub under a scratch `HOME`, reached through an allow-listed
-environment, so nothing it drives is real: no herdr, no Linear, no clauth, and
-no account quota. It answers "what does this actually look like at 57 columns
+environment, so nothing it drives is real: no herdr, no clauth, no account
+quota, and a Linear that serves five fake issues from a committed file to a
+copy of the binary linked to find it (#302). It answers "what does this actually look like at 57 columns
 with the worktree row focused", which is the question a golden frame cannot be
 trusted with (`CLAUDE.md`: a golden-frame suite proves only the states someone
 thought to fixture). It does **not** replace anything in the matrix below. A
