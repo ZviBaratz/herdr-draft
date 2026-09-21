@@ -369,8 +369,8 @@ func TestAPickerWhoseChildHoldsThePipeStillAnswered(t *testing.T) {
 	}
 }
 
-// THE PIN for the order of run's cases, carrying no timing at all -- the
-// sibling of linear's and clauth's tables of the same name. linear's
+// THE PIN for the order of classifyRun's cases, carrying no timing at all --
+// the sibling of linear's and clauth's tables of the same name. linear's
 // classifyRun comment has the argument and the measurements, including why
 // the rows where the command answered AND the context is done are a real
 // band rather than a race, and why a table beats a real subprocess landing
@@ -394,7 +394,7 @@ func TestClassifyRun_AnAnswerInHandBeatsAContextThatIsDone(t *testing.T) {
 		{"killed by the deadline while running", exited, context.DeadlineExceeded, outcomeTimedOut},
 		// Exited 0 before Process.Wait could reap it, so cmd.Run returns the
 		// CONTEXT error rather than an *ExitError -- see linear.classifyRun.
-		{"exited 0 but was reaped after the deadline", context.DeadlineExceeded, context.DeadlineExceeded, outcomeTimedOut},
+		{"exited 0 but the deadline's kill landed on the zombie", context.DeadlineExceeded, context.DeadlineExceeded, outcomeTimedOut},
 		{"killed by the caller", exited, context.Canceled, outcomeCancelled},
 		// The protocol's refusals, and the codes outside it: an exit code
 		// worth interpreting, which only a run nothing interrupted has.

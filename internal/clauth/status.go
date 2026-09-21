@@ -284,8 +284,8 @@ func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 // exec.CommandContext kills the process and cmd.Run then reports an ordinary
 // *exec.ExitError, so exit-code-first would put `clauth status --json:
 // signal: killed` on the account row -- a deadlock presented as a verdict
-// about the user's credentials, which is picker.CLI.run's own documented
-// hazard.
+// about the user's credentials, which is picker.classifyRun's own
+// documented hazard.
 //
 // It is read as DeadlineExceeded specifically and never as `ctx.Err() != nil`:
 // a caller that was CANCELLED reports context.Canceled, and calling that a

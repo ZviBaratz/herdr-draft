@@ -2295,10 +2295,13 @@ type fakePicker struct {
 	err   error
 	calls []picker.Options
 	dirs  []string
-	// obeyCtx makes this fake behave the way picker.CLI does about a
-	// cancelled context -- it refuses rather than answering -- and sawErr
-	// is the context it was handed, for #252's test of which context that
-	// is.
+	// obeyCtx makes this fake behave the way picker.CLI does when the
+	// cancel lands while the picker is still running -- it refuses rather
+	// than answering -- and sawErr is the context it was handed, for #252's
+	// test of which context that is. Left false, it answers regardless,
+	// and that is a real picker.CLI shape too, not only a fake's shortcut:
+	// a picker that had already exited 0 and was only draining a child's
+	// pipe answers on a cancelled context (#291, picker.classifyRun).
 	obeyCtx bool
 	sawErr  error
 }

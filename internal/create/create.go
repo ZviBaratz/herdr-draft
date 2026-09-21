@@ -417,6 +417,20 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	// nothing below is prepared for. It is the one window main's own
 	// handshake cannot cover, because main is inside this call for as long
 	// as the plan takes.
+	//
+	// A signal that arrived BEFORE here must stop here, and the pick
+	// succeeding is not evidence that none did. Nothing earlier in the
+	// pre-flight refuses a cancelled context, and the pick can answer on
+	// one: a picker that exited 0 before the signal, with only a child's
+	// hold on its pipe left to drain, is an answer in hand
+	// (picker.classifyRun, #291), and the drain does not watch the context.
+	// Crossing anyway would start a plan that main's re-raise kills inside
+	// its grace -- the half-built session this seam exists to prevent. So
+	// the seam asks the context itself. The picker's ledger entry already
+	// stands either way; the protocol has no verb for handing it back.
+	if err := ctx.Err(); err != nil {
+		return refuse(deps.stderr(), fmt.Errorf("interrupted before anything was created: %w", err))
+	}
 	return execute(context.WithoutCancel(ctx), resolved, req, deps, ops)
 }
 

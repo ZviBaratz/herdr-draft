@@ -180,8 +180,8 @@ func stderrNote(stderr []byte) string {
 var pickerTimeout = 30 * time.Second
 
 // pickerWaitDelay is how long Wait may keep waiting on the picker's PIPES
-// after the deadline has already killed the picker itself, and without it the
-// deadline above bounds nothing that matters.
+// after the picker itself has exited -- killed by the deadline or not -- and
+// without it the deadline above bounds nothing that matters.
 //
 // Measured, not reasoned about: with pickerTimeout alone, a stub picker that
 // is `#!/bin/sh` + `sleep 30` returns from CLI.run after the full thirty
@@ -229,6 +229,8 @@ func (c CLI) run(ctx context.Context, dir string, opts Options) (code int, stdou
 	case outcomeCancelled:
 		return 0, nil, nil, fmt.Errorf("picker %s: %w", c.Bin, ctx.Err())
 	case outcomeExited:
+		// classifyRun returns this only when runErr IS an *exec.ExitError,
+		// so the As below always matches and exitErr is never nil.
 		var exitErr *exec.ExitError
 		errors.As(runErr, &exitErr)
 		return exitErr.ExitCode(), out.Bytes(), errBuf.Bytes(), nil
@@ -275,11 +277,14 @@ const (
 // between 28s and 30s with a child on the pipe. Reading the deadline first,
 // as run did until #291, reports that working picker as one that never
 // answered -- and reporting a working picker as unusable is the error
-// pickerTimeout's own comment ranks worst.
+// pickerTimeout's own comment ranks worse than a slow start.
 //
 // A run the deadline AFFECTED cannot reach the first case: killed while
-// running gives an *exec.ExitError, and exited 0 but reaped after the
-// deadline gives the context error itself. Neither is nil or ErrWaitDelay.
+// running gives an *exec.ExitError, and exited 0 before it could be reaped
+// gives the context error itself, because the kill succeeds on the zombie
+// and the watcher injects ctx.Err(). Neither is nil or ErrWaitDelay. A
+// zombie the reap gets to first is not one of these: the kill finds it done,
+// nothing reached it, and it comes back nil -- an answer, correctly.
 //
 // Otherwise the DEADLINE is read before the exit code, and that order is
 // load-bearing rather than tidy. exec.CommandContext kills the process when
