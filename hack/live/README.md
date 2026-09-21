@@ -98,6 +98,15 @@ Three things follow, and all three are on purpose:
   or a string that merely mentions `api_key_cmd` is not refused, and neither
   is a `[linear]` that is not a table, which the binary refuses to load.
   `just live-selftest` holds every one of those cases.
+- **The config is read once, and the bytes checked are the bytes installed.**
+  A run can wait on another run's lock between the check and building the
+  tree, for as long as that run lasts. Reading the path a second time would
+  install whatever the file said by then. A file that is not UTF-8 is refused
+  like any other the driver cannot parse, and `--linear-port` accepts
+  1–65535 only: a `0` used to read as "no stub" and skip both refusals.
+  What these refusals cannot catch is a stub-linked binary run without
+  `--linear-port` at all. `just live` never does that, and it deletes its
+  binary on the way out.
 - **The stub refuses what should never reach it anyway.** Any key but its own,
   and any query but the one `internal/linear` sends, gets a GraphQL error the
   form shows as the row's reason. With the refusals above, no route through the

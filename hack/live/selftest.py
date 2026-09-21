@@ -15,12 +15,15 @@ the gate must not start needing Python.
 """
 
 import argparse
+import contextlib
+import io
 import os
 import random
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import drive  # noqa: E402
@@ -323,16 +326,14 @@ class RefuseRealLinear(unittest.TestCase):
     `linear.api_key_cmd` would pass them."""
 
     def refusal(self, body=None, binary_given=True):
-        """What refuse_real_linear says about a config holding `body`
-        (None: no --config at all). Empty when it lets the run go ahead."""
-        config = None
-        if body is not None:
-            fd, config = tempfile.mkstemp(suffix=".toml")
-            self.addCleanup(os.remove, config)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(body)
+        """What refuse_real_linear says about a config holding `body` --
+        str or bytes; None for no --config at all. Empty when it lets the
+        run go ahead."""
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        args = argparse.Namespace(binary_given=binary_given, config=None if body is None else "test.toml")
         try:
-            drive.refuse_real_linear(argparse.Namespace(binary_given=binary_given, config=config))
+            drive.refuse_real_linear(args, body)
         except SystemExit as e:
             return str(e.code)
         return ""
@@ -351,6 +352,9 @@ class RefuseRealLinear(unittest.TestCase):
         "a mixed-case dotted key": "Linear.Api_Key_Cmd = %s\n",
         "a Kelvin-sign key": '[linear]\n"api_%sey_cmd" = %%s\n' % KELVIN,
         "beside an inline api_key": '[linear]\napi_key = "lin_api_FAKE_inline"\napi_key_cmd = %s\n',
+        # Two tables that are one to internal/config. The command is in the
+        # SECOND, which is what a check reading only the first match misses.
+        "in the second of two linear tables": '[linear]\napi_key = "lin_api_FAKE_inline"\n[LINEAR]\napi_key_cmd = %s\n',
     }
 
     def test_every_spelling_internal_config_reads_is_refused(self):
@@ -366,6 +370,7 @@ class RefuseRealLinear(unittest.TestCase):
         for name, body in {
             "a multi-line inline table": "linear = { api_key_cmd = %s,\n}\n" % FAKE_CMD,
             "not TOML at all": "[linear\n",
+            "not UTF-8": b"[linear]\napi_key = \"\xff\"\n",
         }.items():
             with self.subTest(name):
                 self.assertRegex(self.refusal(body), r"cannot read .* as TOML")
@@ -410,8 +415,15 @@ class RefuseRealLinear(unittest.TestCase):
 
 
 class MainRefusesFirst(unittest.TestCase):
-    """main() asks refuse_real_linear before writing anything, and asks it
-    only with the stub on."""
+    """main() refuses before writing anything, only with the stub on, and
+    installs the config it checked -- not whatever the path holds by the
+    time the tree is built."""
+
+    # An executable that exists, so a run that is NOT refused gets past
+    # the binary check and on to the tree: with a missing binary every
+    # run stops before hold_root, and "nothing was written" holds whatever
+    # the refusal does.
+    BINARY = "/bin/true"
 
     def setUp(self):
         d = tempfile.mkdtemp()
@@ -423,20 +435,29 @@ class MainRefusesFirst(unittest.TestCase):
 
     def main(self, *argv):
         try:
-            drive.main(["--root", self.root] + list(argv))
+            with contextlib.redirect_stderr(io.StringIO()):
+                drive.main(["--root", self.root] + list(argv))
         except SystemExit as e:
             return str(e.code)
         self.fail("drive.main ran to the end")
 
     def test_with_the_stub_on(self):
         for argv, refusal in (
-            (["--linear-port", "9", "--binary", "/nonexistent/herdr-draft", "--config", self.config],
+            (["--linear-port", "9", "--binary", self.BINARY, "--config", self.config],
              r"sets \[linear\] api_key_cmd"),
             (["--linear-port", "9"], r"--linear-port needs --binary"),
+            (["--linear-port", "9", "--binary", self.BINARY, "--config", self.config + ".missing"],
+             r"cannot read .*\.missing"),
         ):
             with self.subTest(argv=argv):
                 self.assertRegex(self.main(*argv), refusal)
                 self.assertFalse(os.path.exists(self.root), "wrote the scratch tree before refusing")
+                self.assertFalse(os.path.exists(self.root + ".lock"), "took the lock before refusing")
+
+    def test_port_zero_is_not_a_port(self):
+        # A falsy port once skipped the refusal outright.
+        self.assertEqual(self.main("--linear-port", "0", "--binary", self.BINARY, "--config", self.config), "2")
+        self.assertFalse(os.path.exists(self.root))
 
     def test_with_the_stub_off(self):
         # No stub, no key, nothing to refuse: it gets as far as looking
@@ -444,6 +465,34 @@ class MainRefusesFirst(unittest.TestCase):
         self.assertRegex(self.main("--binary", "/nonexistent/herdr-draft", "--config", self.config),
                          r"no binary at")
         self.assertFalse(os.path.exists(self.root))
+
+    def test_installs_the_config_it_checked(self):
+        # hold_root can wait on another run for as long as that run lasts.
+        # Anything that rereads the path after it installs whatever the
+        # file says THEN -- here, an api_key_cmd written during the wait.
+        checked = b'[linear]\napi_key = "lin_api_FAKE_inline"\n'
+        with open(self.config, "wb") as f:
+            f.write(checked)
+
+        def hold_root(root):
+            with open(self.config, "w") as f:
+                f.write("[linear]\napi_key_cmd = %s\n" % FAKE_CMD)
+
+        class Stop(Exception):
+            pass
+
+        def start_stub_linear(port, fixture):
+            raise Stop()
+
+        with mock.patch.object(drive, "hold_root", hold_root), \
+                mock.patch.object(drive, "start_stub_linear", start_stub_linear):
+            with self.assertRaises(Stop):
+                drive.main(["--root", self.root, "--linear-port", "9", "--binary", self.BINARY,
+                            "--config", self.config])
+        dest = os.path.join(self.root, "cfg", "config.toml")
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), checked)
+        self.assertEqual(os.stat(dest).st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":

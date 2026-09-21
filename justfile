@@ -261,12 +261,19 @@ live-selftest: _live-venv
 # which is what this did until #312's review: a venv built for the old
 # pin went on passing that probe after pyte_version moved, so
 # live-selftest reported the new pin green while testing the old one.
+# The probe also asks for Python 3.11, since drive.py imports tomllib
+# (#314). Otherwise a venv made from an older python3 passes the pyte
+# check and then fails on import with a bare ModuleNotFoundError.
 _live-venv:
     #!/usr/bin/env bash
     set -euo pipefail
     venv="{{live_venv}}"
-    if ! "$venv/bin/python" -c 'import importlib.metadata as m, sys; sys.exit(m.version("pyte") != "{{pyte_version}}")' >/dev/null 2>&1; then
+    if ! "$venv/bin/python" -c 'import importlib.metadata as m, sys; sys.exit(m.version("pyte") != "{{pyte_version}}" or sys.version_info < (3, 11))' >/dev/null 2>&1; then
         command -v python3 >/dev/null 2>&1 || { echo "just live and just live-selftest need python3" >&2; exit 1; }
+        python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
+            echo "just live and just live-selftest need python3 3.11 or later, for tomllib; this one is $(python3 -V 2>&1)" >&2
+            exit 1
+        }
         rm -rf "$venv"
         echo "creating $venv with pyte {{pyte_version}}"
         python3 -m venv "$venv" || {

@@ -81,7 +81,7 @@ sys.path.insert(0, HERE)
 from stub_linear import STUB_LINEAR_KEY  # noqa: E402 -- the one fake key, defined once
 
 
-def refuse_real_linear(args):
+def refuse_real_linear(args, config):
     """The two ways a run with the stub on stops holding only the stub's key.
 
     internal/linear's ResolveAPIKey takes api_key_cmd FIRST, then the
@@ -98,27 +98,34 @@ def refuse_real_linear(args):
     [...]` and a quoted key, and internal/config reads all three. Two facts
     about that reader decide the rest. BurntSushi/toml falls back to
     strings.EqualFold when no key matches a field exactly, so `[LINEAR]
-    API_KEY_CMD` counts too. That is why this uses casefold(), which also
-    folds the Kelvin sign to `k` as EqualFold does. And that reader accepts
+    API_KEY_CMD` counts too, and so does a Kelvin sign (U+212A) for the
+    `k`. The comparison here is casefold(). For these two names lower()
+    would do the same, because the only other rune EqualFold takes to an
+    ASCII letter is the long s, and neither name has an `s`. casefold() is
+    the one that stays right if a name ever does. And that reader accepts
     TOML 1.1, which tomllib does not: a newline inside an inline table is
     valid to one and an error to the other. So a config tomllib cannot read
     is refused as well, not taken to hold nothing: failing to read it here
     says nothing about whether the binary can.
+
+    `config` is the file's BYTES, read once by main(), which installs those
+    same bytes. Checking the path and then copying it again later would
+    install whatever the file said by then, and hold_root can wait on
+    another run for as long as that run lasts.
     """
     if not args.binary_given:
         raise SystemExit(
             "drive.py: --linear-port needs --binary: only a binary linked to that port reaches the stub,\n"
             "           and the default bin/herdr-draft would send the stub's key to the real Linear.\n"
             "           `just live` passes both.")
-    if args.config:
-        with open(args.config, "rb") as f:
-            try:
-                doc = tomllib.load(f)
-            except tomllib.TOMLDecodeError as e:
-                raise SystemExit(
-                    "drive.py: cannot read %s as TOML (%s), so cannot tell whether it sets [linear] api_key_cmd.\n"
-                    "           herdr-draft reads TOML 1.1, which tomllib does not, so it may well set it.\n"
-                    "           Pass a config tomllib can read." % (args.config, e))
+    if config is not None:
+        try:
+            doc = tomllib.loads(config.decode("utf-8"))
+        except (UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+            raise SystemExit(
+                "drive.py: cannot read %s as TOML (%s), so cannot tell whether it sets [linear] api_key_cmd.\n"
+                "           herdr-draft reads TOML 1.1, which tomllib does not, so it may well set it.\n"
+                "           Pass a config tomllib can read." % (args.config, e))
         tables = [v for k, v in doc.items() if k.casefold() == "linear" and isinstance(v, dict)]
         if any(k.casefold() == "api_key_cmd" for table in tables for k in table):
             raise SystemExit(
@@ -483,12 +490,14 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
     # it. A driver whose output depends on what you ran last is the thing
     # the state wipe exists to prevent, and the config is the same hazard.
     dest = os.path.join(root, "cfg", "config.toml")
-    if config:
-        # Copied, then chmod 0600: shutil.copyfile carries content and not
-        # mode, so the copy lands at the umask -- and internal/linear
-        # refuses an inline api_key in a file readable by anyone else, so a
-        # 0600 source silently became an unavailable issue row.
-        shutil.copyfile(config, dest)
+    if config is not None:
+        # The bytes main() read, and refuse_real_linear checked when the
+        # stub is on -- never the path again. Written, then chmod 0600:
+        # internal/linear refuses an inline api_key in a file readable by
+        # anyone else, and a copy that landed at the umask once turned a
+        # 0600 source into an unavailable issue row.
+        with open(dest, "wb") as f:
+            f.write(config)
         os.chmod(dest, 0o600)
     elif os.path.exists(dest):
         os.remove(dest)
@@ -577,6 +586,13 @@ def size(text):
     if not m:
         raise argparse.ArgumentTypeError("a size is WxH, e.g. 101x30")
     return int(m.group(1)), int(m.group(2))
+
+
+def port(text):
+    # Not merely an int: a falsy 0 once skipped the Linear refusals.
+    if not text.isdigit() or not 1 <= int(text) <= 65535:
+        raise argparse.ArgumentTypeError("a port is 1-65535")
+    return int(text)
 
 
 def point(text):
@@ -680,7 +696,7 @@ def main(argv):
                    help="scratch tree: HOME, the stubs, the plugin dirs and a throwaway repo")
     p.add_argument("--repo", help="drive the form at this repository instead of the throwaway one")
     p.add_argument("--config", metavar="FILE", help="install FILE as the plugin's config.toml")
-    p.add_argument("--linear-port", type=int, metavar="PORT",
+    p.add_argument("--linear-port", type=port, metavar="PORT",
                    help="serve the stub Linear on this loopback port. Only a binary LINKED to that port "
                         "talks to it -- `just live` does both halves; without this the issue row is absent")
     p.add_argument("--linear", metavar="FILE", default=os.path.join(HERE, "linear-issues.json"),
@@ -702,8 +718,15 @@ def main(argv):
     args.binary_given = args.binary is not None
     if not args.binary_given:
         args.binary = os.path.join(REPO, "bin", "herdr-draft")
-    if args.linear_port:
-        refuse_real_linear(args)  # before anything is written to the scratch tree
+    config = None
+    if args.config:
+        try:
+            with open(args.config, "rb") as f:
+                config = f.read()
+        except OSError as e:
+            raise SystemExit("drive.py: cannot read %s: %s" % (args.config, e.strerror))
+    if args.linear_port is not None:
+        refuse_real_linear(args, config)  # before anything is written to the scratch tree
 
     try:
         import pyte  # noqa: F401
@@ -716,12 +739,12 @@ def main(argv):
         raise SystemExit("drive.py: no binary at %s -- run `just build`" % args.binary)
 
     lock = hold_root(args.root)  # noqa: F841 -- held for this process's life
-    home, state, repo = build_tree(args.root, args.fresh, args.keep_state, args.config, args.herdr)
+    home, state, repo = build_tree(args.root, args.fresh, args.keep_state, config, args.herdr)
     if args.repo:
         repo = os.path.abspath(args.repo)
     args.repo = repo
 
-    stub = start_stub_linear(args.linear_port, args.linear) if args.linear_port else None
+    stub = start_stub_linear(args.linear_port, args.linear) if args.linear_port is not None else None
     key = STUB_LINEAR_KEY if stub else None
     try:
         sizes = args.size or [(101, 30)]
