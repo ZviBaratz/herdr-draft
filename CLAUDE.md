@@ -78,11 +78,18 @@ just unused  # staticcheck -checks U1000 -tests=false ./...
 just check   # gofmt -l . (empty) && go vet ./... && just unused && go test ./...
 just live    # the real form under a pty, every input stubbed, screen to stdout
 just live-selftest  # that driver's terminal emulator alone, fed bytes; <1s
+just screenshots    # docs/images/*.svg from the showcase golden frames
+just frames-selftest  # the frame-to-SVG converter's own tests
 ```
 
-The last two need `python3` and sit outside `just check` and CI on
-purpose — `hack/live/README.md` has why, the usage, and the ways a pty
-reading can still mislead you.
+`live` and `live-selftest` need `python3` and sit outside `just check` and
+CI on purpose — `hack/live/README.md` has why, the usage, and the ways a
+pty reading can still mislead you. `screenshots` and `frames-selftest` need
+`python3` too; the README's images are drawn from the `showcase-*` golden
+frames in `internal/app`, and `TestShowcaseImagesAreCurrent` fails `just
+check` when an image is older than its frame or the converter. So a change
+that moves a showcase frame is finished only after `go test ./internal/app/
+-update` AND `just screenshots`.
 
 Single package/test: `go test ./internal/plan/...` or
 `go test ./internal/app/ -run TestHandleSubmit`.
