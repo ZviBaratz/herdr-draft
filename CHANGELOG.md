@@ -38,6 +38,15 @@ for why a heading here may read `unreleased`.
   api_key_cmd in config.toml)" to users whose `config.toml` named the
   command it had just run; it now says `api_key_cmd printed nothing`, on
   the same exit code.
+- **The `terminal` palette draws in your terminal's own colours** (#304).
+  Nine of its twelve colours were xterm's default RGB values, so a terminal
+  that redefines red still got xterm's red. They are now ANSI palette
+  entries, as herdr's own `terminal` theme uses, and the focused row is
+  filled with your terminal's bright black instead of a fixed grey. The
+  contrast floors never applied to this palette, and still don't: its
+  colours are whatever your terminal says they are. herdr's
+  `name = "terminal"` on its own still draws in your dark theme; add
+  `dark_name = "terminal"` beside it to reach this palette.
 
 ## 0.1.0 — 2026-09-22
 
