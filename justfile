@@ -285,3 +285,72 @@ _live-venv:
             exit 1
         }
     fi
+
+# screenshots draws the README's images: each showcase golden frame
+# (internal/app/showcase_frames_test.go) through hack/frames/svg.py into
+# docs/images/<state>.svg. Images, not captures, and from frames because a
+# frame is asserted by `go test` -- so an image cannot drift from the UI
+# without the frame failing first -- and because the showcase fixtures
+# carry neutral names only, where a capture carries whoever took it.
+#
+# The order after a UI change is the same as for any other frame, plus one
+# step: `go test ./internal/app/ -update` rewrites the frames, then this
+# redraws the images. Skip it and CI says so: each image carries a digest
+# of its frame and of svg.py, and TestShowcaseImagesAreCurrent recomputes
+# both in `go test`, without Python. `just frames-selftest` goes further
+# and redraws every image, comparing bytes.
+#
+# `--strict` because a code svg.py does not understand is otherwise
+# skipped with a warning, and an image drawn with an attribute missing
+# looks plausible. Each name and title is here and nowhere else; a new
+# showcase frame needs a line below, and the Go test fails until it has
+# one. The title is the image's accessible name.
+#
+# Needs python3 3.11 or later, like everything under hack/, and nothing
+# else: svg.py is standard library only, so there is no venv.
+
+# Redraw docs/images/*.svg from the showcase golden frames. Needs python3.
+screenshots: _frames-python
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p docs/images
+    draw() {
+        python3 -B hack/frames/svg.py --strict \
+            "internal/app/testdata/frames/showcase-$1-101x30.txt" -o "docs/images/$1.svg" --title "$2"
+        echo "docs/images/$1.svg"
+    }
+    draw opening "herdr-draft's new-session form as it opens: focus on an empty title, with the sessions already open listed below"
+    draw titled "The form with a title typed: the worktree row shows the branch the title becomes"
+    draw issue-picker "The issue row focused: a picker over the Linear issues assigned to you"
+    draw options "The options row focused: Claude's model, effort and permission mode, seeded from config.toml"
+    draw account "The account row focused: each clauth profile with its five-hour and seven-day usage"
+
+# frames-selftest is svg.py's own tests: synthetic frames in, SVG out, read
+# back through xml.etree -- colours, reverse video, runs, widths, the
+# rectangles that stand in for rules and blocks, escaping, the unknown-code
+# report and determinism -- and then the repository's own showcase frames,
+# each converted under --strict, and every committed image redrawn and
+# compared byte for byte. Well under a second.
+#
+# `-B` for the reason live-selftest gives: a mutation proves a case pins
+# something only if the mutated source is what runs, and a .pyc is trusted
+# by mtime in whole seconds.
+#
+# Like live-selftest it is not part of `just check`, which must not need
+# Python; the Go test above is what CI runs.
+
+# svg.py's own tests, and the committed images redrawn and compared. Needs python3.
+frames-selftest: _frames-python
+    @python3 -B hack/frames/test_svg.py
+
+# _frames-python checks for the python3 the two recipes above run. No venv:
+# svg.py needs nothing outside the standard library. 3.11 is hack/'s floor
+# (drive.py needs tomllib); svg.py itself would run on 3.10.
+_frames-python:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v python3 >/dev/null 2>&1 || { echo "just screenshots and just frames-selftest need python3" >&2; exit 1; }
+    python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
+        echo "just screenshots and just frames-selftest need python3 3.11 or later; this one is $(python3 -V 2>&1)" >&2
+        exit 1
+    }
