@@ -469,7 +469,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	// different branch_prefix, or turns linear_branch_name off, produces a
 	// different branch for the same title (see applyProjectDefaults).
 	branchBefore := m.worktree.Branch()
-	settle := m.applyProjectDefaults(msg.memoryKey, msg.isGitRepo, msg.repoConfig)
+	settle := m.applyProjectDefaults(msg.req.key, msg.memoryKey, msg.isGitRepo, msg.repoConfig)
 
 	var cmd tea.Cmd
 	if m.worktree.On() != worktreeOnBefore || m.worktree.Branch() != branchBefore {

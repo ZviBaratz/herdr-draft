@@ -63,8 +63,10 @@ func typeProjectPath(t *testing.T, m Model, raw string) Model {
 
 // turnWorktreeOn drives the worktree toggle the way a user does, so the
 // base picker -- which is what a base list actually writes -- is on screen
-// to compare. A ⌃R⌃R marks the worktree touched (handleClearRequested), so
-// the config tier will not turn it on again by itself.
+// to compare. After a ⌃R⌃R the tiers put it back where a form-open does,
+// which for frameSetup is off: its config.toml asks for no worktree and no
+// tier above it says otherwise. (This used to rest on the clear marking
+// the worktree touched, which #135 removed.)
 func turnWorktreeOn(t *testing.T, m Model) Model {
 	t.Helper()
 	if cmd := m.form.FocusByID("worktree"); cmd != nil {

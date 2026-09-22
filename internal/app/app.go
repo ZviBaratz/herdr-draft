@@ -953,6 +953,31 @@ type Model struct {
 	// dir check lands, and for a directory that does not exist.
 	projectKey string
 
+	// clearedDir and clearedKey are what a ⌃R⌃R says about v2 spec §10's
+	// top tier, and all it says about any tier (#135): the project the
+	// rebuilt form opens on is resolved without its projects.json entry,
+	// and everything under that entry -- the repository's
+	// .herdr-draft.toml first -- applies exactly as it does on any
+	// form-open. handleClearRequested says why this is not the touched
+	// flags.
+	//
+	// Two fields, because the rebuild does not know the key. New puts the
+	// project row back on the popup's opening project, which need not be
+	// the one the discarded form was on, and a key is resolved off the
+	// update loop by the dir check. So the rebuild records the row's value
+	// (clearedDir), and the first answer about that value turns it into
+	// the key (clearedKey). An answer about any other value ends the clear
+	// instead: that project was chosen after it, before the opening one
+	// had resolved.
+	//
+	// Once the key is known the clear holds while the form stays on that
+	// project -- a linked checkout of it included, since projects.json
+	// keys the two together -- and ends at the first answer about a
+	// different one. clearedMemory is the only reader and the only writer
+	// after the rebuild.
+	clearedDir string
+	clearedKey string
+
 	// agentKinds is the ordered kind list AgentField was built with, kept
 	// because defaults.Resolve needs it to skip a remembered kind this
 	// binary does not ship (defaults.Sources.KnownAgentKinds) -- and
@@ -2169,17 +2194,37 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 	// already resolved without the per-project tier (it knows no project
 	// key yet), but the dir check fresh.Init() is about to schedule would
 	// resolve WITH it and put the memory straight back, undoing the
-	// clear.
+	// clear. So the rebuilt form is told which project it opened on, and
+	// applyProjectDefaults leaves that project's projects.json entry out
+	// of its resolution: that tier alone, for that project alone (#135).
+	// See clearedDir for how the project is identified and when the clear
+	// ends.
 	//
-	// The suppression rides the touched flags rather than a second flag of
-	// its own, for the reason those flags replaced worktreeDefaultApplied:
-	// one mechanism decides whether a default may still be applied. A ⌃R⌃R
-	// is a deliberate statement about these four fields' values, which is
-	// exactly what "touched" means here.
-	fresh.worktreeTouched = true
-	fresh.placementTouched = true
-	fresh.agentTouched = true
-	fresh.baseTouched = true
+	// This used to set the four touched flags instead, on the argument
+	// that one mechanism should decide whether a default may still be
+	// applied (v2 spec §10's first wiring trap), and that a ⌃R⌃R is a
+	// deliberate statement about those fields' values, which is what
+	// "touched" means. The first half still holds: whether a FIELD may be
+	// moved remains the touched flags' question alone, and this answers
+	// none of it -- it decides what the resolution is made from, before
+	// any field is asked. The second half was wrong. A touched flag says
+	// "the user chose this value", and a choice outranks every tier, so
+	// the flags stopped .herdr-draft.toml -- and the worktree default of
+	// config.toml and last-used.json, which only a dir check ever applies
+	// -- as surely as they stopped projects.json; and since a flag is
+	// never cleared, they did it for every project the popup moved to
+	// afterwards. A repository whose file said split-here cleared to new
+	// space while the resolution still credited the file, and so did the
+	// next repository. A clear chooses no value. It names a tier not to
+	// consult, which is a question about the resolution rather than about
+	// the fields: the old code read "don't re-apply the memory" as "don't
+	// apply anything".
+	//
+	// The flags themselves mean what they always did. The rebuilt form
+	// starts with all four false, as any form-open does, so a value the
+	// user moves after the clear is theirs and outranks every tier from
+	// then on.
+	fresh.clearedDir = fresh.dir.Value()
 	next, sizeCmd := fresh.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	fresh = next.(Model)
 	return fresh, tea.Batch(fresh.Init(), sizeCmd)
@@ -2412,10 +2457,21 @@ func (m *Model) snapshotAppliedDefaults() {
 // meaningless for a target that cannot host a worktree (the chip row is
 // inert), so a remembered `true` waits for a repository rather than being
 // spent on a plain directory.
-func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.RepoConfig) tea.Cmd {
+//
+// dir is the project row's value the check was about, which only a ⌃R⌃R
+// needs: it is how the rebuilt form recognises the answer about the
+// project it opened on (clearedMemory).
+func (m *Model) applyProjectDefaults(dir, key string, isGitRepo bool, repo config.RepoConfig) tea.Cmd {
 	m.projectKey = key
 	m.repoConfig = repo
 	entry, have := m.projects.Get(key)
+	if m.clearedMemory(dir, key) {
+		// "⌃R ⌃R clears back to the repository default" (v2 spec §10):
+		// the one tier above .herdr-draft.toml is left out, as absent
+		// rather than as an empty entry -- see Sources.HaveProject -- and
+		// it is the only one (#135).
+		entry, have = config.ProjectDefaults{}, false
+	}
 	// The memory key IS the repository root for a repository (projectMemoryKey:
 	// canonicalised, so a symlinked checkout compares the way herdr reports
 	// it), and the canonical path otherwise -- which FindSpace's second
@@ -2522,6 +2578,40 @@ func (m *Model) applyProjectDefaults(key string, isGitRepo bool, repo config.Rep
 	m.showRepoConfig()
 	m.snapshotAppliedDefaults()
 	return settle
+}
+
+// clearedMemory reports whether a dir check's answer about dir, which
+// resolved to the projects.json key key, is still under a ⌃R⌃R -- to be
+// resolved without that project's memory -- and moves the clear along: from
+// the row's value to its key on the first answer about the value the
+// rebuilt form opened on, and to nothing on the first answer about any
+// other project. See clearedDir.
+//
+// Nothing brings an ended clear back, so returning to the cleared project
+// later in the same popup re-applies its memory. That is deliberate. A
+// clear is a statement about the form it rebuilt, and once the row has
+// left that project the form it was about is gone; coming back is a project
+// change like any other, and v2 spec §10 re-applies memory on every one.
+// Keeping it cleared would have one project resolve two ways in one popup,
+// depending on the path the row took to reach it, under a rule nothing on
+// screen shows. Nor is it needed to protect anything the user decided: a
+// value they moved after the clear is touched, and stands through every
+// return (noteUserEdits). And a clear whose effect outlives the project it
+// was about is #135's own shape.
+func (m *Model) clearedMemory(dir, key string) bool {
+	if m.clearedDir != "" {
+		opened := dir == m.clearedDir
+		m.clearedDir = ""
+		if opened {
+			m.clearedKey = key
+		}
+		return opened
+	}
+	if m.clearedKey != "" && key == m.clearedKey {
+		return true
+	}
+	m.clearedKey = ""
+	return false
 }
 
 // repoConfigLoader returns the .herdr-draft.toml reader to use --
