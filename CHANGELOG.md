@@ -11,7 +11,7 @@ tag is the one no test can reach. See
 [CONTRIBUTING.md](CONTRIBUTING.md#releases) for the order they move in, and
 for why a heading here may read `unreleased`.
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-09-22
 
 The first release. herdr-draft is a [herdr](https://github.com/herdrdev/herdr)
 plugin: a one-screen dialog, opened in a herdr popup, that creates a fully
