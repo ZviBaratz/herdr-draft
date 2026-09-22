@@ -58,6 +58,33 @@ either, the form has seven rows, and that is the shape most people see.
 | `options` | `opus · effort xhigh · plan mode`, or `claude's own settings` | `none for <kind>`, for an agent with no options |
 | `account` | `active · max · 5h 12% · 7d 40%`, or the pinned profile | `account pinning only applies to claude` |
 
+### While something is still loading
+
+The form draws immediately — before your Linear key has resolved, before
+clauth has been asked for its profiles, and before a configured account
+picker has been checked. None of that holds up the screen, and none of it
+holds up a create either, with one exception noted below.
+
+A row says so in one of two ways. **If there is something to pick, the row
+keeps showing it** and the panel's bottom line names what is still coming:
+
+| Row | Panel says | While |
+|---|---|---|
+| `issue` | `waiting for api_key_cmd…` | your credential helper runs — it may be waiting for you to approve a read |
+| `issue` | `fetching assigned issues…` | the issue list loads |
+| `account` | `reading clauth profiles…` | `clauth status --json` runs, because clauth's status file was out of date |
+
+**If there is nothing to pick, the row itself reads `loading…`** in dim —
+an `issue` row with no cached list from a previous run, and the `account`
+row, which has no profiles until clauth answers. A `loading…` `account` row
+is skipped by `⇥`: there is nothing there to choose or retry yet.
+
+The one wait that can hold a create is the account. `⌃S` while clauth is
+still being read waits up to five seconds and then goes ahead anyway, under
+whatever your `config.toml` names. `⌃S` resting on `auto` while the picker
+is still being checked waits the same five seconds and then *refuses*,
+rather than launch under an account nobody chose.
+
 ### issue
 
 Pick one of your Linear issues to seed the session. The panel lists the
@@ -66,7 +93,10 @@ type. Choosing one fills in the title, the branch (from the issue's own
 branch name) and the prompt, unless you have already typed over them. `none`
 at the top clears the choice.
 
-The row appears only when a Linear API key is configured. See
+The row appears whenever a Linear key *source* is configured — whether or
+not a key resolves from it. A cached list from a previous run is pickable
+straight away, while the key resolves and while the list refreshes, and
+stays pickable if either fails, with the reason on the panel. See
 [`[linear]`](configuration.md#linear) for setting one up and for what
 `unavailable` means.
 
@@ -242,8 +272,11 @@ what it would choose (`auto → alpha`).
 ![The account row focused, listing two clauth profiles with their usage
 gauges](images/account.svg)
 
-The row appears only with clauth and at least two profiles. See
-[Claude accounts](account-picker.md) for what each state on it means.
+The row appears with clauth on `PATH` and at least two profiles — or while
+clauth is still being asked, which is the `loading…` state above. If it
+then reports fewer than two profiles, the row stays and says so rather than
+disappearing from under you. See [Claude accounts](account-picker.md) for
+what each state on it means.
 
 ## Keys
 

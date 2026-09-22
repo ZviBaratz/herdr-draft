@@ -142,6 +142,12 @@ func TestShowcaseFrames(t *testing.T) {
 	// a person picking one lands.
 	t.Run("issue-picker", func(t *testing.T) {
 		m := showcaseModel(t, showcaseSetup())
+		// The opening fetch lands first. Every other showcase frame is
+		// the form at rest, and this one is a picture of the picker
+		// rather than of the wait in front of it: left out, the panel's
+		// status line reads `fetching assigned issues…` for good, since
+		// no fixture ever answers the fetch (draw-first spec §6).
+		m, _ = m.handleLinearResult(linearResultMsg{issues: showcaseIssues()})
 		m.form.FocusByID("issue")
 		m = press(t, m, key(tea.KeyDown, 0))
 		assertAppFrame(t, showcaseFrameName("issue-picker"), m, framePopupW, framePopupH)

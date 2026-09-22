@@ -262,6 +262,14 @@ type fakeClauth struct {
 	status clauth.Status
 	err    error
 	calls  int
+	// peek is what Peek answers -- CachedFresh by default, so a fake that
+	// says nothing about it behaves as clauth's own status file being
+	// fresh, which is the state every test written before #293 assumes.
+	// peekStatus overrides status for the file alone, for the one test
+	// that needs the two halves to disagree.
+	peek       clauth.Cached
+	peekStatus *clauth.Status
+	peeks      int
 }
 
 var _ clauthSource = (*fakeClauth)(nil)
@@ -272,6 +280,17 @@ func (f *fakeClauth) Status(context.Context) (clauth.Status, error) {
 		return clauth.Status{}, f.err
 	}
 	return f.status, nil
+}
+
+func (f *fakeClauth) Peek() (clauth.Status, clauth.Cached) {
+	f.peeks++
+	if f.peek != clauth.CachedFresh {
+		return clauth.Status{}, f.peek
+	}
+	if f.peekStatus != nil {
+		return *f.peekStatus, clauth.CachedFresh
+	}
+	return f.status, clauth.CachedFresh
 }
 
 // noSleep is the injectable-clock fake every test uses: Sleep is a no-op,
@@ -321,6 +340,18 @@ type testSetup struct {
 	// could not be trusted" outcome, the same way ClauthUnavailable does for
 	// clauth.
 	PickerUnavailable string
+	// The three #293 waits, each the state Bootstrap leaves when a slow
+	// read has been deferred past the first frame (draw-first spec §4.1).
+	// Zero means "as before" for all three, which is what keeps every test
+	// written before #293 building the form it was written against.
+	LinearResolving    bool
+	ClauthLoading      bool
+	PickerProbePending bool
+	// LinearUnavailable stands in for a key source that is configured and
+	// could not be resolved, the way ClauthUnavailable does for clauth --
+	// which is two rows since #292: inert with no cache, and a pickable
+	// cached list with one.
+	LinearUnavailable string
 }
 
 // testHomeDir is the home every test model collapses paths against. It is
@@ -329,6 +360,31 @@ type testSetup struct {
 // here would make them differ on every machine whose home is not the
 // author's.
 const testHomeDir = "/home/zvi"
+
+// deliverInit runs the Model's Init commands and routes the first message
+// of type T through Update, which is how a test reaches a state that
+// #293 moved from before the first frame to after it (draw-first spec §3).
+//
+// It ignores every other Init command rather than draining them all: the
+// dir and base checks are debounced and versioned, and a test about the
+// Linear key has no business also landing them.
+func deliverInit[T tea.Msg](t *testing.T, m Model) Model {
+	t.Helper()
+	for _, cmd := range m.initCmds {
+		if cmd == nil {
+			continue
+		}
+		msg := cmd()
+		if _, ok := msg.(T); !ok {
+			continue
+		}
+		next, _ := m.Update(msg)
+		return next.(Model)
+	}
+	var want T
+	t.Fatalf("no Init command produced a %T", want)
+	return m
+}
 
 func newTestModel(t *testing.T, s testSetup) Model {
 	t.Helper()
@@ -361,18 +417,22 @@ func newTestModel(t *testing.T, s testSetup) Model {
 			RepoConfig: s.RepoConfig,
 			Picker:     s.Picker,
 		},
-		Ctx:               s.Ctx,
-		Config:            cfg,
-		State:             s.State,
-		Projects:          s.Projects,
-		Palette:           theme.Default(),
-		StateDir:          t.TempDir(),
-		Workspaces:        s.Workspaces,
-		ClauthStatus:      s.ClauthStatus,
-		ClauthUnavailable: s.ClauthUnavailable,
-		PickerUnavailable: s.PickerUnavailable,
-		LinearCache:       s.LinearCache,
-		HomeDir:           testHomeDir,
+		Ctx:                s.Ctx,
+		Config:             cfg,
+		State:              s.State,
+		Projects:           s.Projects,
+		Palette:            theme.Default(),
+		StateDir:           t.TempDir(),
+		Workspaces:         s.Workspaces,
+		ClauthStatus:       s.ClauthStatus,
+		ClauthUnavailable:  s.ClauthUnavailable,
+		PickerUnavailable:  s.PickerUnavailable,
+		LinearCache:        s.LinearCache,
+		HomeDir:            testHomeDir,
+		LinearResolving:    s.LinearResolving,
+		ClauthLoading:      s.ClauthLoading,
+		PickerProbePending: s.PickerProbePending,
+		LinearUnavailable:  s.LinearUnavailable,
 	})
 }
 
@@ -915,14 +975,31 @@ func TestBootstrap_Success(t *testing.T) {
 // wording is "degrade ... to inert WITH A REASON", and there was no
 // reason. The no-refusal half, which is what the test is named for, still
 // holds and is still asserted.
+//
+// The reason now arrives AFTER the first frame (draw-first spec §5.3):
+// Bootstrap reads the status file and a PATH check, and the row is drawn
+// `loading…` until Init's `clauth status --json` fails. Both halves are
+// asserted, because the loading one is what a user actually sees while a
+// slow clauth is failing.
 func TestBootstrap_ClauthFailureDegrades(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
 	runner := &fakeRunner{}
-	cl := &fakeClauth{err: context.DeadlineExceeded}
+	cl := &fakeClauth{peek: clauth.CachedAsk, err: context.DeadlineExceeded}
 	m, err := Bootstrap(env, runner, cl, newFakeGit(), noSleep, nil)
 	if err != nil {
 		t.Fatalf("Bootstrap with a failing clauth source returned an error, want it to degrade: %v", err)
 	}
+	if cl.calls != 0 {
+		t.Fatalf("Bootstrap ran `clauth status --json` %d times, want 0 -- it belongs after the first frame", cl.calls)
+	}
+	if m.account == nil {
+		t.Fatal("Model.account is nil while clauth is being read, want a row saying so")
+	}
+	if got := fieldText(m.account, 80); !strings.Contains(got, "loading…") {
+		t.Errorf("account row before the read lands = %q, want it to say it is loading", got)
+	}
+
+	m = deliverInit[clauthResultMsg](t, m)
 	if m.account == nil {
 		t.Fatal("Model.account is nil after a clauth that was there and failed, want an inert row carrying the reason")
 	}
@@ -947,7 +1024,14 @@ func TestBootstrap_ClauthFailureDegrades(t *testing.T) {
 // versus it was there and did not work.
 func TestBootstrap_ClauthNotInstalledShowsNothing(t *testing.T) {
 	env := Env{ContextJSON: validContextJSON(), ConfigDir: t.TempDir(), StateDir: t.TempDir()}
-	cl := &fakeClauth{err: fmt.Errorf("clauth status --json: %w", &exec.Error{Name: "clauth", Err: exec.ErrNotFound})}
+	// clauth.Peek makes the same judgement without running anything: a
+	// LookPath that reports exec.ErrNotFound is CachedAbsent (draw-first
+	// spec §3.2, ruling 6). The err below is what its CLI would have said,
+	// kept so this fake still refuses to answer if anything runs it.
+	cl := &fakeClauth{
+		peek: clauth.CachedAbsent,
+		err:  fmt.Errorf("clauth status --json: %w", &exec.Error{Name: "clauth", Err: exec.ErrNotFound}),
+	}
 
 	m, err := Bootstrap(env, &fakeRunner{}, cl, newFakeGit(), noSleep, nil)
 	if err != nil {
@@ -955,6 +1039,9 @@ func TestBootstrap_ClauthNotInstalledShowsNothing(t *testing.T) {
 	}
 	if m.account != nil {
 		t.Error("Model.account is non-nil with clauth not installed, want no row at all")
+	}
+	if cl.calls != 0 {
+		t.Errorf("clauth was run %d times with nothing on PATH, want 0", cl.calls)
 	}
 }
 
@@ -1555,6 +1642,16 @@ func TestBootstrap_BrokenLinearKeyDegradesWithAReason(t *testing.T) {
 	m, err := Bootstrap(env, &fakeRunner{}, nil, newFakeGit(), noSleep, nil)
 	if err != nil {
 		t.Fatalf("Bootstrap with a broken api_key_cmd refused outright, want it to degrade: %v", err)
+	}
+	// The reason arrives after the first frame now (draw-first spec §5.1):
+	// a configured api_key_cmd is a subprocess, so Bootstrap only records
+	// that one is coming and the row is live and empty meanwhile.
+	if !m.linearResolving {
+		t.Fatal("Model.linearResolving is false with an api_key_cmd configured, want the resolve deferred to Init")
+	}
+	m = deliverInit[linearKeyMsg](t, m)
+	if m.linearResolving {
+		t.Fatal("Model.linearResolving is still set after the key landed")
 	}
 	if m.linearUnavailable == "" {
 		t.Fatal("Model.linearUnavailable is empty after a failed api_key_cmd, want the reason recorded")
@@ -2608,6 +2705,12 @@ func runPreview(t *testing.T, m Model, path string) Model {
 // VISIBLY -- the account row is there, saying why -- rather than silently.
 // This is the whole difference between "no picker configured" (the common
 // case, which shows nothing) and "your picker is broken".
+//
+// The verdict arrives after the first frame now, carried by the opening
+// `--dry-run` preview rather than by a probe of its own (draw-first spec
+// §3.3, §5.4). So the row opens offering `auto` -- a named picker is
+// trusted until it fails, which is the price of not running it before the
+// draw -- and the failure takes the row away and leaves the reason.
 func TestBootstrapDegradesAnUnprobeablePicker(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "not-a-picker")
 	configDir := t.TempDir()
@@ -2624,6 +2727,17 @@ func TestBootstrapDegradesAnUnprobeablePicker(t *testing.T) {
 	}
 	if m.account == nil {
 		t.Fatal("a broken picker must still leave an account row to say so on")
+	}
+	if !m.pickerProbePending {
+		t.Fatal("Model.pickerProbePending is false with a picker configured, want the probe deferred to the preview")
+	}
+
+	m = runPreview(t, m, "/repo")
+	if m.pickerProbePending {
+		t.Fatal("Model.pickerProbePending is still set after a probed preview answered")
+	}
+	if m.deps.Picker != nil {
+		t.Fatal("Deps.Picker survived a failed probe")
 	}
 	if m.account.IsAuto() {
 		t.Fatal("an unprobeable picker must not produce an auto selection")

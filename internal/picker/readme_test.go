@@ -75,7 +75,7 @@ func TestTheDocumentedExamplePickerIsConformant(t *testing.T) {
 	c := CLI{Bin: documentedExamplePicker(t)}
 	ctx := context.Background()
 
-	if err := c.Probe(ctx, "/p/thing"); err != nil {
+	if err := probeVerdict(c, ctx, "/p/thing"); err != nil {
 		t.Fatalf("the documented example picker does not pass the startup probe: %v", err)
 	}
 

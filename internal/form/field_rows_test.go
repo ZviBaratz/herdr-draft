@@ -158,7 +158,35 @@ func TestFieldRow_IsAlwaysExactlyOneLine(t *testing.T) {
 // afterwards is what turns the doc comment into a contract.
 func TestFieldRow_IsIdenticalAtEveryWindowHeight(t *testing.T) {
 	palette := theme.Default()
+	// Two stacks, because this check renders only the states it lists and
+	// #293 added two rows that say something new: an issue row waiting on
+	// a key with nothing to pick, and an account row waiting on clauth.
+	// Both reach Row through a branch the settled stack never takes.
+	t.Run("settled", func(t *testing.T) { assertRowsIdenticalAtEveryHeight(t, palette, rowFields(palette)) })
+	t.Run("loading", func(t *testing.T) { assertRowsIdenticalAtEveryHeight(t, palette, loadingRowFields(palette)) })
+}
+
+// loadingRowFields is rowFields with its issue and account rows in the two
+// states #293 introduced (draw-first spec §6). The other six are the same
+// fields, because the stack has to be the same SHAPE for the layout
+// assertions below to hold.
+func loadingRowFields(palette theme.Palette) []Section {
 	fields := rowFields(palette)
+
+	issue := NewIssueField(palette)
+	issue.SetPhase(IssuePhaseWaitingKey) // no issues: the row itself reads `loading…`
+	fields[0] = issue
+
+	account := NewAccountField(palette)
+	account.SetAgentIsClaude(true)
+	account.SetLoading(true)
+	fields[len(fields)-1] = account
+
+	return fields
+}
+
+func assertRowsIdenticalAtEveryHeight(t *testing.T, palette theme.Palette, fields []Section) {
+	t.Helper()
 
 	const w = 80
 	// h = 12 affords all eight rows with no header and no rules; h = 60

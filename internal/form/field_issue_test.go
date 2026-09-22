@@ -188,6 +188,30 @@ func TestIssueField_SetIssuesRefreshKeepsADroppedChosenIssue(t *testing.T) {
 	}
 }
 
+// An UNAVAILABLE issue row ignores input, as #191 made AccountField do.
+// It matters since #293, because the row can turn inert while it is
+// FOCUSED -- a key that fails after the draw, with no cache behind it --
+// and the panel stops drawing a list at the same moment. A cursor moved or
+// a filter typed there would be input into a field with nothing on screen
+// to act on, and the selection would still reach a submit.
+func TestIssueField_UnavailableIgnoresInput(t *testing.T) {
+	f := NewIssueField(theme.Default())
+	f.SetIssues(1, sampleIssues())
+	f.Focus()
+	f.SetUnavailable("api_key_cmd printed nothing")
+
+	if cmd := f.Update(key(tea.KeyDown, 0)); cmd != nil {
+		t.Error("an inert issue row emitted a selection change on Down")
+	}
+	if sel := f.Selected(); sel != nil {
+		t.Errorf("Down moved the selection of an inert row to %v", sel)
+	}
+	f.Update(rn('l'))
+	if got := rowText(f.Row(80)); !strings.Contains(got, "unavailable") {
+		t.Errorf("typing into an inert row reached its filter: row = %q", got)
+	}
+}
+
 func TestIssueField_RowShowsStatusAndEstimateHint(t *testing.T) {
 	f := NewIssueField(theme.Default())
 	f.Focus()

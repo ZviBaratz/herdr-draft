@@ -136,12 +136,35 @@ func TestPickReportsAnAbsentExecutable(t *testing.T) {
 	}
 }
 
+// probeVerdict is Options.Probe's answer alone: the *ProbeError a probed
+// Pick returned, or nil for anything else.
+//
+// It exists because the probe stopped being its own method with #293 -- it
+// is a flag on the popup's opening preview now, so that one `--json
+// --dry-run` both vets the executable and previews what it would choose
+// (draw-first spec §3.3). The tests below are the ones that were written
+// against CLI.Probe, unchanged, which is the point: "Options.Probe's
+// verdict is today's Probe verdict" is a claim worth holding to the
+// assertions that made it.
+//
+// Pick's OTHER errors are deliberately swallowed here, which is the whole
+// distinction: a conformant refusal and an exit 0 with no profile are
+// answers about this call, not about the executable.
+func probeVerdict(c CLI, ctx context.Context, dir string) error {
+	_, err := c.Pick(ctx, dir, Options{DryRun: true, Probe: true})
+	var pe *ProbeError
+	if errors.As(err, &pe) {
+		return pe
+	}
+	return nil
+}
+
 // Probe is what stands between herdr-draft and a same-named stranger. A
 // same-named program on PATH that prints valid JSON of the wrong
 // shape must be refused, naming the missing keys.
 func TestProbeRejectsJSONOfTheWrongShape(t *testing.T) {
 	bin, _ := stubPicker(t, `{"account":"alpha-1","ok":true}`, "", 0)
-	err := CLI{Bin: bin}.Probe(context.Background(), "/p/thing")
+	err := probeVerdict(CLI{Bin: bin}, context.Background(), "/p/thing")
 	if err == nil {
 		t.Fatal("Probe must reject an answer missing every documented key")
 	}
@@ -155,7 +178,7 @@ func TestProbeRejectsJSONOfTheWrongShape(t *testing.T) {
 func TestProbeAcceptsTheDocumentedShapeAndIsADryRun(t *testing.T) {
 	bin, argvFile := stubPicker(t, stubPicked, "", 0)
 	c := CLI{Bin: bin}
-	if err := c.Probe(context.Background(), "/p/thing"); err != nil {
+	if err := probeVerdict(c, context.Background(), "/p/thing"); err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
 	argv, _ := os.ReadFile(argvFile)
@@ -171,16 +194,49 @@ func TestProbeAcceptsTheDocumentedShapeAndIsADryRun(t *testing.T) {
 func TestProbeAcceptsAConformantRefusal(t *testing.T) {
 	bin, _ := stubPicker(t, stubRefused, "", ExitExhausted)
 	c := CLI{Bin: bin}
-	if err := c.Probe(context.Background(), "/p/thing"); err != nil {
+	if err := probeVerdict(c, context.Background(), "/p/thing"); err != nil {
 		t.Fatalf("Probe of a conformant refusal: %v", err)
 	}
 }
 
 func TestProbeRejectsAnUndocumentedExitCode(t *testing.T) {
 	bin, _ := stubPicker(t, stubPicked, "", 7)
-	err := CLI{Bin: bin}.Probe(context.Background(), "/p/thing")
+	err := probeVerdict(CLI{Bin: bin}, context.Background(), "/p/thing")
 	if err == nil || !strings.Contains(err.Error(), "7") {
 		t.Fatalf("Probe error = %v, want one naming exit 7", err)
+	}
+}
+
+// The key check runs on EVERY documented exit code, ahead of the refusal
+// Pick would otherwise build (draw-first spec §5.4). Without that order a
+// same-named stranger exiting 2 would be read as a conformant picker
+// refusing, and never judged at all -- which is exactly the substitution
+// the probe exists to catch.
+func TestProbeRejectsAStrangerThatExitsWithADocumentedCode(t *testing.T) {
+	bin, _ := stubPicker(t, `{"error":"unknown flag --dir"}`, "", ExitExhausted)
+	err := probeVerdict(CLI{Bin: bin}, context.Background(), "/p/thing")
+	if err == nil {
+		t.Fatal("a documented exit code with none of the documented keys must still fail the probe")
+	}
+	if !strings.Contains(err.Error(), "profile") {
+		t.Fatalf("probe error = %v, want one naming the missing keys", err)
+	}
+}
+
+// And the other side of judging the SHAPE and not the answer: a picker
+// that exits 0 having chosen nothing has broken its own contract for THIS
+// call, which Pick reports as a plain error -- but it implements the
+// protocol, so it is not a verdict about the executable and the auto row
+// stays.
+func TestProbeAcceptsExitZeroWithNoProfile(t *testing.T) {
+	bin, _ := stubPicker(t, `{"profile":null,"config_dir":null,"reason":null,
+"usage":{"five_hour":null,"weekly":null,"cache_age_s":null}}`, "", ExitPicked)
+	c := CLI{Bin: bin}
+	if err := probeVerdict(c, context.Background(), "/p/thing"); err != nil {
+		t.Fatalf("probe verdict = %v, want none: the answer is wrong, the executable is not", err)
+	}
+	if _, err := c.Pick(context.Background(), "/p/thing", Options{DryRun: true, Probe: true}); err == nil {
+		t.Fatal("Pick must still refuse an exit 0 that named no profile")
 	}
 }
 
@@ -212,16 +268,19 @@ func shrinkTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { pickerTimeout, pickerWaitDelay = prevTimeout, prevDelay })
 }
 
-// A picker that never answers must not hang the caller. The startup probe runs
-// BEFORE the popup is drawn, so an unbounded wait there means the form never
-// appears and never says why -- the one degradation this feature's design
-// forbids outright, because it is neither visible nor recoverable.
+// A picker that never answers must not hang the caller. Until #293 the
+// probe ran BEFORE the popup was drawn, so an unbounded wait there meant
+// the form never appeared and never said why -- the one degradation this
+// feature's design forbids outright, because it is neither visible nor
+// recoverable. The probe is an Init-time preview now and the popup is
+// already on screen, but `create`'s commit pick is not, and the bound is
+// the same one.
 func TestAHangingPickerIsBounded(t *testing.T) {
 	bin := scriptPicker(t, "sleep 30\n")
 	shrinkTimeout(t, 150*time.Millisecond)
 
 	start := time.Now()
-	err := CLI{Bin: bin}.Probe(context.Background(), "/p/thing")
+	err := probeVerdict(CLI{Bin: bin}, context.Background(), "/p/thing")
 	if err == nil {
 		t.Fatal("Probe of a hanging picker returned nil, want a deadline error")
 	}

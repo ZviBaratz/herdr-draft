@@ -25,7 +25,7 @@ every other document that code cites by section carries a prefix:
 | `spawn-skill spec §N` | `2026-09-16-spawn-skill-design.md` | — |
 | `reap spec §N` | `2026-09-17-pane-reaper-ready-design.md` | amends v2's §6, §8, §10, §11 and §13 and v1's §12; its §12 itemises |
 | `agent-options spec §N` | `2026-09-18-agent-options-design.md` | reverses v1's §3 and §16 item 3 and v2's §16, and amends v3's §4 and §7.2, v2's §8, §11 and §13 and v1's §12; its §12 itemises |
-| `draw-first spec §N` | `2026-09-21-draw-first-design.md` | amends v1's §6, §8, §9, §10 and §13, v2's §6.1 and §13 and v3's §12; approved and **not yet implemented** (#293); its §12 itemises |
+| `draw-first spec §N` | `2026-09-21-draw-first-design.md` | amends v1's §6, §8, §9, §10 and §13, v2's §6.1 and §13 and v3's §12; implemented 2026-09-22 (#293, #292); its §12 itemises |
 
 Two more carry no section prefix because nothing cites them by section, so
 name them by filename: `2026-09-07-herdr-membership-assessment.md` is the
@@ -158,6 +158,17 @@ Layering, outermost to innermost:
   herdr, or a broken `config.toml` refuse outright — a broken Linear key or
   clauth load degrades that one field to "unavailable, with a reason"
   instead of blocking the plugin.
+  **Before the first frame it runs no subprocess but `herdr workspace
+  list`** (draw-first spec §3.1). The three that used to run there — the
+  Linear `api_key_cmd` at up to 60s, `clauth status --json` at 30s when
+  clauth's status file is stale, and an account picker's probe at 30s —
+  run from `Init` instead, and the rows say what they are waiting for. What
+  stays is what a local read answers: whether a key *source* is configured
+  (`linear.KeySourceConfigured`, pure), `linear.LoadCache`, and clauth's
+  status file plus a `PATH` check (`clauth.Peek`). The **row set is still
+  fixed before the first frame** — only what a row says changes afterwards
+  — which is why those three questions have to be answerable without
+  running anything.
 - **`internal/create`** — the headless verb (v2 spec §13). `Run(ctx, args,
   Env, Deps) int` parses the flags, resolves everything unset through
   `internal/defaults`, builds and executes the same `plan.Op` list the form
@@ -502,7 +513,12 @@ Layering, outermost to innermost:
   returns, so a late `Begin` is ordinary, and a `sync.WaitGroup` `Add`
   overlapping a `Wait` is misuse — it panicked the quit path in review.
   Anything new that shells out from a `tea.Cmd` belongs on the same
-  context. Since #202 the four checks a submit waits for are on it too —
+  context — which since #293 includes the Linear key resolve
+  (`resolveKeyCmd`, so `esc` during an `op read` approval kills the helper)
+  and `reloadClauthCmd`, both of which this bullet used to list among the
+  "reads nobody has needed cancelled". `refreshLinearCmd` stays on
+  `context.Background()`: it is an in-process HTTP request, and nothing of
+  it outlives the process. Since #202 the four checks a submit waits for are on it too —
   the dir check's `RepoRoot`/`PrimaryCheckout`, the base settle, the
   title-dup `BranchExists`, and the lane's commit read, which was already
   there — through `awaitCheck`, which runs each one under the Lifetime's
@@ -513,7 +529,7 @@ Layering, outermost to innermost:
   something did. What is still on `context.Background()` in `internal/app`
   is not one kind: Bootstrap's own startup reads (nothing has started that
   a quit could cancel yet), `fetch --prune` (which carries
-  `fetchPruneTimeout` instead), the base list, clauth and Linear are reads
+  `fetchPruneTimeout` instead), the base list and the Linear fetch are reads
   nobody has needed cancelled; `runSubmitCmd`, `plan.CleanCheck` and
   `plan.Clean` are the creation and teardown pipeline, and abandoning one
   of those halfway is a worse outcome than letting it finish — which is the
@@ -579,7 +595,25 @@ Layering, outermost to innermost:
   `ctx.Done()` branch also peeks at the answer before giving up, for the
   boundary that remains.
   Two rules follow for anything new that holds a submit. It gets the same
-  bound, from the same two helpers. And its timeout is reported as
+  bound — and since #293 "from the same two helpers" is a default rather
+  than the rule. The two **account holds** (draw-first spec §7.1, ruling 15)
+  take `checkBudget()`'s deadline and a plain timer, because there is no
+  call to hand `awaitCheck`: the answer they wait for is already in flight
+  as a message, the clauth landing or the probed preview. They are the
+  documented exception, and the exception is narrow — a hold with a call
+  behind it still goes through `awaitCheck`. The other half of that
+  convention does NOT bend: those two are armed **once per ⌃S**
+  (`accountWaitArmed`, `reqs.accountWait`), because a timer re-armed by
+  every re-entry pushes the deadline back and the budget is never spent.
+  And what a spent budget *means* is per hold rather than universal.
+  #202's three refuse. The **clauth** hold proceeds, without #243's
+  dead-credential check, under what the row would have selected from config
+  alone (`accountFromConfig`) — clauth is advisory, as `create` has taken
+  it since #141, and a create refused because a status file was stale would
+  be refusing on no evidence at all. The **probe** hold refuses, because
+  the thing it could not check is whether an executable may be run, and
+  launching unpinned under whatever account is live is exactly what
+  `handlePickerCommit` exists to prevent. And its timeout is reported as
   **unknown**, never as the verdict's negative: `dirUnknown`,
   `titleDupUnknown` and `baseUnknown` refuse the submit exactly as
   `dirInvalid` and `titleDupBlocked` do, and say something else while doing

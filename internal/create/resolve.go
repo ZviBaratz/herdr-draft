@@ -901,6 +901,11 @@ func accountPin(req request, cfg config.Config, kind string) string {
 // on a submit; here the very next thing that happens is the real call, and its
 // failure is reported in full to a person reading stderr. A probe would only
 // double the work and halve the error message.
+//
+// Since #293 the popup does not run a probe of its own either: the check
+// rides on its opening `--dry-run` preview (picker.Options.Probe). This
+// verb makes no preview, so nothing carries it, and the reasoning above is
+// unchanged.
 func accountPicker(cfg config.Config, deps Deps) picker.Source {
 	if deps.Picker != nil {
 		return deps.Picker

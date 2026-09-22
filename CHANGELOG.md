@@ -11,6 +11,34 @@ tag is the one no test can reach. See
 [CONTRIBUTING.md](CONTRIBUTING.md#releases) for the order they move in, and
 for why a heading here may read `unreleased`.
 
+## Unreleased
+
+### Changed
+
+- **The popup draws before its slow reads answer** (#293). `Bootstrap` used
+  to resolve the Linear API key, read clauth and probe a configured account
+  picker before the first frame, so the pane stayed blank for up to sixty
+  seconds while a credential helper waited for you to approve a read. Those
+  three now run once the form is on screen, and the rows say what they are
+  waiting for: `waiting for api_key_cmd…`, `fetching assigned issues…` and
+  `reading clauth profiles…` on the panel, or a dim `loading…` on a row
+  with nothing to pick yet. The form is usable throughout. `⌃S` while
+  clauth is still being read waits five seconds and then creates anyway,
+  under what `config.toml` names; `⌃S` resting on `auto` while the picker
+  is still being checked waits the same five seconds and then refuses,
+  rather than launch under an account nobody chose.
+- **A failed Linear key keeps a cached issue list pickable** (#292). The
+  list on disk used to be discarded whenever the key could not be
+  resolved — a transient `op read` timeout cost you the whole `issue` row
+  for the session. It now stays selectable with the reason on the panel,
+  which is what a failed *refresh* already did.
+- **An `api_key_cmd` that exits 0 and prints nothing** is reported rather
+  than treated as "Linear is not configured", when nothing else supplies a
+  key. `create --issue` said "Linear is not configured (set [linear]
+  api_key_cmd in config.toml)" to users whose `config.toml` named the
+  command it had just run; it now says `api_key_cmd printed nothing`, on
+  the same exit code.
+
 ## 0.1.0 — 2026-09-22
 
 The first release. herdr-draft is a [herdr](https://github.com/herdrdev/herdr)

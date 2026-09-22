@@ -1084,6 +1084,137 @@ func TestAssembledForm_PickerUnavailable(t *testing.T) {
 	assertAppFrame(t, "assembled-picker-unavailable-101x30", m, framePopupW, framePopupH)
 }
 
+// --- #293: the loading opening state, and every row that says so ----------
+
+// loadingFrameSetup is the popup as the person #293 is about actually
+// opens it: an `op read` credential helper, so the key lands after the
+// draw; a clauth daemon that is not running, so its status file is stale
+// and the CLI is being asked; and a configured picker whose probe rides on
+// the opening preview.
+//
+// frameSetup(true) is the base, so this is the SAME fully-configured form
+// every frame beside it renders -- only the three reads are still out.
+// Deps.Linear is cleared because the key has not resolved yet; the cache
+// stays, because #292's whole point is that it is pickable meanwhile.
+func loadingFrameSetup() testSetup {
+	setup := frameSetup(true)
+	setup.Linear = nil
+	setup.LinearResolving = true
+	setup.ClauthStatus = clauth.Status{}
+	setup.ClauthLoading = true
+	setup.Picker = &fakePicker{}
+	setup.PickerProbePending = true
+	setup.Config.Clauth.Picker = "acct-pick"
+	return setup
+}
+
+// TestAssembledForm_OpeningLoadingState is TestAssembledForm_OpeningState's
+// counterpart for the first frame #293 created: the form drawn before any
+// of its three slow reads has answered.
+//
+// It loops over the same sizes for the same reason that one does (v3 spec
+// §12): opening-state × degradation is a product of two axes, and this is
+// the state every user with a credential helper sees on every open. The
+// `issue` row reads `none` over its cached list, the `account` row reads
+// `loading…`, and the panels say what is being waited for.
+func TestAssembledForm_OpeningLoadingState(t *testing.T) {
+	for _, sz := range frameSizes {
+		m := resolveDirCheck(t, newTestModel(t, loadingFrameSetup()))
+		m.worktree.SetOn(true)
+		m.worktree.SetHeadBranch("main")
+		m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
+		m.reactToChanges()
+		m.form.FocusByID("title")
+
+		assertAppFrame(t, fmt.Sprintf("assembled-opening-loading-%dx%d", sz.w, sz.h), m, sz.w, sz.h)
+	}
+}
+
+// The issue panel while the key is out, with and without a cache -- the two
+// rows draw-first spec §6's table separates, and the whole of what a person
+// with an `op read` helper is looking at while they go and approve it.
+func TestAssembledForm_IssueWhileTheKeyIsOut(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cache bool
+	}{
+		{"waiting", true},
+		{"waiting-empty", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setup := loadingFrameSetup()
+			if !tc.cache {
+				setup.LinearCache = nil
+			}
+			m := resolveDirCheck(t, newTestModel(t, setup))
+			m.form.FocusByID("issue")
+			m.reactToChanges()
+
+			assertAppFrame(t, "assembled-issue-"+tc.name+"-101x30", m, framePopupW, framePopupH)
+		})
+	}
+}
+
+// A FIRST run: the key resolved before the draw, there is no cache, and the
+// opening fetch is still out. Ruling 10 is what this frame is for -- the
+// panel used to say `no assigned issues`, which describes the user's Linear
+// queue and is false, because nobody had looked at the queue yet.
+func TestAssembledForm_IssueWhileTheFirstFetchIsOut(t *testing.T) {
+	setup := frameSetup(true)
+	setup.LinearCache = nil
+	m := resolveDirCheck(t, newTestModel(t, setup))
+	m.form.FocusByID("issue")
+	m.reactToChanges()
+
+	assertAppFrame(t, "assembled-issue-fetching-empty-101x30", m, framePopupW, framePopupH)
+}
+
+// #292: the key FAILED and the cached list is still pickable, with the
+// reason where a failed refresh's already goes. Before this the same state
+// was an inert `unavailable` row and the list was discarded.
+func TestAssembledForm_LinearKeyFailedOverACache(t *testing.T) {
+	m := resolveDirCheck(t, newTestModel(t, loadingFrameSetup()))
+	next, _ := m.Update(linearKeyMsg{err: errors.New("resolve linear api key: pass: linear-api-key is not in the password store")})
+	m = next.(Model)
+	m.form.FocusByID("issue")
+	m.reactToChanges()
+
+	assertAppFrame(t, "assembled-linear-key-failed-cached-101x30", m, framePopupW, framePopupH)
+}
+
+// The account row loading, focused. It is reached through FocusByID because
+// the ring skips it (ruling 8) -- which is the point: this is a panel no
+// keystroke can open, so a frame is the only way anyone reads it.
+func TestAssembledForm_AccountLoading(t *testing.T) {
+	m := resolveDirCheck(t, newTestModel(t, loadingFrameSetup()))
+	m.form.FocusByID("account")
+	m.reactToChanges()
+
+	assertAppFrame(t, "assembled-account-loading-101x30", m, framePopupW, framePopupH)
+}
+
+// §7.3's refusal on a loading row: the one panel whose ORDER is new. The
+// refusal takes the status line ahead of `reading clauth profiles…`, and
+// the panel still draws no list.
+func TestAssembledForm_AccountLoadingRefused(t *testing.T) {
+	setup := loadingFrameSetup()
+	m := resolveDirCheck(t, newTestModel(t, setup))
+	m.title.SetTitle("Fix pagination", false)
+	m.prompt.SetValue("do it", false)
+
+	// One ⌃S and one spent budget reach it, through BOTH holds in order:
+	// the clauth hold goes first and proceeds (§7.2), recording `auto`
+	// because a picker is configured; the probe hold is then reached with
+	// the budget already spent, and refuses (§7.3).
+	m = spendTheAccountBudget(t, m)
+	if m.submitting {
+		t.Fatal("the fixture launched instead of refusing")
+	}
+	m.reactToChanges()
+
+	assertAppFrame(t, "assembled-account-loading-refused-101x30", m, framePopupW, framePopupH)
+}
+
 // --- #90: the screen a blocked first-run trust prompt produces -------------
 
 // TestAssembledSubmit_BlockedStartFrame is the state #90 made routine and

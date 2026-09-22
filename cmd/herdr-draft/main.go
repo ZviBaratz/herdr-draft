@@ -2,10 +2,17 @@
 // launches it in a popup pane with $HERDR_PLUGIN_CONTEXT_JSON/
 // $HERDR_PLUGIN_CONFIG_DIR/$HERDR_PLUGIN_STATE_DIR/$HERDR_BIN_PATH set in
 // its environment. This replaces Task 2's smoke binary; internal/app.
-// Bootstrap owns spec §9's pre-open refusal and every other piece of
-// startup work -- this file is deliberately thin: read the plugin
+// Bootstrap owns spec §9's pre-open refusal and the startup work the first
+// frame needs -- this file is deliberately thin: read the plugin
 // environment, construct the production Deps, hand both to
 // app.Bootstrap, and run the resulting tea.Program.
+//
+// Since #293 "the startup work" is only what a local read can answer.
+// Bootstrap runs no subprocess but `herdr workspace list`, and the three
+// slow ones -- the Linear api_key_cmd, `clauth status --json` and the
+// account picker's probe -- run from the Model's Init, after the form is
+// drawn. So the time between this process starting and a first byte on
+// screen is herdr's own round trip and nothing else.
 //
 // v2 spec §13 adds a second entry point on the same binary: with no
 // arguments this is the popup, exactly as before, and `herdr-draft create`

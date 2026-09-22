@@ -402,6 +402,47 @@ func TestFrames_IssueScroll(t *testing.T) {
 	assertFrame(t, "issue-scroll-80x16", buildIssueScrollForm(theme.Default()), 80, 16)
 }
 
+// buildIssueWaitingForm is the issue row while the api_key_cmd that would
+// supply the key is still running (draw-first spec §6): the cached list is
+// pickable, and the panel's status line says what is being waited for
+// rather than making a claim about the user's Linear queue.
+func buildIssueWaitingForm(palette theme.Palette, cache bool) Model {
+	f := NewIssueField(palette)
+	if cache {
+		f.SetIssues(1, sampleIssues())
+	}
+	f.SetPhase(IssuePhaseWaitingKey)
+	f.Focus()
+	return fieldFrame(palette, f)
+}
+
+// Both halves of draw-first spec §6's table for this row, because the ROW
+// differs between them and the panel does not: with nothing to pick the row
+// reads `loading…`, and with a cache it goes on showing the value.
+func TestFrames_IssueWaitingForTheKey(t *testing.T) {
+	assertFrame(t, "issue-waiting-80x16", buildIssueWaitingForm(theme.Default(), true), 80, 16)
+	assertFrame(t, "issue-waiting-empty-80x16", buildIssueWaitingForm(theme.Default(), false), 80, 16)
+}
+
+// buildAccountLoadingForm is the account row while clauth's CLI is being
+// asked for the profiles its status file could not supply (draw-first spec
+// §4.2): inert, `loading…`, no list, and a footer promising no keys.
+//
+// Unfocused is the state every user actually sees -- the ring skips this
+// row (ruling 8) -- but fieldFrame draws the panel only for a focused
+// section, and the panel is half of what this frame is for.
+func buildAccountLoadingForm(palette theme.Palette) Model {
+	f := NewAccountField(palette)
+	f.SetAgentIsClaude(true)
+	f.SetLoading(true)
+	f.Focus()
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_AccountLoading(t *testing.T) {
+	assertFrame(t, "account-loading-80x24", buildAccountLoadingForm(theme.Default()), 80, 24)
+}
+
 // buildAccountPanelForm enables AccountField (agent kind claude) over a
 // mixed healthy/warned profile set, so the frame carries the colored
 // state words that replaced v1's bare "!" marker.

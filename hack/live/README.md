@@ -9,6 +9,7 @@ a scratch `HOME`.
 just live --size 101x30                                 # the popup's own size
 just live --size 57x18 --keys tab,tab,tab --row -1      # one row's footer, narrow
 just live --size 44x12 --click 4,4                      # reach a row Tab skips
+just live --slow-startup 8 --open-settle 1              # the loading rows (#293)
 ```
 
 **Commas, not spaces, in `--keys` through `just`.** The recipe's `{{ARGS}}` is a
@@ -123,6 +124,40 @@ A `--config` carrying an inline `api_key` is refused on such a run (#318):
 with no `LINEAR_API_KEY` set, nothing outranks it, and the default binary
 would use it against the real Linear. Through `just live` the same config is
 fine, because the stub's key wins.
+
+## `--slow-startup`: the rows that are only on screen for a moment
+
+The popup draws before its three slow reads answer (#293), so `issue` and
+`account` have states — `loading…`, `waiting for api_key_cmd…`, `fetching
+assigned issues…`, `reading clauth profiles…` — that the ordinary stubs are
+over too fast to show. `--slow-startup SECONDS` makes the key command and
+`clauth status --json` each take that long:
+
+```console
+$ just live --slow-startup 8 --size 101x30 --open-settle 1
+ 3    issue      loading…
+11    account    loading…
+
+$ just live --slow-startup 6 --size 101x30 --open-settle 9
+11    account    active · Max 20x · 5h 12%
+```
+
+Two things about it are deliberate. It **writes its own `config.toml`** —
+a `[linear] api_key_cmd` naming a sleep script in the scratch tree — which
+is why it refuses to combine with `--config`: the one key
+`refuse_real_linear` refuses from a passed config is the one this sets, and
+a merge would be a hole in that refusal rather than an exception to it. The
+command it names **prints nothing and exits 0**, so no key is ever in play
+here; with the Linear stub on, `internal/linear` then falls through to the
+stub's own `LINEAR_API_KEY` and the list arrives, which is what the second
+screen above shows.
+
+What it cannot show is the other half of #293's smoke: that `esc` during
+those waits leaves no `sleep` behind. Under `pty.fork()` the popup leads
+the pty's session, so its exit sends `SIGHUP` to the whole process group
+and every `sleep` dies whether or not `app.Lifetime` cancelled it. Proving
+that needs the binary run with `SIGHUP` ignored, which is
+`docs/manual-smoke.md`'s job.
 
 ## The stub `herdr`'s envelope
 

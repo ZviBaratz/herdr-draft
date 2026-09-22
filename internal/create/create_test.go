@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -2113,6 +2114,55 @@ func TestIssueWithoutLinear(t *testing.T) {
 	if !strings.Contains(h.stderr.String(), "Linear is not configured") {
 		t.Errorf("stderr = %q, want it to say Linear is unconfigured", h.stderr)
 	}
+}
+
+// An api_key_cmd that RAN and printed nothing used to be
+// indistinguishable from no key source at all, so `create --issue` told
+// the user to set a key their config.toml already named (draw-first spec
+// §8.2, decision 3). It is a failure with its own reason now, on the same
+// exit code -- 2 is already "an unresolvable request", and what changed is
+// the sentence.
+//
+// Two shapes, because the fall-through is what decision 3 kept: with
+// $LINEAR_API_KEY set behind it the same silent command still resolves a
+// key and nothing is refused.
+func TestIssueWithAnApiKeyCmdThatPrintsNothing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub key command is a POSIX shell script")
+	}
+	silent := filepath.Join(t.TempDir(), "silent-key")
+	if err := os.WriteFile(silent, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+
+	t.Run("nothing behind it", func(t *testing.T) {
+		h := newHarness(t)
+		writeConfig(t, h.env.ConfigDir, "[linear]\napi_key_cmd = ["+strconv.Quote(silent)+"]\n")
+
+		if code := h.run("--issue", "LIN-1", "--no-worktree"); code != ExitUsage {
+			t.Fatalf("exit = %d, want %d", code, ExitUsage)
+		}
+		if got := h.stderr.String(); !strings.Contains(got, "api_key_cmd printed nothing") {
+			t.Errorf("stderr = %q, want it to name the command that said nothing", got)
+		}
+		if got := h.stderr.String(); strings.Contains(got, "Linear is not configured") {
+			t.Errorf("stderr = %q, still tells the user to set a key they have set", got)
+		}
+	})
+
+	t.Run("LINEAR_API_KEY behind it", func(t *testing.T) {
+		h := newHarness(t)
+		writeConfig(t, h.env.ConfigDir, "[linear]\napi_key_cmd = ["+strconv.Quote(silent)+"]\n")
+		t.Setenv("LINEAR_API_KEY", "lin_api_from_the_environment")
+
+		// The fall-through reaches a real client, which this package never
+		// lets talk to the network -- so the run fails at the FETCH, which
+		// is proof enough that the key resolved.
+		code := h.run("--issue", "LIN-1", "--no-worktree")
+		if got := h.stderr.String(); strings.Contains(got, "api_key_cmd printed nothing") {
+			t.Errorf("exit = %d, stderr = %q: a silent command must still fall through to $LINEAR_API_KEY", code, got)
+		}
+	})
 }
 
 // --- usage ----------------------------------------------------------------

@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -103,9 +102,14 @@ func (c Clock) now() time.Time {
 }
 
 // linearSource is the subset of Linear access Model needs -- satisfied by
-// *linear.Client in production (constructed internally by Bootstrap once
-// an API key resolves) and a fake in tests. nil means Linear isn't
-// configured at all (spec §6 field 1's static precondition).
+// *linear.Client in production and a fake in tests.
+//
+// nil no longer means "Linear isn't configured": since #293 it means no key
+// has RESOLVED, which with an api_key_cmd is the ordinary state of the
+// first frame (Model.linearResolving). Whether Linear is configured is a
+// separate, pure question answered before the draw
+// (linear.KeySourceConfigured), and it is the one that decides whether the
+// issue row exists at all.
 type linearSource interface {
 	AssignedIssues(ctx context.Context) ([]linear.Issue, error)
 }
@@ -122,6 +126,16 @@ type pickerSource interface {
 
 type clauthSource interface {
 	Status(ctx context.Context) (clauth.Status, error)
+	// Peek is Status' fast half: clauth's on-disk status file, and, when
+	// that cannot answer, whether there is a clauth to ask at all. It runs
+	// no subprocess and takes no context, which is the whole reason it
+	// exists -- Bootstrap calls it before the first frame and leaves the
+	// CLI run to Init (draw-first spec §3.2).
+	//
+	// internal/create's own one-method ClauthSource deliberately does NOT
+	// gain it: `create` has no draw to get in front of, so it keeps
+	// calling Status.
+	Peek() (clauth.Status, clauth.Cached)
 }
 
 // gitSource is the subset of git/filesystem access Model needs -- satisfied
@@ -159,14 +173,23 @@ type gitSource interface {
 // call ever happens in this package's own tests.
 type Deps struct {
 	Runner herdrc.Runner
-	// Linear is nil when Linear isn't configured (no resolved API key) --
-	// see Bootstrap.
+	// Linear is nil until an API key has resolved -- which, with a
+	// configured api_key_cmd, is after the first frame (draw-first spec
+	// §5.1). So nil no longer means "Linear isn't configured": it means no
+	// key has resolved YET, and the three Setup/Model flags beside it say
+	// which of the three reasons that is. See Bootstrap.
 	Linear linearSource
 	Clauth clauthSource
 	// Picker is nil when `[clauth] picker` names no executable -- the normal
 	// case -- OR when the one it named failed its probe. Non-nil means an
-	// executable was named AND answered the account-picker protocol; only
-	// then does the account row grow an `auto` selection. See Bootstrap.
+	// executable was named and has not (yet) failed the protocol check;
+	// only then does the account row grow an `auto` selection.
+	//
+	// Since #293 it starts non-nil and UNVETTED: the probe is merged into
+	// the opening `--dry-run` preview, so the verdict lands after the first
+	// frame and can set this back to nil (draw-first spec §3.3, §5.4).
+	// Model.pickerProbePending is what says the answer is still out, and
+	// a submit resting on `auto` waits for it (§7.1). See Bootstrap.
 	Picker pickerSource
 	Git    gitSource
 	Clock  Clock
@@ -232,22 +255,53 @@ type Setup struct {
 	// collapsing.
 	HomeDir string
 	// LinearUnavailable is non-empty when Linear is CONFIGURED but its API
-	// key could not be resolved (a broken [linear] api_key_cmd, or an
+	// key could not be resolved (a broken [linear] api_key_cmd, an
+	// api_key_cmd that printed nothing with nothing behind it, or an
 	// inline api_key in a config.toml wider than 0600). Distinct from
-	// Deps.Linear == nil, which means Linear is not configured at all: the
-	// first renders spec §6 field 1's own field present-but-inert carrying
-	// this reason (spec §13, "degrade ... with a reason"), the second
-	// renders no field at all. See Bootstrap.
+	// Deps.Linear == nil AND LinearResolving false, which together mean
+	// Linear is not configured at all: the first renders spec §6 field 1's
+	// own field carrying this reason -- present-but-inert with no cache,
+	// and a pickable cached list with one (#292) -- and the second renders
+	// no field at all. See Bootstrap.
 	LinearUnavailable string
+
+	// LinearResolving says a [linear] api_key_cmd is configured, so the key
+	// lands after the first frame (draw-first spec §4.1). The command is
+	// the first source ResolveAPIKey tries, so a configured one makes the
+	// whole resolve asynchronous whatever else is set.
+	//
+	// It is the issue row's third reason to exist, beside a resolved source
+	// and a failure: the row is live, the cached list is pickable, and the
+	// panel says what is being waited for.
+	LinearResolving bool
+
+	// ClauthLoading says clauth's status file was not fresh and there is a
+	// clauth on PATH to ask (clauth.Peek's CachedAsk). The account row is
+	// drawn `loading…` and Init carries the CLI read (draw-first spec
+	// §3.2, §5.3).
+	ClauthLoading bool
+
+	// PickerProbePending says Deps.Picker is the executable `[clauth]
+	// picker` named, not yet vetted: the probe rides on the opening
+	// preview and its verdict lands after the first frame (draw-first spec
+	// §3.3, §5.4).
+	PickerProbePending bool
 	// ClauthUnavailable is non-empty when clauth is INSTALLED but could
 	// not be read -- it exited non-zero, or its --json output did not
 	// parse. Distinct from clauth being absent, which is the common case
-	// and renders no account row at all (see Bootstrap, which uses
-	// exec.ErrNotFound to tell them apart), and distinct from having fewer
-	// than two profiles, which is the documented static precondition.
+	// and renders no account row at all (clauth.Peek's CachedAbsent, which
+	// reads exec.ErrNotFound off a LookPath the way Bootstrap used to read
+	// it off a failed run).
 	//
 	// When set, the account row renders present-but-inert carrying this
 	// reason, exactly as LinearUnavailable does for the issue row.
+	//
+	// Since #293 Bootstrap never sets it: it runs no clauth, so the reason
+	// can only arrive after the first frame, through recoverAccountRow.
+	// It stays on Setup because a ⌃R⌃R rebuild reconstructs the row from
+	// the Model's mirror of it -- and it is also where a reload's "fewer
+	// than two profiles" lands, which used to be a state only a reload
+	// could produce and is now an ordinary open-time answer (decision 2).
 	ClauthUnavailable string
 
 	// PickerUnavailable is non-empty when `[clauth] picker` NAMED an
@@ -277,8 +331,25 @@ type Setup struct {
 // plugin invocation context, probing herdr reachability (a single `herdr
 // workspace list` call doubles as both the reachability probe and the
 // source of the workspace label list/candidate repo roots New needs),
-// loading config/state/palette, resolving the Linear API key, and loading
-// clauth's status feed -- then hands all of it to New.
+// loading config/state/palette, reading the Linear cache and clauth's
+// status file -- then hands all of it to New.
+//
+// BEFORE THE DRAW IT RUNS NO SUBPROCESS BUT `herdr workspace list`
+// (draw-first spec §3.1). That is the whole of #293. It used to run three
+// more -- a [linear] api_key_cmd at up to 60s, `clauth status --json` at
+// 30s when clauth's status file was stale, and an account picker's probe
+// at 30s -- each of them synchronously, with the popup pane blank and
+// silent for however long they took. #141 bounded them, which decided when
+// to give up and nothing else; a person whose `op read` takes fifteen
+// seconds to approve still watched an empty pane for fifteen seconds on
+// every open.
+//
+// So the three move into Init, and what stays here is what a local read
+// can answer: whether a key SOURCE is configured (pure), the cached issue
+// list, and clauth's status file plus a PATH check (clauth.Peek). Each
+// leaves a flag on Setup saying an answer is still coming, and New draws a
+// row that says so. The row SET is still decided here, before the first
+// frame -- only what a row says changes afterwards (§4).
 //
 // Only three conditions refuse outright (spec §9 names two: "herdr socket
 // unreachable -> plain-text error and exit", "on missing/invalid context"):
@@ -325,28 +396,49 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 
 	palette := theme.LoadHerdrPalette(cfg.Palette)
 
-	// linear.ResolveAPIKey distinguishes three outcomes, and so does this
-	// (finding I5): a key (Linear works), no key and no error (Linear is
-	// not configured at all -- spec §6 field 1's "absent -> not rendered"),
-	// or an ERROR, which it raises deliberately when the user's own chosen
-	// key source fails: a broken api_key_cmd, or an inline api_key sitting
-	// in a config.toml readable by anyone but its owner. The last case used
-	// to be folded into the second, so a typo in api_key_cmd made the whole
-	// Linear field vanish with nothing anywhere saying why; spec §13
-	// requires it to degrade "with a reason" instead. Either way the plugin
-	// still opens -- an optional integration's misconfiguration never
-	// blocks manual-mode creation.
+	// Linear, in two halves since #293. The question "is a key source
+	// configured" is pure -- linear.KeySourceConfigured reads the same
+	// three sources ResolveAPIKey does, without running any of them -- and
+	// it alone decides whether the issue row exists (draw-first spec §3.1).
+	//
+	// The CACHE is loaded for every configured user, not only for one whose
+	// key already resolved. That is decision 4 and it is #292: the cached
+	// list used to be reached inside `case key != ""` alone, so a key that
+	// failed threw away a perfectly pickable list sitting two lines from
+	// where it was read.
+	//
+	// Then which of the two paths the key itself takes. An api_key_cmd is
+	// the first source ResolveAPIKey tries, so a configured one makes the
+	// whole resolve a subprocess and it moves into Init (resolveKeyCmd,
+	// appended below). With NO api_key_cmd the resolve is $LINEAR_API_KEY,
+	// or the inline key plus one stat of config.toml -- no process at all
+	// -- so it stays here and those users' first frame is exactly today's,
+	// apart from ruling 10's `fetching…` phase.
+	//
+	// linear.ResolveAPIKey still distinguishes three outcomes and so does
+	// this (finding I5): a key (Linear works), no key and no error (not
+	// configured at all), or an ERROR raised deliberately when the user's
+	// own chosen key source fails. Either way the plugin still opens -- an
+	// optional integration's misconfiguration never blocks manual-mode
+	// creation.
 	var linearSrc linearSource
 	var linearCache []linear.Issue
 	var linearUnavailable string
-	key, kerr := linear.ResolveAPIKey(bg, cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, env.ConfigDir)
-	switch {
-	case kerr != nil:
-		linearUnavailable = linearUnavailableReason(kerr)
-	case key != "":
-		linearSrc = &linear.Client{APIKey: key}
+	var linearResolving bool
+	if linear.KeySourceConfigured(cfg.Linear.APIKeyCmd, cfg.Linear.APIKey) {
 		if cached, _, cerr := linear.LoadCache(env.StateDir); cerr == nil {
 			linearCache = cached
+		}
+		if len(cfg.Linear.APIKeyCmd) > 0 {
+			linearResolving = true
+		} else {
+			key, kerr := linear.ResolveAPIKey(bg, cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, env.ConfigDir)
+			switch {
+			case kerr != nil:
+				linearUnavailable = linearUnavailableReason(kerr)
+			case key != "":
+				linearSrc = &linear.Client{APIKey: key}
+			}
 		}
 	}
 
@@ -370,15 +462,31 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 	// degrade "to inert with a reason". exec.ErrNotFound is what separates
 	// them: it means the binary is not there, everything else means it was
 	// there and did not work.
+	//
+	// Since #293 this is the status FILE and a PATH check, never the CLI
+	// (clauth.Peek, draw-first spec §3.2). A fresh file decides the row
+	// exactly as the full read did. A stale one with clauth on PATH leaves
+	// the row drawn `loading…` while Init asks the CLI, and #200's
+	// recoverAccountRow -- which already turns that answer into live /
+	// "too few profiles" / "failed with a reason" -- is what lands it. A
+	// stale one with no clauth on PATH is the "not installed" case above,
+	// and still produces no row: exec.ErrNotFound is what separated the
+	// four states before, and LookPath asks the same question without
+	// starting anything.
+	//
+	// So clauthUnavailable is no longer reachable from here at all. It
+	// stays on Setup because a ⌃R⌃R rebuild reconstructs the row from the
+	// Model's own mirror of it, and because this package's own tests build
+	// that state directly.
 	var clauthStatus clauth.Status
-	var clauthUnavailable string
+	var clauthLoading bool
 	if clauthEnabled && clauthSrc != nil {
-		st, serr := clauthSrc.Status(bg)
-		switch {
-		case serr == nil:
+		st, cached := clauthSrc.Peek()
+		switch cached {
+		case clauth.CachedFresh:
 			clauthStatus = st
-		case !errors.Is(serr, exec.ErrNotFound):
-			clauthUnavailable = clauthUnavailableReason(serr)
+		case clauth.CachedAsk:
+			clauthLoading = true
 		}
 	}
 
@@ -396,33 +504,48 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 	// it writes no ledger entry and builds no account directory for a session
 	// nobody has asked for.
 	var pickerSrc pickerSource
-	var pickerUnavailable string
+	var pickerProbePending bool
 	if bin := strings.TrimSpace(cfg.Clauth.Picker); bin != "" && clauthEnabled {
-		cli := picker.CLI{Bin: bin}
-		if perr := cli.Probe(bg, defaultProjectDir(ctx)); perr != nil {
-			pickerUnavailable = flattenReason(perr.Error())
-		} else {
-			pickerSrc = cli
-		}
+		pickerSrc = picker.CLI{Bin: bin}
+		pickerProbePending = true
 	}
 
 	deps := Deps{Runner: runner, Linear: linearSrc, Clauth: clauthSrc, Picker: pickerSrc, Git: gitSrc, Clock: clock, Lifetime: lt}
-	return New(Setup{
-		Deps:              deps,
-		Ctx:               ctx,
-		Config:            cfg,
-		State:             state,
-		Projects:          projects,
-		Palette:           palette,
-		StateDir:          env.StateDir,
-		Workspaces:        workspaces,
-		ClauthStatus:      clauthStatus,
-		LinearCache:       linearCache,
-		LinearUnavailable: linearUnavailable,
-		ClauthUnavailable: clauthUnavailable,
-		PickerUnavailable: pickerUnavailable,
-		HomeDir:           pathx.Home(),
-	}), nil
+	m := New(Setup{
+		Deps:               deps,
+		Ctx:                ctx,
+		Config:             cfg,
+		State:              state,
+		Projects:           projects,
+		Palette:            palette,
+		StateDir:           env.StateDir,
+		Workspaces:         workspaces,
+		ClauthStatus:       clauthStatus,
+		LinearCache:        linearCache,
+		LinearUnavailable:  linearUnavailable,
+		LinearResolving:    linearResolving,
+		ClauthLoading:      clauthLoading,
+		PickerProbePending: pickerProbePending,
+		HomeDir:            pathx.Home(),
+	})
+
+	// The key resolve is BOOTSTRAP'S, not New's, and that is deliberate
+	// (draw-first spec §4.4). A ⌃R⌃R rebuild goes through New and never
+	// through here, so `api_key_cmd` is run exactly once per popup: a
+	// second `op read` is a second approval prompt, and the first one's
+	// answer lands on the rebuilt form anyway (the message carries no
+	// version -- §5.1).
+	//
+	// The resolver is a closure over the call Bootstrap used to make
+	// inline rather than a new interface on Deps: it has one caller and
+	// one implementation, and resolveKeyCmd takes it as a parameter so its
+	// own tests can pass a fake.
+	if linearResolving {
+		m.initCmds = append(m.initCmds, resolveKeyCmd(lt, func(ctx context.Context) (string, error) {
+			return linear.ResolveAPIKey(ctx, cfg.Linear.APIKeyCmd, cfg.Linear.APIKey, env.ConfigDir)
+		}))
+	}
+	return m, nil
 }
 
 // The three refusals below are, for most people who ever see one, their
@@ -499,13 +622,17 @@ const readmeURL = "https://github.com/ZviBaratz/herdr-draft#readme"
 // the standing notes -- in the one order they may be applied in.
 //
 // It has two callers and they must not drift: New, for a row built live at
-// open, and async.go's recoverAccountRow, for a row whose unavailable
-// state a successful reload has just cleared (#200). "The row becomes
-// live and can be pinned, as it would have been had clauth answered at
-// open" is the whole of that decision, and one sequence in one place is
-// what makes it true of both -- everything here beyond the profile list
-// (the auto row, the configured default, the notes) is a piece a fix that
-// only re-fed the profiles would have left behind.
+// open, and async.go's recoverAccountRow, for a row whose unavailable OR
+// LOADING state a successful read has just cleared (#200, #293). "The row
+// becomes live and can be pinned, as it would have been had clauth
+// answered at open" is the whole of that decision, and one sequence in one
+// place is what makes it true of both -- everything here beyond the
+// profile list (the auto row, the configured default, the notes) is a
+// piece a fix that only re-fed the profiles would have left behind.
+//
+// Since #293 the second caller is the ordinary path rather than a
+// recovery: a stale status file is how most machines without a running
+// clauth daemon open, so the row most users see go live goes live here.
 //
 // Note what that costs: with both callers sharing this body, no test can
 // catch a change made INSIDE it by comparing the two rows -- they move
@@ -556,10 +683,23 @@ func (m *Model) populateAccountRow() {
 	// (#123). Only a live row carries any of them because only it can
 	// pin: with no working account row, nothing launches through what
 	// they are about.
+	m.setAccountNotes()
+}
+
+// setAccountNotes is populateAccountRow's last step on its own, because the
+// probe's verdict now arrives after the first frame and has to rebuild the
+// notes without rebuilding the row (draw-first spec §5.4).
+//
+// Only a LIVE row carries any of them, which is why populateAccountRow is
+// the only other caller: with no working account row nothing launches
+// through what they are about, and a loading or unavailable row draws no
+// notes at all (AccountField.notesShown). Such a row gets them when it goes
+// live, through populateAccountRow.
+func (m *Model) setAccountNotes() {
 	var notes []string
-	// Only when no picker works: Bootstrap sets one of the two, never both,
-	// and a working auto row beside a failed probe would be two answers to
-	// one question. The verdict this replaced got that from an else-branch.
+	// Only when no picker works: a working auto row beside a failed probe
+	// would be two answers to one question. The verdict this replaced got
+	// that from an else-branch.
 	if m.pickerUnavailable != "" && m.deps.Picker == nil {
 		notes = append(notes, m.pickerUnavailable)
 	}
@@ -593,20 +733,23 @@ func clauthUnavailableReason(err error) string {
 	return flattenReason(msg)
 }
 
-// accountTooFewProfilesReason is the account row's reason for the one
-// state a reload can produce that opening the popup never does: clauth
-// answered, and answered with fewer than the two profiles this row exists
-// to choose between (#200).
+// accountTooFewProfilesReason is the account row's reason for clauth
+// answering with fewer than the two profiles this row exists to choose
+// between (#200).
 //
-// At open that produces no row at all, deliberately -- most people who
-// install this plugin have never heard of clauth, and a row saying it has
-// one profile is noise to every one of them (see Bootstrap's own comment
-// on the four states). By the time a reload lands the row is already on
-// screen carrying the reason clauth failed WITH, and that reason is now
-// false: clauth works, there is just nothing here to choose. Which of the
-// two it is goes in the text because they are different situations --
-// profiles that went missing, against a clauth that only ever had one --
-// and this row is the only place either is reported.
+// A fresh STATUS FILE saying so still produces no row at all, deliberately
+// -- most people who install this plugin have never heard of clauth, and a
+// row saying it has one profile is noise to every one of them (see
+// Bootstrap's own comment on the four states). This is for the answer that
+// arrives once the row is already on screen, which until #293 only a focus
+// reload could produce and is now also the ordinary open-time read of a
+// stale status file (draw-first spec §5.3, decision 2's "the row stays").
+// A row that exists cannot be taken away, and the reason it was drawn with
+// -- `loading…`, or a failure at open -- is false by then: clauth works,
+// there is just nothing here to choose. Which of the two it is goes in the
+// text because they are different situations -- profiles that went
+// missing, against a clauth that only ever had one -- and this row is the
+// only place either is reported.
 func accountTooFewProfilesReason(n int) string {
 	if n == 1 {
 		return "clauth reports one profile; this row needs two"
@@ -637,8 +780,9 @@ func flattenReason(s string) string { return strings.Join(strings.Fields(form.Di
 
 // linearRefreshReason turns an AssignedIssues error into the single line
 // IssueField.SetRefreshError puts on the panel's status row. Same reasoning
-// as linearUnavailableReason for dropping the package's own prefix, plus
-// one thing that sibling does not need: the text is FLATTENED.
+// as linearUnavailableReason for dropping the package's own prefix, and
+// both flatten -- that sibling has since had to (#323), because a failing
+// api_key_cmd's stderr can be a paragraph and the row is one line.
 //
 // A Linear 401 arrives as `unexpected status 401: <response body>`, and
 // that body is JSON with newlines in it. The panel builds a fixed number
@@ -699,6 +843,12 @@ type reqVersions struct {
 	// rapid-refocus staleness gap, see clauthResultMsg's own doc comment
 	// in async.go).
 	clauth int
+	// accountWait is the account holds' one timer, armed at most once per
+	// ⌃S (draw-first spec §7.1). It is a counter here for the reason every
+	// other one is: a timer armed by a submit that has since been released
+	// -- or by a form a ⌃R⌃R discarded -- must not release the next hold,
+	// and the version it carries is what says so.
+	accountWait int
 }
 
 // superseded is what a ⌃R⌃R rebuild starts from: every counter one past
@@ -718,13 +868,14 @@ type reqVersions struct {
 // first request is higher again.
 func (v reqVersions) superseded() reqVersions {
 	return reqVersions{
-		dir:        v.dir + 1,
-		title:      v.title + 1,
-		base:       v.base + 1,
-		baseSettle: v.baseSettle + 1,
-		browse:     v.browse + 1,
-		picker:     v.picker + 1,
-		clauth:     v.clauth + 1,
+		dir:         v.dir + 1,
+		title:       v.title + 1,
+		base:        v.base + 1,
+		baseSettle:  v.baseSettle + 1,
+		browse:      v.browse + 1,
+		picker:      v.picker + 1,
+		clauth:      v.clauth + 1,
+		accountWait: v.accountWait + 1,
 	}
 }
 
@@ -748,9 +899,13 @@ type Model struct {
 
 	form form.Model
 
-	// issue and account are nil when their own static precondition isn't
-	// met (spec §6: Linear unconfigured, fewer than two clauth profiles) --
-	// New simply never constructs or appends them.
+	// issue and account are nil when their own precondition isn't met, and
+	// since #293 both preconditions are answerable without running
+	// anything: no Linear key SOURCE is configured, and clauth's status
+	// file either reported fewer than two profiles or there is no clauth
+	// on PATH to ask (draw-first spec §3). New simply never constructs or
+	// appends them, and the row set is fixed before the first frame -- only
+	// what a row SAYS changes afterwards.
 	issue     *form.IssueField
 	dir       *form.DirField
 	title     *form.TitleField
@@ -813,12 +968,19 @@ type Model struct {
 	// checkBudget, the one place either is read.
 	checkDeadline time.Duration
 
-	// submitHeld is a submit waiting for the project row's check (#195), the
-	// base check (#194) or the title-duplicate check (#137): set by
-	// handleSubmit while any of them is out. The handler that lands one --
+	// submitHeld is a submit waiting for something. Three of the five are
+	// #202's, ahead of validation because validation reads their verdicts:
+	// the project row's check (#195), the base check (#194) and the
+	// title-duplicate check (#137). The handler that lands one --
 	// handleDirResult, handleBaseSettled or handleTitleResult -- re-enters
 	// handleSubmit, which re-checks all three and holds again if another is
 	// still out.
+	//
+	// The other two are #293's account holds, which sit at the point where
+	// the account is READ rather than ahead of validation: the clauth hold
+	// inside checkSubmitValidation, and the probe hold in continueSubmit.
+	// accountHeld says which, because they resume at different steps, and
+	// both are bounded by one timer rather than by awaitCheck (ruling 15).
 	submitHeld bool
 
 	// submitResolving is a submit that has passed validation and is out on a
@@ -842,6 +1004,54 @@ type Model struct {
 	// inert Linear field rather than silently promoting it back to a
 	// working one.
 	linearUnavailable string
+
+	// linearResolving, clauthLoading and pickerProbePending mirror Setup's
+	// three new fields for the reason every mirror above exists: a ⌃R⌃R
+	// rebuild goes through New from this Model's own state, so a state that
+	// lived only in a field would be replaced by the open-time one on the
+	// first clear (draw-first spec §7.4).
+	//
+	// Each transition writes the mirror FIRST and derives the field from
+	// it, which is recoverAccountRow's rule applied to all three: a rebuild
+	// then cannot put back a state that has since moved on.
+	linearResolving    bool
+	clauthLoading      bool
+	pickerProbePending bool
+
+	// accountHeld is which of the two account holds is holding this submit
+	// (draw-first spec §7.1), and accountHoldNone when none is. It decides
+	// where a landing re-enters: the clauth hold sits inside validation, so
+	// it resumes at handleSubmit, and the probe hold sits after it, so it
+	// resumes at continueSubmit -- re-entering the top from there would
+	// spend a lane's commit read a second time.
+	accountHeld accountHold
+
+	// accountWaitArmed is whether this ⌃S has already armed its one timer.
+	// Re-entries from #202's landings and from the other account hold must
+	// not re-arm it, or each landing would push the deadline back and the
+	// budget would never be spent. Cleared by the next form.SubmitMsg, not
+	// by a re-entry.
+	accountWaitArmed bool
+
+	// accountWaitExpired is that timer having fired: the account holds are
+	// over for this ⌃S whatever they were waiting for. The clauth hold then
+	// proceeds WITHOUT the #243 dead-credential check, which is clauth's
+	// advisory posture (§7.2); the probe hold refuses, because launching
+	// unpinned under `auto` is what handlePickerCommit exists to prevent
+	// (§7.3).
+	accountWaitExpired bool
+
+	// accountFromConfig is §7.2's answer: which account the row WOULD have
+	// selected, from config alone, recorded when a spent budget lets a
+	// submit past the clauth hold. The row has no profile list then, so
+	// AccountField.SetPin cannot apply `[clauth] default` and the field's
+	// own Pin() is empty.
+	//
+	// It lives here rather than being threaded through buildPlanInput's
+	// arguments for autoPick's reason: PlanInput() stays a pure read of
+	// state, which is what internal/create's equivalence test compares. The
+	// next ⌃S, or a clear, discards it.
+	accountFromConfig configAccount
 
 	// clauthUnavailable and pickerUnavailable mirror Setup's fields of the
 	// same names, for the reason linearUnavailable does. The rebuild used to
@@ -1185,9 +1395,12 @@ func New(s Setup) Model {
 		clauthStatus: s.ClauthStatus,
 		linearIssues: s.LinearCache,
 
-		linearUnavailable: s.LinearUnavailable,
-		clauthUnavailable: s.ClauthUnavailable,
-		pickerUnavailable: s.PickerUnavailable,
+		linearUnavailable:  s.LinearUnavailable,
+		clauthUnavailable:  s.ClauthUnavailable,
+		pickerUnavailable:  s.PickerUnavailable,
+		linearResolving:    s.LinearResolving,
+		clauthLoading:      s.ClauthLoading,
+		pickerProbePending: s.PickerProbePending,
 
 		fetchedRepos: map[string]bool{},
 
@@ -1279,28 +1492,46 @@ func New(s Setup) Model {
 	m.placement.SetSpace(m.resolved.Space.Label)
 	m.placement.SetValue(m.resolved.Placement)
 
-	// Linear (spec §6 field 1): rendered only when Linear is configured --
-	// decided entirely by whether Bootstrap resolved an API key at all
-	// (Deps.Linear != nil is the static precondition; New never itself
-	// tries to resolve a key).
-	if s.Deps.Linear != nil {
+	// Linear (spec §6 field 1): rendered when Linear is configured, which
+	// since #293 means a key SOURCE is set rather than a key resolved
+	// (draw-first spec §4.2). Four states, first match wins, and three of
+	// them are live -- because a cached list is pickable whatever the key
+	// is doing, which is decision 4 and #292.
+	switch {
+	case s.Deps.Linear != nil:
+		// A key resolved before the draw, or a rebuild carried the source
+		// a landed one installed. The opening fetch is scheduled below and
+		// the panel says so meanwhile (ruling 10).
 		m.issue = form.NewIssueField(palette)
-		if len(s.LinearCache) > 0 {
-			m.issueItemsVersion++
-			m.issue.SetIssues(m.issueItemsVersion, s.LinearCache)
-		}
-	} else if s.LinearUnavailable != "" {
-		// Configured but broken (finding I5): rendered present-but-inert
-		// with the reason, rather than silently absent -- see
-		// Setup.LinearUnavailable and IssueField.SetUnavailable. No
+		m.seedIssueCache(s.LinearCache)
+		m.issue.SetPhase(form.IssuePhaseFetching)
+	case s.LinearResolving:
+		// api_key_cmd is out. Live, with the cache pickable, and the panel
+		// naming the key the user wrote (draw-first spec §5.1, §6).
+		m.issue = form.NewIssueField(palette)
+		m.seedIssueCache(s.LinearCache)
+		m.issue.SetPhase(form.IssuePhaseWaitingKey)
+	case s.LinearUnavailable != "" && len(s.LinearCache) > 0:
+		// #292: the key failed and there is still a perfectly usable list
+		// on disk. The reason goes where a failed REFRESH's already goes,
+		// because it is the same situation -- a cached list that could not
+		// be refreshed -- and SetRefreshError deliberately does not make
+		// the field inert.
+		m.issue = form.NewIssueField(palette)
+		m.seedIssueCache(s.LinearCache)
+		m.issue.SetRefreshError(s.LinearUnavailable)
+	case s.LinearUnavailable != "":
+		// Configured but broken, with nothing to pick (finding I5):
+		// present-but-inert with the reason, rather than silently absent
+		// -- see Setup.LinearUnavailable and IssueField.SetUnavailable. No
 		// linearSource exists, so nothing ever schedules a refresh for it
 		// (initCmds below gates on m.issue != nil AND Deps.Linear != nil).
 		m.issue = form.NewIssueField(palette)
 		m.issue.SetUnavailable(s.LinearUnavailable)
 	}
 
-	// Account (spec §6 field 7): rendered only when clauth is enabled AND
-	// >= 2 profiles exist. Bootstrap folds "enabled" into ClauthStatus.
+	// Account (spec §6 field 7): rendered when clauth is enabled AND its
+	// STATUS FILE reported >= 2 profiles. Bootstrap folds "enabled" into ClauthStatus.
 	// Profiles (a disabled clauth simply never populates it), but a
 	// caller constructing Setup directly (as this package's own tests do)
 	// could still hand in a non-empty ClauthStatus with Deps.Clauth ==
@@ -1324,10 +1555,23 @@ func New(s Setup) Model {
 	// NEXT open and, until #200, of nothing else -- the reload loaded the
 	// profiles into a row that went on reading `unavailable` and, since
 	// #191, went on ignoring input.
-	if s.ClauthUnavailable != "" {
+	//
+	// Since #293 there is a third state between those two, and it is the
+	// one that made the row's precondition stop being static: clauth's
+	// status file was stale and its CLI is being asked, so the row is drawn
+	// `loading…` and inert, and is not a focus stop (ruling 8). There is
+	// nothing to retry -- the read is already out -- and nothing to choose
+	// between yet, so a choice made there would be silently overridden when
+	// the profiles land. recoverAccountRow turns that answer into live,
+	// "too few profiles", or a reason.
+	switch {
+	case s.ClauthUnavailable != "":
 		m.account = form.NewAccountField(palette)
 		m.account.SetUnavailable(s.ClauthUnavailable)
-	} else if s.Deps.Clauth != nil && len(s.ClauthStatus.Profiles) >= 2 {
+	case s.ClauthLoading:
+		m.account = form.NewAccountField(palette)
+		m.account.SetLoading(true)
+	case s.Deps.Clauth != nil && len(s.ClauthStatus.Profiles) >= 2:
 		m.account = form.NewAccountField(palette)
 		m.populateAccountRow()
 	}
@@ -1416,15 +1660,47 @@ func New(s Setup) Model {
 	if m.issue != nil && s.Deps.Linear != nil {
 		m.initCmds = append(m.initCmds, m.refreshLinearCmd())
 	}
+	// clauth's CLI, for a status file that could not answer (draw-first
+	// spec §4.4). It is New's rather than Bootstrap's, unlike the key
+	// resolve: a ⌃R⌃R rebuild SHOULD ask again -- superseded() has already
+	// retired the discarded form's read (#201) -- and the cost is one more
+	// `clauth status --json`, which nobody has to approve.
+	if m.clauthLoading {
+		if reload := m.reloadClauthCmd(); reload != nil {
+			m.initCmds = append(m.initCmds, reload)
+		}
+	}
 
 	return m
 }
 
-// Init focuses the form's initial section and kicks off the very first
-// debounced dir-validity/base-list check plus (when configured) the
-// Linear async refresh -- the actual scheduling/counter-bumping for those
-// already happened in New (see initCmds' own doc comment); this only
-// returns the resulting Cmds.
+// seedIssueCache puts the cache-rendered list into a freshly built
+// IssueField at a fresh version, which is New's half of spec §10's "render
+// cache first, then async refresh".
+//
+// Factored out because #293 gave it three callers instead of one: a
+// resolved key, a key still out, and a key that failed over a list that is
+// still pickable (#292).
+func (m *Model) seedIssueCache(cache []linear.Issue) {
+	if len(cache) == 0 {
+		return
+	}
+	m.issueItemsVersion++
+	m.issue.SetIssues(m.issueItemsVersion, cache)
+}
+
+// Init focuses the form's initial section and kicks off everything the
+// first frame did not need: the debounced dir-validity and base-list
+// checks, the account picker's opening preview (carrying the probe), the
+// Linear async refresh, the `clauth status --json` a stale status file
+// could not answer for, and -- appended by Bootstrap rather than New -- the
+// api_key_cmd resolve (#293). The actual scheduling and counter-bumping
+// for those already happened in New (see initCmds' own doc comment); this
+// only returns the resulting Cmds.
+//
+// That list is the whole of draw-first spec §3: the form is already on
+// screen by the time any of them runs, and each row says what it is
+// waiting for.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(append([]tea.Cmd{m.form.Init()}, m.initCmds...)...)
 }
@@ -1462,7 +1738,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case form.CancelMsg:
 		return m, tea.Quit
 	case form.SubmitMsg:
-		return m.handleSubmit()
+		return m.startSubmitRequest()
 	case form.ClearRequestedMsg:
 		return m.handleClearRequested()
 	case dirDebounceMsg:
@@ -1483,10 +1759,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTitleDebounce(msg)
 	case titleResultMsg:
 		return m.handleTitleResult(msg)
+	case linearKeyMsg:
+		return m.handleLinearKey(msg)
 	case linearResultMsg:
 		return m.handleLinearResult(msg)
 	case clauthResultMsg:
 		return m.handleClauthResult(msg)
+	case accountWaitMsg:
+		return m.handleAccountWait(msg)
 	case pickerDebounceMsg:
 		return m.handlePickerDebounce(msg)
 	case pickerPreviewMsg:
@@ -1643,6 +1923,22 @@ func BranchRefusal(useWorktree bool, branch string) error {
 // what the form held before: a duplicate typed and submitted at once went
 // past it, and a duplicate fixed at once was refused with no warning left on
 // screen. handleTitleResult comes back through here.
+// startSubmitRequest is a NEW ⌃S, as opposed to one of the re-entries
+// every held check makes into handleSubmit when its answer lands.
+//
+// The distinction is the whole of draw-first spec §7.1's "one budget,
+// armed once per ⌃S": this is the only place the account holds' per-submit
+// state is cleared, so a re-entry cannot re-arm the timer or push the
+// deadline back, and a fresh ⌃S after a spent budget may hold again and
+// discards §7.2's recorded account.
+func (m Model) startSubmitRequest() (Model, tea.Cmd) {
+	m.accountWaitArmed = false
+	m.accountWaitExpired = false
+	m.accountHeld = accountHoldNone
+	m.accountFromConfig = configAccount{}
+	return m.handleSubmit()
+}
+
 func (m Model) handleSubmit() (Model, tea.Cmd) {
 	if m.dirCheckPending() || m.baseSettlePending() || m.titleCheckPending() {
 		m.submitHeld = true
@@ -1723,11 +2019,39 @@ func (m Model) titleCheckPending() bool { return m.titleLandedVersion != m.reqs.
 // continueSubmit is handleSubmit's second step, and where a lane's commit
 // resumes it (handleLinkedCommit).
 func (m Model) continueSubmit() (Model, tea.Cmd) {
+	// THE PROBE HOLD (draw-first spec §7.1), before the commit pick and
+	// never after it: a commit pick writes the picker's ledger, and must
+	// never run an executable that has not answered the probe.
+	//
+	// Because it sits after validation it freezes the form, exactly as the
+	// commit pick's own round trip does (submitResolving, #136) -- an edit
+	// made during the wait would otherwise reach a plan validation never
+	// saw. And like the clauth hold it applies only to claude.
+	if m.agent.Value() == claudeKind && m.account != nil && m.pickerProbePending && m.accountIsAuto() {
+		if !m.accountWaitExpired {
+			m.submitResolving = true
+			// A STATEMENT, not an operand of the return. holdForAccount
+			// mutates this m, and Go leaves the order of a plain variable
+			// operand against a call in the same return unspecified -- so
+			// `return m, m.holdForAccount(...)` may copy m before or after
+			// the mutation, and a copy taken first would return a Model
+			// that is not held at all. (The m.form.FocusByID(...) returns
+			// elsewhere in this file are safe for a different reason:
+			// FocusByID takes a VALUE receiver and changes nothing about
+			// the struct being returned.)
+			cmd := m.holdForAccount(accountHoldProbe)
+			return m, cmd
+		}
+		// §7.3: an unknown is not a pass. Removing `auto` and launching
+		// under whatever account happens to be live is what
+		// handlePickerCommit exists to prevent.
+		return m.refuseAccountHold(accountProbePendingReason)
+	}
 	// An `auto` account is resolved HERE, after every blocking check and
 	// before anything is created: the pick writes a ledger entry, and spending
 	// one on a submit that a duplicate title was about to refuse would hand
 	// out an account to a session that never exists.
-	if m.deps.Picker != nil && m.account != nil && m.account.IsAuto() && m.autoPick.Profile == "" {
+	if m.deps.Picker != nil && m.account != nil && m.accountIsAuto() && m.autoPick.Profile == "" {
 		m.account.SetPickerPreview(form.AccountPickerPreview{Pending: true})
 		m.submitResolving = true
 		return m, m.pickerCommitCmd()
@@ -1798,7 +2122,7 @@ func (m Model) beginSubmit() (Model, tea.Cmd) {
 //     (accountAuthBlocked, #243).
 //
 // Returns (nil, false) when nothing blocks.
-func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
+func (m *Model) checkSubmitValidation() (tea.Cmd, bool) {
 	if strings.TrimSpace(m.title.Value()) == "" {
 		m.title.SetVerdict(m.title.Value(), "title required", form.VerdictRefusal)
 		return m.form.FocusByID("title"), true
@@ -1830,6 +2154,30 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 		// opens already says which of the two it is (#202).
 		return m.form.FocusByID("title"), true
 	}
+	// THE CLAUTH HOLD (draw-first spec §7.1), immediately before the check
+	// it exists for and after every validation that does not need an
+	// account: a required title, a duplicate, or a branch git cannot use is
+	// refused at once, as today, and never after a wait that could not have
+	// changed the answer.
+	//
+	// Only for claude, the one kind an account is pinned or picked for
+	// (accountPin, ResolveAccount). A codex submit never waits on clauth.
+	if m.agent.Value() == claudeKind && m.account != nil && m.clauthLoading {
+		if !m.accountWaitExpired {
+			return m.holdForAccount(accountHoldClauth), true
+		}
+		// Decision 5: the budget is spent, so the create goes ahead
+		// WITHOUT #243's dead-credential check -- there is no status to
+		// check against, and clauth's posture here is advisory, as
+		// `create` has taken it since #141. Unlike #202's held checks this
+		// timeout does not refuse.
+		//
+		// What it launches under is recorded here, where the submit gets
+		// past, and read from there by accountPin, continueSubmit and
+		// ResolveAccount (§7.2).
+		m.accountFromConfig = m.accountFromConfigValue()
+		return nil, false
+	}
 	if pin, blocked := m.accountAuthBlocked(); blocked {
 		// Fix round 1 (reviewer finding -- silent failure): the row
 		// marker Task 18 already renders for this profile was already
@@ -1849,6 +2197,144 @@ func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 	}
 	return nil, false
 }
+
+// accountHold names which of draw-first spec §7.1's two holds is holding a
+// submit, which is what says where a landing re-enters.
+//
+// Two holds rather than one because they sit at different points and wait
+// for different answers: the clauth hold is inside validation, immediately
+// before #243's dead-credential check, and the probe hold is after all of
+// it, immediately before the commit pick. Re-entering the top from the
+// second would re-run a lane's commit read, which is a round trip with a
+// cost.
+type accountHold int
+
+const (
+	accountHoldNone accountHold = iota
+	accountHoldClauth
+	accountHoldProbe
+)
+
+// configAccount is draw-first spec §7.2's answer: which account the row
+// WOULD have selected, from config alone, for a submit that outlasted a
+// clauth load.
+//
+// set is what distinguishes "unpinned, decided from config" from "nothing
+// decided" -- both carry an empty pin, and only the first must beat the
+// field's own Pin(). It is the same shape WithAccount records a picker's
+// answer in, and for the same reason: buildPlanInput stays a pure read of
+// state.
+type configAccount struct {
+	set bool
+	// pin is a `[clauth] default` naming a profile, pinned WITHOUT
+	// verification, exactly as `create` pins one. The live row would drop a
+	// mistyped default ("never guess"); this path types `clauth start
+	// <typo>` into the pane instead, which is the one disclosed divergence.
+	pin string
+	// auto is the picker's own row, chosen when no default names a profile
+	// and a picker is configured whose probe has not failed. The commit
+	// pick then runs once the probe passes (§7.1's probe hold); a probe
+	// still pending when the budget is spent is §7.3's refusal.
+	auto bool
+}
+
+// accountFromConfigValue is configAccount's own precedence, which is the
+// LIVE row's precedence read off config instead of off the field:
+// AccountField.SetPin has a named profile beat `auto`, and
+// SetPickerAvailable makes `auto` the resting selection over `active`.
+func (m Model) accountFromConfigValue() configAccount {
+	if pin := m.cfg.Clauth.Default; pin != "" && pin != accountActiveSentinel {
+		return configAccount{set: true, pin: pin}
+	}
+	if m.deps.Picker != nil {
+		return configAccount{set: true, auto: true}
+	}
+	return configAccount{set: true}
+}
+
+// accountActiveSentinel is config.toml's documented "use whatever profile
+// is live" value for `[clauth] default`, which AccountField.SetPin already
+// treats as a no-op. Named here because accountFromConfigValue has to make
+// the same judgement without a field to ask.
+const accountActiveSentinel = "active"
+
+// accountIsAuto is "the selection is the picker's own row", reading
+// §7.2's recorded answer ahead of the field -- which is the order every
+// reader of that answer takes, because the field it would otherwise ask has
+// no profile list to have selected anything in.
+func (m Model) accountIsAuto() bool {
+	if m.accountFromConfig.set {
+		return m.accountFromConfig.auto
+	}
+	return m.account != nil && m.account.IsAuto()
+}
+
+// holdForAccount holds the submit at the step that called it and arms the
+// one timer that bounds the wait (draw-first spec §7.1).
+//
+// ONE BUDGET, ARMED ONCE PER ⌃S. The bound is checkBudget()'s deadline, the
+// same 5s every #202 check gets, but the wait is a TIMER rather than
+// awaitCheck (ruling 15, a documented exception to CLAUDE.md's "the same
+// bound, from the same two helpers"): the answer is already in flight as a
+// message and there is no call to hand awaitCheck. Re-entries -- from
+// #202's landings, and from the other account hold -- find accountWaitArmed
+// set and do not re-arm, so nothing pushes the deadline back.
+func (m *Model) holdForAccount(which accountHold) tea.Cmd {
+	m.submitHeld = true
+	m.accountHeld = which
+	if m.accountWaitArmed {
+		return nil
+	}
+	m.accountWaitArmed = true
+	m.reqs.accountWait++
+	v := m.reqs.accountWait
+	clock := m.deps.Clock
+	_, deadline := m.checkBudget()
+	return func() tea.Msg {
+		clock.sleep(deadline)
+		return accountWaitMsg{version: v}
+	}
+}
+
+// resumeAccountHold re-enters the step a landing has just released, and is
+// a no-op when no account hold is up.
+func (m Model) resumeAccountHold() (Model, tea.Cmd) {
+	switch m.accountHeld {
+	case accountHoldClauth:
+		m.accountHeld = accountHoldNone
+		return m.handleSubmit()
+	case accountHoldProbe:
+		m.accountHeld = accountHoldNone
+		return m.continueSubmit()
+	}
+	return m, nil
+}
+
+// refuseAccountHold ends a held submit with a reason on the account row
+// (draw-first spec §7.3), which is #202's posture for a check that could
+// not answer and handlePickerCommit's for an `auto` that could not be
+// resolved: neither falls through to an unpinned launch.
+//
+// It clears submitResolving because the probe hold froze the form the way
+// the commit pick's own round trip does -- an edit made during the wait
+// would otherwise reach a plan validation never saw -- and the freeze has
+// to end with the wait.
+func (m Model) refuseAccountHold(reason string) (Model, tea.Cmd) {
+	m.submitHeld = false
+	m.accountHeld = accountHoldNone
+	m.submitResolving = false
+	if m.account == nil {
+		return m, nil
+	}
+	m.account.SetVerdict(m.account.Pin(), reason)
+	return m, m.form.FocusByID("account")
+}
+
+// accountProbePendingReason is the first of §7.3's two refusals, in #202's
+// could-not-check register: the budget ran out with the probe still out.
+// The second carries the probe's own reason, which is more specific than
+// anything this layer could compose.
+const accountProbePendingReason = "picker has not answered yet"
 
 // titleSessions maps herdr's own workspace list down to the value type
 // internal/form's TitleField takes (v3 spec §9). The mapping is the
@@ -1898,6 +2384,12 @@ func (m Model) accountPin() string {
 	if m.autoPick.Profile != "" {
 		return m.autoPick.Profile
 	}
+	// §7.2's answer ahead of the field, for a submit that outlasted a
+	// clauth load: the field has no profile list, so SetPin could not have
+	// applied `[clauth] default` and its own Pin() is empty.
+	if m.accountFromConfig.set {
+		return m.accountFromConfig.pin
+	}
 	return m.account.Pin()
 }
 
@@ -1931,7 +2423,7 @@ func (m Model) accountLaunch() plan.LaunchMode {
 // with WithAccount rather than mutating in place is what lets the I/O happen
 // inside a tea.Cmd, which runs off-model by construction.
 func (m Model) ResolveAccount(ctx context.Context) (picker.Result, error) {
-	if m.deps.Picker == nil || m.account == nil || !m.account.IsAuto() || m.agent.Value() != claudeKind {
+	if m.deps.Picker == nil || m.account == nil || !m.accountIsAuto() || m.agent.Value() != claudeKind {
 		return picker.Result{}, nil
 	}
 	return m.deps.Picker.Pick(ctx, pathx.ExpandTilde(m.dir.Value()), picker.Options{})
@@ -2196,6 +2688,16 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		ClauthUnavailable: m.clauthUnavailable,
 		PickerUnavailable: m.pickerUnavailable,
 
+		// The three waits a rebuild inherits (draw-first spec §7.4). The
+		// key's own message is Bootstrap's and unversioned, so it lands on
+		// the rebuilt form and api_key_cmd never runs twice; clauth is
+		// re-asked by New, and superseded() has already retired the
+		// discarded form's read; and the probe's verdict is unversioned
+		// too, so an answer still in flight decides it.
+		LinearResolving:    m.linearResolving,
+		ClauthLoading:      m.clauthLoading,
+		PickerProbePending: m.pickerProbePending,
+
 		// Every counter, one past this form's (#201): a check the form
 		// being discarded still has in flight must not meet a version the
 		// rebuilt one holds or issues. See reqVersions.superseded.
@@ -2308,7 +2810,11 @@ func (m *Model) reactToChanges() []tea.Cmd {
 
 	if focusedID := m.form.FocusedID(); focusedID != m.lastFocusedID {
 		m.lastFocusedID = focusedID
-		if focusedID == "account" && m.account != nil {
+		// Not while the row is LOADING (draw-first spec §4.2): the
+		// open-time read is already out, and a second one would retire it
+		// through the version guard -- turning a focus into a reason the
+		// first answer never got to give.
+		if focusedID == "account" && m.account != nil && !m.clauthLoading {
 			cmds = append(cmds, m.reloadClauthCmd())
 		}
 	}

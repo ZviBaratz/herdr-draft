@@ -35,7 +35,7 @@ func TestAgainstARealPicker(t *testing.T) {
 	}
 
 	c := CLI{Bin: bin}
-	if err := c.Probe(context.Background(), dir); err != nil {
+	if err := probeVerdict(c, context.Background(), dir); err != nil {
 		t.Fatalf("Probe(%s): %v", bin, err)
 	}
 

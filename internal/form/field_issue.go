@@ -85,6 +85,23 @@ const (
 	issueCountMany = "issues"
 )
 
+// The two phases SetPhase takes (draw-first spec §6). They are exported
+// because the app layer chooses WHICH of them applies -- it is the layer
+// that knows whether a key is out or a fetch is -- while the words stay
+// here, where every other sentence this field says to a user lives.
+const (
+	// IssuePhaseWaitingKey names the key the user wrote, which v2 spec
+	// §6.1 asks of a reason. "Waiting" is also honest: a credential helper
+	// may be waiting on a person to approve a prompt.
+	IssuePhaseWaitingKey = "waiting for api_key_cmd…"
+	// IssuePhaseFetching is v2 spec §6.1's own sentence, specified there
+	// and implemented nowhere until #293. Without it a first open with no
+	// cache says `no assigned issues` while the fetch is still out --
+	// which panelStatus' own comment calls a false statement, because
+	// nobody looked at the queue.
+	IssuePhaseFetching = "fetching assigned issues…"
+)
+
 // IssueField is the form's Linear issue Section (spec §6 field 1): a
 // type-to-filter picker over the viewer's assigned issues, "none" pinned
 // as row 0 for manual (non-Linear-seeded) mode. Selecting an issue emits
@@ -138,7 +155,28 @@ type IssueField struct {
 	// degrading gracefully.
 	//
 	// So this changes what the panel SAYS and nothing else.
+	//
+	// Two things reach it since #293, not one, and they are the same
+	// situation reached from opposite sides: a refresh that failed over a
+	// cache-rendered list, and a KEY that failed with that same list on
+	// screen (#292). The second used to take the whole row away -- an
+	// inert `unavailable`, with a perfectly pickable cached list discarded
+	// two lines from where it was loaded.
 	refreshErr string
+
+	// phase, when non-empty, is what is being waited for right now
+	// (SetPhase): a key still resolving, or a fetch still out. It is a
+	// third thing again beside the two above, and the difference is
+	// tense. unavailable and refreshErr report something that has already
+	// happened; this reports something in progress, and every landing
+	// that records a reason clears it, so the two are never set together.
+	//
+	// It reaches the ROW only when there is nothing to pick -- see Row.
+	// With a cache-rendered list on screen the row goes on showing the
+	// value, because a pick from that list is a complete choice and
+	// hiding it behind a phase word would be the degradation #292 is
+	// about.
+	phase string
 }
 
 // NewIssueField returns an empty, blurred IssueField (selection on the
@@ -181,7 +219,14 @@ func (f *IssueField) ID() string { return "issue" }
 // The one exception is SetUnavailable: Linear CONFIGURED but broken is a
 // different state from Linear absent, and spec §13 requires it to degrade
 // "with a reason" rather than vanish. Such a field is present-but-inert --
-// rendered, skipped by the focus ring.
+// rendered, skipped by the focus ring, and since #293 ignoring input too
+// (Update), because the row can now turn inert while it is focused.
+//
+// "Configured" is a weaker word than it was. Since #293 it means a key
+// SOURCE is set -- an api_key_cmd, $LINEAR_API_KEY or an inline api_key --
+// which app.Bootstrap decides before the first frame without running
+// anything. Whether a key actually resolves is decided after the draw, and
+// decides only what this field SAYS (draw-first spec §3.1, §4.2).
 func (f *IssueField) Enabled() bool { return f.unavailable == "" }
 
 // SetUnavailable marks the field present-but-inert, showing reason instead
@@ -212,6 +257,25 @@ func (f *IssueField) SetUnavailable(reason string) { f.unavailable = reason }
 // reason must be a single line; the app layer flattens it.
 func (f *IssueField) SetRefreshError(reason string) { f.refreshErr = reason }
 
+// SetPhase records what the field is waiting for, or clears it with "" --
+// one of the two IssuePhase constants above (draw-first spec §6).
+//
+// The app layer sets it wherever a wait starts (New, for a key that
+// resolves after the draw and for the opening fetch; handleLinearKey, for
+// the fetch a resolved key chains into) and clears it wherever one ends.
+// It is deliberately not derived here from the field's own state: whether
+// a key is out is the app layer's fact, and this field has no source of
+// its own to ask.
+func (f *IssueField) SetPhase(phase string) { f.phase = phase }
+
+// loadingRow reports whether the ROW should read `loading…` rather than a
+// value: a wait is on and there is nothing to pick behind it.
+//
+// len(f.issues) rather than the picker's filtered length, because a filter
+// that matches nothing is the user's own doing and the list is still
+// there. That is the panel's business (panelStatus), not the row's.
+func (f *IssueField) loadingRow() bool { return f.phase != "" && len(f.issues) == 0 }
+
 // Focus gives the field input focus, returning the wrapped lineInput's own
 // blink tea.Cmd.
 func (f *IssueField) Focus() tea.Cmd {
@@ -240,6 +304,14 @@ func (f *IssueField) Blur() {
 // language and Atrium's own live-preview-while-browsing interaction
 // quality (spec §3 goal 5).
 func (f *IssueField) Update(msg tea.Msg) tea.Cmd {
+	if f.unavailable != "" {
+		// Inert ignores everything, as #191 made AccountField do. It
+		// matters here since #293: the row can turn inert WHILE it is
+		// focused -- a key that fails after the draw, with no cache behind
+		// it -- and a cursor moved or a filter typed there would be input
+		// into a field the panel has stopped drawing a list for.
+		return nil
+	}
 	if click, ok := msg.(tea.MouseClickMsg); ok {
 		if f.pickerRowsShown > 0 {
 			if _, ok := f.picker.SelectAt(click, f.pickerRowsShown, "row:"+f.ID()+":"); ok {
@@ -419,9 +491,10 @@ func (f *IssueField) Selected() *linear.Issue {
 func (f *IssueField) Label() string { return issueRowLabel }
 
 // Row is the chosen issue as `ENG-101 · fix login redirect loop`, a dim
-// `none` in manual mode, the live filter input while focused, and -- when
-// Linear is configured but unreachable -- `unavailable  <reason>` in dim
-// italic (v2 spec §6/§6.1).
+// `none` in manual mode, a dim `loading…` while a key or a first fetch is
+// out with nothing to pick behind it, the live filter input while focused,
+// and -- when Linear is configured but unreachable -- `unavailable
+// <reason>` in dim italic (v2 spec §6/§6.1, draw-first spec §6).
 //
 // An over-long issue elides at its TAIL, keeping the head: the identifier
 // leads, and it is the half that stays useful when the title is cut.
@@ -438,6 +511,9 @@ func (f *IssueField) Row(w int) string {
 	default:
 		sel := f.Selected()
 		if sel == nil {
+			if f.loadingRow() {
+				return fitLine(dimText(f.palette).Render(keepHead(rowLoadingLabel, w)), w)
+			}
 			return fitLine(dimText(f.palette).Render(keepHead(issueRowNone, w)), w)
 		}
 		text := DisplayText(sel.Identifier + " · " + sel.Title)
@@ -506,7 +582,12 @@ func (f *IssueField) panelStatus() string {
 		// The case this whole distinction exists for: a fetch that failed
 		// with no cache to fall back on. "no assigned issues" is not a
 		// weaker statement here, it is a false one -- it describes the
-		// user's Linear queue, and nobody looked at the queue.
+		// user's Linear queue, and nobody looked at the queue. A wait
+		// still IN PROGRESS is the same falsehood one moment earlier, so
+		// the phase outranks both (draw-first spec §6, ruling 10).
+		if f.phase != "" {
+			return f.phase
+		}
 		if f.refreshErr != "" {
 			return f.refreshErr
 		}
@@ -516,6 +597,12 @@ func (f *IssueField) panelStatus() string {
 		// typed the filter a keystroke ago and it is the more immediate
 		// fact, exactly as the empty-Linear check outranks it above.
 		return issuePanelNoMatch
+	case f.phase != "":
+		// A list IS showing and is pickable; say what is still coming.
+		// Above refreshErr only in ordering, never in fact: the two are
+		// never set together, because every landing that records a reason
+		// clears the phase.
+		return f.phase
 	case f.refreshErr != "":
 		// A list IS showing and is usable; say why it may be out of date.
 		return f.refreshErr

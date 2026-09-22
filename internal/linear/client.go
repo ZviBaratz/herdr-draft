@@ -342,9 +342,9 @@ const configFileName = "config.toml"
 //     its trimmed stdout is used. A command that is configured but fails to
 //     run is a hard error -- it is not silently treated as absent, since a
 //     broken api_key_cmd is a real misconfiguration the user should see.
-//     A command that runs successfully but prints nothing is treated the
-//     same as "not configured" and resolution falls through to the next
-//     source.
+//     A command that runs successfully but prints nothing FALLS THROUGH to
+//     the next two sources, and is a hard error -- ErrKeyCmdEmpty -- only
+//     when neither of them supplies a key either (draw-first spec §8.2).
 //  2. The $LINEAR_API_KEY environment variable.
 //  3. apiKeyLiteral (config's [linear] api_key inline value): only trusted
 //     when <configDir>/config.toml has no group/other permission bits set
@@ -354,7 +354,12 @@ const configFileName = "config.toml"
 //
 // When all three sources are absent, ResolveAPIKey returns ("", nil) --
 // per spec §10, an absent key means the Linear field is simply not
-// rendered, not an error.
+// rendered, not an error. That answer is reserved for a user who
+// configured NOTHING: an apiKeyCmd that ran and printed nothing, with
+// nothing to fall through to, returns ErrKeyCmdEmpty instead, because the
+// old ("", nil) told that user Linear was unconfigured while their
+// config.toml named the command it had just run (draw-first spec §8.2,
+// decision 3).
 //
 // ctx bounds source 1 only, and both halves of that are deliberate. The
 // command is the part that can hang -- it used to reach plain exec.Command
@@ -365,6 +370,9 @@ const configFileName = "config.toml"
 // unbounded reads classifies as not on the project, and bounding it here
 // would make the two comments disagree about the same file.
 func ResolveAPIKey(ctx context.Context, apiKeyCmd []string, apiKeyLiteral, configDir string) (string, error) {
+	// Whether the command ran and said nothing, which only matters once
+	// both fall-throughs below have also come up empty.
+	var ranEmpty bool
 	if len(apiKeyCmd) > 0 {
 		key, err := runKeyCmd(ctx, apiKeyCmd)
 		if err != nil {
@@ -373,6 +381,7 @@ func ResolveAPIKey(ctx context.Context, apiKeyCmd []string, apiKeyLiteral, confi
 		if key != "" {
 			return key, nil
 		}
+		ranEmpty = true
 	}
 
 	if key := strings.TrimSpace(os.Getenv("LINEAR_API_KEY")); key != "" {
@@ -380,13 +389,52 @@ func ResolveAPIKey(ctx context.Context, apiKeyCmd []string, apiKeyLiteral, confi
 	}
 
 	if apiKeyLiteral == "" {
+		if ranEmpty {
+			return "", fmt.Errorf("%s: %w", keyCmdPrefix, ErrKeyCmdEmpty)
+		}
 		return "", nil
 	}
 
+	// The permissions error stays ahead of ErrKeyCmdEmpty, and that order
+	// is the honest one: an over-permissioned config.toml is a hazard the
+	// user has to fix before the inline key can be read at all, where
+	// "printed nothing" is only the LAST source having nothing to say.
 	if err := checkConfigPerm(configDir); err != nil {
 		return "", err
 	}
 	return apiKeyLiteral, nil
+}
+
+// ErrKeyCmdEmpty is a configured api_key_cmd that ran, exited 0 and printed
+// nothing, with no $LINEAR_API_KEY and no inline api_key behind it
+// (draw-first spec §8.2).
+//
+// A sentinel rather than a bare string because both callers put its text in
+// front of a person -- the popup on the issue row, `create --issue` on
+// stderr -- and the app layer builds the same sentence for the one answer
+// that reaches it without an error at all (a resolver that reported no key
+// and no failure).
+//
+// It is deliberately NOT ErrTimeout's shape: nothing branches on it, so it
+// needs no Is of its own.
+var ErrKeyCmdEmpty = errors.New("api_key_cmd printed nothing")
+
+// KeySourceConfigured reports whether the user has named a Linear key
+// source at all -- the pure, subprocess-free half of ResolveAPIKey, and the
+// question app.Bootstrap now answers before the first frame is drawn
+// (draw-first spec §3.1).
+//
+// The three sources are ResolveAPIKey's own, read exactly as it reads them:
+// a non-empty api_key_cmd, a $LINEAR_API_KEY that is non-empty once
+// trimmed, or a non-empty inline api_key. It deliberately says nothing
+// about whether any of them WORKS -- the command may be a typo and the
+// inline key may sit in a world-readable config.toml. "Configured" is what
+// decides that the issue row exists; what it says is decided later, by the
+// resolve.
+func KeySourceConfigured(apiKeyCmd []string, apiKeyLiteral string) bool {
+	return len(apiKeyCmd) > 0 ||
+		strings.TrimSpace(os.Getenv("LINEAR_API_KEY")) != "" ||
+		apiKeyLiteral != ""
 }
 
 // keyCmdTimeout bounds api_key_cmd (#141). Without it the command had no
@@ -394,9 +442,13 @@ func ResolveAPIKey(ctx context.Context, apiKeyCmd []string, apiKeyLiteral, confi
 // exec.Command, which takes no context.
 //
 // It is a deadlock breaker rather than a responsiveness budget, and it
-// protects the same thing picker.pickerTimeout does, for the same reason:
-// app.Bootstrap runs this synchronously BEFORE the popup is drawn, so a
-// helper that never answers means the form never appears and never says why.
+// protects the same thing picker.pickerTimeout does. What it protects
+// against has moved: app.Bootstrap used to run this synchronously BEFORE
+// the popup was drawn, so a helper that never answered meant the form never
+// appeared and never said why. Since #293 the popup draws first and this
+// runs from Init, so a hang now costs the issue row and not the screen --
+// but `create --issue` still waits for it with nothing drawn at all, and
+// that is the caller this bound is for now.
 //
 // SIXTY seconds, and deliberately longer than the thirty every other bound
 // in this repository uses, because this is the only call herdr-draft makes
@@ -409,12 +461,12 @@ func ResolveAPIKey(ctx context.Context, apiKeyCmd []string, apiKeyLiteral, confi
 // permanent until someone re-reads the config, and indistinguishable from a
 // genuinely broken command.
 //
-// Both paths take the same number, and the popup's blank pane is the price.
-// A shorter budget before the draw would be the failure above; what the
-// popup already does while a working helper waits for approval is exactly
-// what it does while a hung one does not, so the bound only decides when to
-// give up. Drawing the form first and resolving Linear asynchronously is the
-// real fix for that and is a change to Bootstrap's shape, not a deadline.
+// Both paths take the same number, and #141's decision 4 settled that they
+// should: a shorter budget would be the failure above. The popup's blank
+// pane used to be the price, and is not any more -- #293 drew the form
+// first and put `waiting for api_key_cmd…` on the issue panel, so what the
+// popup does while a working helper waits for approval is now visible and
+// usable, and this bound only decides when to give up.
 //
 // A constant rather than a [timeouts] key, for fetchPruneTimeout's and
 // preflightCheckDeadline's reason: a safety bound is not a tuning knob, and
