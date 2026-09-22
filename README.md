@@ -79,7 +79,7 @@ own `config.toml`:
 
 ```toml
 [[keys.command]]
-key = "prefix+n"
+key = "prefix+d"
 type = "plugin_action"
 command = "zvibaratz.draft.open"
 description = "new session"
@@ -88,6 +88,10 @@ description = "new session"
 `zvibaratz.draft.open` is the plugin's `open` action, qualified with its
 plugin id so that no other plugin's `open` can answer to it. Check the file
 with `herdr config check` and load it with `herdr server reload-config`.
+
+Pick a key herdr does not already use. `prefix+d` is free in herdr's
+defaults, but `prefix+n` is not: it is the next tab, and `config check`
+accepts a binding that collides with it without a word.
 
 You can also open the dialog from any shell inside herdr:
 
