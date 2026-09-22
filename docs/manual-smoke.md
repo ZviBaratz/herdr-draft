@@ -108,6 +108,12 @@ Two things make this less obvious than it sounds:
   # answer the dialog, then /exit
   ```
 
+  Do not count on it if the pane is closed promptly. On the 0.9.1 run
+  (Recorded runs, 2026-09-22) a trust accepted a minute before the pane was
+  closed was asked for again by the next session in that directory, though
+  `.claude.json` held it afterwards: the write lands, not always before the
+  next reader. Budget for meeting the prompt anyway.
+
 - **A worktree cell cannot be pre-trusted at all.** The checkout does not
   exist until the create makes it, so there is no directory to trust in
   advance. Cells 1, 3 and 8 will meet the trust prompt **every time**, on
@@ -718,9 +724,12 @@ still sitting on its dialog:
   file it was saved to (or `--json` carries `prompt_sent: false` and
   `unsent_prompt`).
 - **The launch really went through clauth.** `herdr[S] pane list` shows
-  `agent: "claude"` and `tokens.clauth: "<the profile you picked>"`, and
+  `agent: "claude"` and a `terminal_title` of
+  `clauth start <the profile you picked> --`, and
   `herdr[S] pane process-info --pane <pane-id>` shows **both** `clauth`
-  (parent) and `claude` (child).
+  (parent) and `claude` (child). herdr 0.9.0 also reported
+  `tokens.clauth: "<profile>"` on the pane; 0.9.1 has no `tokens` field, so
+  do not read its absence as a failure.
 
 Finally, answer the dialog in the pane (`↓`, `↵`) and confirm the advice the
 message gave is true: `agent get` should move to `idle`, the queued prompt
@@ -1389,7 +1398,8 @@ launcher = ["claude-as"]
    (`.pane_id` from the JSON, not `space_pane_id`):
 
    - **It ran, under clauth.** `herdr[S] pane list` shows `agent: "claude"`
-     and `tokens.clauth: "<profile>"`, and
+     and a `terminal_title` of `clauth start <profile> --` (herdr 0.9.0
+     also reported `tokens.clauth`; 0.9.1 does not), and
      `herdr[S] pane process-info --pane <pane-id>` shows `clauth` (parent)
      and `claude` (child). A pane back at a shell prompt is the #72 failure.
    - **The extra args followed the whole template, and the brackets arrived
@@ -1715,7 +1725,15 @@ config.toml`. Nowhere in the panel reads `inherit`. Then walk the panel:
 1. `↑`/`↓` move between `model`, `effort` and `mode`, and `←`/`→` move the
    chips of the line under `▸`.
 2. On `model`, choose `other`: a `name` line opens under it. Type
-   `claude-opus-5[1m]`. Paste `--foo` into it, and nothing lands.
+   `claude-opus-5[1m]`. Paste `--foo` into it, and nothing lands. A paste is
+   one edit, and the line refuses any edit that leaves an invalid id. **Typed**
+   key by key it is five edits, each judged alone. Into an empty line both
+   dashes are refused, since an id may not start with one, and the line ends
+   up holding `foo`. After `claude-opus-5[1m]` every edit is valid, since a
+   dash may appear anywhere but first, so the line becomes
+   `claude-opus-5[1m]--foo`, one argument starting with a letter. That is the
+   same guard, and neither way puts a flag on the command line. A driver that
+   sends keystrokes rather than a bracketed paste sees the second shape.
 3. `mode` → `plan`. The row now reads `claude-opus-5[1m] · effort high ·
    plan mode`, and the hint on the model line says the model replaces
    extra args' `sonnet`.
@@ -1812,6 +1830,55 @@ arg or merely followed it.
   alongside the release.
 
 ## Recorded runs
+
+### herdr 0.9.1 — 2026-09-22
+
+herdr 0.9.1 (client and server), clauth 0.15.2, Claude Code 2.1.278, plugin at
+`44fa9eb` — the v0.1.0 release candidate, `just build` from a clean tree. Run
+headlessly from another session's pane: one disposable server (Route A0) with
+its `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `[worktrees] directory` under
+`/var/tmp/hd-smoke`, and Route B inside its panes for every form. The plugin
+config and state directories were redirected to scratch throughout, so the run
+wrote none of the owner's plugin state. Every launch billed `toysim-0`, read
+off the pane rather than inferred. Cell 1, which needs a person, was run by the
+owner through the real popup, in a throwaway herdr of its own (below).
+
+| Cell | Result |
+|---|---|
+| 1 — Path A, worktree on | **pass**, run by the owner through the real popup, in a herdr with its own `XDG_CONFIG_HOME`/`XDG_STATE_HOME` under `/var/tmp`, the plugin built from `origin/main` (no code change since `44fa9eb`), Linear and clauth off (the seven-row form), and `CLAUDE_CONFIG_DIR` pointing at `toysim-0`. Every check in the cell held: focus on `title` with `name it to create · ⇥ for the prompt · ⌃R clear`; `title untitled`, `prompt —`, `worktree on · from main` with no invented branch; the panel listing the other two spaces and not the invoking one; `branch will be you/smoke-a-wt`; a colliding label marked `!` on the keystroke and `label in use` after the debounce; the base list opening on `HEAD (main)`; placement inert as `the worktree's own space`. `⌃S` drew the progress stack, herdr moved to the agent's pane with the trust dialog up, the dialog was answered there with nothing pressed in the popup, and the prompt `hi` went out and was answered while the popup closed itself. The launched claude billed `toysim-0` |
+| 2 — Path A, worktree off | **pass** — `tab here` produced exactly one new tab in the invoking workspace, labelled with the session title, and no second workspace. The launch row waited (`… claude`) with the footer `answer the dialog in the pane — your prompt goes out as soon as you do`; the dialog was answered in the pane, **nothing pressed in the popup**, the launch row went `✓`, the prompt row `working…`, and the popup closed itself. The pane then held `❯ hi` as a submitted turn with the answer under it and an empty input buffer. `process-info` showed a bare `claude` with no clauth parent, which is what makes it Path A |
+| 3 — Path B, worktree on | **pass** — `✓ worktree zvi/smoke-b-wt from HEAD`, then `✓ claude under clauth toysim-0` and a `detection` step that went to `…`. The three checks held with the dialog still up: `agent get` reported `agent_status: "blocked"` (a live agent, not a dead pane); the prompt was still `queued` and went out on answering; `process-info` showed **both** `clauth start toysim-0 --` (parent) and `claude` (child). Placement spec §14 held — the agent landed in the worktree's own space (`w3`), with the origin repo's workspace (`w2`) opened alongside. **The footer instruction was byte-identical to Cell 2's**, which is the thing this cell exists to check |
+| 4 — Path B, worktree off | **pass** — `new space` gave `✓ workspace` then `✓ tab`, then the clauth agent step and the detection step, then the prompt. Same `process-info` pair, same wait, same self-closing popup, prompt delivered as a submitted turn |
+| 5 — headless `create` | **pass** — all five inert probes matched the table exactly (three exit 2, one exit 3, `bogus` exit 2 and `help` exit 0); the stalled-`git` lever gave **exit 5 after 30.13s** with `timed out after 30s checking whether <repo> is a git repository`, empty stdout, and its control (lever removed) came back in 0.11s at exit 3. Both environment guards fired with the right first stderr line, and the `HERDR_PLUGIN_ID`-less run left its scratch directory empty. A live `create --no-worktree --placement new-space --account toysim-0 --prompt hi --json` returned **exit 0** with `"ok": true`, `prompt_sent: true`, the three ids doubled by `space_*`, and a provenance map; progress went to stderr one line per step and stdout carried one clean JSON object. The topology-only trick (`[agents] favorites = ["nosuchkind"]`) covered `--worktree` (exit 1, `--on-failure keep`, `checkout_path` reported, `prompt_status: "unsent"` with `unsent_prompt` preserved), `split-here` and `tab-here` at no account cost |
+| 15 — the options row | **pass** — no drift: claude 2.1.278's `--effort` lists exactly `low, medium, high, xhigh, max`, and its `--permission-mode` choices contain all four the declaration offers (it also lists `bypassPermissions` and `dontAsk`, which the declaration deliberately refuses). With `[agents.extra_args] claude = ["--model", "sonnet"]` and `[agents.options.claude] effort = "high"`, the row rested on `sonnet · effort high` with `sonnet` drawn dim and italic (`DimText`) beside a bright `effort high`. The panel's model line rested on `sonnet•`, the mode line on `claude's`, the effort line on the bold accented `high`; the hints read `sends no --model of its own; [agents.extra_args] passes sonnet` and `sends no --permission-mode, so claude's own settings decide`, the last lines `[agents.extra_args] adds: --model sonnet` and `from config.toml`, and **`inherit` appeared nowhere on the screen** (#330). `other` → `claude-opus-5[1m]` flipped the hint to `sends --model claude-opus-5[1m] instead of [agents.extra_args]'s sonnet`; `mode → plan` gave the row `claude-opus-5[1m] · effort high · plan mode`; moving `agent` to `codex` gave `options  none for codex` with `⇥` skipping it (and the account row degrading to `account pinning only applies to claude`), and coming back to `claude` restored every choice. **Path A launched `claude --settings {…} --model claude-opus-5[1m] --effort high --permission-mode plan` — no `--model sonnet`, so the option replaced the extra arg**, and claude's banner read `Opus 5 (1M context) with high effort` with `⏸ plan mode on` in the footer. **Path B typed `clauth start toysim-0 -- --model 'claude-opus-5[1m]' --effort high --permission-mode plan`**, the bracketed id quoted for the pane's shell exactly once, and claude received it literally — #72 stays fixed on both paths. The four headless probes matched: `--model opus --permission-mode plan` reported `agent_options {effort: high, model: opus, permission_mode: plan}` with provenance `option.model: flag` and `option.effort: config.toml`; `--effort inherit` reported **no `agent_options`** and `agent_args ["--model", "sonnet"]`; `--agent codex --effort high` and `--permission-mode bypassPermissions` both exited 2 before anything was created, each naming its reason |
+
+**#335's hang is gone.** In a Route B form with the prompt row focused and
+empty, `alt+left` then `alt+b` left the form responding: the next `⇥` moved
+focus from `prompt` to `project` and the panel repainted into the project
+picker. Before #335 this froze the popup.
+
+**#319's footer hint carries a colour.** `pane read --source visible --format
+ansi` on a form screen shows the hint run wrapped in an explicit
+`ESC[38;2;166;173;200m` over `ESC[48;2;24;24;37m` — catppuccin-mocha's
+`DimText` on `base`, **7.89:1**, comfortably over `DimTextContrastFloor`'s 3:1.
+The create button beside it measures 8.34:1.
+
+**Two sentences in this document were wrong against 0.9.1**, and both would
+have been recorded as failures. Both are corrected in the change that added
+this entry. Cell 3 (and Cell 12) asked `pane list` for
+`tokens.clauth: "<profile>"`, which herdr 0.9.1 no longer emits: the same
+evidence arrives as `terminal_title` plus `process-info`'s parent/child pair.
+Cell 15 step 2's "nothing lands" holds for a paste, which is one edit, but
+not for the same text typed key by key. The line refuses each edit that
+leaves an invalid id, so typed into an empty line the two leading dashes are
+refused and `foo` lands. No flag is injected either way.
+
+**Teardown was clean.** Server stopped and deleted (both verbs exit 0, and the
+background process exited 0); the scratch `XDG_STATE_HOME` did **not** grow
+back after `rm -rf`, which is the tell for a surviving server; no process
+anywhere referenced `/var/tmp/hd-smoke`; no `herdr-draft` process on the
+machine; and the owner's own session came back byte-identical to the list
+recorded at the start — sixteen workspaces, same ids, one `default` session.
 
 ### Cell 6's missing attribution, re-run (#93) — 2026-09-20
 
