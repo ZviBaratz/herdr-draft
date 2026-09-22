@@ -345,7 +345,10 @@ Layering, outermost to innermost:
   for a human to answer a dialog is right for a popup and wrong for a script
   with nobody at the keyboard. Zero means "behave exactly as this did before
   the option existed", which is what lets `create` opt out by passing an
-  empty `ExecOpts` rather than by carrying a branch of its own.
+  empty `ExecOpts` rather than by carrying a branch of its own. `NoFocus`
+  is the second, and the other way round: `create` sets it, so nothing it
+  opens pulls the person's view away from what they are doing, while the
+  popup, whose person just asked for the session, keeps herdr's `--focus`.
 - **A prompt has four fates, and "it failed" is only one of them.**
   `herdr agent prompt` can succeed; time out its confirmation
   (`ErrPromptWaitTimeout`, herdr's `timeout`); stall

@@ -92,7 +92,30 @@ type ExecOpts struct {
 	// keyboard and a five-minute wait for a dialog nobody will answer is
 	// worse than failing with the reason.
 	TrustWait time.Duration
+
+	// NoFocus sends every space, tab and split the plan opens to herdr with
+	// --no-focus, whatever Build set on the op. herdr otherwise moves the
+	// user's view to the new session the moment it exists.
+	//
+	// That is right for the popup, and only the popup: the user asked for
+	// the session a keystroke ago, is looking at it, and the trust-dialog
+	// wait below counts on their being in front of the agent's pane.
+	// `create` is run by a script or by an agent handing work off, while the
+	// user is doing something else entirely, and a view that jumps to a
+	// space they did not open lands their next keystroke in the wrong place
+	// -- in the case that prompted this, a session they were about to close
+	// was the new one instead of the one they meant.
+	//
+	// A runtime option rather than an Input field for TrustWait's reason:
+	// it is a difference between the two front ends, and equivalence_test.go
+	// holds their Inputs identical. Zero is the popup's behaviour, which is
+	// what every caller before this field got.
+	NoFocus bool
 }
+
+// focus is what one topology request asks herdr for: what Build set,
+// unless the caller asked for no focus at all.
+func (o ExecOpts) focus(built bool) bool { return built && !o.NoFocus }
 
 // Progress reports one op's state transition to Execute's caller. Index is
 // the op's position among Total ops, Label is that op's Op.Label, and Err
@@ -1410,7 +1433,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// then resolves for itself (cleanBase).
 				baseCommit, _ = commitAt(ctx, op.Worktree.Cwd, op.Worktree.Base)
 
-				topo, err = r.WorktreeCreate(ctx, *op.Worktree)
+				req := *op.Worktree
+				req.Focus = opts.focus(req.Focus)
+				topo, err = r.WorktreeCreate(ctx, req)
 				if err != nil {
 					return err
 				}
@@ -1447,7 +1472,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 							Workspace: topo.WorkspaceID,
 							Cwd:       topo.CheckoutPath,
 							Label:     op.Worktree.Label,
-							Focus:     true,
+							Focus:     opts.focus(true),
 						})
 						if claimErr != nil {
 							return claimErr
@@ -1460,19 +1485,25 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				if op.Workspace == nil {
 					return malformedOpError(op.Kind)
 				}
-				topo, err = r.WorkspaceCreate(ctx, *op.Workspace)
+				req := *op.Workspace
+				req.Focus = opts.focus(req.Focus)
+				topo, err = r.WorkspaceCreate(ctx, req)
 				gotTopo = err == nil
 			case OpTabCreate:
 				if op.Tab == nil {
 					return malformedOpError(op.Kind)
 				}
-				topo, err = r.TabCreate(ctx, *op.Tab)
+				req := *op.Tab
+				req.Focus = opts.focus(req.Focus)
+				topo, err = r.TabCreate(ctx, req)
 				gotTopo = err == nil
 			case OpPaneSplit:
 				if op.Split == nil {
 					return malformedOpError(op.Kind)
 				}
-				topo, err = r.PaneSplit(ctx, *op.Split)
+				req := *op.Split
+				req.Focus = opts.focus(req.Focus)
+				topo, err = r.PaneSplit(ctx, req)
 				gotTopo = err == nil
 			case OpTabRename:
 				if op.Rename == nil {
