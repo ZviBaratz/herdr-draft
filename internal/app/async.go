@@ -1402,7 +1402,10 @@ func previewFrom(res picker.Result, err error) form.AccountPickerPreview {
 	if err != nil {
 		var refusal *picker.RefusalError
 		if errors.As(err, &refusal) {
-			return form.AccountPickerPreview{Refusal: refusal.Short()}
+			// Short is already one line, by internal/picker's own copy
+			// of the flattening; flattenReason is what drops a control
+			// character from it (#151).
+			return form.AccountPickerPreview{Refusal: flattenReason(refusal.Short())}
 		}
 		return form.AccountPickerPreview{Refusal: flattenReason(err.Error())}
 	}
@@ -1420,7 +1423,7 @@ func previewFrom(res picker.Result, err error) form.AccountPickerPreview {
 
 // flattenWarnings puts each picker warning on one line, as flattenReason does
 // for a refusal: the panel draws one line per warning, and a picker's own
-// text may carry newlines. Control characters beyond whitespace are #151's.
+// text may carry newlines, or any other control character (#151).
 func flattenWarnings(ws []string) []string {
 	if len(ws) == 0 {
 		return nil

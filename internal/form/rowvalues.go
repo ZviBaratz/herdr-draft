@@ -17,6 +17,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 
@@ -84,6 +86,56 @@ func keepHead(s string, width int) string { return widgets.KeepHead(s, width) }
 //
 // Delegates to widgets.KeepTail -- see keepHead above.
 func keepTail(s string, width int) string { return widgets.KeepTail(s, width) }
+
+// DisplayText returns s as a row can draw it: a tab, CR or LF becomes a
+// space, and every other control character is dropped, as is U+FFFD --
+// which is also what each byte of invalid UTF-8 decodes to.
+//
+// It is for text neither this package nor the user wrote: a Linear
+// issue's identifier, title and state, a workspace's label, a directory's
+// name, a reason another program gave (#151). Nothing else cleans it on
+// the way in, and the widths every row is laid out by cannot see the
+// problem: lipgloss counts a CR as no cells at all, so every width check
+// and golden frame passes while the terminal goes back to the start of
+// the line and draws the rest over the row's own label. An ESC is zero
+// cells too, and starts a sequence rather than a character.
+//
+// The rule is plan.SanitizeTitle's, on purpose, so an issue's title reads
+// the same in the issue row as in the title row it seeds. A line break
+// between two words is a word boundary, which a space keeps and dropping
+// would not. Everything else is dropped rather than spaced, which leaves an
+// escape sequence's printable tail on screen -- `[2J` is odd text that says
+// something odd was there -- and is how herdr draws a label with one in it
+// (SanitizeTitle's doc). It is a copy rather than a call: SanitizeTitle
+// follows bubbles' textinput wherever an upgrade takes it, and this
+// function's promise, that no control character reaches a row, must not
+// move with it.
+//
+// Exported for internal/app's flattenReason, so a reason is cleaned by the
+// same rule before it reaches a row's setter. Text the user typed never
+// needs it: lineInput and the prompt's textarea clean their own.
+func DisplayText(s string) string {
+	if strings.IndexFunc(s, notDisplayable) < 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\t', r == '\r', r == '\n':
+			b.WriteByte(' ')
+		case notDisplayable(r):
+			// dropped
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// notDisplayable reports a rune DisplayText does not pass through as it
+// is: any control character, and U+FFFD.
+func notDisplayable(r rune) bool { return r == utf8.RuneError || unicode.IsControl(r) }
 
 // gaugeWidth is how many cells a utilization gauge occupies (v3 spec
 // §8.6): ten, enough for a reader to judge a fraction at a glance and few
@@ -415,8 +467,13 @@ func provenanceLine(source string, w int, p theme.Palette) string {
 // is the whole defect v2 spec §11's "with a visible note" names. The text is
 // prose, so it elides at its TAIL (keepHead) rather than being clipped
 // silently by panelText's own fit.
+//
+// It is drawn through DisplayText because a note can quote what it
+// refuses, and a repository's .herdr-draft.toml arrives with `git clone`:
+// the name of a key in it is somebody else's text (#151). The TOML library
+// escapes a key's C0 controls when it prints the name, but not C1 ones.
 func noteLine(note string, w int, p theme.Palette) string {
-	return panelText(lipgloss.NewStyle().Foreground(p.Warning).Render(keepHead(note, panelInner(w))), w)
+	return panelText(lipgloss.NewStyle().Foreground(p.Warning).Render(keepHead(DisplayText(note), panelInner(w))), w)
 }
 
 // capRows clamps a field's PanelRows() to its own ceiling, never below 1:

@@ -50,7 +50,7 @@ const tabInLabelWidth = 28
 func tabInChip(spaceLabel string) widgets.Chip {
 	return widgets.Chip{
 		ID:        tabInChipID,
-		Label:     "tab in " + keepHead(spaceLabel, tabInLabelWidth),
+		Label:     "tab in " + keepHead(DisplayText(spaceLabel), tabInLabelWidth),
 		FocusHint: "opens a tab in the space already holding this repository",
 	}
 }

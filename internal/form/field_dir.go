@@ -526,7 +526,7 @@ func (d *DirField) Row(w int) string {
 	if val == "" {
 		return fitLine(dimText(d.palette).Render(keepHead(dirRowNone, budget))+marker, w)
 	}
-	shown := keepTail(d.collapseHome(val), budget)
+	shown := keepTail(DisplayText(d.collapseHome(val)), budget)
 	return fitLine(lipgloss.NewStyle().Foreground(d.palette.Text).Render(shown)+marker, w)
 }
 
@@ -694,7 +694,11 @@ func (d *DirField) refreshItems(bump bool) {
 		// in presentation, which is exactly the split PickerItem is for --
 		// and the reason the match span is computed from the CELL rather
 		// than from `it`, per §8.4. See dirMatch.
-		cell := d.collapseHome(it)
+		//
+		// The cell is cleaned BEFORE the span is computed, for that same
+		// reason: a directory's name is the filesystem's text (#151), and a
+		// span found in the raw name would point past a dropped character.
+		cell := DisplayText(d.collapseHome(it))
 		pickerItems[i] = widgets.PickerItem{ID: it, Cells: []string{cell}, Match: dirMatch(cell, query)}
 	}
 	d.picker.SetItems(d.pickerVersion, pickerItems)

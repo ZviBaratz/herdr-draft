@@ -3,6 +3,7 @@ package plan
 import (
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -69,5 +70,57 @@ func TestSanitizeTitle(t *testing.T) {
 				t.Errorf("SanitizeTitle(%q) = %q, want %q", tc.title, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSanitizePrompt pins #183's rule for what reaches `herdr agent
+// prompt`: nothing herdr would type as a key survives, and nothing a
+// prompt is written with is lost. The tab row is there so a later parity
+// fix for #183's other half changes it on purpose rather than by accident.
+func TestSanitizePrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name, prompt, want string
+	}{
+		{"empty", "", ""},
+		{"plain is untouched", "fix the login redirect loop", "fix the login redirect loop"},
+		{"a line break is kept", "line one\nline two", "line one\nline two"},
+		{"a blank line is kept", "para one\n\npara two", "para one\n\npara two"},
+		{"a tab is kept", "func main() {\n\treturn\n}", "func main() {\n\treturn\n}"},
+		{"a CRLF is one line break", "line one\r\nline two\r\n", "line one\nline two\n"},
+		{"a lone CR is a line break", "line one\rline two", "line one\nline two"},
+		{"CR CR LF is two", "line one\r\r\nline two", "line one\n\nline two"},
+		{"the paste terminator loses its ESC", "look\x1b[201~ here", "look[201~ here"},
+		{"shift+tab loses its ESC", "look\x1b[Z here", "look[Z here"},
+		{"BEL is dropped", "fix\alogin", "fixlogin"},
+		{"DEL is dropped", "fix\x7flogin", "fixlogin"},
+		{"a C1 control is dropped, NEL and CSI included", "fix\u0085\u009blogin", "fixlogin"},
+		{"an invalid UTF-8 byte is dropped", "fix\xfflogin", "fixlogin"},
+		{"a literal U+FFFD is dropped too", "fix�login", "fixlogin"},
+		{"a line separator is not a control, and is kept", "fix login", "fix login"},
+		{"non-ASCII is kept", "Fix café login", "Fix café login"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizePrompt(tc.prompt); got != tc.want {
+				t.Errorf("SanitizePrompt(%q) = %q, want %q", tc.prompt, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSanitizePromptKeepsNoOtherControlForEveryRune takes the table above
+// to all of Unicode: whatever a prompt holds, the only control characters
+// left are LF and TAB.
+func TestSanitizePromptKeepsNoOtherControlForEveryRune(t *testing.T) {
+	var b strings.Builder
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		b.WriteRune(r)
+	}
+	for _, r := range SanitizePrompt(b.String()) {
+		if r == '\n' || r == '\t' {
+			continue
+		}
+		if unicode.IsControl(r) || r == utf8.RuneError {
+			t.Fatalf("SanitizePrompt kept %U", r)
+		}
 	}
 }

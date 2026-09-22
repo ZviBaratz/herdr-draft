@@ -160,9 +160,12 @@ func NewSubmitView(palette theme.Palette) *SubmitView {
 // "", which renders that half empty; the header row itself is still part
 // of the frame whenever the window affords it, because the frame is a
 // function of (height, step count) alone.
+//
+// context is cleaned as Model.SetContext cleans it: it names the project
+// by its directory, which is the filesystem's text (#151).
 func (v *SubmitView) SetHeader(name, context string) {
 	v.name = name
-	v.context = context
+	v.context = DisplayText(context)
 }
 
 // SetSteps replaces the whole staged-progress stack. The app layer is

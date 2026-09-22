@@ -589,7 +589,7 @@ func clauthUnavailableReason(err error) string {
 	for _, prefix := range []string{"clauth status --json: ", "parse clauth status: ", "clauth status: "} {
 		msg = strings.TrimPrefix(msg, prefix)
 	}
-	return strings.Join(strings.Fields(msg), " ")
+	return flattenReason(msg)
 }
 
 // accountTooFewProfilesReason is the account row's reason for the one
@@ -613,14 +613,26 @@ func accountTooFewProfilesReason(n int) string {
 	return "clauth reports no profiles; this row needs two"
 }
 
-// flattenReason collapses a multi-line failure to one line.
+// flattenReason collapses a multi-line failure to one line, and drops any
+// control character in it.
 //
 // clauthUnavailableReason above also strips that package's own error prefixes;
 // this one does not, because a picker is somebody else's program and its
 // message is its own -- there is no prefix herdr-draft is entitled to assume.
 // Both exist for the same reason: every row this lands on has exactly one
 // line, and a picker's stderr can be a paragraph.
-func flattenReason(s string) string { return strings.Join(strings.Fields(s), " ") }
+//
+// The control characters are #151's. strings.Fields already split on a CR,
+// which is the one that overwrites a row, but kept an ESC or a BEL inside a
+// word. form.DisplayText is the rule the form draws its own external text
+// by, so a reason and a Linear title are cleaned the same way; it runs
+// first, and Fields then collapses the spaces it leaves.
+//
+// Every reason Linear, clauth or the account picker gives a row comes
+// through here, by way of the helpers around it and previewFrom, so this
+// is the one place to change. A failed step's error on the submit view
+// does not: that is herdr's and git's text, and #151 did not cover it.
+func flattenReason(s string) string { return strings.Join(strings.Fields(form.DisplayText(s)), " ") }
 
 // linearRefreshReason turns an AssignedIssues error into the single line
 // IssueField.SetRefreshError puts on the panel's status row. Same reasoning
@@ -631,12 +643,11 @@ func flattenReason(s string) string { return strings.Join(strings.Fields(s), " "
 // that body is JSON with newlines in it. The panel builds a fixed number
 // of lines and a multi-line status would push the row count past the
 // height Panel was asked for -- an error message that breaks the form's
-// layout is a worse bug than the one being reported. strings.Fields also
+// layout is a worse bug than the one being reported. flattenReason also
 // collapses the runs of spaces indented JSON is full of, which matters
 // when the line is about to be elided to the panel's width.
 func linearRefreshReason(err error) string {
-	msg := strings.TrimPrefix(err.Error(), "linear assigned issues: ")
-	return strings.Join(strings.Fields(msg), " ")
+	return flattenReason(strings.TrimPrefix(err.Error(), "linear assigned issues: "))
 }
 
 // reqVersions is every request-version counter the form's async sources
@@ -3177,6 +3188,14 @@ func buildDirCandidates(ctx herdrc.Context, workspaces []herdrc.WorkspaceInfo, r
 // prompt from the same template through the same substitutions, and a
 // second copy of them would be a second answer to "what does a
 // Linear-seeded session start with".
+//
+// The result goes through plan.SanitizePrompt, here and not in each
+// caller, because an issue's title and description are somebody else's
+// text on their way to being typed into an agent's pane (#183). The
+// popup's textarea would drop the escape sequences anyway; `create` has
+// no textarea, and a rule applied where the text is made cannot be
+// forgotten by the next thing to use it. Rendering it clean also means
+// the textarea is handed one line break per CRLF rather than two.
 func RenderPromptTemplate(tmpl string, iss linear.Issue) string {
 	if tmpl == "" {
 		tmpl = defaultPromptTemplate
@@ -3187,5 +3206,5 @@ func RenderPromptTemplate(tmpl string, iss linear.Issue) string {
 		"{url}", iss.URL,
 		"{description}", iss.Description,
 	)
-	return r.Replace(tmpl)
+	return plan.SanitizePrompt(r.Replace(tmpl))
 }

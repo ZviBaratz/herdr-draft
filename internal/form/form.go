@@ -390,8 +390,11 @@ func New(cfg Setup) Model {
 // the copy shares with the original. A plain string field written
 // through a value receiver would be set on the copy and silently
 // dropped.
+//
+// The project's name is its directory's, which is the filesystem's text,
+// so it is stored as DisplayText draws it (#151).
 func (m *Model) SetContext(s string) {
-	m.context = s
+	m.context = DisplayText(s)
 }
 
 // SubmitMsg is emitted (as a tea.Cmd's result) when the grammar's

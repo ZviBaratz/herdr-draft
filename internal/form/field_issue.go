@@ -371,9 +371,11 @@ func (f *IssueField) refreshItems(bump bool) {
 			continue // defensive: an unidentified issue can't be a stable PickerItem.ID
 		}
 		byID[iss.Identifier] = iss
+		// The ID stays the issue's own identifier, which is a key and
+		// never drawn; the cells are Linear's text, drawn (#151).
 		items = append(items, widgets.PickerItem{
 			ID:        iss.Identifier,
-			Cells:     []string{iss.Identifier, iss.Title},
+			Cells:     []string{DisplayText(iss.Identifier), DisplayText(iss.Title)},
 			Badge:     issueHint(iss),
 			BadgeTone: widgets.ToneMuted,
 		})
@@ -391,7 +393,7 @@ func (f *IssueField) refreshItems(bump bool) {
 func issueHint(iss linear.Issue) string {
 	var parts []string
 	if iss.StateName != "" {
-		parts = append(parts, iss.StateName)
+		parts = append(parts, DisplayText(iss.StateName))
 	}
 	if iss.Estimate != nil {
 		parts = append(parts, "est "+strconv.FormatFloat(*iss.Estimate, 'g', -1, 64))
@@ -438,7 +440,7 @@ func (f *IssueField) Row(w int) string {
 		if sel == nil {
 			return fitLine(dimText(f.palette).Render(keepHead(issueRowNone, w)), w)
 		}
-		text := sel.Identifier + " · " + sel.Title
+		text := DisplayText(sel.Identifier + " · " + sel.Title)
 		return fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(keepHead(text, w)), w)
 	}
 }

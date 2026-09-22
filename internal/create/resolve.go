@@ -976,9 +976,17 @@ type explicitPrompt struct {
 // issue seeds through the USER's own template -- never a repository's,
 // which v2 spec §11 forbids for exactly the reason it would be effective: it
 // would become the agent's first instruction.
+//
+// Either way the text is kept to plan.SanitizePrompt's rule: herdr types
+// it into the agent's pane, where an escape sequence is a key (#183). The
+// template's copy of the rule is inside RenderPromptTemplate, which the
+// popup shares; --prompt's is here, because the popup's own prompt is a
+// textarea that already drops what this drops. Silently, unlike --title:
+// a title that came back changed names a session, and the caller is told,
+// while a dropped ESC was never going to be text the agent read.
 func promptText(prompt explicitPrompt, issue *linear.Issue, cfg config.Config) string {
 	if prompt.given {
-		return prompt.text
+		return plan.SanitizePrompt(prompt.text)
 	}
 	if issue == nil {
 		return ""

@@ -601,6 +601,38 @@ prompt_template = "Work on {identifier}"
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
+		{
+			// #183's security half: the prompt an issue seeds drops an
+			// escape sequence on both paths. The form's textarea always
+			// dropped the ESC and `create` handed it to herdr, which types
+			// the prompt into the agent's pane as a paste it does not
+			// escape -- so the two plans differed, and the one that
+			// differed was the one that could end the paste early.
+			//
+			// The description carries no tab and no CRLF. The textarea
+			// turns a tab into four spaces and `create` keeps it, which is
+			// #183's other half and still an open question; this scenario
+			// is not the place to settle it by accident.
+			name: "an issue description with an escape sequence is cleaned on both paths",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+`,
+			issue: &linear.Issue{
+				Identifier: "ENG-44", Title: "Fix login redirect loop",
+				BranchName: "zvi/eng-44-fix-login-redirect-loop",
+				URL:        "https://linear.app/x/ENG-44", Description: "it loops\x1b[201~\x1b[Z\a forever",
+			},
+			args: []string{"--issue", "ENG-44"},
+			want: plan.Input{
+				Title:  "Fix login redirect loop",
+				Branch: "zvi/eng-44-fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				Prompt:           "Work on ENG-44: Fix login redirect loop\n\nhttps://linear.app/x/ENG-44\n\nit loops[201~[Z forever",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configDir, stateDir := t.TempDir(), t.TempDir()

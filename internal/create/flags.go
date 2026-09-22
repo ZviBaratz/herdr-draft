@@ -99,7 +99,10 @@ flags:
                      a tab, CR or LF becomes a space, other control
                      characters and invalid UTF-8 are dropped, and it is
                      cut to 32 runes
-  --prompt TEXT      initial prompt; "-" reads it from stdin
+  --prompt TEXT      initial prompt; "-" reads it from stdin. It, or the
+                     one --issue seeds, keeps tabs and line breaks (a
+                     CRLF or a lone CR becomes one line break); other
+                     control characters and invalid UTF-8 are dropped
   --branch NAME      worktree branch (default: derived from the title)
   --base REF         worktree base ref (default: HEAD). Inside a linked
                      worktree it is resolved there, so HEAD is the commit
@@ -322,6 +325,8 @@ func readPrompt(r request, stdin io.Reader) (string, bool, error) {
 		return "", false, fmt.Errorf("reading the prompt from stdin: %w", err)
 	}
 	// A trailing newline is an artifact of how the text was piped in, not
-	// part of the prompt; interior whitespace is left exactly as written.
-	return strings.TrimRight(string(b), "\n"), true, nil
+	// part of the prompt, and a CRLF file ends in one too: trimming only
+	// the LF would leave a CR that plan.SanitizePrompt then turns back into
+	// a line break (#183). Everything inside is promptText's to clean.
+	return strings.TrimRight(string(b), "\r\n"), true, nil
 }
