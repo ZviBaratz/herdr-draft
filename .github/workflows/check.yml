@@ -27,8 +27,10 @@ jobs:
     strategy:
       # Report both platforms. A macOS-only failure is exactly the kind of
       # thing worth seeing in full rather than having cancelled by a
-      # simultaneous Linux failure -- the binary has never been compiled
-      # anywhere but one Linux laptop.
+      # simultaneous Linux failure: herdr builds the plugin from source on
+      # the user's own machine, so a platform this job does not compile on
+      # is an install that fails at first contact. macos-latest is Apple
+      # Silicon, so this also covers arm64.
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]

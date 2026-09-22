@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: A question, or an idea to talk through first
+    url: https://github.com/ZviBaratz/herdr-draft/discussions
+    about: Ask in Discussions. Questions answered there are easier for the next person to find.
+  - name: A security problem
+    url: https://github.com/ZviBaratz/herdr-draft/security/advisories/new
+    about: Report privately. See SECURITY.md for what counts and what to include.
+  - name: A bug in herdr itself
+    url: https://github.com/herdrdev/herdr/issues
+    about: If herdr does it without this plugin involved, it belongs upstream.

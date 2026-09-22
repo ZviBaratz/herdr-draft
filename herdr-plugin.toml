@@ -2,7 +2,7 @@ id = "zvibaratz.draft"
 name = "herdr-draft"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
-description = "new session creation dialog"
+description = "New-session dialog: worktree, placement, agent, model and Claude account in one submit"
 # Omitting this key does NOT mean "unspecified" -- herdr's own
 # build_platform_supported treats an absent list as every platform
 # (is_none_or), so silence here is an active claim to run on Windows. It
