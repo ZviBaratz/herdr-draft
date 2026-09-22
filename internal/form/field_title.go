@@ -96,6 +96,33 @@ type Session struct {
 	Repo string
 }
 
+// VerdictTone is what kind of statement a TitleField verdict makes, which
+// decides how it is drawn (#308). The app layer supplies it with the words,
+// because the field cannot tell a note from a refusal by reading them: until
+// #308 SetVerdict took a bare string and drew every verdict as a dim hint, so
+// `title required` -- the first refusal a new user meets, on the panel the
+// refusal has just moved focus to -- looked exactly like `branch will be
+// <slug>`, a note about nothing wrong.
+type VerdictTone int
+
+const (
+	// VerdictNote is the resting consequence of the title as it stands,
+	// `branch will be <slug>`: nothing is wrong, and it is drawn as the dim
+	// hint it is. The zero value, so a field that has been told nothing is
+	// drawing a note, which is the only honest reading of an empty line.
+	VerdictNote VerdictTone = iota
+	// VerdictRefusal is a reason the submit is refused: `title required`,
+	// a branch or label already in use, a plan that could not be built.
+	VerdictRefusal
+	// VerdictUnknown is a check that did not answer (#202): `couldn't
+	// check`. It refuses the submit as VerdictRefusal does and is drawn
+	// the same way today, and it is a value of its own for #202's reason:
+	// "we could not check" and "we checked, and no" are different
+	// statements, and the words already differ. A tone that could not tell
+	// them apart would be the first thing to erase that.
+	VerdictUnknown
+)
+
 // TitleField is the form's Title Section (spec §6 field 3): a single-line,
 // 32-rune-capped text field whose typed value doubles as the session's
 // branch/title (spec §6's "quick-create" contract, wired through
@@ -117,8 +144,10 @@ type TitleField struct {
 	// must stop rendering, without SetVerdict's caller needing a separate
 	// Clear call to make that happen -- verdictLine (below) only shows
 	// verdictText when verdictKey still equals the CURRENT Value().
+	// verdictTone goes stale with them: it is part of the same verdict.
 	verdictKey  string
 	verdictText string
+	verdictTone VerdictTone
 
 	// sessions is v3 spec §9's list: the workspaces that existed when the
 	// form opened, pushed in by the app (SetSessions) from the
@@ -308,11 +337,7 @@ func (f *TitleField) Panel(w, h int) string {
 	if h < 1 {
 		h = 1
 	}
-	text := ""
-	if f.verdictKey == f.Value() {
-		text = f.verdictText
-	}
-	lines := []string{panelText(dimHint(f.palette).Render(text), w)}
+	lines := []string{f.verdictLine(w)}
 	// The list is what a short window gives up, not the verdict: the
 	// verdict is about the keystroke the user just made.
 	if h >= 3 && len(f.sessions) > 0 {
@@ -326,6 +351,27 @@ func (f *TitleField) Panel(w, h int) string {
 		}
 	}
 	return panelBlock(w, h, lines...)
+}
+
+// verdictLine is the panel's first line: SetVerdict's message while it is
+// still about the title on screen, drawn in the tone the app gave it.
+//
+// A refusal and an unknown go through noteLine, the composer the worktree
+// panel already draws its own refusal with (`branch name required`), so a
+// refused title and a refused branch read alike: Warning, elided at the
+// tail rather than clipped silently. A note stays the dim hint it always
+// was, and so does a stale verdict's empty line.
+func (f *TitleField) verdictLine(w int) string {
+	text, tone := "", VerdictNote
+	if f.verdictKey == f.Value() {
+		text, tone = f.verdictText, f.verdictTone
+	}
+	switch tone {
+	case VerdictRefusal, VerdictUnknown:
+		return noteLine(text, w, f.palette)
+	default:
+		return panelText(dimHint(f.palette).Render(text), w)
+	}
 }
 
 // sessionsHeading is the list's own heading line, with v3 spec §8.5's
@@ -419,14 +465,21 @@ func (f *TitleField) refreshSessions() {
 }
 
 // SetVerdict records the app layer's own live-validation message for the
-// title text that was current when it was computed (key): a short note
-// (e.g. the branch name a title would produce, or a "title already in
-// use" warning) shown on the reserved verdict line. A later call whose key
-// no longer matches Value() (the title has since changed) is stored but
-// never rendered -- see verdictKey's own doc comment; there is no separate
-// Clear method, matching DirField's SetValidity's identical
+// title text that was current when it was computed (key), and what kind of
+// message it is (tone): the branch name a title would produce is a
+// VerdictNote, a duplicate or a missing title a VerdictRefusal, a check
+// that never answered a VerdictUnknown. It is shown on the reserved verdict
+// line, in the tone's style (verdictLine). A later call whose key no longer
+// matches Value() (the title has since changed) is stored but never
+// rendered -- see verdictKey's own doc comment; there is no separate Clear
+// method, matching DirField's SetValidity's identical
 // staleness-by-comparison design.
-func (f *TitleField) SetVerdict(key, text string) {
+//
+// The tone is a required argument rather than a second setter so that no
+// caller can push words without saying what they are: a refusal pushed
+// with the tone forgotten would be #308 again, drawn as a hint.
+func (f *TitleField) SetVerdict(key, text string, tone VerdictTone) {
 	f.verdictKey = key
 	f.verdictText = text
+	f.verdictTone = tone
 }

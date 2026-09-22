@@ -1446,6 +1446,52 @@ func TestRenderFooter_ExactFitKeepsCancel(t *testing.T) {
 	}
 }
 
+// TestFooter_HintIsDrawnInDimText is #319. The key ladder was the one text
+// on the form with no foreground: renderFooter handed it on bare, and the
+// line's paint sets a background and nothing else, so it came out in the
+// host terminal's default foreground. A stripped frame cannot show that,
+// and the setup every golden frame implies -- a dark theme in a dark
+// terminal -- happens to be legible; a light theme in a dark terminal drew
+// it as low as 1.04:1.
+//
+// It pins the tier and not merely "some colour": DimText is the one with a
+// floor on PanelBG (#299), and the one the submit view's footer draws its
+// step counter in. Every cell of the hint rather than its first, because a
+// span that loses its colour after an inner reset is the hazard
+// widgets.PaintLine exists for. The line goes through the same paint
+// composeRows gives it, one palette of each polarity (the defect was a
+// polarity mismatch), and every zone, since each draws its own ladder.
+func TestFooter_HintIsDrawnInDimText(t *testing.T) {
+	for _, name := range []string{"catppuccin", "solarized-light"} {
+		palette, ok := theme.Builtin(name)
+		if !ok {
+			t.Fatalf("theme.Builtin(%q) is not a known builtin", name)
+		}
+		dim := rgbKey(palette.DimText)
+		for _, zone := range everyFocusableZone() {
+			for _, width := range []int{150, 101, 57} {
+				line := widgets.Zones.Scan(paintLine(renderFooter(width, zone, footerRungs(zone, false), palette), width, palette.PanelBG))
+				// The ladder ends where the gap before the buttons begins:
+				// no rung carries two spaces in a row.
+				hint, _, found := strings.Cut(ansi.Strip(line), strings.Repeat(" ", footerButtonGap))
+				if !found || strings.TrimSpace(hint) == "" {
+					t.Fatalf("%s, zone %+v, w=%d: no key ladder on the line to measure: %q", name, zone, width, ansi.Strip(line))
+				}
+				fg := foregroundPerCell(line)
+				cell := 0
+				for _, r := range hint {
+					if r != ' ' && fg[cell] != dim {
+						t.Errorf("%s, zone %+v, w=%d: %q in the hint %q is drawn in %q, want DimText %s (\"\" is the terminal's own foreground, #319)",
+							name, zone, width, r, hint, fg[cell], dim)
+						break
+					}
+					cell += ansi.StringWidth(string(r))
+				}
+			}
+		}
+	}
+}
+
 // TestFooterRungs_PerZone pins footer.go's own per-zone table against the
 // zones the key grammar actually defines (v2 spec §3 rule 4, and the plan's
 // rung table): every zone a real field maps onto teaches something, and

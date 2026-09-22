@@ -167,7 +167,7 @@ func TestTitleField_VerdictShownOnlyForCurrentTitle(t *testing.T) {
 	for _, r := range "fix login" {
 		f.Update(rn(r))
 	}
-	f.SetVerdict("fix login", "branch: zvi/fix-login")
+	f.SetVerdict("fix login", "branch: zvi/fix-login", VerdictNote)
 
 	frame := fieldText(f, 60)
 	if !strings.Contains(frame, "branch: zvi/fix-login") {
@@ -181,6 +181,51 @@ func TestTitleField_VerdictShownOnlyForCurrentTitle(t *testing.T) {
 	frame = fieldText(f, 60)
 	if strings.Contains(frame, "branch: zvi/fix-login") {
 		t.Fatalf("View(60) = %q, still shows the stale verdict after the title changed", frame)
+	}
+}
+
+// TestTitleField_VerdictToneDecidesItsColour is #308: a refusal and an
+// unknown are drawn in Warning, through the worktree panel's own noteLine,
+// and a note stays in the dim hint tier. Until #308 every verdict was dim,
+// so `title required` -- on the panel the refusal had just moved focus to --
+// read exactly like `branch will be <slug>`.
+//
+// The words, the key and the palette are the same for all three, so the
+// tone is the only input that varies and the only thing that can be
+// choosing the colour.
+func TestTitleField_VerdictToneDecidesItsColour(t *testing.T) {
+	palette := theme.Default()
+	if rgbKey(palette.DimText) == rgbKey(palette.Warning) {
+		t.Fatal("premise: DimText and Warning are the same colour in this palette, so a tone could not show")
+	}
+	const words = "title required"
+	for _, tc := range []struct {
+		tone VerdictTone
+		want string
+		name string
+	}{
+		{VerdictNote, rgbKey(palette.DimText), "DimText"},
+		{VerdictRefusal, rgbKey(palette.Warning), "Warning"},
+		{VerdictUnknown, rgbKey(palette.Warning), "Warning"},
+	} {
+		f := NewTitleField(palette)
+		f.SetVerdict(f.Value(), words, tc.tone)
+
+		line := strings.Split(f.Panel(80, 1), "\n")[0]
+		text := ansi.Strip(line)
+		at := strings.Index(text, words)
+		if at < 0 {
+			t.Fatalf("tone %d: the panel does not show the verdict at all: %q", tc.tone, text)
+		}
+		fg := foregroundPerCell(line)
+		cell := ansi.StringWidth(text[:at])
+		for _, r := range words {
+			if r != ' ' && fg[cell] != tc.want {
+				t.Errorf("tone %d: %q is drawn in %q at cell %d, want %s %s", tc.tone, words, fg[cell], cell, tc.name, tc.want)
+				break
+			}
+			cell += ansi.StringWidth(string(r))
+		}
 	}
 }
 

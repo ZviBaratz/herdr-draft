@@ -846,7 +846,7 @@ func TestTitleField_RowAndPanelVocabulary(t *testing.T) {
 	// 26 cells of verdict: longer than v1's titleVerdictMaxCells clamp,
 	// and the exact string v2 spec §6 names as the one v1 cuts.
 	const verdict = "branch: zvi/fix-login-redirect-loop"
-	f.SetVerdict(f.Value(), verdict)
+	f.SetVerdict(f.Value(), verdict, VerdictNote)
 	if got, want := panelLineAt(f.Panel(80, 1), 0), verdict; got != want {
 		t.Errorf("Panel verdict = %q, want the whole of %q -- the panel is full width", got, want)
 	}

@@ -772,26 +772,36 @@ func TestBaseDebounce_TriggersRun(t *testing.T) {
 
 // --- titleVerdictText: pure function, every combination --------------------
 
+// The tone is pinned beside the words (#308): a duplicate is a refusal and a
+// check that never answered is an unknown (#202), and the panel draws
+// either one in Warning rather than as the dim note it used to share a
+// tier with. An empty verdict's tone is a note, because the line it leaves
+// is handed to the resting note.
 func TestTitleVerdictText_AllCombinations(t *testing.T) {
 	cases := []struct {
 		branchExists, labelTaken, timedOut bool
 		want                               string
+		wantTone                           form.VerdictTone
 	}{
-		{false, false, false, ""},
-		{true, false, false, "branch exists"},
-		{false, true, false, "label in use"},
-		{true, true, false, "branch & label in use"},
+		{false, false, false, "", form.VerdictNote},
+		{true, false, false, "branch exists", form.VerdictRefusal},
+		{false, true, false, "label in use", form.VerdictRefusal},
+		{true, true, false, "branch & label in use", form.VerdictRefusal},
 		// A timed-out check (#202) says so whatever the other two hold.
 		// branchExists is meaningless on that path -- git never answered
 		// -- and a label collision the check DID find is the weaker thing
-		// to say when the branch question came back blank.
-		{false, false, true, "couldn't check"},
-		{false, true, true, "couldn't check"},
-		{true, true, true, "couldn't check"},
+		// to say when the branch question came back blank. The tone
+		// follows the words: this line says the check did not answer,
+		// even where the label half would have refused on its own.
+		{false, false, true, "couldn't check", form.VerdictUnknown},
+		{false, true, true, "couldn't check", form.VerdictUnknown},
+		{true, true, true, "couldn't check", form.VerdictUnknown},
 	}
 	for _, c := range cases {
-		if got := titleVerdictText(c.branchExists, c.labelTaken, c.timedOut); got != c.want {
-			t.Errorf("titleVerdictText(%v, %v, %v) = %q, want %q", c.branchExists, c.labelTaken, c.timedOut, got, c.want)
+		got, tone := titleVerdictText(c.branchExists, c.labelTaken, c.timedOut)
+		if got != c.want || tone != c.wantTone {
+			t.Errorf("titleVerdictText(%v, %v, %v) = %q, %v; want %q, %v",
+				c.branchExists, c.labelTaken, c.timedOut, got, tone, c.want, c.wantTone)
 		}
 	}
 }

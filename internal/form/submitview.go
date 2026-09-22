@@ -716,12 +716,18 @@ func removeLine(branch plan.BranchFate) string {
 // job, which is the one part a clipped line would have cut off. Wrapping is
 // at spaces only (wrapAtSpaces), so neither the branch nor that command is
 // ever split across lines: both are things to copy.
+//
+// The branch is drawn in Branch, as the worktree panel draws every branch
+// name. It used to carry no foreground at all, so it took the host
+// terminal's default colour on the theme's panel -- #319's defect, on the
+// one line of this screen the user most needs to read.
 func (v *SubmitView) keptBranchLines(width int) []string {
 	inner := width - gutterWidth
 	warn := lipgloss.NewStyle().Foreground(v.palette.Warning)
+	branch := lipgloss.NewStyle().Foreground(v.palette.Branch)
 	out := []string{
 		indentedLine(warn.Render("removed the worktree and its workspace, but not its branch"), width),
-		indentedLine(v.keptBranch, width),
+		indentedLine(branch.Render(v.keptBranch), width),
 	}
 	for _, l := range wrapAtSpaces(v.keptReason, inner) {
 		out = append(out, indentedLine(dimText(v.palette).Render(l), width))

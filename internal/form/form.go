@@ -1009,6 +1009,22 @@ func (m Model) renderPanelRegion(width, region int) []string {
 // Nothing else here is width-aware. The footer's reach is entirely a
 // function of the boxWidth composeRows hands it, which is why v3 spec
 // §6.2's edge-to-edge box needed no change on this side of the call.
+//
+// The key ladder is drawn in DimText, the tier the submit view's footer
+// already draws its step counter in one screen later. Until #319 it had
+// no foreground at all, and it was the only text on the form without one:
+// composeRows' paintLine sets a background and nothing else, so the hint
+// came out in whatever foreground the host terminal defaults to, on the
+// theme's PanelBG. That is legible only while the terminal and the theme
+// agree on polarity -- which is why the default theme in a dark terminal
+// never showed it -- and a light theme in a dark terminal drew it as low
+// as 1.04:1. DimText is floored at 3:1 against PanelBG (#299), so the
+// hint's contrast is now something this package measures rather than
+// something the terminal happens to lend it.
+//
+// The style goes on AFTER fitFooter has picked a rung: fitFooter measures
+// the bare rungs, and spreadLine's fitLine is ANSI-aware, so neither the
+// rung chosen nor where a too-narrow one is clipped moves.
 func renderFooter(width int, zone FocusZone, rungs []string, p theme.Palette) string {
 	create := widgets.Zones.Mark(zoneCreateButton, createButton(p, zone))
 	createWidth := lipgloss.Width(create)
@@ -1021,7 +1037,8 @@ func renderFooter(width int, zone FocusZone, rungs []string, p theme.Palette) st
 	if both := createWidth + footerButtonGap + lipgloss.Width(cancel); both <= width {
 		buttons, buttonsWidth = create+strings.Repeat(" ", footerButtonGap)+cancel, both
 	}
-	return spreadLine(fitFooter(rungs, width-buttonsWidth-footerButtonGap), buttons, width)
+	hint := dimText(p).Render(fitFooter(rungs, width-buttonsWidth-footerButtonGap))
+	return spreadLine(hint, buttons, width)
 }
 
 // footerButtonGap is the minimum blank space kept between the footer's

@@ -1750,7 +1750,7 @@ func (m Model) beginSubmit() (Model, tea.Cmd) {
 		// WorktreeField.Enabled() -- its own git-repo gate -- is true) --
 		// this is a defensive fallback for a future Build rule this
 		// package hasn't anticipated, not a path exercised today.
-		m.title.SetVerdict(m.title.Value(), "could not build plan: "+err.Error())
+		m.title.SetVerdict(m.title.Value(), "could not build plan: "+err.Error(), form.VerdictRefusal)
 		return m, m.form.FocusByID("title")
 	}
 
@@ -1799,7 +1799,7 @@ func (m Model) beginSubmit() (Model, tea.Cmd) {
 // Returns (nil, false) when nothing blocks.
 func (m Model) checkSubmitValidation() (tea.Cmd, bool) {
 	if strings.TrimSpace(m.title.Value()) == "" {
-		m.title.SetVerdict(m.title.Value(), "title required")
+		m.title.SetVerdict(m.title.Value(), "title required", form.VerdictRefusal)
 		return m.form.FocusByID("title"), true
 	}
 	if m.dirInvalid || m.dirUnknown {
@@ -2301,7 +2301,7 @@ func (m *Model) reactToChanges() []tea.Cmd {
 		// a fresh check is being scheduled, so any duplicate warning
 		// already on screen was computed for a title/branch/dir triple
 		// that no longer holds and is about to be recomputed.
-		m.title.SetVerdict(titleVal, m.titleNote(""))
+		m.title.SetVerdict(titleVal, m.titleNote(), form.VerdictNote)
 		cmds = append(cmds, m.scheduleTitleCheck(titleVal, branchVal, dirVal, worktreeOn))
 	}
 

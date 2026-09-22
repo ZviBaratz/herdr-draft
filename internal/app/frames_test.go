@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -343,6 +344,94 @@ func TestAssembledForm_FocusedSectionVisibleAt80x24(t *testing.T) {
 	}
 }
 
+// TestAssembledForm_EveryGlyphHasAPaletteForeground is #319's measurement
+// made a test. The defect was found by driving the form under a pty,
+// tabbing through every focus stop, and recording each cell drawn in the
+// host terminal's default foreground: nine runs, one per stop, and every
+// one of them the footer's key ladder. Such a cell is legible only while
+// the terminal and the theme agree on polarity, and no stripped frame can
+// show it, so no frame did.
+//
+// Every stop, on the opening form and on a filled one, because what is on
+// screen -- the ladder above all -- differs by zone and by whether a title
+// has been typed.
+func TestAssembledForm_EveryGlyphHasAPaletteForeground(t *testing.T) {
+	for _, filled := range []bool{false, true} {
+		m := newAssembledModel(t, true)
+		if filled {
+			m = fillFrameModel(m, true)
+		} else {
+			m.worktree.SetOn(true)
+			m.worktree.SetHeadBranch("main")
+			m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
+			m.reactToChanges()
+		}
+		for _, id := range m.form.SectionIDs() {
+			m.form.FocusByID(id)
+			for i, line := range strings.Split(m.form.ViewAt(framePopupW, framePopupH), "\n") {
+				if bare := textInTheTerminalsForeground(line); bare != "" {
+					t.Errorf("filled=%v, %q focused: line %d draws %q in the terminal's own foreground: %q",
+						filled, id, i, bare, ansi.Strip(line))
+				}
+			}
+		}
+	}
+}
+
+// sgrSequence matches one SGR escape and captures its parameters. Anything
+// else in the stream is not SGR and moves no colour.
+var sgrSequence = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
+
+// textInTheTerminalsForeground returns the glyphs of one rendered line
+// that carry no foreground at all, joined, or "" when every one of them
+// has a colour of its own. Spaces are skipped: a space shows no foreground.
+//
+// The parameters are walked in order rather than searched, because
+// lipgloss packs a foreground and a background into one sequence
+// (`1;38;2;24;24;37;48;2;137;180;250`), and a background's channels must
+// not be read as a foreground's.
+func textInTheTerminalsForeground(line string) string {
+	var bare strings.Builder
+	coloured := false
+	keep := func(s string) {
+		if coloured {
+			return
+		}
+		for _, r := range ansi.Strip(s) {
+			if r != ' ' {
+				bare.WriteRune(r)
+			}
+		}
+	}
+	rest := line
+	for {
+		loc := sgrSequence.FindStringSubmatchIndex(rest)
+		if loc == nil {
+			break
+		}
+		keep(rest[:loc[0]])
+		params := strings.Split(rest[loc[2]:loc[3]], ";")
+		for i := 0; i < len(params); i++ {
+			switch params[i] {
+			case "", "0", "39":
+				coloured = false
+			case "38", "48":
+				switch {
+				case i+4 < len(params) && params[i+1] == "2":
+					coloured = coloured || params[i] == "38"
+					i += 4
+				case i+2 < len(params) && params[i+1] == "5":
+					coloured = coloured || params[i] == "38"
+					i += 2
+				}
+			}
+		}
+		rest = rest[loc[1]:]
+	}
+	keep(rest)
+	return bare.String()
+}
+
 // TestAssembledForm_EverySectionVisibleDownToItsFloor walks the whole
 // range of window heights herdr's own popup can produce (a "80%"-height
 // popup on terminals from 24 to 60 rows, plus everything below that down
@@ -614,6 +703,41 @@ func TestAssembledForm_WhenTheOtherChecksTimeOut(t *testing.T) {
 
 		assertAppFrame(t, fmt.Sprintf("assembled-title-unchecked-%dx%d", framePopupW, framePopupH), m, framePopupW, framePopupH)
 	})
+}
+
+// TestAssembledForm_TitleRequired is #308's refusal as a new user meets it:
+// ⌃S on the opening form with no title typed, sent from another row. The
+// refusal moves focus to the title, so the panel it opens is the one saying
+// why, and the frame is what pins that line in Warning -- noteLine's tone,
+// the worktree panel's `branch name required` -- rather than in the dim
+// hint tier `branch will be <slug>` is drawn in, where it sat until #308.
+// Its sibling tone, the unknown, is pinned by assembled-title-unchecked.
+func TestAssembledForm_TitleRequired(t *testing.T) {
+	m := newAssembledModel(t, true)
+	m.worktree.SetOn(true)
+	m.worktree.SetHeadBranch("main")
+	m.worktree.SetBaseItems(1, []string{"main", "release/1.4"})
+	m.reactToChanges()
+	// The opening form's title check is out, and a submit waits for it
+	// (#137). Land its answer -- nothing in use, for an empty title -- so
+	// the ⌃S below reaches the validation rather than a hold.
+	next, _ := m.handleTitleResult(titleResultMsg{
+		req:    request{version: m.reqs.title, key: m.title.Value()},
+		branch: m.worktree.Branch(),
+	})
+	m = next
+	m.form.FocusByID("prompt")
+
+	updated, _ := m.Update(form.SubmitMsg{})
+	m = updated.(Model)
+	if m.submitHeld || m.submitting {
+		t.Fatalf("test setup: the submit was held (%v) or started (%v) instead of refused", m.submitHeld, m.submitting)
+	}
+	if got := m.form.FocusedID(); got != "title" {
+		t.Fatalf("focus ended on %q, want the title row, which says what is missing", got)
+	}
+
+	assertAppFrame(t, fmt.Sprintf("assembled-title-required-%dx%d", framePopupW, framePopupH), m, framePopupW, framePopupH)
 }
 
 // TestAssembledForm_OpenedFromALane pins the popup opened in a linked

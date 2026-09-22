@@ -133,9 +133,10 @@ type Palette struct {
 	Text    Color
 	// DimText is the subdued tier: every row's label, and most of the
 	// secondary text on the screen -- panel hints and statuses, provenance,
-	// the reasons on the submit view. Every palette this package hands out
-	// has had it raised to DimTextContrastFloor on the same grounds as the
-	// five semantic colours, and never past Text (#299).
+	// the footer's key ladder (#319), the reasons on the submit view. It is
+	// not a refusal's tier: those are Warning (#308). Every palette this
+	// package hands out has had it raised to DimTextContrastFloor on the
+	// same grounds as the five semantic colours, and never past Text (#299).
 	DimText Color
 	// Overlay0 draws the rules and is the middle text tier -- panel column
 	// headings, badges, the scrollbar thumb. Without it the palette jumps
