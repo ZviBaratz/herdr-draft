@@ -403,9 +403,11 @@ func (f *TitleField) refreshSessions() {
 		if title != "" && s.Label == title {
 			marker = markerWarning
 		}
+		// herdr's text, drawn as text (#151). The ID and the collision
+		// mark above keep the raw label: a label is compared, not shown.
 		items = append(items, widgets.PickerItem{
 			ID:     s.Label,
-			Cells:  []string{s.Label, s.Status, panes, s.Repo},
+			Cells:  []string{DisplayText(s.Label), DisplayText(s.Status), panes, DisplayText(s.Repo)},
 			Marker: marker,
 		})
 	}
