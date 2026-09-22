@@ -508,3 +508,39 @@ func TestMouseZones_AChipScrolledOutOfViewHasNoClickTarget(t *testing.T) {
 		t.Errorf("effort after clicking the on-screen `high` chip = %q, want %q", got, "high")
 	}
 }
+
+// TestMouseZones_TheNoFlagChipKeepsItsIDAndItsBadge is the click half of
+// the no-flag chip's relabelling (agent-options spec §7.2, amended
+// 2026-09-22). Two things could have moved with the label and must not.
+// Its zone is still `chip:options:<name>:inherit`: only the label changed,
+// so a click resolves exactly as it did. And the zone covers the badge --
+// Zones.Mark wraps the chip's whole rendered span, and the next chip's
+// zone starts one separator after it -- so the `•` is part of the thing
+// you click, not a dead cell beside it, and nothing after it is shifted.
+func TestMouseZones_TheNoFlagChipKeepsItsIDAndItsBadge(t *testing.T) {
+	f := NewOptionsField(theme.Default())
+	f.SetKind("claude", ownerPinned())
+	m := fieldFrame(theme.Default(), f)
+	f.Update(key(tea.KeyRight, 0)) // model: fable, so the click has somewhere to move from
+	_ = m.ViewAt(80, 24)
+	syncZones()
+
+	noFlag := widgets.Zones.Get("chip:options:model:inherit")
+	if noFlag.IsZero() {
+		t.Fatal("the model line's no-flag chip has no `chip:options:model:inherit` zone")
+	}
+	if got, want := noFlag.EndX-noFlag.StartX+1, 20; got != want { // " claude-opus-5[1m]• "
+		t.Errorf("the no-flag chip's zone is %d cells wide, want %d: its label, its badge and both pads", got, want)
+	}
+	if fable := widgets.Zones.Get("chip:options:model:fable"); fable.StartX != noFlag.EndX+2 {
+		t.Errorf("fable's zone starts at %d, want %d: one separator after the badged chip", fable.StartX, noFlag.EndX+2)
+	}
+
+	// The badge's own cell: the chip's last cell is its pad, so the one
+	// before it.
+	next, _ := m.Update(clickAt(noFlag.EndX-1, noFlag.StartY))
+	_ = next.(Model)
+	if got := f.Values(); got != nil {
+		t.Errorf("Values() after clicking the badge = %v, want nil: the no-flag chip sends nothing", got)
+	}
+}

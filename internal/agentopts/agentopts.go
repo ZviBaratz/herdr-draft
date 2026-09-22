@@ -23,9 +23,17 @@ import (
 	"strings"
 )
 
-// Inherit is the value that sends no flag at all, so the agent's own
-// settings decide. It is the word a person types and the chip they see; a
-// Values map never stores it -- an inherited option is simply absent.
+// Inherit is the value that sends no flag at all, so whatever
+// [agents.extra_args] passes, or else the agent's own settings, decide. It
+// is the word a person types -- `create --effort inherit`, config.toml's
+// `effort = "inherit"`, the spawn skill -- and a Values map never stores
+// it: an inherited option is simply absent.
+//
+// It is no longer a word the form shows. The form's first chip sends no
+// flag and is labelled with what that leads to -- the value extra_args
+// passes, or `claude's` -- since a chip reading `inherit` named the
+// mechanism and left the outcome to be looked up (agent-options spec §7.2,
+// amended 2026-09-22).
 //
 // "inherit" and not "default", following Atrium, which tried "default" and
 // went back: `default` was a real --permission-mode value, so a chip named
@@ -51,7 +59,8 @@ type Option struct {
 	// Flag is the agent's own flag, e.g. "--model".
 	Flag string
 	// Choices are the offered values, in the order a chip row shows them.
-	// Inherit is not one of them: every option has it, first.
+	// Inherit is not one of them: every option has it, first, as the form's
+	// no-flag chip.
 	Choices []Choice
 	// FreeText admits a typed value outside Choices, checked against
 	// freeTextPattern. Only a model id is open-ended.
@@ -332,9 +341,9 @@ func flagOf(opts []Option, a string) (Option, bool) {
 
 // Pinned is what extra_args already passes for this kind's declared flags,
 // the last occurrence winning -- what an INHERITED option will actually
-// launch with, which the form says so the row does not claim "claude's own
-// settings" over a config file that decided otherwise. nil when it passes
-// none of them.
+// launch with, which the form says (in the row, and as the label of the
+// no-flag chip) so it does not claim "claude's own settings" over a config
+// file that decided otherwise. nil when it passes none of them.
 func Pinned(kind string, extra []string) Values {
 	opts := declarations[kind]
 	var out Values

@@ -41,8 +41,15 @@ import (
 
 // Chip is one option in a ChipRow.
 type Chip struct {
-	ID        string
-	Label     string
+	ID    string
+	Label string
+	// Badge is drawn dim straight after Label, inside the chip's padding,
+	// on the cursor chip as on every other: a mark about the chip rather
+	// than part of its name -- the options panel's `•` on a value
+	// [agents.extra_args] supplies. It is part of the chip everywhere the
+	// row measures one, so the window, the cut markers and the click zone
+	// all count it.
+	Badge     string
 	FocusHint string
 }
 
@@ -225,12 +232,11 @@ func (c *ChipRow) MarkedView(width int, zonePrefix string) string {
 	}
 	for i := lo; i <= hi; i++ {
 		chip := c.chips[i]
-		var rendered string
+		face := plain
 		if i == c.cursor {
-			rendered = active.Render(chipLabel(chip))
-		} else {
-			rendered = plain.Render(chipLabel(chip))
+			face = active
 		}
+		rendered := renderChip(chip, face, dim)
 		zoneID := ""
 		if zonePrefix != "" {
 			zoneID = zonePrefix + chip.ID
@@ -253,10 +259,23 @@ func (c *ChipRow) MarkedView(width int, zonePrefix string) string {
 	return line
 }
 
-// chipLabel is a chip as the row draws it: its label padded by one space
-// each side, which is what the "·" separator sits between.
+// chipLabel is a chip as the row draws it: its label and badge padded by
+// one space each side, which is what the "·" separator sits between. It is
+// what every width the row computes is measured on, so a badge can never
+// be drawn in a cell the window did not budget for.
 func chipLabel(chip Chip) string {
-	return " " + chip.Label + " "
+	return " " + chip.Label + chip.Badge + " "
+}
+
+// renderChip draws chipLabel's text: the label and its padding in face,
+// the badge between them dim. A chip with no badge is face over the whole
+// of chipLabel, byte for byte what it was before badges existed, so no
+// frame of an unbadged row moves.
+func renderChip(chip Chip, face, dim lipgloss.Style) string {
+	if chip.Badge == "" {
+		return face.Render(chipLabel(chip))
+	}
+	return face.Render(" "+chip.Label) + dim.Render(chip.Badge) + face.Render(" ")
 }
 
 // chipCut stands where the chips a scrolled row does not show would be:

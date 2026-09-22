@@ -1683,9 +1683,17 @@ effort = "high"
 off, and an account row left on `active` (or clauth absent). Read the
 `options` row before touching it.
 
-**Expected at rest:** `sonnet · effort high`, with `sonnet` dim, and the
-panel's last lines `[agents.extra_args] adds: --model sonnet` and `from
-config.toml`. Then walk the panel:
+**Expected at rest:** `sonnet · effort high`, with `sonnet` dim. In the
+panel each line's first chip sends no flag and is labelled with what that
+leads to (agent-options spec §7.2, amended 2026-09-22). The model line
+rests on its first chip, which reads `sonnet•`: extra args pass `sonnet`,
+and the `•` is dim. The effort line rests on the explicit `high` chip,
+since config.toml chose it. The mode line rests on its first chip, which
+reads `claude's`: nothing passes `--permission-mode`, so claude's own
+settings decide. With the cursor on the model line the hint reads `sends
+no --model of its own; [agents.extra_args] passes sonnet`, and the panel's
+last lines are `[agents.extra_args] adds: --model sonnet` and `from
+config.toml`. Nowhere in the panel reads `inherit`. Then walk the panel:
 
 1. `↑`/`↓` move between `model`, `effort` and `mode`, and `←`/`→` move the
    chips of the line under `▸`.
