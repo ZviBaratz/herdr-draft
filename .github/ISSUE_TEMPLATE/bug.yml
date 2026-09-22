@@ -6,8 +6,8 @@ body:
     attributes:
       value: |
         Thanks for taking the time. Before filing, please check the
-        [known limitations](https://github.com/ZviBaratz/herdr-draft#known-limitations) and
-        [troubleshooting](https://github.com/ZviBaratz/herdr-draft#troubleshooting)
+        [known limitations](https://github.com/ZviBaratz/herdr-draft/blob/main/docs/troubleshooting.md#known-limitations) and
+        [troubleshooting](https://github.com/ZviBaratz/herdr-draft/blob/main/docs/troubleshooting.md#problems-and-fixes)
         and search the [open issues](https://github.com/ZviBaratz/herdr-draft/issues).
 
         **Anything exploitable goes to the

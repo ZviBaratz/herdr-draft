@@ -6,7 +6,7 @@ version(s) you intend to support, before publishing. It exercises the real
 popup, the real herdr CLI, and (for Path B) a real clauth profile — nothing
 here is mocked.
 
-Fourteen cells and a 10b: the original four (Path A/B × worktree on/off), plus
+Fifteen cells and a 10b: the original four (Path A/B × worktree on/off), plus
 three that cover what v2 added — the headless `create`, the repo-level
 `.herdr-draft.toml`, and per-project memory — plus two that cover what the
 placement spec added: a worktree session keeping its own space (placement
@@ -17,9 +17,10 @@ Cell 10 spends real model quota on its payload, so it is the one to decide
 about deliberately rather than by default. The last two cover how a pinned
 account is launched: the account picker with the wrapper launch, and a
 `[clauth] launcher` of your own.
-The thirteenth asks whether the spawn skill actually fires, and the
+The thirteenth asks whether the spawn skill actually fires, the
 fourteenth is the placement that puts a session in the repository's own
-space as a tab (#128).
+space as a tab (#128), and the fifteenth is the `options` row: the agent's
+model, effort and permission mode, from the popup and from `create`.
 
 ---
 
@@ -332,8 +333,8 @@ frames pin all three plus one deliberately oversized **150×44** whose only
 job is the margins and the footer's full-width reach. If the popup does not
 look 104 cells wide, herdr is
 still holding the old manifest in memory: `herdr plugin list --plugin zvibaratz.draft
---json` to check, then `herdr plugin disable draft && herdr plugin enable
-draft`.
+--json` to check, then `herdr plugin disable zvibaratz.draft && herdr plugin
+enable zvibaratz.draft`.
 
 At the shipped 101×30, fully configured (blank panel rows elided):
 
@@ -655,7 +656,7 @@ the throwaway repo directory.
 
 **Setup:** fresh throwaway repo, e.g. `/var/tmp/herdr-draft-smoke-b-wt`.
 Requires clauth configured with ≥2 profiles — otherwise there is no
-**account** row at all (see README's config reference), and the cell cannot
+**account** row at all (see [Claude accounts](account-picker.md#the-account-row)), and the cell cannot
 be run.
 
 **Steps:** Cell 1's walk through step 8 (agent must be `claude` — Path B is
@@ -1002,13 +1003,17 @@ this manual step cannot force with certainty every time.
 work.** "Same typed title, same branch" is refused twice over:
 
 - Through the form, the duplicate check stops the submit. Retyping Cell 8's
-  title puts `branch & label in use` in the title panel, and a duplicate
-  verdict is the one thing that can block a create (`internal/app/async.go`'s
-  `titleNote`). Since reuse *requires* an existing checkout, and an existing
-  checkout is exactly `branch exists`, no same-branch create can be submitted
-  from the form at all.
-- Headlessly, `herdr worktree create` fails before herdr ever considers
-  reuse: `fatal: '<checkout>' already exists`, surfaced as
+  title puts `branch & label in use` (or `branch exists`) in the title panel,
+  and `checkSubmitValidation` refuses on that verdict (`titleDupBlocked`).
+  Since #137 a submit waits for the check to answer, so one sent inside its
+  150 ms debounce no longer slips past it, and since #202 a check that never
+  answers refuses as well. Reuse *requires* an existing checkout, and an
+  existing checkout means its branch exists, so the form refuses every
+  same-branch create.
+- Headlessly, `create` refuses the same branch before herdr is asked (#147):
+  exit 2, `branch "<name>" already exists, locally or on a remote`. Before
+  #147 it reached herdr, and `herdr worktree create` failed before herdr ever
+  considered reuse: `fatal: '<checkout>' already exists`, surfaced as
   `worktree_create_failed`.
 
 Reuse needs a **stale workspace**: one herdr still holds open for a checkout
@@ -1017,8 +1022,9 @@ written for:
 
 ```bash
 # after Cell 8, with its worktree workspace still open
-rm -rf /home/zvi/.herdr/worktrees/<repo>/<branch-slug>
+rm -rf <checkout>   # the first session's checkout_path, e.g. ~/.herdr/worktrees/<repo>/<branch-slug>
 git -C <repo> worktree prune
+git -C <repo> branch -D <same branch>   # since #147, see below
 # then create the SAME branch again
 herdr-draft create --project <repo> --title "<a different title>" \
     --branch <same branch> --worktree --json
@@ -1027,6 +1033,11 @@ herdr-draft create --project <repo> --title "<a different title>" \
 No `--placement` is needed. Since placement spec §14 a worktree session has
 no placement op, so the worktree op is always the agent's pane and the
 correction fires whenever herdr reuses a workspace.
+
+`worktree prune` leaves the branch in place, and since #147 `create` refuses
+an existing branch before herdr is asked, so the recipe now deletes it too.
+The pass below predates #147 and ran without that line; the recipe with it
+is unrun.
 
 **Passed on 0.9.0.** herdr reused the open workspace, and the correction
 claimed a fresh **tab** in it — the agent landed in a new pane, and the first
@@ -1126,10 +1137,15 @@ usually `idle` by the time you look. `working` is a *transient*, not the
 pass condition. Only the pane distinguishes the two, which is the whole
 reason this cell reads it.
 
-**If it does reproduce on 0.9.0**, #73 item 2 is the fix: `plan.Execute`
-already reads the pane *before* sending (`internal/plan/dialog.go`) and can
-read after as well, falling back to the `unsent-prompt.txt` path rather than
-reporting success.
+**If it does reproduce on 0.9.0**, #73 item 2 is where the fix goes.
+`plan.Execute` reads the pane *before* sending (`internal/plan/dialog.go`),
+and since #116 it reads it *after* as well: that shipped as
+`confirmPromptLanded` (`internal/plan/exec.go`), which fails a send whose
+pane then stops answering or still shows a dialog with no trace of the
+prompt, and reports its delivery unconfirmed. It does **not** recognise
+this cell's failure shape, a payload sitting unsubmitted below the `❯`, so
+a reproduction means teaching it that shape too, rather than reporting
+success.
 
 **A wording trap, either way** (#43): herdr's `agent_prompt_stalled` means
 the text **was typed** and the submission did not complete. "Prompt not sent
@@ -1144,6 +1160,12 @@ and headless `create`; one that survives that retry is reported as
 you should see instead is "delivery unconfirmed — read the pane" in the
 popup and `prompt_status: "unconfirmed"` from `create`. A run that still
 says "not sent" for `agent_prompt_stalled` is a regression, not a trap.
+
+**Passed on 0.9.0**, headlessly, with 6311 bytes over 120 lines and 22 blank
+lines — a superset of the payload that failed on 0.8.2. The whole thing
+arrived above the `❯` as one submitted turn and the agent answered it; the
+input buffer was empty. #73's silent failure does not survive the floor bump.
+The form half of the cell is still unrun.
 
 ### Cell 10b — the same question from the other side (#108)
 
@@ -1162,7 +1184,7 @@ out says nothing about delivery.
 prompt into a slow-to-paint agent, with the prompt timeout cut short.
 
 ```bash
-# from the scratch pane, with [timeouts] prompt_ms lowered in config.toml
+# from the scratch pane, with [timeouts] prompt_wait_ms lowered in config.toml
 herdr-draft create --title "smoke unconfirmed" --no-worktree   --placement split-here --prompt - --json < /tmp/smoke-prompt.txt
 ```
 
@@ -1194,18 +1216,12 @@ the session mid-turn.
 cell is written from the code and the one live capture in #108 — a
 hypothesis until someone runs it.
 
-**Passed on 0.9.0**, headlessly, with 6311 bytes over 120 lines and 22 blank
-lines — a superset of the payload that failed on 0.8.2. The whole thing
-arrived above the `❯` as one submitted turn and the agent answered it; the
-input buffer was empty. #73's silent failure does not survive the floor bump.
-The form half of the cell is still unrun.
-
 ## What the account picker added
 
 ### Cell 11 — the account picker protocol, and the wrapper launch
 
 **Needs a picker.** Any executable satisfying the [account picker
-protocol](../README.md#account-picker-protocol) will do; the cell below was run
+protocol](account-picker.md#the-account-picker-protocol) will do; the cell below was run
 against one that exists on the author's machine, named through
 `[clauth] picker` in the plugin's own `config.toml`. Without one, herdr-draft
 has no `auto` row and this cell has nothing to run.
@@ -1456,8 +1472,9 @@ cp /tmp/spawn-SKILL.md ~/.claude/skills/spawn/SKILL.md
 ```
 
 **The lookup is half the cell.** `herdr-draft` is not on `PATH`, so
-locating it is the first thing any user has to do, and it is the step the
-README can get wrong without any test noticing. Record what it printed.
+locating it is the first thing any user has to do, and it is the step
+[`docs/spawn-skill.md`](spawn-skill.md) can get wrong without any test
+noticing. Record what it printed.
 Until #167 this cell used a `find` over `~/.config/herdr/plugins`, on the
 premise that herdr reported no install path; `herdr plugin list --json`
 does, as `plugin_root`.

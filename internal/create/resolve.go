@@ -415,7 +415,7 @@ func loadMemory(stateDir string) (config.State, config.Projects) {
 //
 // The one caller who has to change is the person following this project's
 // own advice: exporting the two directories by hand into a plain shell
-// (README, docs/manual-smoke.md's Route B) now needs HERDR_PLUGIN_ID
+// (docs/create.md, docs/manual-smoke.md's Route B) now needs HERDR_PLUGIN_ID
 // beside them. Both messages below say so, because advice that does not
 // survive being followed is worse than none.
 //

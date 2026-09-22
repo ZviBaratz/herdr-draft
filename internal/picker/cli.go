@@ -29,8 +29,8 @@ type Source interface {
 }
 
 // Argv is the documented invocation, exported because it is the contract's
-// most quotable half and the README and the tests should read one definition
-// of it.
+// most quotable half and docs/account-picker.md and the tests should read
+// one definition of it.
 func Argv(bin, dir string, opts Options) []string {
 	argv := []string{bin, "--dir", dir, "--json"}
 	if opts.Strict {
@@ -72,15 +72,15 @@ func (c CLI) Pick(ctx context.Context, dir string, opts Options) (Result, error)
 	res, derr := Decode(stdout)
 
 	if code != ExitPicked {
-		// An exit code outside the protocol's set is a MALFUNCTION, and this
-		// check is what the README's "any other exit code is treated as a
-		// malfunction, not a refusal" means on this path -- it used to be
-		// true of Probe alone, so a picker that died on exit 1 or 127, or was
-		// killed by a signal, was reported to the user as "picker refused:
-		// picker exited 127": a crash presented as a decision. The two are
-		// not interchangeable. A refusal is the picker answering; a
-		// malfunction is the picker failing to, and only the first is
-		// something the user can reason about.
+		// An exit code outside the protocol's set is a MALFUNCTION, and
+		// this check is what docs/account-picker.md's "any other exit code
+		// is treated as a malfunction, not a refusal" means on this path --
+		// it used to be true of Probe alone, so a picker that died on exit
+		// 1 or 127, or was killed by a signal, was reported to the user as
+		// "picker refused: picker exited 127": a crash presented as a
+		// decision. The two are not interchangeable. A refusal is the
+		// picker answering; a malfunction is the picker failing to, and
+		// only the first is something the user can reason about.
 		if !documentedCode(code) {
 			return Result{}, fmt.Errorf("%s%s", undocumentedCodeMsg(c.Bin, code), stderrNote(stderr))
 		}

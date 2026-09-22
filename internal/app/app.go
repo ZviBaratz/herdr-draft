@@ -280,10 +280,11 @@ type Setup struct {
 // loading config/state/palette, resolving the Linear API key, and loading
 // clauth's status feed -- then hands all of it to New.
 //
-// Only two conditions refuse outright (spec §9: "herdr socket unreachable
-// -> plain-text error and exit", "on missing/invalid context"): an invalid
-// $HERDR_PLUGIN_CONTEXT_JSON, an unreachable herdr, or a config.toml that
-// fails to parse (extended from the spec's literal two cases: proceeding
+// Only three conditions refuse outright (spec §9 names two: "herdr socket
+// unreachable -> plain-text error and exit", "on missing/invalid context"):
+// an invalid $HERDR_PLUGIN_CONTEXT_JSON, an unreachable herdr, or a
+// config.toml that fails to parse (extended from the spec's literal two
+// cases: proceeding
 // with config.Load's own zero-value Config on a parse error -- as opposed
 // to its documented defaults() -- would silently corrupt every config-
 // derived default the form has, which a clear stderr message is far
@@ -360,10 +361,10 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 	// all produced an absent account row.
 	//
 	// The first two SHOULD produce an absent row: that rule is deliberate
-	// and documented (README's Troubleshooting: "a static, by-design
-	// check, not a bug"), and most people who install this plugin have
-	// never heard of clauth. Announcing a missing optional dependency to
-	// them would be noise.
+	// and documented (docs/troubleshooting.md: "Without them the form has
+	// seven rows, which is by design"), and most people who install this
+	// plugin have never heard of clauth. Announcing a missing optional
+	// dependency to them would be noise.
 	//
 	// The other two are a broken integration, which spec §13 says must
 	// degrade "to inert with a reason". exec.ErrNotFound is what separates
@@ -382,9 +383,9 @@ func Bootstrap(env Env, runner herdrc.Runner, clauthSrc clauthSource, gitSrc git
 	}
 
 	// A named picker is PROBED before it is trusted (#122; the protocol
-	// itself is README's "Account picker protocol"). No spec section
-	// carries this: the brief it was written from cited a "§5.6" that
-	// exists in no document in docs/specs.
+	// itself is docs/account-picker.md's "The account picker protocol"). No
+	// spec section carries this: the brief it was written from cited a
+	// "§5.6" that exists in no document in docs/specs.
 	// Naming one is the user's explicit consent to run it; the probe is what
 	// checks that the thing under that name implements the protocol, because
 	// a same-named stranger routing account credentials is worse than no

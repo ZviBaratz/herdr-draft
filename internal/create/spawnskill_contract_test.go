@@ -198,8 +198,8 @@ func TestSkillFooterNamesTheDigest(t *testing.T) {
 // TestSkillNamesTheCheckBudget holds the budgets the document promises to
 // the ones the binary keeps.
 //
-// Each number is a fact in several documents -- this one, README's
-// exit-code section, the CHANGELOG entry, the v2 spec's amendments and
+// Each number is a fact in several documents -- this one, docs/create.md's
+// exit-code section, docs/troubleshooting.md, the v2 spec's amendments and
 // docs/manual-smoke.md's recorded runs -- and was held to the constant by
 // nothing: changing preflightCheckDeadline to 300s left the ENTIRE suite
 // green. This file exists because a document naming a flag `create` does
@@ -228,8 +228,8 @@ func TestSkillNamesTheCheckBudget(t *testing.T) {
 	}
 	if preflightCheckDeadline != 30*time.Second {
 		t.Fatalf("the check budget is now %s. Four other documents name it and no test reads them: "+
-			"README.md's exit-code section, the CHANGELOG entry, the v2 spec's #272 amendment, and "+
-			"docs/manual-smoke.md's recorded run", preflightCheckDeadline)
+			"docs/create.md's exit-code section, docs/troubleshooting.md, the v2 spec's #272 "+
+			"amendment, and docs/manual-smoke.md's recorded run", preflightCheckDeadline)
 	}
 }
 
@@ -310,14 +310,17 @@ func installDirs(text string) []string {
 
 // TestSkillInstallDirMatchesItsName is §8.1's "equals the install
 // directory the README and the document itself tell the user to create".
+// The README's install recipe moved to docs/spawn-skill.md with the rest of
+// the user guide; the README is still read, so a recipe that comes back to
+// it is held to the same name.
 //
 // Claude Code loads a skill from <dir>/SKILL.md and takes its identity
 // from the frontmatter `name`; when the two disagree the skill does not
 // load, and nothing says so -- there is no error, the skill is simply
-// never there. So a rename that touches only one of the three places is a
-// silent break, which is the shape this test exists for. The README is
+// never there. So a rename that touches only one of the places is a
+// silent break, which is the shape this test exists for. The user guide is
 // read from disk rather than embedded for the same reason
-// internal/picker/readme_test.go reads it: it is the copy a user follows.
+// internal/picker/readme_test.go reads its page: it is the copy a user follows.
 func TestSkillInstallDirMatchesItsName(t *testing.T) {
 	doc := renderedSkill()
 
@@ -335,17 +338,27 @@ func TestSkillInstallDirMatchesItsName(t *testing.T) {
 		}
 	}
 
-	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
-	if err != nil {
-		t.Fatalf("read README: %v", err)
-	}
-	readmeDirs := installDirs(string(readme))
-	if len(readmeDirs) == 0 {
-		t.Fatal("the README never gives the install path -- if that section moved, move this test with it")
-	}
-	for _, d := range readmeDirs {
-		if d != skillName {
-			t.Errorf("the README installs into ~/.claude/skills/%s/ but the skill is named %q", d, skillName)
+	// The guide page must give the path; the README may, and whatever it
+	// names is held to the same value.
+	for _, page := range []struct {
+		path     string
+		required bool
+	}{
+		{filepath.Join("..", "..", "docs", "spawn-skill.md"), true},
+		{filepath.Join("..", "..", "README.md"), false},
+	} {
+		text, err := os.ReadFile(page.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", page.path, err)
+		}
+		pageDirs := installDirs(string(text))
+		if page.required && len(pageDirs) == 0 {
+			t.Fatalf("%s never gives the install path -- if that section moved, move this test with it", page.path)
+		}
+		for _, d := range pageDirs {
+			if d != skillName {
+				t.Errorf("%s installs into ~/.claude/skills/%s/ but the skill is named %q", page.path, d, skillName)
+			}
 		}
 	}
 }
