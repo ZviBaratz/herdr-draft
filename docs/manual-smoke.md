@@ -724,12 +724,18 @@ still sitting on its dialog:
   file it was saved to (or `--json` carries `prompt_sent: false` and
   `unsent_prompt`).
 - **The launch really went through clauth.** `herdr[S] pane list` shows
-  `agent: "claude"` and a `terminal_title` of
-  `clauth start <the profile you picked> --`, and
+  `agent: "claude"`, `tokens.clauth: "<the profile you picked>"` and a
+  `terminal_title` of `clauth start <profile> --`, and
   `herdr[S] pane process-info --pane <pane-id>` shows **both** `clauth`
-  (parent) and `claude` (child). herdr 0.9.0 also reported
-  `tokens.clauth: "<profile>"` on the pane; 0.9.1 has no `tokens` field, so
-  do not read its absence as a failure.
+  (parent) and `claude` (child).
+
+  `tokens` comes from the agent's own status line, so it appears only once
+  herdr has recognised the pane as an agent: while the trust dialog is up
+  there is no `tokens` key at all, and a launch that did not go through
+  clauth reads `tokens.clauth: "unknown"` rather than being absent
+  (measured on 0.9.1, 2026-09-22). `terminal_title` and `process-info` are
+  there from the start, so read those first and `tokens` once the agent is
+  up.
 
 Finally, answer the dialog in the pane (`↓`, `↵`) and confirm the advice the
 message gave is true: `agent get` should move to `idle`, the queued prompt
@@ -1397,9 +1403,9 @@ launcher = ["claude-as"]
    which is the whole of #72 — so read the facts off the agent's pane
    (`.pane_id` from the JSON, not `space_pane_id`):
 
-   - **It ran, under clauth.** `herdr[S] pane list` shows `agent: "claude"`
-     and a `terminal_title` of `clauth start <profile> --` (herdr 0.9.0
-     also reported `tokens.clauth`; 0.9.1 does not), and
+   - **It ran, under clauth.** `herdr[S] pane list` shows `agent: "claude"`,
+     a `terminal_title` of `clauth start <profile> --`, and, once the agent
+     is up, `tokens.clauth: "<profile>"`, and
      `herdr[S] pane process-info --pane <pane-id>` shows `clauth` (parent)
      and `claude` (child). A pane back at a shell prompt is the #72 failure.
    - **The extra args followed the whole template, and the brackets arrived
@@ -1866,8 +1872,11 @@ The create button beside it measures 8.34:1.
 **Two sentences in this document were wrong against 0.9.1**, and both would
 have been recorded as failures. Both are corrected in the change that added
 this entry. Cell 3 (and Cell 12) asked `pane list` for
-`tokens.clauth: "<profile>"`, which herdr 0.9.1 no longer emits: the same
-evidence arrives as `terminal_title` plus `process-info`'s parent/child pair.
+`tokens.clauth: "<profile>"` as the first thing to read. It is still
+emitted, but only once herdr has recognised the pane as an agent, which is
+after the trust dialog this cell meets; `terminal_title` and `process-info`
+are there from the start. (The run recorded this as "0.9.1 emits no
+`tokens` field", which a later check disproved.)
 Cell 15 step 2's "nothing lands" holds for a paste, which is one edit, but
 not for the same text typed key by key. The line refuses each edit that
 leaves an invalid id, so typed into an empty line the two leading dashes are
