@@ -63,6 +63,8 @@ shows.
   and a check that timed out.
 - `--on-failure keep|clean`. A clean removes only what the run made,
   including a worktree branch it created that holds no work.
+- Sessions open in the background: `create` never moves your view to the
+  session it makes. The popup does, since there you asked for the session.
 
 ### Defaults and configuration
 
