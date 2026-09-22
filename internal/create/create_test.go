@@ -34,6 +34,9 @@ import (
 // demand at one named method.
 type fakeRunner struct {
 	calls []string
+	// focusAsked is what each space, tab and split request asked herdr
+	// for, in call order: `create` must never take the user's focus.
+	focusAsked []bool
 
 	// onOp and ctxErrs are #252's instrumentation: onOp fires as an op
 	// begins, so a test can cancel in the MIDDLE of plan.Execute, and
@@ -237,6 +240,7 @@ func (r *fakeRunner) observe(ctx context.Context, op string) {
 }
 
 func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreateReq) (herdrc.CreatedTopology, error) {
+	r.focusAsked = append(r.focusAsked, req.Focus)
 	if err := r.record("WorktreeCreate", req.Cwd, req.Branch, req.Base); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
@@ -259,6 +263,7 @@ func (r *fakeRunner) WorktreeCreate(_ context.Context, req herdrc.WorktreeCreate
 
 func (r *fakeRunner) WorkspaceCreate(ctx context.Context, req herdrc.WorkspaceCreateReq) (herdrc.CreatedTopology, error) {
 	r.observe(ctx, "WorkspaceCreate")
+	r.focusAsked = append(r.focusAsked, req.Focus)
 	if err := r.record("WorkspaceCreate", req.Cwd, req.Label); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
@@ -266,6 +271,7 @@ func (r *fakeRunner) WorkspaceCreate(ctx context.Context, req herdrc.WorkspaceCr
 }
 
 func (r *fakeRunner) TabCreate(_ context.Context, req herdrc.TabCreateReq) (herdrc.CreatedTopology, error) {
+	r.focusAsked = append(r.focusAsked, req.Focus)
 	if err := r.record("TabCreate", req.Workspace, req.Cwd); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
@@ -277,6 +283,7 @@ func (r *fakeRunner) TabRename(_ context.Context, req herdrc.TabRenameReq) error
 }
 
 func (r *fakeRunner) PaneSplit(_ context.Context, req herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
+	r.focusAsked = append(r.focusAsked, req.Focus)
 	if err := r.record("PaneSplit", req.PaneID, req.Direction); err != nil {
 		return herdrc.CreatedTopology{}, err
 	}
@@ -3253,3 +3260,35 @@ type codedErr struct {
 
 func (e codedErr) Error() string        { return e.msg }
 func (e codedErr) Is(target error) bool { return target == e.code }
+
+// TestCreateNeverTakesTheUsersFocus: every space, tab and split `create`
+// opens is requested with --no-focus (plan.ExecOpts.NoFocus). A create runs
+// beside whatever the user is doing -- a script, or an agent handing work
+// off -- and herdr moving their view to the new session as it appears put
+// the next keystroke in the wrong place. The popup keeps herdr's focus move;
+// internal/plan's own test pins both halves of the option.
+func TestCreateNeverTakesTheUsersFocus(t *testing.T) {
+	for _, args := range [][]string{
+		{"--worktree"},
+		{"--no-worktree", "--placement", "new-space"},
+		{"--no-worktree", "--placement", "tab-here"},
+		{"--no-worktree", "--placement", "split-here"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			h := newHarness(t)
+			// The two `here` placements need the invoking pane.
+			h.env.WorkspaceID, h.env.TabID, h.env.PaneID = "wUSER", "tUSER", "pUSER"
+			if code := h.run(append([]string{"--title", "fix login redirect"}, args...)...); code != ExitOK {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+			}
+			if len(h.runner.focusAsked) == 0 {
+				t.Fatalf("calls = %v: no space, tab or split was requested, so there is nothing to check", h.runner.calls)
+			}
+			for i, focus := range h.runner.focusAsked {
+				if focus {
+					t.Errorf("topology request %d asked herdr for focus; calls = %v", i, h.runner.calls)
+				}
+			}
+		})
+	}
+}

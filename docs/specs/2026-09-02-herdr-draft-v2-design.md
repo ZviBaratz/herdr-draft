@@ -692,6 +692,19 @@ command and the form produce the same session from the same inputs.
 > another account itself: the issue's "or another account" is left to the
 > user's answer, since the skill keeps accounts the user's call.
 
+> **Amended (2026-09-22; approved by the owner): `create` takes no
+> focus.** Every space, tab and split it opens is requested with
+> `--no-focus` (`plan.ExecOpts.NoFocus`), where the form's plan, and v1
+> §9's op list, ask for `--focus`. `create` is run by a script or by an
+> agent handing work off while the person is doing something else, and
+> herdr moving their view to the new session as it appeared put their next
+> keystroke in the wrong place: a session spawned during this release's
+> own smoke run was closed by accident, because the view had just moved
+> onto it. The popup keeps the focus move; the person asked for that
+> session a keystroke ago. It is a runtime option and not a `plan.Input`
+> field, for TrustWait's reason (`equivalence_test.go`), and not a flag,
+> since no form row offers it.
+
 > **Amended, #171 (2026-09-18): from inside a linked worktree.** Both paths
 > take the linked checkout as the project: `create` because it is the
 > working directory, and the form because a linked worktree's space now

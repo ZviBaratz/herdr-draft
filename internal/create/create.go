@@ -648,7 +648,12 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 	// will answer is worse than failing with the reason -- and there is no
 	// flag for it either, since every flag here has a form row behind it
 	// and no row offers this.
-	rep.result = plan.Execute(ctx, deps.Runner, ops, plan.ExecOpts{}, onProgress)
+	//
+	// And no focus: the session is made beside whatever the user is doing,
+	// not in front of it (ExecOpts.NoFocus says why). Nor is that a flag,
+	// for the same reason; the popup, the one front end a person is
+	// watching, keeps herdr's focus move.
+	rep.result = plan.Execute(ctx, deps.Runner, ops, plan.ExecOpts{NoFocus: true}, onProgress)
 
 	if rep.result.FailedIndex == -1 {
 		// v2 spec §10's per-project memory and spec §12's state dir are

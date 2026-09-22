@@ -138,6 +138,10 @@ type mockRunner struct {
 	// are orderings no test can see.
 	onWorktreeCreate func(herdrc.WorktreeCreateReq)
 	onWorktreeRemove func(workspaceID string)
+
+	// focusAsked is what every topology request asked herdr for, in call
+	// order, as "<method>:<focus>" -- ExecOpts.NoFocus's evidence.
+	focusAsked []string
 }
 
 var _ herdrc.Runner = (*mockRunner)(nil)
@@ -166,6 +170,7 @@ func (m *mockRunner) WorkspaceList(ctx context.Context) ([]herdrc.WorkspaceInfo,
 
 func (m *mockRunner) WorktreeCreate(ctx context.Context, req herdrc.WorktreeCreateReq) (herdrc.CreatedTopology, error) {
 	m.record("WorktreeCreate", req.Cwd, req.Branch, req.Base)
+	m.focusAsked = append(m.focusAsked, fmt.Sprintf("%s:%t", "WorktreeCreate", req.Focus))
 	if m.shouldFail("WorktreeCreate") {
 		return herdrc.CreatedTopology{}, m.failErr
 	}
@@ -177,6 +182,7 @@ func (m *mockRunner) WorktreeCreate(ctx context.Context, req herdrc.WorktreeCrea
 
 func (m *mockRunner) WorkspaceCreate(ctx context.Context, req herdrc.WorkspaceCreateReq) (herdrc.CreatedTopology, error) {
 	m.record("WorkspaceCreate", req.Cwd, req.Label)
+	m.focusAsked = append(m.focusAsked, fmt.Sprintf("%s:%t", "WorkspaceCreate", req.Focus))
 	if m.shouldFail("WorkspaceCreate") {
 		return herdrc.CreatedTopology{}, m.failErr
 	}
@@ -185,6 +191,7 @@ func (m *mockRunner) WorkspaceCreate(ctx context.Context, req herdrc.WorkspaceCr
 
 func (m *mockRunner) TabCreate(ctx context.Context, req herdrc.TabCreateReq) (herdrc.CreatedTopology, error) {
 	m.record("TabCreate", req.Workspace, req.Cwd)
+	m.focusAsked = append(m.focusAsked, fmt.Sprintf("%s:%t", "TabCreate", req.Focus))
 	if m.shouldFail("TabCreate") {
 		return herdrc.CreatedTopology{}, m.failErr
 	}
@@ -204,6 +211,7 @@ func (m *mockRunner) TabRename(ctx context.Context, req herdrc.TabRenameReq) err
 
 func (m *mockRunner) PaneSplit(ctx context.Context, req herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
 	m.record("PaneSplit", req.PaneID, req.Direction, req.Cwd)
+	m.focusAsked = append(m.focusAsked, fmt.Sprintf("%s:%t", "PaneSplit", req.Focus))
 	if m.shouldFail("PaneSplit") {
 		return herdrc.CreatedTopology{}, m.failErr
 	}
@@ -4276,5 +4284,63 @@ func TestExecuteWrapperLaunchThreadsPaneIDAndConfigDir(t *testing.T) {
 	}
 	if !reflect.DeepEqual(m.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", m.calls, wantCalls)
+	}
+}
+
+// TestExecute_NoFocusKeepsEveryTopologyRequestOutOfTheUsersWay pins
+// ExecOpts.NoFocus across every topology Build makes, and the reuse claim
+// Execute makes on its own: with the option, no request asks herdr for
+// focus; without it, each asks for exactly what Build set, which for every
+// one of them is focus. The second half is what makes the first mean
+// something -- a request that never asked for focus passes "asks for none"
+// trivially.
+func TestExecute_NoFocusKeepsEveryTopologyRequestOutOfTheUsersWay(t *testing.T) {
+	space := Space{WorkspaceID: "w3", Label: "repo"}
+	cases := []struct {
+		name  string
+		input func(Input) Input
+		reuse bool
+		want  []string
+	}{
+		{"worktree", func(in Input) Input { in.UseWorktree = true; return in }, false,
+			[]string{"WorktreeCreate"}},
+		{"worktree into a reused space", func(in Input) Input { in.UseWorktree = true; return in }, true,
+			[]string{"WorktreeCreate", "TabCreate"}},
+		{"new space", func(in Input) Input { return in }, false,
+			[]string{"WorkspaceCreate"}},
+		{"tab here", func(in Input) Input { in.Placement = PlacementTabHere; return in }, false,
+			[]string{"TabCreate"}},
+		{"tab in", func(in Input) Input { in.Placement = PlacementTabIn; in.Space = space; return in }, false,
+			[]string{"TabCreate"}},
+		{"split here", func(in Input) Input { in.Placement = PlacementSplitHere; return in }, false,
+			[]string{"PaneSplit"}},
+	}
+	for _, tc := range cases {
+		for _, noFocus := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/NoFocus=%t", tc.name, noFocus), func(t *testing.T) {
+				ops, err := Build(tc.input(validInput()))
+				if err != nil {
+					t.Fatalf("Build: %v", err)
+				}
+				m := &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "w9:t1", PaneID: "w9:p1", CheckoutPath: "/tmp/wt"}}
+				if tc.reuse {
+					m.workspacesBeforeCreate = []herdrc.WorkspaceInfo{{WorkspaceID: "w9", Label: "somebody-else"}}
+					m.tabTopo = &herdrc.CreatedTopology{WorkspaceID: "w9", TabID: "w9:t2", PaneID: "w9:p2", CheckoutPath: "/tmp/wt"}
+				}
+
+				result := Execute(context.Background(), m, ops, ExecOpts{NoFocus: noFocus}, nil)
+
+				if result.FailedIndex != -1 {
+					t.Fatalf("FailedIndex = %d, want -1; calls = %v", result.FailedIndex, m.calls)
+				}
+				var want []string
+				for _, method := range tc.want {
+					want = append(want, fmt.Sprintf("%s:%t", method, !noFocus))
+				}
+				if !slices.Equal(m.focusAsked, want) {
+					t.Errorf("topology requests asked for %v, want %v", m.focusAsked, want)
+				}
+			})
+		}
 	}
 }
