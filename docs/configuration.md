@@ -116,12 +116,21 @@ The key is looked for in this order, and the first one found wins:
    and herdr-draft refuses to read it unless the file is readable by you
    alone (mode `0600`).
 
-A source that is configured but fails does not hide the row. The row reads
-`unavailable` with the reason beside it, and its panel carries the whole
-reason. That covers an `api_key_cmd` that exits non-zero, is not on `PATH` or
-does not answer within its sixty seconds, and an `api_key` in a file others
-can read. The popup resolves the key before it draws, so a helper that hangs
-holds the popup blank for up to that minute.
+A source that is configured but fails does not hide the row. With a cached
+issue list on disk the list stays pickable and the panel carries the
+reason; with nothing to pick the row reads `unavailable` with the reason
+beside it. That covers an `api_key_cmd` that exits non-zero, is not on
+`PATH`, does not answer within its sixty seconds, or exits 0 having printed
+nothing with no other source behind it, and an `api_key` in a file others
+can read.
+
+**The popup does not wait for the key.** It draws first, and the `issue`
+row is live while `api_key_cmd` runs: the cached list is pickable, and the
+panel reads `waiting for api_key_cmd…`. With no cache yet the row reads
+`loading…`. So a helper that waits for you to approve a read costs you
+nothing but that row — you can type a title, pick a project and press ⌃S
+while it runs. (`herdr-draft create --issue` has no screen to draw, so it
+does wait.)
 
 The issue list is the issues assigned to you that are in a to-do or
 in-progress state, the 50 most recently updated. The popup draws the last
@@ -170,8 +179,12 @@ which adds an `auto` choice to the `account` row and `--account auto` to
 herdr-draft never goes looking for a picker. A program on `PATH` with a
 plausible name is not used unless this key names it, because finding a
 program with the expected name is not the same as finding the one you meant.
-A named picker is also probed once at startup, and is used only if its answer
-has the documented shape. When it does not, the `account` row says so.
+A named picker is also probed once, and is used only if its answer has the
+documented shape. The probe rides on the first preview the popup makes, so
+it costs no extra run: the `auto` row is offered from the first frame and
+removed, with the reason on the panel, if that answer turns out not to
+implement the protocol. A ⌃S made before the probe has answered waits for
+it, and is refused rather than launched unpinned if it never does.
 
 ### `launch` and `launcher`
 

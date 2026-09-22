@@ -185,9 +185,12 @@ func (opts LoadOpts) now() time.Time {
 // context but no deadline: both callers handed it context.Background(), so
 // `exec.CommandContext` had nothing to act on.
 //
-// It protects the same thing picker.pickerTimeout does. app.Bootstrap reads
-// clauth synchronously BEFORE the popup is drawn, so a clauth that never
-// answers meant the form never appeared and never said why.
+// It protects the same thing picker.pickerTimeout does. app.Bootstrap used
+// to read clauth synchronously BEFORE the popup was drawn, so a clauth that
+// never answered meant the form never appeared and never said why. Since
+// #293 it reads the status file before the draw (Peek) and runs this from
+// Init, so a hang costs the account row its `loading…` and nothing else;
+// `create` still waits for it, with nothing drawn.
 //
 // THIRTY seconds, the number this repository already uses for "slow but not
 // hung" -- app.fetchPruneTimeout, picker.pickerTimeout,
@@ -215,6 +218,57 @@ var cliTimeout = 30 * time.Second
 // picker.pickerWaitDelay and linear.keyCmdWaitDelay are the same two seconds
 // for the same reason.
 var cliWaitDelay = 2 * time.Second
+
+// Cached is what Peek found without running anything: which of clauth's
+// two halves can answer, and whether either can (draw-first spec §3.2).
+type Cached int
+
+const (
+	// CachedFresh: the status file answered, and Peek's Status is it. The
+	// account row is decided before the first frame, exactly as it was
+	// when Bootstrap ran the whole of Load.
+	CachedFresh Cached = iota
+	// CachedAsk: no fresh status file, and there is a clauth to ask. The
+	// row is drawn `loading…` and the CLI is run from Init.
+	CachedAsk
+	// CachedAbsent: no fresh status file and no clauth on PATH. This is the
+	// common case -- most people who install this plugin have never heard
+	// of clauth -- and it produces no account row at all, as it does today.
+	CachedAbsent
+)
+
+// Peek is Load's fast half: the status file, and, when that cannot answer,
+// whether there is a clauth to ask at all. It runs NO subprocess, which is
+// the whole point -- app.Bootstrap calls it before the popup's first frame
+// and moves the CLI run into Init (draw-first spec §3.1, §3.2).
+//
+// The PATH check is ruling 6, and it classifies exactly as the CLI run it
+// replaces does. exec.Command resolves a bare name through LookPath before
+// it starts anything, and app.Bootstrap has always read exec.ErrNotFound as
+// "clauth is not installed" (no row) and anything else as "installed and
+// broken" (a row with a reason). So ErrNotFound answers CachedAbsent and
+// every other LookPath error answers CachedAsk, whose CLI run then fails
+// with that same error and puts it on the row. Without the check, everyone
+// without clauth -- which is most people -- would watch a `loading…` row
+// that could only ever vanish or say "clauth not found".
+//
+// An empty CLIBin answers CachedAsk, which only tests build: Load's own
+// "no fresh status file and no CLI binary configured" error then reaches
+// the row, as it does today.
+func Peek(opts LoadOpts) (Status, Cached) {
+	if opts.StatusFile != "" {
+		if st, ok := loadFreshStatusFile(opts.StatusFile, opts.now()); ok {
+			return st, CachedFresh
+		}
+	}
+	if opts.CLIBin == "" {
+		return Status{}, CachedAsk
+	}
+	if _, err := exec.LookPath(opts.CLIBin); errors.Is(err, exec.ErrNotFound) {
+		return Status{}, CachedAbsent
+	}
+	return Status{}, CachedAsk
+}
 
 // Load returns clauth's current status, preferring StatusFile when it is
 // fresh -- generated_at + 2×refresh_interval_ms is after Now() -- and
@@ -294,10 +348,18 @@ func Load(ctx context.Context, opts LoadOpts) (Status, error) {
 // exec.ErrWaitDelay means clauth SUCCEEDED -- its doc is explicit that it is
 // returned only when "no Cancel call has occurred, and the command has
 // otherwise exited with a successful status" -- so the buffered stdout is
-// parsed rather than reported as a failure. The two budgets are not two
-// timers on one deadline: a run the deadline ended has had its Cancel
-// called, so it cannot come back as ErrWaitDelay, and the arms are mutually
-// exclusive by exec's own contract.
+// parsed rather than reported as a failure.
+//
+// The two arms are NOT mutually exclusive, which is why the order above is
+// load-bearing rather than tidy. An earlier version of this comment said
+// they were: that a run the deadline ended has had its Cancel called, so it
+// could not come back as ErrWaitDelay. linear.runKeyCmd measured the
+// opposite, deterministically -- cmd.Wait takes Process.Wait FIRST, so a
+// clauth that exits 0 just inside its budget records no Cancel, and only
+// then does the WaitDelay timer start, and that timer can expire after the
+// deadline has passed. Both are then true at once, with the payload in the
+// buffer. Read that comment for the sweep; the consequence here is the one
+// the FOUR ARMS paragraph above already states.
 func loadFromCLI(ctx context.Context, bin string) (Status, error) {
 	ctx, cancel := context.WithTimeout(ctx, cliTimeout)
 	defer cancel()

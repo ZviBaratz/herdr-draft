@@ -2,6 +2,7 @@ package linear
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -240,6 +241,94 @@ func TestResolveAPIKeyEmptyCmdOutputFallsThroughToEnv(t *testing.T) {
 	}
 	if key != "from-env" {
 		t.Errorf("ResolveAPIKey = %q, want %q", key, "from-env")
+	}
+}
+
+// Decision 3 (draw-first spec §8.2): an api_key_cmd that RAN and printed
+// nothing, with nothing to fall through to, is a failure with its own
+// reason -- where it used to return ("", nil) and be indistinguishable
+// from a user who had configured no key at all. The popup showed no issue
+// row and `create --issue` told them to set a key they had set.
+func TestResolveAPIKeyEmptyCmdOutputWithNoFallbackIsAnError(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	cmd := fakeAPIKeyCmd(t, "")
+	key, err := ResolveAPIKey(context.Background(), cmd, "", t.TempDir())
+	if err == nil {
+		t.Fatalf("ResolveAPIKey = %q, nil -- want the api_key_cmd-printed-nothing error", key)
+	}
+	if !errors.Is(err, ErrKeyCmdEmpty) {
+		t.Errorf("ResolveAPIKey error = %v, want one matching ErrKeyCmdEmpty", err)
+	}
+	if !strings.Contains(err.Error(), keyCmdPrefix) {
+		t.Errorf("ResolveAPIKey error = %v, want this package's own prefix so the app layer can strip it", err)
+	}
+}
+
+// And the other half of decision 3, which is the half it deliberately did
+// NOT change: the fall-through is kept, so a silent command with a key
+// behind it resolves that key and nothing is reported. The test above it
+// only fires when every source has had its turn.
+//
+// A literal, this time, rather than $LINEAR_API_KEY (which
+// TestResolveAPIKeyEmptyCmdOutputFallsThroughToEnv already covers): the
+// literal is the LAST source, so it is the one an over-eager error would
+// have shadowed.
+func TestResolveAPIKeyEmptyCmdOutputStillFallsThroughToTheLiteral(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	cmd := fakeAPIKeyCmd(t, "")
+	key, err := ResolveAPIKey(context.Background(), cmd, "from-literal", writeConfigWithPerm(t, 0o600))
+	if err != nil {
+		t.Fatalf("ResolveAPIKey: %v", err)
+	}
+	if key != "from-literal" {
+		t.Errorf("ResolveAPIKey = %q, want %q", key, "from-literal")
+	}
+}
+
+// A config.toml wider than 0600 still reports the PERMISSIONS problem, not
+// "printed nothing": the user has to fix the file before the inline key
+// can be read at all, where "printed nothing" is only the last source
+// having had nothing to say.
+func TestResolveAPIKeyEmptyCmdOutputKeepsThePermissionsError(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	cmd := fakeAPIKeyCmd(t, "")
+	_, err := ResolveAPIKey(context.Background(), cmd, "from-literal", writeConfigWithPerm(t, 0o644))
+	if err == nil {
+		t.Fatal("ResolveAPIKey: got nil error, want the permissions error")
+	}
+	if errors.Is(err, ErrKeyCmdEmpty) {
+		t.Errorf("ResolveAPIKey error = %v, want the permissions error rather than the empty-command one", err)
+	}
+}
+
+// KeySourceConfigured is what decides, before the popup draws anything,
+// whether there is an issue row at all (draw-first spec §3.1). It must
+// read the same three sources ResolveAPIKey does and run none of them --
+// including the trim on $LINEAR_API_KEY, which ResolveAPIKey applies and a
+// bare os.Getenv check would not.
+func TestKeySourceConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cmd     []string
+		env     string
+		literal string
+		want    bool
+	}{
+		{name: "nothing at all"},
+		{name: "a command", cmd: []string{"pass", "show", "linear"}, want: true},
+		{name: "an empty command slice", cmd: []string{}},
+		{name: "the environment", env: "lin_api_x", want: true},
+		{name: "the environment, whitespace only", env: "  \t "},
+		{name: "the environment, padded", env: "  lin_api_x ", want: true},
+		{name: "an inline key", literal: "lin_api_x", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("LINEAR_API_KEY", tc.env)
+			if got := KeySourceConfigured(tc.cmd, tc.literal); got != tc.want {
+				t.Fatalf("KeySourceConfigured(%v, %q) with $LINEAR_API_KEY=%q = %v, want %v",
+					tc.cmd, tc.literal, tc.env, got, tc.want)
+			}
+		})
 	}
 }
 

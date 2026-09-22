@@ -97,23 +97,49 @@ the repository's file.
 
 ### There is no `issue` row, or no `account` row
 
-Both are optional, and each appears only with its integration, checked once
-when the popup opens. `issue` needs a Linear API key (see
-[`[linear]`](configuration.md#linear)). `account` needs clauth with at least
-two profiles (see [Claude accounts](account-picker.md)). Without them the
-form has seven rows, which is by design.
+Both are optional, and each appears only with its integration, decided once
+when the popup opens. `issue` needs a Linear key *source* — an
+`api_key_cmd`, `LINEAR_API_KEY` or an inline `api_key` (see
+[`[linear]`](configuration.md#linear)); whether that source actually
+produces a key is decided afterwards, and only changes what the row says.
+`account` needs clauth on `PATH`, and either a status file reporting at
+least two profiles or one stale enough that clauth has to be asked (see
+[Claude accounts](account-picker.md)). Without them the form has seven
+rows, which is by design.
+
+A row the popup does draw never disappears, so the set you see in the first
+frame is the set you have for that popup.
+
+### The `issue` row says `loading…`, or its panel says it is waiting
+
+Nothing is wrong. The popup draws before your Linear key has resolved, so
+the panel reads `waiting for api_key_cmd…` while your credential helper
+runs — which may be waiting for *you* to approve a read — and then
+`fetching assigned issues…` while the list loads. If there is a cached list
+from a previous run, the row shows your selection and the list is pickable
+the whole time. `loading…` only means there is nothing to pick yet.
+
+The `account` row says `loading…` for the same kind of reason: clauth's
+status file was out of date, so `clauth status --json` is being run. That
+row is not a focus stop while it loads — there is nothing to retry, because
+the read is already out.
 
 ### The `issue` row says `unavailable`
 
-A key source is configured but failed: `api_key_cmd` exited with an error,
-is not on `PATH` or did not answer within sixty seconds, or `api_key` sits in
-a `config.toml` others can read. The reason is on the row and, in full, in
-its panel. See [`[linear]`](configuration.md#linear).
+A key source is configured but failed, and there is no cached list to fall
+back on: `api_key_cmd` exited with an error, is not on `PATH`, did not
+answer within sixty seconds, or exited 0 having printed nothing with no
+other source behind it; or `api_key` sits in a `config.toml` others can
+read. The reason is on the row and, in full, in its panel. With a cached
+list the row stays pickable instead and the reason goes on the panel. See
+[`[linear]`](configuration.md#linear).
 
 ### The `account` row says `unavailable`
 
-clauth is installed, but herdr-draft could not read it. Focus the row, with
-`⇥` or a click, to ask clauth again without closing the form. See
+Either clauth is installed and herdr-draft could not read it, or clauth
+answered with fewer than the two profiles this row exists to choose
+between. The panel says which. Focus the row, with `⇥` or a click, to ask
+clauth again without closing the form. See
 [The account row](account-picker.md#the-account-row).
 
 ### The `project` row says `check timed out`, or the title panel says `couldn't check`
@@ -182,13 +208,6 @@ These are known and understood. Please read them before filing a bug.
   can show, so this check stays even where herdr would have called the agent
   ready.
 
-- **The popup can open blank for a while.** Before it draws anything, it
-  resolves your Linear key, reads clauth's status when clauth's own status
-  file is out of date, and probes a configured account picker. While any of
-  those is waiting, the pane is empty: up to sixty seconds for an
-  `api_key_cmd` that is waiting for your approval, and up to thirty seconds
-  each for clauth and the picker.
-
 - **The popup is reachable only by a key binding or from the command line.**
   herdr does not yet let plugins add entries to its menus.
 
@@ -224,5 +243,5 @@ list and any saved prompt, and nothing else.
 | `recents.json` | project directories you have used recently, offered on the `project` row. Written after each successful create |
 | `last-used.json` | the agent kind, placement and worktree toggle from your last successful create anywhere |
 | `projects.json` | the same, plus the base, for each repository, keyed by its root so a linked worktree shares its repository's entry. Keeps the 50 most recently used |
-| `linear-cache.json` | the last Linear issue list, drawn at once while a fresh one loads |
+| `linear-cache.json` | the last Linear issue list, drawn at once while the key resolves and a fresh one loads, and kept pickable if either fails |
 | `unsent-prompt.txt` | the last prompt that could not be delivered, kept for pasting by hand. Replaced by the next one |

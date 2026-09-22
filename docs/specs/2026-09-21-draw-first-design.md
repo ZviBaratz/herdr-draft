@@ -2,10 +2,10 @@
 
 - **Date:** 2026-09-21
 - **Status:** approved by the owner 2026-09-21, one section at a time (§2
-  records the rulings). **Not implemented.** Implementation is a separate
-  decision, and #293 is unmilestoned on purpose. Until it lands, every
-  sentence below describes intended behaviour, and each amendment block this
-  document adds to an earlier spec says so.
+  records the rulings), and **implemented 2026-09-22**, which closed #293
+  and #292. Every sentence below now describes the code, and the amendment
+  blocks this document added to the earlier specs have lost their "approved,
+  not yet implemented" clause (ruling 14). §11 lists what moved with it.
 - **Issues:** #293, which closes with the implementation, and #292, which
   closes with it (decision 4).
 - **Amends:** v1 spec §6 (the static-precondition sentence, field 1 and

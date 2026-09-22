@@ -87,6 +87,13 @@ const fetchPruneTimeout = 30 * time.Second
 // and the rest were handed context.Background() -- so on a stalled mount
 // ⌃S waited silently and for good, with nothing on screen to say why.
 //
+// Since #293 it is also the budget the two ACCOUNT holds spend, which are
+// bounded by a timer carrying it rather than by awaitCheck: their answer
+// is already in flight as a message and there is no call to hand
+// awaitCheck (draw-first spec §7.1, ruling 15). One number, because a
+// person holding ⌃S is waiting for whichever of the five is slowest and
+// has no way to tell them apart.
+//
 // Five seconds. Every one of these is an os.Stat plus one or two `git
 // rev-parse` calls against the selected project: single-digit milliseconds
 // on a filesystem that is working, and seconds only on one that is not, so
@@ -1252,6 +1259,113 @@ type linearResultMsg struct {
 	err error
 }
 
+// linearKeyMsg carries the answer to the one api_key_cmd run a popup makes
+// (draw-first spec §5.1). Exactly one of src and err is set.
+//
+// UNVERSIONED, deliberately, and it is the only async source in this file
+// that is: there is one per popup, Bootstrap starts it, and a ⌃R⌃R rebuild
+// never starts another -- a second `op read` is a second approval prompt.
+// So it lands on whichever form is current, which is the behaviour a
+// version guard would have to be written to produce anyway.
+type linearKeyMsg struct {
+	src linearSource
+	err error
+}
+
+// resolveKeyCmd runs the Linear key resolve off the update loop, which is
+// what lets the form draw before it answers (#293).
+//
+// It runs on the popup's Lifetime, so `esc` during an approval kills the
+// `op read` rather than leaving it waiting for a popup that is gone.
+// An approval dialog another process put on screen may outlive it; closing
+// that is the helper's business, and Lifetime.Shutdown's grace is sized for
+// the kill (#211).
+//
+// resolve is a parameter rather than a method on Deps because it has one
+// production implementation (Bootstrap's closure over linear.ResolveAPIKey)
+// and one reason to be injectable: this file's own tests must not run a
+// subprocess.
+func resolveKeyCmd(lt *Lifetime, resolve func(context.Context) (string, error)) tea.Cmd {
+	return func() tea.Msg {
+		ctx, done := lt.Begin()
+		defer done()
+		key, err := resolve(ctx)
+		switch {
+		case err != nil:
+			return linearKeyMsg{err: err}
+		case key == "":
+			// Unreachable through linear.ResolveAPIKey with an api_key_cmd
+			// configured, which is the only way this command is scheduled:
+			// a command that prints nothing with nothing behind it now
+			// returns ErrKeyCmdEmpty rather than ("", nil) (draw-first spec
+			// §8.2). Answered rather than assumed away, because a resolver
+			// is injectable and silently leaving a live row with no source
+			// behind it would be the kind of quiet nothing #292 is about.
+			return linearKeyMsg{err: linear.ErrKeyCmdEmpty}
+		}
+		return linearKeyMsg{src: &linear.Client{APIKey: key}}
+	}
+}
+
+// handleLinearKey applies the key's answer to the issue row (draw-first
+// spec §5.1). A submit never waits for any of this: the issue row is
+// optional, and a pick from the cache is already a complete choice.
+//
+// The two outcomes differ in what they leave pickable, and that is #292.
+// A key that failed used to take the whole row away; it now does so only
+// when there is nothing behind it, and otherwise puts its reason exactly
+// where a failed REFRESH's already goes -- the same situation, a cached
+// list that could not be refreshed.
+//
+// Every write goes through the Model's own mirrors first, for
+// recoverAccountRow's reason: a ⌃R⌃R rebuilds the row from them, so a state
+// written only into the field would be replaced by the open-time one on the
+// first clear.
+func (m Model) handleLinearKey(msg linearKeyMsg) (Model, tea.Cmd) {
+	m.linearResolving = false
+	if m.issue == nil {
+		// Only reachable by constructing a Model by hand: Bootstrap
+		// schedules this exactly when LinearResolving is set, which is what
+		// New builds the row from.
+		return m, nil
+	}
+	if msg.err != nil {
+		reason := linearUnavailableReason(msg.err)
+		m.linearUnavailable = reason
+		m.issue.SetPhase("")
+		if len(m.linearIssues) > 0 {
+			m.issue.SetRefreshError(reason)
+		} else {
+			m.issue.SetUnavailable(reason)
+		}
+		return m, nil
+	}
+	m.deps.Linear = msg.src
+	m.issue.SetPhase(form.IssuePhaseFetching)
+	return m, m.refreshLinearCmd()
+}
+
+// accountWaitMsg is the account holds' one timer firing (draw-first spec
+// §7.1). version is reqs.accountWait as it stood when the hold armed it, so
+// a timer from a submit that has since been released -- or from a form a
+// ⌃R⌃R discarded -- cannot release a later hold.
+type accountWaitMsg struct{ version int }
+
+// handleAccountWait spends the account holds' budget: the submit stops
+// waiting for an account, and goes on waiting for any of #202's checks that
+// is still out.
+//
+// What happens next is the holding step's own business and differs between
+// the two, which is why this only re-enters: the clauth hold proceeds
+// without #243's check (§7.2) and the probe hold refuses (§7.3).
+func (m Model) handleAccountWait(msg accountWaitMsg) (Model, tea.Cmd) {
+	if msg.version != m.reqs.accountWait || !m.submitHeld || m.accountHeld == accountHoldNone {
+		return m, nil
+	}
+	m.accountWaitExpired = true
+	return m.resumeAccountHold()
+}
+
 // refreshLinearCmd fetches the viewer's assigned issues over the network
 // (spec §10) -- the async half of "render cache first, then async
 // refresh"; the cache-render half happens synchronously in New, before the
@@ -1298,6 +1412,11 @@ func (m Model) handleLinearResult(msg linearResultMsg) (Model, tea.Cmd) {
 	if m.issue == nil {
 		return m, nil
 	}
+	// Either outcome ends the fetch, so either clears the phase (draw-first
+	// spec §6): the two are never set together, which is what lets the
+	// panel's precedence put the phase above a reason without ever having
+	// to choose between them.
+	m.issue.SetPhase("")
 	if msg.err != nil {
 		m.issue.SetRefreshError(linearRefreshReason(msg.err))
 		return m, nil
@@ -1327,6 +1446,12 @@ type pickerPreviewMsg struct {
 	req request
 	res picker.Result
 	err error
+	// probed says this call carried Options.Probe, so its answer is also a
+	// verdict about the EXECUTABLE (draw-first spec §5.4). Carried on the
+	// message rather than re-read off the Model when it lands, because by
+	// then the flag it was read from may already have been cleared by
+	// another answer.
+	probed bool
 }
 
 // schedulePickerPreview debounces a preview call for path, and puts the row
@@ -1372,6 +1497,12 @@ func (m Model) runPickerPreview(req request) tea.Cmd {
 	}
 	path := pathx.ExpandTilde(req.key)
 	lt := m.deps.Lifetime
+	// The probe rides on the preview while the verdict is still out
+	// (draw-first spec §3.3). They are the same invocation -- one
+	// `--json --dry-run` against the same directory -- so running a
+	// separate probe would be a second subprocess for an answer this one
+	// already carries.
+	probe := m.pickerProbePending
 	return func() tea.Msg {
 		// On the app's own context like the commit pick below, though a
 		// preview writes no ledger and so leaves nothing behind: a picker
@@ -1379,13 +1510,39 @@ func (m Model) runPickerPreview(req request) tea.Cmd {
 		// to leave one running for a form that is gone (#211).
 		ctx, done := lt.Begin()
 		defer done()
-		res, err := src.Pick(ctx, path, picker.Options{DryRun: true})
-		return pickerPreviewMsg{req: req, res: res, err: err}
+		res, err := src.Pick(ctx, path, picker.Options{DryRun: true, Probe: probe})
+		return pickerPreviewMsg{req: req, res: res, err: err, probed: probe}
 	}
 }
 
-// handlePickerPreview applies a CURRENT preview to the account row.
+// handlePickerPreview applies a CURRENT preview to the account row -- and,
+// while one is still owed, the probe's verdict about the executable
+// (draw-first spec §5.4).
+//
+// THE VERDICT DECIDES AHEAD OF BOTH GUARDS BELOW: whatever version the
+// answer carries, and whether or not a submit is out on a round trip. It is
+// about the EXECUTABLE, not about the directory or the moment, so neither
+// guard may discard it -- and a dropped verdict would leave
+// pickerProbePending set for the rest of the popup, refusing every `auto`
+// submit (§7.3). The versioned half, applying the answer as a preview,
+// keeps both.
 func (m Model) handlePickerPreview(msg pickerPreviewMsg) (Model, tea.Cmd) {
+	if msg.probed && m.pickerProbePending {
+		var failed *picker.ProbeError
+		m, failed = m.applyProbeVerdict(msg.err)
+		if m.submitHeld && m.accountHeld == accountHoldProbe {
+			// A submit is waiting on exactly this answer, and the form is
+			// frozen for it -- so the preview half does not also run.
+			if failed != nil {
+				// §7.3: removing `auto` would otherwise release the hold
+				// and launch the submit unpinned under whatever account is
+				// live, which is what handlePickerCommit exists to
+				// prevent.
+				return m.refuseAccountHold(m.pickerUnavailable)
+			}
+			return m.resumeAccountHold()
+		}
+	}
 	if msg.req.version != m.reqs.picker || m.account == nil {
 		return m, nil
 	}
@@ -1398,6 +1555,40 @@ func (m Model) handlePickerPreview(msg pickerPreviewMsg) (Model, tea.Cmd) {
 	}
 	m.account.SetPickerPreview(previewFrom(msg.res, msg.err))
 	return m, nil
+}
+
+// applyProbeVerdict records the probe's answer about the executable and
+// reports the failure when there was one (draw-first spec §5.4).
+//
+// PASS is anything but a *picker.ProbeError. Pick's other plain errors --
+// exit 0 with no profile, a payload that does not decode -- are about this
+// call rather than about the executable, and reach the row as any preview's
+// reason does.
+//
+// A FAIL is permanent for the life of the popup: the reason is recorded on
+// the Model (so a ⌃R⌃R rebuild keeps it), Deps.Picker is dropped, and the
+// auto row goes away. The notes are rebuilt only for a row that is already
+// live, because only a live row draws any; a loading or unavailable row
+// gets them when it goes live, through populateAccountRow.
+//
+// The row then reads exactly what a failed probe produced before #293 --
+// no auto row, the reason as its first note -- arrived at after the first
+// frame instead of before it.
+func (m Model) applyProbeVerdict(err error) (Model, *picker.ProbeError) {
+	m.pickerProbePending = false
+	var pe *picker.ProbeError
+	if !errors.As(err, &pe) {
+		return m, nil
+	}
+	m.pickerUnavailable = flattenReason(pe.Error())
+	m.deps.Picker = nil
+	if m.account != nil {
+		m.account.SetPickerAvailable(false)
+		if m.clauthUnavailable == "" && !m.clauthLoading {
+			m.setAccountNotes()
+		}
+	}
+	return m, pe
 }
 
 // previewFrom reduces a picker answer to the plain values the form needs.
@@ -1576,11 +1767,18 @@ type clauthResultMsg struct {
 }
 
 // reloadClauthCmd re-loads clauth's status feed -- spec §8 reads clauth
-// "form-open + on account focus". The open-time load happens
-// synchronously in Bootstrap/New (it gates whether AccountField is even
-// constructed, a static precondition that must be known before the form
-// renders); this is the focus-triggered reload (see reactToChanges' own
-// FocusedID diff).
+// "form-open + on account focus".
+//
+// Since #293 it serves BOTH. The form-open read is split: Bootstrap reads
+// clauth's status file before the first frame (clauth.Peek), and when that
+// cannot answer New schedules this from Init and the row says `loading…`
+// meanwhile (draw-first spec §3.2, §5.3). The focus-triggered reload is
+// the same call from reactToChanges' FocusedID diff, which skips it while
+// the row is loading -- the read is already out.
+//
+// It runs on the popup's Lifetime, as every shell-out from a tea.Cmd in
+// this package does: quitting the popup ends the `clauth status --json`
+// with it rather than leaving it to answer a form that is gone (#211).
 //
 // Returns nil when m.deps.Clauth is nil -- defense in depth alongside
 // New's own Deps.Clauth != nil gate on constructing AccountField at all
@@ -1596,8 +1794,11 @@ func (m *Model) reloadClauthCmd() tea.Cmd {
 	}
 	m.reqs.clauth++
 	v := m.reqs.clauth
+	lt := m.deps.Lifetime
 	return func() tea.Msg {
-		st, err := src.Status(context.Background())
+		ctx, done := lt.Begin()
+		defer done()
+		st, err := src.Status(ctx)
 		if err != nil {
 			return clauthResultMsg{version: v, err: err}
 		}
@@ -1627,8 +1828,19 @@ func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
 	if msg.version != m.reqs.clauth || m.account == nil {
 		return m, nil
 	}
-	if m.clauthUnavailable != "" {
-		return m.recoverAccountRow(msg), nil
+	// A LOADING row takes the same path an unavailable one does (draw-first
+	// spec §5.3): both are rows with no profile list, waiting to be told
+	// what they are, and recoverAccountRow's three outcomes are exactly the
+	// three answers either can get.
+	if m.clauthLoading || m.clauthUnavailable != "" {
+		m = m.recoverAccountRow(msg)
+		if m.submitHeld && m.accountHeld == accountHoldClauth {
+			// The submit this answer released goes on from the top, so the
+			// validation it waited for -- #243's dead-credential check --
+			// runs on the profiles that just landed (§7.1).
+			return m.resumeAccountHold()
+		}
+		return m, nil
 	}
 	if msg.err != nil {
 		return m, nil
@@ -1638,9 +1850,14 @@ func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// recoverAccountRow applies a reload to a row that is currently
-// unavailable: clauth was installed and broken when the popup opened, the
-// row said so, and focusing it (spec §8) has just asked clauth again.
+// recoverAccountRow applies an answer to a row that has no profile list:
+// one that is LOADING, because clauth's status file was stale and Init
+// asked the CLI (#293), or one that is UNAVAILABLE, because clauth was
+// installed and broken and focusing the row (spec §8) asked it again.
+//
+// The two are one function because they are one situation -- a row waiting
+// to be told what it is -- and because its three outcomes are exactly the
+// three answers either can get.
 //
 // Until #200 the answer went nowhere. handleClauthResult loaded the
 // profiles and nothing cleared the state, so the row kept reading
@@ -1665,6 +1882,12 @@ func (m Model) handleClauthResult(msg clauthResultMsg) (Model, tea.Cmd) {
 // m.clauthStatus is the other half of that -- New's live-row gate is
 // `>= 2 profiles`.
 func (m Model) recoverAccountRow(msg clauthResultMsg) Model {
+	// The wait is over on every outcome, and the mirror is cleared before
+	// the field for the reason the rest of this function writes both: a
+	// ⌃R⌃R rebuilds the row from the mirror, and one left set would put
+	// `loading…` back over an answer that has already landed.
+	m.clauthLoading = false
+	m.account.SetLoading(false)
 	switch {
 	case msg.err != nil:
 		m.clauthUnavailable = clauthUnavailableReason(msg.err)
@@ -2422,8 +2645,10 @@ func (gitxSource) FetchPrune(ctx context.Context, dir string) error {
 // --- production clauthSource: internal/clauth ------------------------------
 
 // clauthLoader implements clauthSource over the real internal/clauth
-// package (clauth.Load: prefers a fresh on-disk status file, falls back to
-// invoking the clauth CLI -- see clauth.Load's own doc comment).
+// package: Peek is the status file and a PATH check, Status is
+// clauth.Load's full "fresh file, else the CLI" (see their own doc
+// comments). The two halves are separate methods because #293 runs them at
+// different moments -- the file before the first frame, the CLI after it.
 type clauthLoader struct{ opts clauth.LoadOpts }
 
 // NewClauthSource returns the production clauthSource main.go wires into
@@ -2432,6 +2657,14 @@ func NewClauthSource(opts clauth.LoadOpts) clauthSource { return clauthLoader{op
 
 func (l clauthLoader) Status(ctx context.Context) (clauth.Status, error) {
 	return clauth.Load(ctx, l.opts)
+}
+
+// Peek is Load's fast half, and runs no subprocess -- see clauth.Peek. It
+// is what Bootstrap reads before the first frame (draw-first spec §3.2);
+// Status above is the CLI half, now reached only from Init and from the
+// focus reload.
+func (l clauthLoader) Peek() (clauth.Status, clauth.Cached) {
+	return clauth.Peek(l.opts)
 }
 
 // withOptions appends the session options the agent is launched with to a

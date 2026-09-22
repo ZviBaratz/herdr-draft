@@ -441,3 +441,97 @@ func TestLoadCLIFailurePropagatesError(t *testing.T) {
 		t.Errorf("error %q does not contain stderr content", err.Error())
 	}
 }
+
+// --- Peek: Load's fast half (draw-first spec §3.2) -------------------------
+
+// Peek's three answers, and the one property they all share: NOTHING IS
+// EXECUTED. app.Bootstrap calls it before the popup's first frame, which
+// is the whole reason it exists, so a Peek that shelled out would put the
+// wait straight back where #293 took it from.
+//
+// The bin every case points at is a script that fails loudly if it runs,
+// and PATH is set to its directory with t.Setenv so the LookPath half is
+// answered by a real lookup rather than by an absolute path that never
+// consults PATH at all.
+func TestPeek(t *testing.T) {
+	// generated_at is 2026-08-31T20:54:37Z and refresh_interval_ms 90000,
+	// so the file is fresh until 20:57:37Z -- the same two instants
+	// TestLoadPrefersFreshStatusFile and its sibling pick.
+	fresh := time.Date(2026, 8, 31, 20, 57, 0, 0, time.UTC)
+	stale := time.Date(2026, 8, 31, 21, 30, 0, 0, time.UTC)
+
+	statusFile := filepath.Join(t.TempDir(), "status.json")
+	if err := os.WriteFile(statusFile, fixtureBytes(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	onPath := fakeClauthFail(t, "Peek must never run clauth")
+	t.Setenv("PATH", filepath.Dir(onPath))
+
+	t.Run("a fresh status file answers", func(t *testing.T) {
+		st, cached := Peek(LoadOpts{StatusFile: statusFile, CLIBin: filepath.Base(onPath), Now: func() time.Time { return fresh }})
+		if cached != CachedFresh {
+			t.Fatalf("Peek = %v, want CachedFresh", cached)
+		}
+		if st.ActiveProfile != "alpha" {
+			t.Errorf("ActiveProfile = %q, want alpha (from the status file)", st.ActiveProfile)
+		}
+	})
+
+	t.Run("a stale file with clauth on PATH asks the CLI", func(t *testing.T) {
+		st, cached := Peek(LoadOpts{StatusFile: statusFile, CLIBin: filepath.Base(onPath), Now: func() time.Time { return stale }})
+		if cached != CachedAsk {
+			t.Fatalf("Peek = %v, want CachedAsk", cached)
+		}
+		if len(st.Profiles) != 0 {
+			t.Errorf("Peek returned %d profiles with no answer yet, want none", len(st.Profiles))
+		}
+	})
+
+	t.Run("a stale file with no clauth on PATH is absent", func(t *testing.T) {
+		_, cached := Peek(LoadOpts{StatusFile: statusFile, CLIBin: "definitely-not-a-real-clauth", Now: func() time.Time { return stale }})
+		if cached != CachedAbsent {
+			t.Fatalf("Peek = %v, want CachedAbsent", cached)
+		}
+	})
+
+	t.Run("no status file at all and no clauth is absent", func(t *testing.T) {
+		_, cached := Peek(LoadOpts{CLIBin: "definitely-not-a-real-clauth", Now: func() time.Time { return stale }})
+		if cached != CachedAbsent {
+			t.Fatalf("Peek = %v, want CachedAbsent", cached)
+		}
+	})
+
+	// An empty CLIBin is a shape only tests build, and it answers "ask":
+	// Load's own "no CLI binary configured" error then reaches the row, as
+	// it did before #293. Answering CachedAbsent here would silently hide
+	// that error instead.
+	t.Run("an empty CLIBin asks", func(t *testing.T) {
+		_, cached := Peek(LoadOpts{StatusFile: statusFile, Now: func() time.Time { return stale }})
+		if cached != CachedAsk {
+			t.Fatalf("Peek = %v, want CachedAsk", cached)
+		}
+	})
+}
+
+// The PATH check classifies exactly as the CLI run it replaces did: not
+// found means no row, and ANY OTHER LookPath error means the row, whose
+// CLI run then fails with that error on it (ruling 6).
+//
+// A CLIBin naming a PATH is where the two answers separate, because
+// LookPath checks that one file rather than searching: a file that is
+// there and not executable reports a permission error, which is not
+// ErrNotFound. Worth pinning because it is the arm a `return
+// CachedAbsent` on any error at all would swallow -- turning "your clauth
+// is not executable" into the silence a user with no clauth gets.
+func TestPeekAsksWhenClauthIsThereButNotExecutable(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "clauth")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, cached := Peek(LoadOpts{CLIBin: bin, Now: time.Now})
+	if cached != CachedAsk {
+		t.Fatalf("Peek = %v for a clauth that is there and not executable, want CachedAsk -- the row says why", cached)
+	}
+}

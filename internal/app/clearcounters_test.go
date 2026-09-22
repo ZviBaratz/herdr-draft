@@ -376,7 +376,7 @@ func TestClear_EveryCounterStartsPastTheDiscardedForms(t *testing.T) {
 	// Every source driven at least once, so no counter is compared at zero
 	// -- where "carried" and "restarted" look the same.
 	m = typeProjectPath(t, m, "~/Projects/")
-	m.reqs = reqVersions{dir: 7, title: 8, base: 9, baseSettle: 10, browse: 11, picker: 12, clauth: 13}
+	m.reqs = reqVersions{dir: 7, title: 8, base: 9, baseSettle: 10, browse: 11, picker: 12, clauth: 13, accountWait: 14}
 	before := m.reqs
 
 	fresh, _ := m.handleClearRequested()
@@ -401,6 +401,7 @@ func TestClear_EveryCounterStartsPastTheDiscardedForms(t *testing.T) {
 		{"browse", before.browse, fresh.reqs.browse},
 		{"picker", before.picker, fresh.reqs.picker},
 		{"clauth", before.clauth, fresh.reqs.clauth},
+		{"accountWait", before.accountWait, fresh.reqs.accountWait},
 	} {
 		if c.now <= c.was {
 			t.Errorf("%s: the rebuilt form starts at %d, which the discarded form's requests can still carry (it reached %d)",

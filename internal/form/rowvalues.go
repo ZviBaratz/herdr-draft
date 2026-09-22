@@ -32,6 +32,17 @@ import (
 // name one for. One spelling, in one place, for the same idea.
 const rowValueNone = "—"
 
+// rowLoadingLabel is v2 spec §6.1's Loading row -- "The row reads
+// `loading…` in dim" -- which that document specified and nothing
+// implemented until #293 drew the form before its slow reads had answered.
+//
+// One spelling, here, because two rows now take it: the issue row while a
+// key resolves or a first fetch is out with no cache to show meanwhile,
+// and the account row while clauth's CLI is being asked (draw-first spec
+// §6). Both draw it only when there is nothing to pick -- a row with a
+// value shows the value and puts the phase on the panel.
+const rowLoadingLabel = "loading…"
+
 // unavailableReasonSep joins a state word to the reason for it:
 // `unavailable  no API key`, `remove unavailable  uncommitted changes`.
 // Two spaces, no dash -- v2 spec §6's table and §6.1's worked example

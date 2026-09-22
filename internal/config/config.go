@@ -76,8 +76,10 @@ type ClauthConfig struct {
 	// finding a program with the expected name is not the same as finding the
 	// program that was meant, and a plugin that silently adopted a same-named
 	// stranger to route account credentials through would be worse than a
-	// plugin with no picker at all. Even a named one is probed once before it
-	// is trusted (app.Bootstrap).
+	// plugin with no picker at all. Even a named one is probed once before
+	// anything is pinned through it -- on the popup's opening `--dry-run`
+	// preview, which carries the check (picker.Options.Probe), and never in
+	// `create`, which does not probe at all.
 	Picker string `toml:"picker"`
 
 	// Launch selects how a pinned account is launched: ClauthLaunchStart (the

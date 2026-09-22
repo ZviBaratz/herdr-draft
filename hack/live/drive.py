@@ -77,6 +77,21 @@ cat <<'JSON'
 JSON
 """
 
+# --slow-startup's two stubs, for #293's state: the popup draws before the
+# Linear key resolves and before clauth answers, and the rows say so. Both
+# waits are over in microseconds with the ordinary stubs, so the screen the
+# change is about cannot be read without making them take a moment.
+#
+# The key command EXECS its sleep, so the process app.Lifetime cancels at
+# `esc` is the sleep itself rather than a shell whose child outlives it.
+# It prints NOTHING and exits 0, which is deliberate twice over: nothing
+# here ever holds a Linear key (the stub's own key is in the environment
+# and is what the fall-through then finds), and with no stub at all the
+# run lands on decision 3's `api_key_cmd printed nothing` instead.
+SLOW_KEY = """#!/bin/sh
+exec sleep %s
+"""
+
 sys.path.insert(0, HERE)
 from stub_linear import STUB_LINEAR_KEY  # noqa: E402 -- the one fake key, defined once
 
@@ -138,7 +153,8 @@ def refuse_real_linear(args, config):
         if any(k.casefold() == "api_key_cmd" for table in tables for k in table):
             raise SystemExit(
                 "drive.py: %s sets [linear] api_key_cmd, which internal/linear prefers to any other key --\n"
-                "           with the stub on it would send whatever that command prints to a loopback port.\n"
+                "           with the stub on it would send whatever that command prints to a loopback port,\n"
+                "           and without it, to the real Linear.\n"
                 "           Drop it from the config you pass here." % args.config)
         if args.linear_port is None and any(k.casefold() == "api_key" for table in tables for k in table):
             raise SystemExit(
@@ -449,7 +465,7 @@ def write_exec(path, body):
     os.chmod(path, 0o755)
 
 
-def build_tree(root, fresh, keep_state, config, herdr_stub):
+def build_tree(root, fresh, keep_state, config, herdr_stub, slow=None):
     """Make the scratch tree: a HOME with nothing in it, the two stubs, the
     plugin's config and state directories, and a throwaway git repo.
 
@@ -491,7 +507,13 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
         with open(herdr_stub) as f:
             stub = f.read()
     write_exec(os.path.join(root, "bin", "herdr"), stub)
-    write_exec(os.path.join(root, "bin", "clauth"), STUB_CLAUTH)
+    clauth_stub = STUB_CLAUTH
+    if slow is not None:
+        # clauth cannot exec its sleep: it has to print afterwards. Nothing
+        # asserts what kills THIS one, so the shell is fine here.
+        clauth_stub = clauth_stub.replace("#!/bin/sh\n", "#!/bin/sh\nsleep %s\n" % slow, 1)
+        write_exec(os.path.join(root, "bin", "slow-key"), SLOW_KEY % slow)
+    write_exec(os.path.join(root, "bin", "clauth"), clauth_stub)
     if not ours:
         with open(marker, "w") as f:
             f.write("made by hack/live/drive.py\n")
@@ -503,7 +525,16 @@ def build_tree(root, fresh, keep_state, config, herdr_stub):
     # it. A driver whose output depends on what you ran last is the thing
     # the state wipe exists to prevent, and the config is the same hazard.
     dest = os.path.join(root, "cfg", "config.toml")
-    if config is not None:
+    if slow is not None:
+        # The driver's OWN config, not anyone's file, which is why it may
+        # set the one key refuse_real_linear refuses from --config: the
+        # command it names is SLOW_KEY above, three lines up the page,
+        # and prints nothing. --slow-startup and --config are mutually
+        # exclusive precisely so there is never a merge to reason about.
+        with open(dest, "w") as f:
+            f.write('[linear]\napi_key_cmd = ["%s"]\n' % os.path.join(root, "bin", "slow-key"))
+        os.chmod(dest, 0o600)
+    elif config is not None:
         # The bytes main() read, and refuse_real_linear checked -- never
         # the path again. Written, then chmod 0600:
         # internal/linear refuses an inline api_key in a file readable by
@@ -723,6 +754,10 @@ def main(argv):
     p.add_argument("--herdr", metavar="FILE",
                    help="install FILE as the stub herdr instead of the built-in one -- which is how you "
                         "answer more subcommands, and how you reproduce the envelope failure the README describes")
+    p.add_argument("--slow-startup", type=float, default=None, metavar="SECONDS",
+                   help="#293: make api_key_cmd and `clauth status --json` each take SECONDS, "
+                        "so the popup's loading rows stay on screen long enough to read. "
+                        "Writes its own config.toml, so it cannot be combined with --config")
     p.add_argument("--fresh", action="store_true", help="delete the whole scratch tree first")
     p.add_argument("--keep-state", action="store_true",
                    help="keep the plugin state dir, so last-used and per-project memory carry over between runs")
@@ -737,6 +772,14 @@ def main(argv):
     args.binary_given = args.binary is not None
     if not args.binary_given:
         args.binary = os.path.join(REPO, "bin", "herdr-draft")
+    if args.slow_startup is not None:
+        if args.config:
+            raise SystemExit(
+                "drive.py: --slow-startup writes its own config.toml (a [linear] api_key_cmd naming\n"
+                "           its own sleep script), so it cannot be combined with --config. Run them\n"
+                "           separately, or add the delay to the command your config already names.")
+        if args.slow_startup <= 0:
+            raise SystemExit("drive.py: --slow-startup wants a positive number of seconds")
     config = None
     if args.config:
         try:
@@ -757,7 +800,8 @@ def main(argv):
         raise SystemExit("drive.py: no binary at %s -- run `just build`" % args.binary)
 
     lock = hold_root(args.root)  # noqa: F841 -- held for this process's life
-    home, state, repo = build_tree(args.root, args.fresh, args.keep_state, config, args.herdr)
+    home, state, repo = build_tree(args.root, args.fresh, args.keep_state, config, args.herdr,
+                                   slow=args.slow_startup)
     if args.repo:
         repo = os.path.abspath(args.repo)
     args.repo = repo

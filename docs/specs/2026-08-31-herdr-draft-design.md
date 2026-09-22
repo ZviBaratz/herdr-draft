@@ -187,14 +187,14 @@ Atrium:
   whose precondition is static at startup (Linear unconfigured, fewer than two
   clauth profiles) are simply not rendered.
 
-  > **Amended, draw-first spec §3.2 and §4.2 (#293, 2026-09-21; approved,
-  > not yet implemented).** Linear's precondition stays static: whether a key
-  > source is configured is known before the draw. clauth's is static only
-  > when its status file is fresh. Otherwise, with clauth on `PATH`, the row
-  > is drawn reading `loading…` and the CLI is asked after the draw, and an
-  > answer of fewer than two profiles leaves the row in place with a reason
-  > rather than removing it. The row set is still fixed before the first
-  > frame, so no field vanishes from under the user.
+  > **Amended, draw-first spec §3.2 and §4.2 (#293, 2026-09-21).** Linear's
+  > precondition stays static: whether a key source is configured is known
+  > before the draw. clauth's is static only when its status file is fresh.
+  > Otherwise, with clauth on `PATH`, the row is drawn reading `loading…` and
+  > the CLI is asked after the draw, and an answer of fewer than two profiles
+  > leaves the row in place with a reason rather than removing it. The row set
+  > is still fixed before the first frame, so no field vanishes from under the
+  > user.
 
 ### Field order and behavior
 
@@ -206,10 +206,9 @@ Atrium:
    **touched-vs-preselected** rule: programmatic seeds never mark a field
    touched; the first user edit does, and later seeding stops clobbering it.
 
-   > **Amended, draw-first spec §3.1 (#293, 2026-09-21; approved, not yet
-   > implemented).** "Configured" means a key source is set, not that a key
-   > resolved. The row is drawn while `api_key_cmd` runs, with the cached
-   > list already pickable.
+   > **Amended, draw-first spec §3.1 (#293, 2026-09-21).** "Configured" means
+   > a key source is set, not that a key resolved. The row is drawn while
+   > `api_key_cmd` runs, with the cached list already pickable.
 
 2. **Project** — Atrium's dual-mode directory picker: fragment = fuzzy filter
    over candidates; `/`, `~`, `.` prefix = filesystem browsing with a
@@ -245,9 +244,9 @@ Atrium:
    selectable but visibly marked; the exhausted-confirm modal is deferred to
    future work (§16).
 
-   > **Amended, draw-first spec §3.2 (#293, 2026-09-21; approved, not yet
-   > implemented).** "Static" only when clauth's status file is fresh. See
-   > the amendment beside this section's static-precondition sentence.
+   > **Amended, draw-first spec §3.2 (#293, 2026-09-21).** "Static" only when
+   > clauth's status file is fresh. See the amendment beside this section's
+   > static-precondition sentence.
 
 8. **Prompt** — optional textarea (4 rows preferred, 1 floor). Placeholder
    ladder: `Optional — sent to the agent once it starts (Enter or Tab to
@@ -296,13 +295,12 @@ All request/response pairs carry keys (filter version, `(title,path)`,
 render loop; every remote fetch has a visible `searching…` / `couldn't
 list` header state in its widget.
 
-> **Amended, draw-first spec §3 and §5 (#293, 2026-09-21; approved, not yet
-> implemented).** Two rows change. clauth's form-open read is split: the
-> status file is read before the form is drawn, and `clauth status --json`
-> runs after the draw, only when the file is stale. Linear's key is resolved
-> after the draw too, when it comes from `api_key_cmd`. Without this design,
-> both run before the first frame, and the popup pane stays blank while they
-> wait.
+> **Amended, draw-first spec §3 and §5 (#293, 2026-09-21).** Two rows change.
+> clauth's form-open read is split: the status file is read before the form is
+> drawn, and `clauth status --json` runs after the draw, only when the file is
+> stale. Linear's key is resolved after the draw too, when it comes from
+> `api_key_cmd`. Before it, both ran before the first frame, and the popup
+> pane stayed blank while they waited.
 
 ## 9. Submit pipeline
 
@@ -353,12 +351,11 @@ only if config demands it (default: optional).
 > The commit-time pick runs *after* the last refusal on both paths — by
 > design in both — so the picker's answer is not auth-checked.
 
-> **Amended, draw-first spec §7 (#293, 2026-09-21; approved, not yet
-> implemented).** A submit made while clauth is still being read after the
-> draw waits up to the popup's 5s check budget. If the read has still not
-> answered, the create goes ahead without this check, since there is no
-> status to check against, and the account comes from config alone (that
-> spec's §7.2).
+> **Amended, draw-first spec §7 (#293, 2026-09-21).** A submit made while
+> clauth is still being read after the draw waits up to the popup's 5s check
+> budget. If the read has still not answered, the create goes ahead without
+> this check, since there is no status to check against, and the account comes
+> from config alone (that spec's §7.2).
 
 Staged creation, with per-step progress lines rendered in the popup
 (`creating worktree… ✓` / `starting claude… ✗ <error>`):
@@ -430,11 +427,11 @@ it.)
   `pass show linear`), `LINEAR_API_KEY` env, `api_key` config value. Absent →
   the Linear field is not rendered; everything else works.
 
-  > **Amended, draw-first spec §8.2 (#293, 2026-09-21; approved, not yet
-  > implemented).** An `api_key_cmd` that exits 0 and prints nothing still
-  > falls through to the other two sources. When neither supplies a key it is
-  > a failure with a reason, `api_key_cmd printed nothing`, rather than an
-  > absent key. Absent now means that no source is configured at all.
+  > **Amended, draw-first spec §8.2 (#293, 2026-09-21).** An `api_key_cmd`
+  > that exits 0 and prints nothing still falls through to the other two
+  > sources. When neither supplies a key it is a failure with a reason,
+  > `api_key_cmd printed nothing`, rather than an absent key. Absent now means
+  > that no source is configured at all.
 - **Query** (single request, form-open):
 
   ```graphql
@@ -450,10 +447,9 @@ it.)
 - **Cache**: last response in state dir, rendered instantly at form-open with
   an async refresh (TTL ~5 min); filtering is client-side.
 
-  > **Amended, draw-first spec §4.2 (#293, 2026-09-21; approved, not yet
-  > implemented).** The cache is loaded whenever a key source is configured,
-  > and it stays pickable while the key resolves and after the key fails
-  > (#292).
+  > **Amended, draw-first spec §4.2 (#293, 2026-09-21).** The cache is loaded
+  > whenever a key source is configured, and it stays pickable while the key
+  > resolves and after the key fails (#292).
 - **Seeding template** (config-overridable), default:
 
   ```
@@ -565,10 +561,10 @@ silently.
 - Linear/clauth/network failures degrade the respective field to inert with a
   reason; they never block manual-mode creation.
 
-  > **Amended, draw-first spec §4.2 (#293, 2026-09-21; approved, not yet
-  > implemented).** A key failure with a cached list on screen degrades to
-  > that list, still pickable, with the reason as its note, as a failed
-  > refresh already did. Only a failure with nothing to pick is inert.
+  > **Amended, draw-first spec §4.2 (#293, 2026-09-21).** A key failure with a
+  > cached list on screen degrades to that list, still pickable, with the
+  > reason as its note, as a failed refresh already did. Only a failure with
+  > nothing to pick is inert.
 - The submit pipeline is the only place with side effects; everything before
   it is read-only.
 

@@ -142,16 +142,20 @@ called. If you see it, compare your picker's flags with the invocation above.
 
 **Every call gets 30 seconds.** A picker that has not answered by then is
 abandoned and reported as a malfunction, never as a refusal. The limit is
-generous because a picker may need several network round trips, and it
-exists so that a picker that hangs cannot stop the popup opening.
+generous because a picker may need several network round trips. Nothing it
+bounds now runs before the popup is drawn, but `create` still waits on the
+real pick with nothing on screen.
 
 ### What herdr-draft does with it
 
 - **When the popup opens**, once: `--json --dry-run` against the current
-  project. Only the answer's **shape** is checked (the six required keys,
-  and one of the documented exit codes), never the answer itself: a picker
-  whose pool is exhausted today is still a working picker. If the check
-  fails, the `account` row says so and has no `auto` entry.
+  project. That one call does two jobs. It is the preview below, *and* it
+  is the check on the executable: only the answer's **shape** is checked
+  (the six required keys, and one of the documented exit codes), never the
+  answer itself, since a picker whose pool is exhausted today is still a
+  working picker. If the check fails, the `account` row says so and loses
+  its `auto` entry — which it had been offering since the first frame,
+  because the popup draws before this call answers.
 - **On every project change**: `--json --dry-run` again, so the `auto` entry
   shows what the picker would choose here.
 - **Once per create**, after every other check has passed and before
@@ -160,8 +164,12 @@ exists so that a picker that hangs cannot stop the popup opening.
   in the popup, moves focus to the account list. It never falls back to an
   unpinned launch.
 
-`herdr-draft create` skips the startup check, since the next thing it does is
-the real call. `create --account auto` with no picker configured is a usage
+A ⌃S pressed before that first call has answered waits for it, up to the
+popup's five-second check budget, and is refused — with the reason on the
+`account` panel — rather than launched unpinned if it never does.
+
+`herdr-draft create` makes no preview, so it never runs the check: the next
+thing it does is the real call. `create --account auto` with no picker configured is a usage
 error (exit 2), not a quiet fallback.
 
 Closing the popup, or interrupting `create`, stops a pick that is still
@@ -180,7 +188,7 @@ A picker can be a shell script. The smallest one that meets the contract:
 #!/bin/sh
 # Always picks the same account. The one flag it must not ignore is --dry-run:
 # a dry run builds no account directory, so config_dir comes back null. The
-# startup probe and every preview pass it, so a picker that answers a real
+# opening probe and every preview pass it, so a picker that answers a real
 # config_dir there is claiming, several times a session, to have built
 # something it did not.
 config_dir="\"$HOME/.claude-my-account\""

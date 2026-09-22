@@ -20,7 +20,43 @@ type Options struct {
 	// preview sets it; the commit-time pick must not, or two sessions opened
 	// a second apart would both be handed the same account.
 	DryRun bool
+	// Probe asks Pick to also judge the SHAPE of what came back, and to
+	// report a failure of that judgement as a *ProbeError.
+	//
+	// It exists because the probe and the popup's opening preview are the
+	// same invocation against the same directory (draw-first spec §3.3): one
+	// `--json --dry-run`, whose answer is both "does this executable
+	// implement the protocol" and "what would it choose here". Running two
+	// was affordable while the probe happened before the draw; now that the
+	// popup draws first, a second one would be a second subprocess for an
+	// answer already in hand.
+	//
+	// What it checks is exactly what a probe checks and nothing more -- the
+	// executable ran and answered, its exit code is one the protocol
+	// documents, and its stdout carries the documented keys. It does not
+	// judge the ANSWER: a machine whose pool is exhausted, or which has no
+	// tenant table, still has a perfectly good picker.
+	Probe bool
 }
+
+// ProbeError is a verdict about the EXECUTABLE rather than about one pick:
+// the thing named by `[clauth] picker` does not implement the
+// account-picker protocol. Only Options.Probe produces one.
+//
+// It is its own type because the caller acts on it differently from every
+// other error Pick returns. A verdict is permanent for the life of the
+// popup -- it removes the `auto` row and drops the picker entirely -- where
+// a refusal, an exit 0 with no profile, or a payload that does not decode
+// are all about this call and reach the account row as a preview's reason
+// does (draw-first spec §5.4).
+type ProbeError struct {
+	// Reason is the sentence the row shows. It is this package's own text
+	// rather than the picker's alone, because a program that answered
+	// outside the protocol has usually not explained itself.
+	Reason string
+}
+
+func (e *ProbeError) Error() string { return e.Reason }
 
 // Source is the picker access herdr-draft depends on, so internal/app and
 // internal/create can be tested against a fake and never run a subprocess.
@@ -49,7 +85,9 @@ func Argv(bin, dir string, opts Options) []string {
 // program with the name a user configured is not finding *this* one, and a
 // plugin that silently adopted a same-named stranger to route account
 // credentials would be worse than a plugin with no picker at all. Bin comes
-// from config, and Probe checks it before anything trusts it.
+// from config, and Options.Probe checks it before anything trusts it -- on
+// the first pick the popup makes, which is a `--dry-run` preview
+// (draw-first spec §3.3).
 type CLI struct{ Bin string }
 
 var _ Source = CLI{}
@@ -63,6 +101,12 @@ var _ Source = CLI{}
 func (c CLI) Pick(ctx context.Context, dir string, opts Options) (Result, error) {
 	code, stdout, stderr, err := c.run(ctx, dir, opts)
 	if err != nil {
+		if opts.Probe {
+			// The executable did not run, or did not answer inside its
+			// budget. Under a probe that is a verdict about the executable;
+			// without one it is this call's own failure, unchanged.
+			return Result{}, &ProbeError{Reason: err.Error()}
+		}
 		return Result{}, err
 	}
 
@@ -70,6 +114,21 @@ func (c CLI) Pick(ctx context.Context, dir string, opts Options) (Result, error)
 	// the JSON body on every exit path, and that sentence is more useful than
 	// anything this package could compose from an exit code.
 	res, derr := Decode(stdout)
+
+	if opts.Probe {
+		// BEFORE the refusal below, which is what draw-first spec §5.4's
+		// "the key check runs on every documented exit code" buys: a
+		// same-named program that exits 2 would otherwise be built into a
+		// *RefusalError and never judged at all.
+		if !documentedCode(code) {
+			return Result{}, &ProbeError{Reason: undocumentedCodeMsg(c.Bin, code) + stderrNote(stderr)}
+		}
+		if missing := MissingKeys(stdout); len(missing) > 0 {
+			return Result{}, &ProbeError{Reason: fmt.Sprintf(
+				"%s answered without the documented keys %s -- it does not implement the account-picker protocol",
+				c.Bin, strings.Join(missing, ", "))}
+		}
+	}
 
 	if code != ExitPicked {
 		// An exit code outside the protocol's set is a MALFUNCTION, and
@@ -103,35 +162,10 @@ func (c CLI) Pick(ctx context.Context, dir string, opts Options) (Result, error)
 	return res, nil
 }
 
-// Probe runs ONE `--json --dry-run` against dir and reports whether the
-// executable behaves like a picker: an exit code from the documented set, and
-// an answer carrying the documented keys.
-//
-// It judges the SHAPE of the answer, never the answer. A machine whose pool
-// is exhausted, or which has no tenant table configured, still has a
-// perfectly good picker -- refusing it there would turn the feature off on
-// exactly the day the user most needs to see why it said no.
-//
-// --dry-run is not incidental: a probe must not write a ledger entry or build
-// an account directory for a session nobody has asked for yet.
-func (c CLI) Probe(ctx context.Context, dir string) error {
-	code, stdout, stderr, err := c.run(ctx, dir, Options{DryRun: true})
-	if err != nil {
-		return err
-	}
-	if !documentedCode(code) {
-		return fmt.Errorf("%s%s", undocumentedCodeMsg(c.Bin, code), stderrNote(stderr))
-	}
-	if missing := MissingKeys(stdout); len(missing) > 0 {
-		return fmt.Errorf("%s answered without the documented keys %s -- it does not implement the account-picker protocol",
-			c.Bin, strings.Join(missing, ", "))
-	}
-	return nil
-}
-
 // documentedCode reports whether code is one the protocol defines. Anything
-// else is a malfunction on BOTH paths -- see Pick and Probe, which share this
-// so the two cannot drift again.
+// else is a malfunction on both of Pick's paths -- the refusal it would
+// otherwise build, and Options.Probe's verdict above it -- which is why the
+// two share this rather than each deciding.
 func documentedCode(code int) bool {
 	switch code {
 	case ExitPicked, ExitExhausted, ExitBackpressure, ExitBadTable, ExitNoProfiles, ExitUsage:
@@ -155,16 +189,19 @@ func stderrNote(stderr []byte) string {
 	return ": " + flatten(note)
 }
 
-// pickerTimeout bounds EVERY picker invocation -- probe, preview and the
-// commit-time pick alike, because they all reach run.
+// pickerTimeout bounds EVERY picker invocation -- the probed preview, the
+// plain preview and the commit-time pick alike, because they all reach run.
 //
 // It is a deadlock breaker, not a responsiveness budget, and the distinction
 // is what sets the number. The invocation this protects is a third-party
-// executable named in config.toml and run before the popup is drawn: with no
-// deadline, a picker that hangs means the form never appears and never says
-// why, which is the one degradation mode this feature's design forbids
-// outright because it is neither visible nor recoverable. Every other failure
-// here already reaches a row or a stderr line.
+// executable named in config.toml: with no deadline, a picker that hangs
+// held up the popup's whole first frame, which is the one degradation mode
+// this feature's design forbids outright because it is neither visible nor
+// recoverable. #293 is what finally met that -- the probe moved into the
+// opening preview, so a hang now leaves `auto · asking the picker…` on a
+// drawn row -- and the bound stays, because `create` still waits on the
+// commit pick with nothing drawn. Every other failure here already reaches
+// a row or a stderr line.
 //
 // Thirty seconds, then, is chosen to sit ABOVE the slowest legitimate answer
 // rather than near a comfortable one. A conformant picker may hold N accounts'

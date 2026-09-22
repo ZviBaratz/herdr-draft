@@ -203,6 +203,12 @@ const (
 	// the plain count -- see filterCount for the field.
 	accountCountOne  = "profile"
 	accountCountMany = "profiles"
+	// accountLoadingPanelHint is the panel while SetLoading(true) is on:
+	// clauth's status file could not answer and its CLI is being asked
+	// (draw-first spec §6). It names the read rather than the state, for
+	// accountAutoPending's reason -- a row that says what it is doing
+	// reads as work where a blank one reads as a glitch.
+	accountLoadingPanelHint = "reading clauth profiles…"
 )
 
 // AccountField is the form's clauth account Section (spec §6 field 7): a
@@ -220,6 +226,13 @@ const (
 // Enabled() instead reports the DYNAMIC half of that same spec sentence
 // ("inert unless the selected agent kind is claude"), driven by
 // SetAgentIsClaude.
+//
+// Since #293 the static half is only static when clauth's status file
+// answered. A stale file leaves the row drawn and LOADING while the CLI is
+// asked after the first frame (SetLoading, draw-first spec §3.2/§4.2), and
+// fewer than two profiles then leave it in place with a reason rather than
+// removing it -- a row that exists cannot be taken away once the form is
+// on screen.
 type AccountField struct {
 	palette theme.Palette
 	picker  *widgets.Picker
@@ -271,6 +284,18 @@ type AccountField struct {
 	// is installed but could not be read. See that setter.
 	unavailable string
 
+	// loading is SetLoading's own state: clauth's status file was stale and
+	// the CLI has not answered yet (draw-first spec §4.2). Inert, like
+	// unavailable, and for a sharper reason -- there is nothing to choose
+	// between yet, and a choice made here would not survive, since the
+	// only entry is `active`, committing it leaves the pin empty, and
+	// SetPickerAvailable then makes `auto` the selection over that empty
+	// pin when the profiles land.
+	//
+	// Unlike unavailable it is NOT a focus stop (RetryOnFocus): there is
+	// nothing to retry, because the read is already out.
+	loading bool
+
 	// pickerRowsShown is how many profile rows the last Panel render
 	// drew. widgets.Picker.SelectAt needs the SAME height MarkedView was
 	// called with to map a click back to an item, and v2's panel height
@@ -290,8 +315,9 @@ type AccountField struct {
 	verdictKey  string
 	verdictText string
 
-	// pickerAvailable is whether an account picker was configured AND probed
-	// successfully (app.Bootstrap). False -- the normal case -- means the auto
+	// pickerAvailable is whether an account picker was configured and has
+	// not failed its probe (app.Bootstrap sets it; app's own probe verdict
+	// can clear it). False -- the normal case -- means the auto
 	// row does not exist at all, not that it is disabled: a row offering a
 	// feature nobody has set up is a row that has to explain itself forever.
 	pickerAvailable bool
@@ -346,9 +372,16 @@ type AccountPickerPreview struct {
 }
 
 // SetPickerAvailable records whether an account picker is configured and has
-// been probed. It adds or removes the auto row, and -- when it is the first
-// thing to arrive and nothing else is pinned -- makes auto the resting
-// selection: someone who configured a picker configured it to be used.
+// not failed its probe. It adds or removes the auto row, and -- when it is
+// the first thing to arrive and nothing else is pinned -- makes auto the
+// resting selection: someone who configured a picker configured it to be
+// used.
+//
+// Since #293 the probe's answer arrives AFTER the first frame, carried by
+// the opening preview (draw-first spec §5.4), so this is now also the call
+// that TAKES the auto row away: a named picker starts available, and a
+// verdict that it does not implement the protocol removes the row it had
+// already offered.
 func (f *AccountField) SetPickerAvailable(available bool) {
 	f.pickerAvailable = available
 	if !available {
@@ -471,12 +504,30 @@ func (f *AccountField) ID() string { return "account" }
 // JSON did not parse. Before this, all four of "not installed", "one
 // profile", "crashed" and "unparseable" rendered identically: nothing at
 // all, with the error discarded at the point of failure.
+//
+// Since #293 it carries one more answer, and it is the one that softened
+// the ">= 2 profiles" gate above: a row already on screen because clauth's
+// status file was stale cannot be taken away, so a CLI that then reports
+// fewer than two profiles leaves the row here with a reason saying so
+// (decision 2).
 func (f *AccountField) SetUnavailable(reason string) { f.unavailable = reason }
+
+// SetLoading marks the field present-but-inert while clauth's CLI is being
+// asked for the profiles its status file could not supply (draw-first spec
+// §4.2). The app layer clears it on every outcome of that read.
+//
+// It is a third state beside unavailable and live rather than a reuse of
+// unavailable, which is decision 4's own reason turned one field over: an
+// unavailable row is a verdict, and "we have not asked yet" is not one --
+// a submit that could not tell the two apart would have to refuse both.
+func (f *AccountField) SetLoading(loading bool) { f.loading = loading }
 
 // Enabled reports the dynamic half of spec §6 field 7's precondition:
 // present-but-inert (form.go's Section doc comment) whenever the
 // currently selected agent kind is not claude -- see SetAgentIsClaude.
-func (f *AccountField) Enabled() bool { return f.agentIsClaude && f.unavailable == "" }
+func (f *AccountField) Enabled() bool {
+	return f.agentIsClaude && f.unavailable == "" && !f.loading
+}
 
 // RetryOnFocus asks the focus ring for a stop on a row Enabled() has just
 // refused -- form.go's optional retryOnFocus interface, and the one state
@@ -491,9 +542,11 @@ func (f *AccountField) Enabled() bool { return f.agentIsClaude && f.unavailable 
 // still says there is nothing to set here. It buys the stop and nothing
 // else.
 //
-// Deliberately silent for the other inert state. A non-claude agent has
-// nothing to retry and nothing to pin, so a stop there would be a row you
-// tab onto to be told it does not apply to you.
+// Deliberately silent for the other two inert states. A non-claude agent
+// has nothing to retry and nothing to pin, so a stop there would be a row
+// you tab onto to be told it does not apply to you; a LOADING row has
+// nothing to retry either, because the read it is waiting for is already
+// out and a second one would only retire the first (ruling 8).
 func (f *AccountField) RetryOnFocus() bool { return f.agentIsClaude && f.unavailable != "" }
 
 // Focus gives the field input focus. widgets.Picker has no Focus/Blur of
@@ -1162,6 +1215,14 @@ func (f *AccountField) Row(w int) string {
 		reason := issueUnavailableLabel + unavailableReasonSep + f.unavailable
 		return fitLine(dimHint(f.palette).Render(keepHead(reason, w)), w)
 	}
+	// Above the agent check for the reason the clauth check above it is:
+	// loading is a fact about this row whatever agent is selected, and
+	// "this row is for claude" would be a misleading thing to show for a
+	// row that has not been read yet. Below it, because a clauth that
+	// FAILED is the later, stronger fact.
+	if f.loading {
+		return fitLine(dimText(f.palette).Render(keepHead(rowLoadingLabel, w)), w)
+	}
 	if !f.agentIsClaude {
 		return fitLine(dimHint(f.palette).Render(keepHead(accountInertPlaceholder, w)), w)
 	}
@@ -1480,6 +1541,16 @@ func (f *AccountField) panelStatus(inner int) string {
 	switch {
 	case f.unavailable != "":
 		return dimHint(f.palette).Render(f.unavailable)
+	case f.loading:
+		// A submit refused for this row takes the line ahead of the phase
+		// (draw-first spec §7.3): the phase is what is happening anyway,
+		// and the refusal is the thing that just happened to the user.
+		// SetVerdict's own staleness guard still applies -- a loading row's
+		// Pin() is "", which is the key the refusal is recorded under.
+		if f.verdictKey == f.Pin() && f.verdictText != "" {
+			return lipgloss.NewStyle().Foreground(f.palette.Danger).Render(f.verdictText)
+		}
+		return dimHint(f.palette).Render(accountLoadingPanelHint)
 	case !f.agentIsClaude:
 		return dimHint(f.palette).Render(accountInertPanelHint)
 	case f.verdictKey == f.Pin() && f.verdictText != "":
