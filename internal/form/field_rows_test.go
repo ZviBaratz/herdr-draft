@@ -512,6 +512,14 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			f.SetKind("claude", claudeKind(map[string]string{"model": "claude-opus-5[1m]"}))
 			return f
 		}, 4 + 1},
+		// A pinned value relabels its line's no-flag chip and adds no
+		// line of its own: the extra_args line is there because extra_args
+		// is set, as it would be with nothing pinned.
+		{"options/claude-pinned", func() Section {
+			f := NewOptionsField(p)
+			f.SetKind("claude", ownerPinned())
+			return f
+		}, 3 + 1 + 1},
 		{"options/claude-every-extra", func() Section {
 			f := NewOptionsField(p)
 			f.SetKind("claude", KindOptions{

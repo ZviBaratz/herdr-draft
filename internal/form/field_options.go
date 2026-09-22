@@ -29,11 +29,20 @@ import (
 const (
 	optionsRowLabel  = "options"
 	optionsNameLabel = "name"
-	// optionsInheritID and optionsOtherID are the two chips every line may
-	// carry beyond its offered values: inherit (send no flag), always
-	// first, and other (type a value), last and only on a free-text line.
-	optionsInheritID = "inherit"
-	optionsOtherID   = "other"
+	// optionsNoFlagID and optionsOtherID are the two chips every line may
+	// carry beyond its offered values: the no-flag chip, always first, and
+	// other (type a value), last and only on a free-text line.
+	//
+	// The no-flag chip's ID is still the word `create --effort inherit` and
+	// config.toml take, though the chip no longer shows it: noFlagChip
+	// labels it with what sending no flag leads to (agent-options spec
+	// §7.2, amended 2026-09-22). Only the label moved, so the chip's zone
+	// ID, its position under ←→ and Values' nil for it are what they were.
+	optionsNoFlagID = "inherit"
+	optionsOtherID  = "other"
+	// optionsPinBadge marks a no-flag chip whose label is a value
+	// [agents.extra_args] passes rather than one this chip sends.
+	optionsPinBadge = "•"
 	// optionsExtraArgsLead introduces the read-only extra_args line.
 	optionsExtraArgsLead = "[agents.extra_args] adds: "
 )
@@ -54,7 +63,7 @@ type OptionSpec struct {
 	Label string
 	// Flag is the agent's own flag, which the panel's hint names.
 	Flag string
-	// Choices are the offered values after `inherit`.
+	// Choices are the offered values after the no-flag chip.
 	Choices []OptionChoice
 	// FreeText adds an `other` chip and, while it is selected, a name
 	// part to type a value into.
@@ -78,7 +87,8 @@ type KindOptions struct {
 	SeedSource string
 	// ExtraArgs is [agents.extra_args] for the kind, shown read-only, and
 	// Pinned what it already passes for the declared flags -- what an
-	// inherited option actually launches with.
+	// inherited option actually launches with, and so what its no-flag
+	// chip is labelled.
 	ExtraArgs []string
 	Pinned    map[string]string
 }
@@ -151,7 +161,7 @@ func (f *OptionsField) SetKind(kind string, o KindOptions) {
 	if !ok {
 		st = &kindState{opts: o}
 		for _, spec := range o.Specs {
-			st.lines = append(st.lines, f.newLine(spec, o.Seed[spec.Name]))
+			st.lines = append(st.lines, f.newLine(spec, o.Seed[spec.Name], noFlagChip(kind, spec, o.Pinned[spec.Name])))
 		}
 		f.kinds[kind] = st
 	}
@@ -160,10 +170,10 @@ func (f *OptionsField) SetKind(kind string, o KindOptions) {
 	f.syncNameFocus()
 }
 
-// newLine builds one option's chips (inherit, the offered values, then
+// newLine builds one option's chips (noFlag, the offered values, then
 // other for free text) and lands them on seed.
-func (f *OptionsField) newLine(spec OptionSpec, seed string) *optionLine {
-	chips := []widgets.Chip{{ID: optionsInheritID, Label: optionsInheritID}}
+func (f *OptionsField) newLine(spec OptionSpec, seed string, noFlag widgets.Chip) *optionLine {
+	chips := []widgets.Chip{noFlag}
 	for _, c := range spec.Choices {
 		chips = append(chips, widgets.Chip{ID: c.Value, Label: c.Label})
 	}
@@ -177,7 +187,7 @@ func (f *OptionsField) newLine(spec OptionSpec, seed string) *optionLine {
 	if seed == "" {
 		return l
 	}
-	// Matched against the OFFERED values only. The inherit and other chips
+	// Matched against the OFFERED values only. The no-flag and other chips
 	// carry form words as their IDs, and a free-text seed may spell one:
 	// config.toml's `model = "other"` is a model id, which create sends as
 	// `--model other`, so selecting the `other` chip with an empty name
@@ -200,11 +210,37 @@ func (f *OptionsField) newLine(spec OptionSpec, seed string) *optionLine {
 // not the kind, so they show whichever kind is selected.
 func (f *OptionsField) SetNotes(notes []string) { f.notes = notes }
 
-// value is what one line sends: "" for inherit, and for `other` the typed
-// name when it is a valid one.
+// noFlagChip is the chip that sends no flag, labelled with what sending
+// none leads to as far as this plugin knows it (agent-options spec §7.2,
+// amended 2026-09-22): the value [agents.extra_args] passes for the flag,
+// badged so it does not read as a value this chip sends, or `<kind>'s`
+// when it passes none, since the agent's own settings then decide. What
+// those settings hold is not read -- they differ per account directory,
+// and with an `auto` account picker which directory is not known until
+// the submit.
+//
+// An offered value takes its own chip's label, so a pinned acceptEdits
+// reads `accept-edits•` beside the `accept-edits` chip, as the row
+// already spells it.
+func noFlagChip(kind string, spec OptionSpec, pinned string) widgets.Chip {
+	if pinned == "" {
+		return widgets.Chip{ID: optionsNoFlagID, Label: kindName(kind) + "'s"}
+	}
+	label := pinned
+	for _, c := range spec.Choices {
+		if c.Value == pinned {
+			label = c.Label
+			break
+		}
+	}
+	return widgets.Chip{ID: optionsNoFlagID, Label: label, Badge: optionsPinBadge}
+}
+
+// value is what one line sends: "" for the no-flag chip, and for `other`
+// the typed name when it is a valid one.
 func (l *optionLine) value() string {
 	switch id := l.chips.Selected().ID; id {
-	case optionsInheritID:
+	case optionsNoFlagID:
 		return ""
 	case optionsOtherID:
 		v := strings.TrimSpace(l.name.Value())
@@ -434,7 +470,7 @@ func (f *OptionsField) Row(w int) string {
 	}
 	dim := dimHint(f.palette)
 	if !f.Enabled() {
-		return fitLine(dim.Render(keepHead("none for "+f.kindName(), w)), w)
+		return fitLine(dim.Render(keepHead("none for "+kindName(f.kind), w)), w)
 	}
 	text := lipgloss.NewStyle().Foreground(f.palette.Text)
 	var out strings.Builder
@@ -466,17 +502,17 @@ func (f *OptionsField) Row(w int) string {
 		room -= lipgloss.Width(v)
 	}
 	if !any {
-		return fitLine(dim.Render(keepHead(f.kindName()+"'s own settings", w)), w)
+		return fitLine(dim.Render(keepHead(kindName(f.kind)+"'s own settings", w)), w)
 	}
 	return fitLine(out.String(), w)
 }
 
-// kindName is the kind for a sentence, never an empty word.
-func (f *OptionsField) kindName() string {
-	if f.kind == "" {
+// kindName is a kind for a sentence, never an empty word.
+func kindName(kind string) string {
+	if kind == "" {
 		return "this agent"
 	}
-	return f.kind
+	return kind
 }
 
 // hint is the dim sentence under the parts: what the focused part will
@@ -498,9 +534,9 @@ func (f *OptionsField) hint() string {
 	case l.onOther() && v == "":
 		return fmt.Sprintf("type a %s; an empty one sends no %s", l.spec.Label, flag)
 	case v == "" && pinned != "":
-		return fmt.Sprintf("inherit sends nothing of its own; [agents.extra_args] passes %s %s", flag, pinned)
+		return fmt.Sprintf("sends no %s of its own; [agents.extra_args] passes %s", flag, pinned)
 	case v == "":
-		return fmt.Sprintf("inherit sends no %s, so %s's own settings decide", flag, f.kindName())
+		return fmt.Sprintf("sends no %s, so %s's own settings decide", flag, kindName(f.kind))
 	case pinned != "" && pinned != v:
 		return fmt.Sprintf("sends %s %s instead of [agents.extra_args]'s %s", flag, v, pinned)
 	default:
@@ -548,7 +584,7 @@ func (f *OptionsField) Panel(width, h int) string {
 	dim := dimHint(f.palette)
 	extras := []string{}
 	if !f.Enabled() {
-		extras = append(extras, panelText(dim.Render(keepHead(f.kindName()+" takes no session options here", panelInner(width))), width))
+		extras = append(extras, panelText(dim.Render(keepHead(kindName(f.kind)+" takes no session options here", panelInner(width))), width))
 		if e := f.extraArgsLine(); e != "" {
 			extras = append(extras, panelText(dim.Render(keepHead(e, panelInner(width))), width))
 		}

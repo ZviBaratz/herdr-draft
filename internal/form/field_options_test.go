@@ -343,7 +343,7 @@ func TestOptionsField_AKindWithNothingDeclaredIsInert(t *testing.T) {
 // Agent-options spec §7.1/§7.2: extra_args' own pin is what an inherited
 // option launches with, so the row shows it (dim) and the hint names
 // where it comes from.
-func TestOptionsField_ExtraArgsPinShowsThroughInherit(t *testing.T) {
+func TestOptionsField_ExtraArgsPinShowsThroughTheNoFlagChip(t *testing.T) {
 	f := NewOptionsField(theme.Default())
 	f.SetKind("claude", KindOptions{
 		Specs:     claudeSpecs(),
@@ -355,7 +355,7 @@ func TestOptionsField_ExtraArgsPinShowsThroughInherit(t *testing.T) {
 		t.Fatalf("row = %q, want extra_args' model", got)
 	}
 	panel := plainPanel(f, 8)
-	for _, want := range []string{"[agents.extra_args] passes --model opus", "[agents.extra_args] adds: --model opus --verbose"} {
+	for _, want := range []string{"sends no --model of its own; [agents.extra_args] passes opus", "[agents.extra_args] adds: --model opus --verbose"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("panel missing %q:\n%s", want, panel)
 		}
@@ -369,8 +369,8 @@ func TestOptionsField_ExtraArgsPinShowsThroughInherit(t *testing.T) {
 func TestOptionsField_HintSaysWhatThePartSends(t *testing.T) {
 	f := newClaudeOptions(t, nil)
 	f.Focus()
-	if panel := plainPanel(f, 8); !strings.Contains(panel, "inherit sends no --model, so claude's own settings decide") {
-		t.Fatalf("inherit hint missing:\n%s", panel)
+	if panel := plainPanel(f, 8); !strings.Contains(panel, "sends no --model, so claude's own settings decide") {
+		t.Fatalf("no-flag hint missing:\n%s", panel)
 	}
 	f.Update(key(tea.KeyDown, 0))
 	f.Update(key(tea.KeyLeft, 0)) // effort: max
@@ -392,7 +392,7 @@ func TestOptionsField_PanelShortensFromTheBottom(t *testing.T) {
 		t.Fatalf("PanelRows = %d, want %d", got, want)
 	}
 	full := plainPanel(f, f.PanelRows())
-	for _, want := range []string{"model", "effort", "mode", "inherit sends no --model", "[agents.extra_args] adds", "ignoring [agents.options.claude]", "from config.toml"} {
+	for _, want := range []string{"model", "effort", "mode", "sends no --model", "[agents.extra_args] adds", "ignoring [agents.options.claude]", "from config.toml"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("full panel missing %q:\n%s", want, full)
 		}
@@ -442,5 +442,134 @@ func TestOptionsField_RowFitsNarrowWidths(t *testing.T) {
 		if strings.Contains(row, "\n") || ansi.StringWidth(row) != w {
 			t.Errorf("Row(%d) = %q (width %d), want one line of exactly %d cells", w, row, ansi.StringWidth(row), w)
 		}
+	}
+}
+
+// ownerPinned is the owner's own [agents.extra_args], the config the
+// no-flag chip's label was changed for (agent-options spec §7.2, amended
+// 2026-09-22): a typed model id no chip offers, and an effort that is one.
+func ownerPinned() KindOptions {
+	return KindOptions{
+		Specs:     claudeSpecs(),
+		ExtraArgs: []string{"--model", "claude-opus-5[1m]", "--effort", "xhigh"},
+		Pinned:    map[string]string{"model": "claude-opus-5[1m]", "effort": "xhigh"},
+	}
+}
+
+// chipLine is the chips of the panel line labelled label, stripped and
+// trimmed, or "" when no line carries that label.
+func chipLine(panel, label string) string {
+	for _, line := range strings.Split(panel, "\n") {
+		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "▸"))
+		if strings.HasPrefix(t, label+" ") {
+			return strings.TrimSpace(t[len(label):])
+		}
+	}
+	return ""
+}
+
+// Agent-options spec §7.2, amended 2026-09-22: the first chip on every line
+// still sends no flag, and says what that leads to rather than `inherit`
+// -- the value [agents.extra_args] passes, badged, or `<kind>'s` when it
+// passes none. The owner's config has to read exactly as the owner asked.
+func TestOptionsField_TheNoFlagChipNamesWhatTheSessionGets(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind string
+		opts KindOptions
+		want map[string]string // panel label -> its chips
+	}{
+		{"nothing pinned", "claude", claudeKind(nil), map[string]string{
+			"model":  "claude's · fable · opus · sonnet · haiku · other",
+			"effort": "claude's · low · medium · high · xhigh · max",
+			"mode":   "claude's · manual · plan · accept-edits · auto",
+		}},
+		{"the owner's extra_args", "claude", ownerPinned(), map[string]string{
+			"model":  "claude-opus-5[1m]• · fable · opus · sonnet · haiku · other",
+			"effort": "xhigh• · low · medium · high · xhigh · max",
+			"mode":   "claude's · manual · plan · accept-edits · auto",
+		}},
+		// An offered value is spelled as its own chip is, the way the row
+		// already spells it: accept-edits, not the flag's acceptEdits.
+		{"a pinned value whose chip is relabelled", "claude", KindOptions{
+			Specs:     claudeSpecs(),
+			ExtraArgs: []string{"--permission-mode=acceptEdits"},
+			Pinned:    map[string]string{"permission_mode": "acceptEdits"},
+		}, map[string]string{
+			"mode": "accept-edits• · manual · plan · accept-edits · auto",
+		}},
+		// The word is the kind's, not a constant that happens to be right
+		// for the only kind declared today.
+		{"another kind", "goose", claudeKind(nil), map[string]string{
+			"effort": "goose's · low · medium · high · xhigh · max",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewOptionsField(theme.Default())
+			f.SetKind(tc.kind, tc.opts)
+			panel := plainPanel(f, 8)
+			for label, want := range tc.want {
+				if got := chipLine(panel, label); got != want {
+					t.Errorf("%s line = %q, want %q\n%s", label, got, want, panel)
+				}
+			}
+			// Nor does the hint under the first chip still call it that:
+			// "inherit sends no --model, so ..." contains every word of
+			// the hint that replaced it, so a substring check for the new
+			// hint alone passes on the old one.
+			if strings.Contains(panel, "inherit") {
+				t.Errorf("the panel still says inherit:\n%s", panel)
+			}
+		})
+	}
+}
+
+// Only the label moved. The no-flag chip still sends nothing, sits where
+// `inherit` sat -- so ←→ lands on the same chips from it -- and an
+// explicit chip naming the very value extra_args passes still SENDS its
+// flag, displacing extra_args exactly as before (agent-options spec §5.2),
+// which is what keeps the popup and `create --effort xhigh` equivalent.
+func TestOptionsField_TheNoFlagChipStillSendsNothing(t *testing.T) {
+	f := NewOptionsField(theme.Default())
+	f.SetKind("claude", ownerPinned())
+	f.Focus()
+	if got := f.Values(); got != nil {
+		t.Fatalf("Values() at rest = %v, want nil: every line is on its no-flag chip", got)
+	}
+	if panel := plainPanel(f, 8); !strings.Contains(panel, "sends no --model of its own; [agents.extra_args] passes claude-opus-5[1m]") {
+		t.Errorf("the pinned no-flag hint is missing:\n%s", panel)
+	}
+
+	f.Update(key(tea.KeyRight, 0)) // model: the no-flag chip -> fable
+	if got := f.Values()["model"]; got != "fable" {
+		t.Errorf("→ from the no-flag chip chose %q, want fable", got)
+	}
+	f.Update(key(tea.KeyLeft, 0)) // back
+	f.Update(key(tea.KeyLeft, 0)) // wraps to other
+	if got := chipLine(plainPanel(f, 8), "name"); got == "" {
+		t.Errorf("← from the no-flag chip did not wrap to other: no name line opened")
+	}
+	f.Update(key(tea.KeyRight, 0)) // back to the no-flag chip
+	if got := f.Values(); got != nil {
+		t.Errorf("Values() back on the no-flag chip = %v, want nil", got)
+	}
+
+	f.Update(key(tea.KeyDown, 0)) // effort
+	if panel := plainPanel(f, 8); !strings.Contains(panel, "sends no --effort of its own; [agents.extra_args] passes xhigh") {
+		t.Errorf("the effort line's pinned hint is missing:\n%s", panel)
+	}
+	for i := 0; i < 4; i++ {
+		f.Update(key(tea.KeyRight, 0)) // low, medium, high, xhigh
+	}
+	if got, want := f.Values(), map[string]string{"effort": "xhigh"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("the explicit xhigh chip: Values() = %v, want %v -- it sends the flag, whatever extra_args passes", got, want)
+	}
+	if panel := plainPanel(f, 8); !strings.Contains(panel, "sends --effort xhigh") {
+		t.Errorf("the explicit chip's hint is missing:\n%s", panel)
+	}
+
+	f.Update(key(tea.KeyDown, 0)) // mode, nothing pinned
+	if panel := plainPanel(f, 8); !strings.Contains(panel, "sends no --permission-mode, so claude's own settings decide") {
+		t.Errorf("the unpinned no-flag hint is missing:\n%s", panel)
 	}
 }

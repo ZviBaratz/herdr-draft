@@ -354,3 +354,81 @@ func TestChipRow_BelowTheFloorTheMarkersYieldToTheChip(t *testing.T) {
 		}
 	}
 }
+
+// effortPinnedChips is the options panel's effort line when
+// [agents.extra_args] passes `--effort xhigh`: its first chip sends no
+// flag and is labelled with the value extra_args passes, badged, ahead of
+// the offered values -- `xhigh` among them, unbadged, which does send one.
+// Drawn widths 8 (" xhigh• "), 5, 8, 6, 7 and 5: 44 cells with the five
+// separators, 43 of them needed, since the last is max's trailing pad.
+func effortPinnedChips() []Chip {
+	return []Chip{
+		{ID: "inherit", Label: "xhigh", Badge: "•"},
+		{ID: "low", Label: "low"},
+		{ID: "medium", Label: "medium"},
+		{ID: "high", Label: "high"},
+		{ID: "xhigh", Label: "xhigh"},
+		{ID: "max", Label: "max"},
+	}
+}
+
+// TestChipRow_ABadgeIsDrawnDimAfterItsLabel pins Chip.Badge's rendering:
+// straight after the label, inside the padding, and dim on the cursor chip
+// as well as off it. The badge says something ABOUT the chip -- on the
+// options panel, that its value comes from [agents.extra_args] rather than
+// from this chip -- so it must not take the cursor's accent and read as
+// part of the value's name.
+func TestChipRow_ABadgeIsDrawnDimAfterItsLabel(t *testing.T) {
+	p := testPalette()
+	dim := lipgloss.NewStyle().Foreground(p.DimText)
+	c := NewChipRow(p)
+	c.SetChips(effortPinnedChips())
+
+	if got := ansi.Strip(c.View(60)); !strings.HasPrefix(got, " xhigh• · low · ") {
+		t.Fatalf("the row is %q, want it to start with the badged chip, badge after the label", got)
+	}
+	check := func(where string, face lipgloss.Style) {
+		t.Helper()
+		view := c.View(60)
+		if want := face.Render(" xhigh") + dim.Render("•") + face.Render(" "); !strings.Contains(view, want) {
+			t.Errorf("%s: the badged chip is not its label in the chip's face with the badge dim:\n got: %q\nwant: %q", where, view, want)
+		}
+	}
+	check("under the cursor", lipgloss.NewStyle().Foreground(p.Accent).Bold(true))
+	c.Next()
+	check("off the cursor", lipgloss.NewStyle().Foreground(p.Text))
+}
+
+// TestChipRow_ABadgeCountsTowardTheWindow is the other half: a badge takes
+// a cell, so every width the row computes has to count it, or chipWindow
+// budgets for a row one cell narrower than the one it draws -- and the
+// cell that goes missing is the last chip's, clipped mid-word with no
+// marker, which is #300's defect back again.
+//
+// Worked by hand from effortPinnedChips' widths: at 43 the whole row fits.
+// At 42 it does not, and with the cursor on the badged chip the window is
+// the first five chips plus a right cut: 8+5+8+6+7 + 3 separators + 4 for
+// the marker = 41.
+func TestChipRow_ABadgeCountsTowardTheWindow(t *testing.T) {
+	render := func(w int) string {
+		c := NewChipRow(testPalette())
+		c.SetChips(effortPinnedChips())
+		return ansi.Strip(c.View(w))
+	}
+	if got := strings.TrimSpace(render(43)); got != "xhigh• · low · medium · high · xhigh · max" {
+		t.Errorf("at 43 columns the row is %q, want every chip whole and no marker", got)
+	}
+	got := render(42)
+	if want := "xhigh• · low · medium · high · xhigh · …"; strings.TrimSpace(got) != want {
+		t.Errorf("at 42 columns the row is %q, want %q", strings.TrimSpace(got), want)
+	}
+	for piece := range chipsOn(got) {
+		whole := piece == "…" || piece == "xhigh•"
+		for _, c := range effortPinnedChips() {
+			whole = whole || piece == c.Label
+		}
+		if !whole {
+			t.Errorf("at 42 columns %q is a chip cut in half: the row is %q", piece, got)
+		}
+	}
+}

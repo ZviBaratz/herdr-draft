@@ -561,8 +561,9 @@ func TestFrames_AccountAutoRefused(t *testing.T) {
 
 // buildOptionsPanelForm focuses OptionsField on claude with a config seed,
 // extra_args passing a flag of its own, and the cursor moved to effort --
-// agent-options spec §7.2's panel with every line it can carry. With other,
-// the model is a typed id, so the name part is open under it.
+// agent-options spec §7.2's panel with every line it can carry. The model's
+// no-flag chip therefore reads `opus•`, and the other two `claude's`. With
+// other, the model is a typed id, so the name part is open under it.
 func buildOptionsPanelForm(palette theme.Palette, other bool) Model {
 	f := NewOptionsField(palette)
 	seed := map[string]string{"effort": "xhigh", "permission_mode": "plan"}
@@ -582,6 +583,29 @@ func buildOptionsPanelForm(palette theme.Palette, other bool) Model {
 func TestFrames_OptionsPanel(t *testing.T) {
 	assertFrame(t, "options-panel-80x24", buildOptionsPanelForm(theme.Default(), false), 80, 24)
 	assertFrame(t, "options-panel-other-80x24", buildOptionsPanelForm(theme.Default(), true), 80, 24)
+}
+
+// buildOptionsPinnedForm is the owner's own config, the one the no-flag
+// chip's label was changed for (agent-options spec §7.2, amended
+// 2026-09-22): nothing seeded, and [agents.extra_args] passing a typed
+// model id and an effort. Every line rests on its no-flag chip, so the
+// panel reads as what the session gets -- `claude-opus-5[1m]•`, `xhigh•`,
+// `claude's` -- rather than three `inherit`s. The model's pin is a
+// free-text id no chip offers, so it becomes the first chip's own label;
+// the effort's is an offered value, so `xhigh` is on its line twice, once
+// badged (sends nothing) and once plain (sends --effort xhigh).
+func buildOptionsPinnedForm(palette theme.Palette) Model {
+	f := NewOptionsField(palette)
+	f.SetKind("claude", KindOptions{
+		Specs:     claudeSpecs(),
+		ExtraArgs: []string{"--model", "claude-opus-5[1m]", "--effort", "xhigh"},
+		Pinned:    map[string]string{"model": "claude-opus-5[1m]", "effort": "xhigh"},
+	})
+	return fieldFrame(palette, f)
+}
+
+func TestFrames_OptionsPinned(t *testing.T) {
+	assertFrame(t, "options-pinned-80x24", buildOptionsPinnedForm(theme.Default()), 80, 24)
 }
 
 // buildOptionsInertForm is a kind that declares nothing, reached by a

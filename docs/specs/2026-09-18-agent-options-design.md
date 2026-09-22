@@ -48,6 +48,21 @@ This adds:
 `inherit`, the first chip on every line, sends no flag, so the agent's own
 settings decide. It is the default for every option.
 
+> **Amended (2026-09-22; approved by the owner): the first chip is labelled
+> with its outcome.** The first chip still sends no flag and is still the
+> default, but it no longer reads `inherit`. Its label says what sending no
+> flag leads to, as far as herdr-draft itself knows: the value
+> `[agents.extra_args]` passes for that flag, followed by a dim `•`
+> (`xhigh•`, or a typed model id such as `claude-opus-5[1m]•`), or
+> `claude's` when `[agents.extra_args]` passes none, because claude's own
+> settings then decide. What those settings hold is not read. They differ
+> between account directories, some defaults depend on the plan, the
+> environment can override them, and with an `auto` account picker the
+> directory is not known until the submit, so a resolver would be guessing.
+> `inherit` stays the word a person types: `create --effort inherit`,
+> `config.toml` and the spawn skill are unchanged. §7.2's amendment gives
+> the panel.
+
 ## 2. Why the recorded decision is reversed
 
 v1 §16 item 3 reads: *"Model / effort / permission-mode chip fields — covered
@@ -266,6 +281,39 @@ focus an inert row (`form.go`'s `FocusByID`).
    config.toml [agents.extra_args] adds: --verbose
 ```
 
+> **Amended (2026-09-22; approved by the owner): the first chip is labelled
+> with its outcome** (§1's amendment says why). With
+> `[agents.extra_args] claude = ["--model", "claude-opus-5[1m]", "--effort", "xhigh"]`
+> and nothing chosen, the panel reads:
+>
+> ```
+>  ▸ model    claude-opus-5[1m]• · fable · opus · sonnet · haiku · other
+>    effort   xhigh• · low · medium · high · xhigh · max
+>    mode     claude's · manual · plan · accept-edits · auto
+>    sends no --model of its own; [agents.extra_args] passes claude-opus-5[1m]
+>    [agents.extra_args] adds: --model claude-opus-5[1m] --effort xhigh
+> ```
+>
+> - The first chip's label is the value `[agents.extra_args]` passes, with a
+>   dim `•` after it, when it passes one. Otherwise it is `<kind>'s`. An
+>   offered value is spelled as its own chip is (`accept-edits•`). A typed
+>   id needs no extra chip, because the first chip's label already names it.
+> - Only the label changes. The chip still sends no flag, it keeps its
+>   place and its internal ID, and `Values` still omits it. The explicit
+>   chips are unchanged, so choosing the plain `xhigh` above still sends
+>   `--effort xhigh` and displaces `extra_args` (§5.2). That is what keeps
+>   a `config.toml` seed of `xhigh` meaning the same on both paths.
+> - The `•` is drawn in the dim text colour on every chip, the cursor's
+>   included, and counts toward the chip's width everywhere the chip row
+>   measures one: the scrolled window, the cut markers and the click zone.
+> - The two hint lines that named `inherit` become
+>   `sends no --effort, so claude's own settings decide` and
+>   `sends no --effort of its own; [agents.extra_args] passes high`.
+>   The others are unchanged.
+> - Wherever else this section says `inherit` for the chip, read "the first
+>   chip". The row (§7.1) does not change. The panel above is the golden
+>   frame `options-pinned-80x24` (§11).
+
 - One part per option, in declaration order. `name` appears only while
   `other` is selected. It is a line input, like the worktree panel's branch.
 - `↑↓` moves between parts, and `←→` moves the chips of a chip part. On
@@ -277,6 +325,13 @@ focus an inert row (`form.go`'s `FocusByID`).
   - `inherit sends no --effort, so claude's own settings decide`
   - when `extra_args` passes the flag: `inherit sends nothing of its own; [agents.extra_args] passes --effort high`
   - when a set option displaces `extra_args` (§5.2): `sends --model fable instead of [agents.extra_args]'s opus`
+
+  > **Amended (2026-09-22; approved by the owner).** The second and third
+  > now read `sends no --effort, so claude's own settings decide` and
+  > `sends no --effort of its own; [agents.extra_args] passes high`. The
+  > first chip no longer says `inherit`, so the hint does not either (see
+  > the amendment under the panel above).
+
 - The `extra_args` line shows the raw config value, and only when there is
   one.
 - Warnings about `[agents.options]` (§6.2) come next, then a provenance line
