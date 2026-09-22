@@ -3051,9 +3051,9 @@ func lastPathSegment(p string) string {
 }
 
 // View renders the form and enables the popup chrome bubbletea v2 controls
-// entirely through the returned tea.View (v2.0.8 has no
+// entirely through the returned tea.View (v2.0.9 has no
 // tea.WithAltScreen()/mouse-enabling tea.NewProgram option at all --
-// verified directly against charm.land/bubbletea/v2@v2.0.8's options.go,
+// verified directly against charm.land/bubbletea/v2@v2.0.9's options.go,
 // which defines no such option; AltScreen and MouseMode are both fields on
 // tea.View instead, per tea.go's own doc comments). MouseMode is set to
 // tea.MouseModeAllMotion, the exact setting task-2b's live probe already

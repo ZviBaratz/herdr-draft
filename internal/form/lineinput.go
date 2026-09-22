@@ -1,7 +1,8 @@
 // lineInput is an independent implementation, written directly against
 // charm.land/bubbles/v2's textinput package (its exported API, read from
-// the vendored v2.1.1 module source under
-// $GOPATH/pkg/mod/charm.land/bubbles/v2@v2.1.1/textinput/textinput.go) --
+// the vendored module source -- v2.1.1 when this was written, re-read at
+// v2.2.1 under
+// $GOPATH/pkg/mod/charm.land/bubbles/v2@v2.2.1/textinput/textinput.go) --
 // it is NOT derived from atrium (github.com/ZviBaratz/atrium). Atrium's
 // own single-line text field lives in ui/overlay/textInput.go, which is
 // explicitly NOT on the audited clean-file list (per task 15's own
@@ -120,9 +121,6 @@ func lineInputStyles(palette theme.Palette) textinput.Styles {
 // Value returns the input's current text.
 func (l *lineInput) Value() string { return l.ti.Value() }
 
-// SetValue replaces the input's text and moves the cursor to the end --
-// matching textinput.Model.SetValue's own documented behavior (verified in
-// the vendored source: SetValue calls SetCursor(len(m.value)) internally).
 // SetValue replaces the text. The cursor is moved to the END, which
 // bubbles' own SetValue does NOT do on its own: it only repositions a
 // cursor that would be out of bounds (setValueInternal), so replacing

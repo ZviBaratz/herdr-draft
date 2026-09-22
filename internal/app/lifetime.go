@@ -31,7 +31,7 @@ type Lifetime struct {
 	// from overlapping. sync.WaitGroup calls that overlap MISUSE and
 	// panics on it, and a late Begin is the ordinary case here rather than
 	// an exotic one -- bubbletea does not wait for its Cmd goroutines
-	// before Run returns (v2.0.8's tea.go: "Don't wait on these
+	// before Run returns (v2.0.9's tea.go: "Don't wait on these
 	// goroutines... we'll have to leak the goroutine until Cmd returns"),
 	// so a Cmd launched just before the quit reaches Begin after
 	// runProgram has reached Shutdown. Panicking on the way out, in the

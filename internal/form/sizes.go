@@ -176,7 +176,7 @@ const (
 // doc) is deliberately NOT painted at all: lipgloss.Style.Render's own
 // getAsColor/Render logic special-cases that exact sentinel to mean "skip
 // the Background SGR key, leave the terminal's own default" (verified in
-// charm.land/lipgloss/v2@v2.0.5 style.go, `if bg != noColor`), and
+// charm.land/lipgloss/v2@v2.0.6 style.go, `if bg != noColor`), and
 // building the SGR bytes directly via ansi.Style here bypasses that
 // special case -- so this function re-implements the same guard, rather
 // than literally painting black (NoColor{}.RGBA() reports opaque black)

@@ -1186,7 +1186,7 @@ func TestSyncDerivedInertness_AccountFollowsAgentKind(t *testing.T) {
 
 // --- mouse/altscreen (carried requirement) ---------------------------------
 
-// TestView_EnablesAltScreenAndMouse pins the bubbletea v2.0.8 fact this
+// TestView_EnablesAltScreenAndMouse pins the bubbletea v2.0.9 fact this
 // task verified directly against the vendored package (options.go defines
 // no WithAltScreen/mouse-enabling ProgramOption at all in v2 -- both moved
 // to fields on the returned tea.View): View() must set them itself.

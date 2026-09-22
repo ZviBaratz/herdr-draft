@@ -1,7 +1,8 @@
 // PromptArea is an independent implementation, written directly against
 // charm.land/bubbles/v2's textarea package (its exported API and doc
-// comments, read from the actual v2.1.1 module source under
-// $GOPATH/pkg/mod/charm.land/bubbles/v2@v2.1.1/textarea/textarea.go) and
+// comments, read from the actual module source -- v2.1.1 when this was
+// written, re-read at v2.2.1 under
+// $GOPATH/pkg/mod/charm.land/bubbles/v2@v2.2.1/textarea/textarea.go) and
 // spec §6 item 8 -- it is NOT derived from atrium
 // (github.com/ZviBaratz/atrium). Atrium's own textInput.go
 // (ui/overlay/textInput.go), the file that would be the natural porting
@@ -44,6 +45,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -110,10 +112,48 @@ func NewPromptArea(palette theme.Palette) *PromptArea {
 	ta.ShowLineNumbers = false
 	ta.SetStyles(paletteStyles(palette))
 	ta.SetHeight(PromptAreaPreferredRows)
+	disableSelection(&ta.KeyMap)
 
 	return &PromptArea{
 		ta:   ta,
 		rows: PromptAreaPreferredRows,
+	}
+}
+
+// disableSelection switches off the text selection bubbles v2.2.0 added to
+// textarea's DefaultKeyMap (charmbracelet/bubbles#1029): ⇧ with an arrow,
+// ⌃⇧ or ⌥⇧ with ←/→, ⌥⇧F and ⌥⇧B, ⌃G to select everything and ⌃⇧C to copy.
+// paletteStyles sets no Selection style, so a selection draws exactly like
+// the text around it, and it hides the cursor for as long as it lasts,
+// because bubbles draws a selected span in place of the cursor -- yet the
+// next key typed, pasted or deleted replaces all of it. Measured on v2.2.1
+// with this widget's own styles: ⌃G and then one letter left the prompt
+// holding that letter alone, and ⇧↑ and then ⌫ deleted a line, with nothing
+// on screen to say either was about to happen.
+//
+// Disabled, every one of those chords falls through to the textarea's
+// default case, which inserts the key's text and so does nothing for a
+// chord that carries none -- what each of them did on v2.1.1, which bound
+// none of them. Turning selection on is a feature and not part of a
+// dependency bump: it needs a Selection style drawn from the palette, with a
+// measured contrast floor against the ground it sits on
+// (internal/theme/contrast_test.go), and an answer for the cursor it hides.
+//
+// The word motions v2.2.0 bound in the same release stay on: ⌃←/⌃→ move by
+// a word and ⌃⌫/⌃⌦ delete one, the same four chords the title row's
+// textinput binds.
+func disableSelection(km *textarea.KeyMap) {
+	for _, b := range []*key.Binding{
+		&km.SelectCharacterForward,
+		&km.SelectCharacterBackward,
+		&km.SelectWordForward,
+		&km.SelectWordBackward,
+		&km.SelectLineUp,
+		&km.SelectLineDown,
+		&km.SelectAll,
+		&km.CopySelection,
+	} {
+		b.SetEnabled(false)
 	}
 }
 
@@ -316,7 +356,7 @@ func (p *PromptArea) InsertNewline() {
 
 // ScrollUp moves the cursor up one visual line -- task 21's mouse-wheel
 // scroll (wheel up over the focused prompt), delegating to bubbles/v2's
-// own textarea.Model.CursorUp (verified exported in the vendored v2.1.1
+// own textarea.Model.CursorUp (verified exported in the vendored v2.2.1
 // source: moves the cursor one visual line up, which also scrolls the
 // wrapped textarea's own internal viewport once the cursor leaves the
 // visible window -- there is no separate "scroll without moving the
