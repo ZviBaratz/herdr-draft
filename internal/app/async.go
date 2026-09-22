@@ -485,7 +485,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		// ...and the title panel's resting note follows both for the same
 		// reason: it names the branch, and is true only while a worktree
 		// is going to be created (see Model.titleNote).
-		m.title.SetVerdict(m.title.Value(), m.titleNote(""))
+		m.title.SetVerdict(m.title.Value(), m.titleNote(), form.VerdictNote)
 	}
 	cmd = tea.Batch(cmd, settle)
 	if m.submitHeld {
@@ -1145,7 +1145,13 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 	}
 	m.titleLandedVersion = msg.req.version
 	m.worktree.SetBranchVerdict(msg.branch, branchVerdictText(msg.branchInvalid))
-	m.title.SetVerdict(msg.req.key, m.titleNote(titleVerdictText(msg.branchExists, msg.labelTaken, msg.timedOut)))
+	text, tone := titleVerdictText(msg.branchExists, msg.labelTaken, msg.timedOut)
+	if text == "" {
+		// Nothing blocks, so the line goes to the resting note. Only here:
+		// a duplicate verdict always wins it (see titleNote).
+		text, tone = m.titleNote(), form.VerdictNote
+	}
+	m.title.SetVerdict(msg.req.key, text, tone)
 	// titleDupBlocked mirrors the SAME verdict just pushed above --
 	// checkSubmitValidation (app.go, spec §9) reads this directly rather
 	// than re-deriving it from TitleField's own (unexported) verdict
@@ -1163,33 +1169,25 @@ func (m Model) handleTitleResult(msg titleResultMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// titleVerdictText composes TitleField's verdict message (bounded to 21
-// cells by TitleField itself -- see field_title.go's titleVerdictMaxCells)
-// from the two duplicate checks spec §6 field 3 names. No literal wording
-// is given in the spec beyond the field's own example fixture text, so
-// this is this task's own terse phrasing.
-// titleNote is what TitleField's panel line actually says: a duplicate
-// warning when there is one, and otherwise the RESTING consequence of the
-// title as it stands -- v2 spec §4's own mockup, whose title panel reads
-// `branch will be zvi/fix-login-redirect-loop` on a form nothing is wrong
-// with.
+// titleNote is the RESTING line of TitleField's panel: the consequence of
+// the title as it stands -- v2 spec §4's own mockup, whose title panel
+// reads `branch will be zvi/fix-login-redirect-loop` on a form nothing is
+// wrong with. Every caller pushes it as a form.VerdictNote, the dim tier,
+// because it is not a verdict at all.
 //
-// The layering matters in both directions. A duplicate warning always
-// wins: it is the one thing that can stop a submit, and burying it under
-// a restatement of the branch name would be the panel's worst possible
-// failure. And the resting note is not a verdict at all, which is why it
-// is composed HERE rather than inside titleVerdictText -- that function
-// stays a pure statement about the two duplicate checks.
+// The layering matters in both directions, and handleTitleResult is where
+// it is applied. A duplicate verdict always wins the line: it is the one
+// thing that can stop a submit, and burying it under a restatement of the
+// branch name would be the panel's worst possible failure. And the resting
+// note is composed HERE rather than inside titleVerdictText, so that
+// function stays a pure statement about the two duplicate checks.
 //
 // A session with no worktree creates no branch, so it has no resting note
 // to give: the panel is then genuinely empty, which is honest. Nor does a
 // branch the submit would refuse (#199): "branch will be zvi/old " would
 // promise, in text that reads exactly like the user's existing zvi/old, a
 // branch that will not be made. The worktree panel says why.
-func (m Model) titleNote(verdict string) string {
-	if verdict != "" {
-		return verdict
-	}
+func (m Model) titleNote() string {
 	if !m.worktree.Enabled() || !m.worktree.On() {
 		return ""
 	}
@@ -1213,22 +1211,31 @@ func branchVerdictText(invalid error) string {
 	return "invalid branch name  " + invalid.Error()
 }
 
-func titleVerdictText(branchExists, labelTaken, timedOut bool) string {
+// titleVerdictText composes TitleField's verdict from the two duplicate
+// checks spec §6 field 3 names, and says which kind of verdict it is (#308):
+// a duplicate is a form.VerdictRefusal, and a check that never answered is a
+// form.VerdictUnknown (#202) -- it blocks the submit too, but "we could not
+// check" is not "we checked, and no", and the tone keeps the two apart as
+// the words already do. "" when neither check found anything, which is
+// handleTitleResult's cue to put titleNote's resting note on the line
+// instead. No literal wording is given in the spec beyond the field's own
+// example fixture text, so this is this package's own terse phrasing.
+func titleVerdictText(branchExists, labelTaken, timedOut bool) (string, form.VerdictTone) {
 	switch {
 	// First: a check that did not answer knows nothing about the branch,
 	// so "branch exists" is not a thing it could also be saying. The label
 	// half is still true and still blocks, but this is the more surprising
 	// of the two and the one the user has no way to guess at.
 	case timedOut:
-		return "couldn't check"
+		return "couldn't check", form.VerdictUnknown
 	case branchExists && labelTaken:
-		return "branch & label in use"
+		return "branch & label in use", form.VerdictRefusal
 	case branchExists:
-		return "branch exists"
+		return "branch exists", form.VerdictRefusal
 	case labelTaken:
-		return "label in use"
+		return "label in use", form.VerdictRefusal
 	default:
-		return ""
+		return "", form.VerdictNote
 	}
 }
 

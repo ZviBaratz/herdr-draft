@@ -172,7 +172,7 @@ func buildTitlePanelForm(palette theme.Palette) Model {
 	for _, r := range "fix login redirect loop" {
 		f.Update(rn(r))
 	}
-	f.SetVerdict(f.Value(), "branch will be zvi/fix-login-redirect-loop")
+	f.SetVerdict(f.Value(), "branch will be zvi/fix-login-redirect-loop", VerdictNote)
 	return fieldFrame(palette, f)
 }
 

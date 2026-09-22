@@ -47,9 +47,22 @@ var sgrSetBG = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
 // or not its fill survives, because the fill is invisible in stripped
 // text and a trailing pad of spaces on the terminal's own background is
 // indistinguishable from one on Surface until you run it.
-func backgroundPerCell(line string) []string {
+func backgroundPerCell(line string) []string { return colourPerCell(line, applySGR) }
+
+// foregroundPerCell is backgroundPerCell for the foreground: the "r;g;b"
+// of the last truecolor foreground still in force at each printable cell,
+// or "" for none -- the terminal's own default. The question is the same
+// shape one attribute over (#319): text with no foreground at all reads
+// exactly like text drawn in DimText in a stripped frame, and wrong only
+// on a terminal whose polarity differs from the theme's.
+func foregroundPerCell(line string) []string { return colourPerCell(line, applyForegroundSGR) }
+
+// colourPerCell is the walk backgroundPerCell and foregroundPerCell share:
+// it folds each SGR sequence into the running value with apply and reports
+// that value once per printable cell.
+func colourPerCell(line string, apply func(current, params string) string) []string {
 	var out []string
-	bg := ""
+	current := ""
 	rest := line
 	for {
 		loc := sgrSetBG.FindStringSubmatchIndex(rest)
@@ -57,15 +70,42 @@ func backgroundPerCell(line string) []string {
 			break
 		}
 		for range ansi.StringWidth(rest[:loc[0]]) {
-			out = append(out, bg)
+			out = append(out, current)
 		}
-		bg = applySGR(bg, rest[loc[2]:loc[3]])
+		current = apply(current, rest[loc[2]:loc[3]])
 		rest = rest[loc[1]:]
 	}
 	for range ansi.StringWidth(rest) {
-		out = append(out, bg)
+		out = append(out, current)
 	}
 	return out
+}
+
+// applyForegroundSGR folds one escape sequence's parameters into the
+// running foreground: "38;2;r;g;b" sets it, a reset ("", "0") or a
+// default-foreground "39" clears it. It walks the parameters in order
+// rather than searching them, because lipgloss packs a foreground and a
+// background into one sequence (`1;38;2;24;24;37;48;2;137;180;250`) and a
+// background's channels must not be read as a foreground's.
+func applyForegroundSGR(fg, params string) string {
+	if params == "" {
+		return ""
+	}
+	parts := strings.Split(params, ";")
+	for i := 0; i < len(parts); i++ {
+		switch parts[i] {
+		case "0", "39":
+			fg = ""
+		case "38", "48":
+			if i+4 < len(parts) && parts[i+1] == "2" {
+				if parts[i] == "38" {
+					fg = strings.Join(parts[i+2:i+5], ";")
+				}
+				i += 4
+			}
+		}
+	}
+	return fg
 }
 
 // applySGR folds one escape sequence's parameters into the running
@@ -84,7 +124,8 @@ func applySGR(bg, params string) string {
 	return bg
 }
 
-// rgbKey spells a palette color the way backgroundPerCell reports one.
+// rgbKey spells a palette color the way backgroundPerCell and
+// foregroundPerCell report one.
 func rgbKey(c color.Color) string {
 	r, g, b, _ := c.RGBA()
 	return fmt.Sprintf("%d;%d;%d", r>>8, g>>8, b>>8)
