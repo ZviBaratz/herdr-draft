@@ -1,0 +1,32 @@
+# Dependabot keeps the two things this repository pins current: Go modules,
+# and the GitHub Actions in check.yml, which are pinned by commit SHA rather
+# than by tag (a tag is mutable, and the workflow runs on every push).
+# Dependabot understands SHA pins and updates the SHA and its version comment
+# together.
+#
+# Read a gomod PR's go.mod diff before merging it. herdr runs `go build` on
+# the USER's machine at install time, so a dependency that needs a newer Go
+# and drags this module's `go` line up with it raises the floor for everyone
+# installing the plugin -- the reason CONTRIBUTING.md gives for keeping
+# staticcheck out of go.mod. Such an update waits until the floor moves on
+# purpose.
+#
+# Monthly and grouped, because every update is a PR that has to pass the
+# whole gate on two platforms, and a burst of single-dependency PRs costs
+# more review than the drift it prevents.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      go-modules:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

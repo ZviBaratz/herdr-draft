@@ -1,0 +1,28 @@
+name: Feature request
+description: Something herdr-draft could do that it does not.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Several features were considered and declined on purpose. The list, with
+        the reasons, is in
+        [CONTRIBUTING.md's "What not to propose"](https://github.com/ZviBaratz/herdr-draft/blob/main/CONTRIBUTING.md#what-not-to-propose).
+        If yours is there and you think the reason no longer holds, say why.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and where herdr-draft gets in the way. A real session you wanted to create is the most useful example.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: How it could work, from the popup's side, `create`'s, or both. Every `create` flag has a control in the form, so a new flag usually means a new control.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: A workaround, `[agents.extra_args]`, a script around `create`, or nothing.

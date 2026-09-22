@@ -1,0 +1,88 @@
+name: Bug report
+description: Something herdr-draft did that it should not have, or did not do that it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Before filing, please check the
+        [known limitations](https://github.com/ZviBaratz/herdr-draft#known-limitations) and
+        [troubleshooting](https://github.com/ZviBaratz/herdr-draft#troubleshooting)
+        and search the [open issues](https://github.com/ZviBaratz/herdr-draft/issues).
+
+        **Anything exploitable goes to the
+        [private reporting form](https://github.com/ZviBaratz/herdr-draft/security/advisories/new),
+        not here.**
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead. Quote any message verbatim.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows it. For the popup, which row you were on and which keys you pressed.
+      placeholder: |
+        1. Open the popup in a repository with a .herdr-draft.toml
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - The popup
+        - herdr-draft create (headless)
+        - The /spawn skill
+        - Installing or building the plugin
+        - Somewhere else
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: herdr-draft version
+      description: The full output of `herdr-draft version`. Find the binary with `herdr plugin list --json --plugin zvibaratz.draft`, under `plugin_root`/bin.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: herdr-version
+    attributes:
+      label: herdr version
+      description: The client and server versions. `herdr status` shows both, and they can differ after `herdr update` until the server restarts.
+      placeholder: "client 0.9.1, server 0.9.1"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS, terminal and herdr theme
+      placeholder: "macOS 15.4, Ghostty, catppuccin"
+    validations:
+      required: true
+  - type: checkboxes
+    id: integrations
+    attributes:
+      label: What is configured
+      description: Tick everything that applies. Several paths only run with one of these.
+      options:
+        - label: Linear (an `[linear]` key)
+        - label: clauth, with two or more profiles
+        - label: An account picker (`[clauth] picker`)
+        - label: A repository `.herdr-draft.toml`
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: The parts of `config.toml` or `.herdr-draft.toml` that matter. Remove every key, token and command that prints one.
+      render: toml
+  - type: textarea
+    id: screen
+    attributes:
+      label: Screen or output
+      description: A screenshot, the text of the screen, or `create`'s stderr. Check it for anything private first.
