@@ -16,12 +16,9 @@ that on one screen, fills every field with a sensible default, and does it
 in one submit. The same binary creates sessions without the screen too, for
 scripts and for agents handing work to other agents.
 
-<!-- Hero image: a real capture of the popup goes here, as docs/images/popup.png. -->
-
-![The herdr-draft form as it opens: nine one-line rows (issue, title, prompt,
-project, worktree, placement, agent, options, account) with the title row
-focused, and the sessions already open listed in the panel
-below](docs/images/opening.svg)
+![herdr with three spaces in its sidebar and the herdr-draft popup open over
+them: a title typed, a one-line prompt, and the worktree row showing the
+branch the session will get](docs/images/popup.png)
 
 ## What you get
 

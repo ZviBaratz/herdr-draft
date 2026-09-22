@@ -4,8 +4,9 @@ The popup is one screen: a header, a stack of rows, one panel, and a footer.
 This page goes through each part, then the keys, then what happens after you
 create.
 
-![The form with a title typed: the worktree row shows the branch that title
-will create, and the panel below lists the sessions already open](images/titled.svg)
+![The form as it opens, with Linear and clauth both set up: nine one-line
+rows with the title row focused, and the sessions already open listed in
+the panel below](images/opening.svg)
 
 A few herdr words, since the form uses them throughout. herdr's sidebar
 lists **spaces** (herdr's API calls them workspaces). A space holds
