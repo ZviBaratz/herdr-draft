@@ -222,9 +222,9 @@ func runPopup() int {
 	}
 
 	return runProgram(os.Stderr, lt, func() error {
-		// bubbletea v2.0.8 has no tea.WithAltScreen()/mouse-enabling
+		// bubbletea v2.0.9 has no tea.WithAltScreen()/mouse-enabling
 		// tea.NewProgram option at all (verified against
-		// charm.land/bubbletea/v2@v2.0.8's options.go: WithContext/WithOutput/
+		// charm.land/bubbletea/v2@v2.0.9's options.go: WithContext/WithOutput/
 		// WithInput/WithEnvironment/WithoutSignalHandler/WithoutCatchPanics/
 		// WithoutSignals/WithoutRenderer/WithFilter/WithFPS/WithColorProfile/
 		// WithWindowSize is the complete list) -- AltScreen and MouseMode are
@@ -320,7 +320,7 @@ type signalWatch struct {
 // SIGTERM until the plan finished, which is worse than the bug.
 //
 // It is `create` that needs this and not the popup, which bubbletea already
-// covers: v2.0.8 notifies on both signals and turns them into InterruptMsg/
+// covers: v2.0.9 notifies on both signals and turns them into InterruptMsg/
 // QuitMsg (tea.go's own "SIGTERM is sent by unix utilities (like kill) to
 // terminate a process"), so Run returns and runProgram's teardown happens the
 // ordinary way.

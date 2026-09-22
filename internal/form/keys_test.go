@@ -8,7 +8,7 @@ import (
 
 // key builds a synthetic tea.KeyPressMsg whose String() matches keystroke,
 // using the same Code/Mod construction bubbletea's own decoder produces for
-// these chords (verified against charm.land/bubbletea/v2@v2.0.8/key.go and
+// these chords (verified against charm.land/bubbletea/v2@v2.0.9/key.go and
 // ultraviolet's decoder.go control-character table -- e.g. Ctrl+<letter>
 // decodes to Code: '<letter>', Mod: ModCtrl, not a distinct control-code
 // rune), so these fixtures exercise MapKey exactly as a real keypress would.

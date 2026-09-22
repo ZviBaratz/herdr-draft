@@ -23,6 +23,19 @@ updates:
     groups:
       go-modules:
         patterns: ["*"]
+    # The golang.org/x modules support the latest two Go releases, and each
+    # new Go release moves their `go` line up with it -- so their minor
+    # updates are the ones that raise this module's floor. At Go 1.25.0,
+    # x/text v0.42.0 and x/sync v0.23.0 both need Go 1.26 (#329 was that
+    # PR). They are v0.x, so a minor update is the part that moves:
+    # Dependabot reads v0.41.0 -> v0.42.0 as semver-minor and still offers
+    # v0.41.x patches. Take them deliberately when the floor moves on
+    # purpose, and remove this ignore then. A charm update can still pull a
+    # newer x module in as its own requirement, which is what the go.mod
+    # diff check above is for.
+    ignore:
+      - dependency-name: "golang.org/x/*"
+        update-types: ["version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -1386,7 +1386,7 @@ func roundDiv(num, den int) int {
 //
 // Inline(true) is required, not cosmetic: Style.Render runs Wrap() whenever
 // width > 0 and inline is false, *before* the MaxWidth truncation step (see
-// charm.land/lipgloss/v2@v2.0.5 style.go's "Word wrap" comment) -- so
+// charm.land/lipgloss/v2@v2.0.6 style.go's "Word wrap" comment) -- so
 // without it, content longer than width is word-wrapped onto multiple
 // physical lines instead of being clipped onto one, silently breaking every
 // caller here that promises a fixed row/line count (Picker.View's

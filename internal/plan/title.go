@@ -50,7 +50,7 @@ func CutTitle(title string) string {
 // control characters at all, so they are kept -- all as the row does.
 //
 // The rule is not this repository's. It is bubbles' textinput sanitizer
-// (v2.1.1, textinput.go's san(): runeutil's ReplaceTabs(" ") and
+// (v2.2.1, textinput.go's san(): runeutil's ReplaceTabs(" ") and
 // ReplaceNewlines(" ")), which cleans typing, pastes and SetValue alike.
 // The row cannot be routed through this function, so two tests in
 // internal/form hold the row to it instead (#178):
@@ -105,7 +105,7 @@ func SanitizeTitle(title string) string {
 // written with, so they stay, and a paste carries them as text.
 //
 // The popup was never exposed: its prompt is a bubbles textarea, whose
-// sanitizer (v2.1.1, textarea.go's san()) drops the same characters from
+// sanitizer (v2.2.1, textarea.go's san()) drops the same characters from
 // a paste, from typing and from SetValue. So this is `create`'s rule and
 // the Linear-seeded prompt's, and the form's textarea still applies its
 // own on top. Two of the textarea's choices are deliberately NOT copied,

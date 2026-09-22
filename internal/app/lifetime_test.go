@@ -97,7 +97,7 @@ func TestShutdownGivesUpAtTheGrace(t *testing.T) {
 // A Begin may arrive after Shutdown has already started waiting, and it must
 // not take the process down with it.
 //
-// bubbletea does not wait for its Cmd goroutines before Run returns -- v2.0.8's
+// bubbletea does not wait for its Cmd goroutines before Run returns -- v2.0.9's
 // tea.go says so in as many words ("Don't wait on these goroutines... we'll
 // have to leak the goroutine until Cmd returns") -- so a Cmd launched just
 // before the quit can reach Begin after runProgram has reached Shutdown. A

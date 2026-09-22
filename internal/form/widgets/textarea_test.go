@@ -1,9 +1,12 @@
 package widgets
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -296,7 +299,7 @@ func TestPromptArea_UpdateIgnoresInputWhileBlurred(t *testing.T) {
 // TestPromptArea_RawUpdateEnterInsertsNewline documents the exact footgun
 // the package doc warns callers about: bubbles/v2 textarea's DefaultKeyMap
 // binds "enter" (and "ctrl+m") to InsertNewline (verified directly against
-// charm.land/bubbles/v2@v2.1.1/textarea/textarea.go's DefaultKeyMap, not
+// charm.land/bubbles/v2@v2.2.1/textarea/textarea.go's DefaultKeyMap, not
 // assumed). If PromptArea's caller (task 16's form.go) ever forwarded a
 // bare Enter keypress to Update unfiltered instead of routing it through
 // keys.go's MapKey first, it would silently insert a newline instead of
@@ -312,5 +315,152 @@ func TestPromptArea_RawUpdateEnterInsertsNewline(t *testing.T) {
 	p.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got, want := p.Value(), "x\n"; got != want {
 		t.Fatalf("Value() after a raw Enter Update = %q, want %q (bubbles' own InsertNewline default binding)", got, want)
+	}
+}
+
+// TestPromptArea_WordLeftReturnsAtTheStartOfTheText pins that moving a word
+// left returns when there is no word left to move to. Under
+// charm.land/bubbles/v2 v2.1.1 it did not: textarea's wordLeft stepped left
+// until it stood on a non-space rune, and characterLeft at the very start of
+// the text does not move, so with nothing but whitespace -- or nothing at
+// all -- before the cursor the loop never ended. ⌥← or ⌥B in an EMPTY
+// prompt was enough, and because MapKey reports both as ActionNone the form
+// forwards them here untouched, so the popup froze on a key a shell user
+// presses out of habit. bubbles v2.2.1 fixed it upstream ("fix(textarea):
+// stop word-left at input boundary", charmbracelet/bubbles#1036): the loop
+// now returns once a step leaves the cursor where it was.
+//
+// Each case runs its keys on a goroutine under a bound, so a regression
+// fails here instead of hanging the suite. The ⌃← case never hung on
+// v2.1.1, which did not bind that chord; v2.2.0 bound it to the same
+// word-left (charmbracelet/bubbles#1020), which is why it is here. The last
+// case is the control: a word at the cursor stopped the loop even on
+// v2.1.1.
+func TestPromptArea_WordLeftReturnsAtTheStartOfTheText(t *testing.T) {
+	altLeft := tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt}
+	altB := tea.KeyPressMsg{Code: 'b', Mod: tea.ModAlt}
+	ctrlLeft := tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl}
+	home := tea.KeyPressMsg{Code: tea.KeyHome}
+
+	cases := []struct {
+		name  string
+		value string
+		keys  []tea.KeyPressMsg
+	}{
+		{"empty, alt+left", "", []tea.KeyPressMsg{altLeft}},
+		{"empty, alt+b", "", []tea.KeyPressMsg{altB}},
+		{"empty, ctrl+left", "", []tea.KeyPressMsg{ctrlLeft}},
+		{"leading spaces, alt+left from the line start", "  indented", []tea.KeyPressMsg{home, altLeft}},
+		{"after a leading newline, alt+left", "\nsecond line", []tea.KeyPressMsg{home, altLeft}},
+		{"blank lines only, alt+b", "\n\n", []tea.KeyPressMsg{altB}},
+		{"control: a word at the cursor", "word", []tea.KeyPressMsg{home, altLeft}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewPromptArea(testPalette())
+			p.Focus()
+			p.SetValue(tc.value)
+			ok := returnsWithin(2*time.Second, func() {
+				for _, k := range tc.keys {
+					p.Update(k)
+				}
+			})
+			if !ok {
+				t.Fatalf("Update did not return within 2s for %q in %q: word-left is looping at the start of the text", tc.keys[len(tc.keys)-1].String(), tc.value)
+			}
+			if got := p.Value(); got != tc.value {
+				t.Errorf("Value() = %q after moving the cursor, want the text untouched (%q)", got, tc.value)
+			}
+		})
+	}
+}
+
+// returnsWithin reports whether fn returns within d. It runs fn on a
+// goroutine of its own and cannot stop it -- nothing stops a spinning loop
+// from outside -- so a case that fails leaves that goroutine running for the
+// rest of the test binary. That is the price of a failure rather than a
+// hang, and it is safe because every caller hands fn a widget no other code
+// touches.
+func returnsWithin(d time.Duration, fn func()) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// TestPromptArea_SelectionChordsDoNotSelect pins disableSelection. Each
+// sequence is one the probe behind that function measured doing damage on
+// bubbles v2.2.1 with selection on: a selection nothing drew, replaced by the
+// next key. With it off, the chords do what they did on v2.1.1 -- nothing --
+// so the key after them lands at the cursor and the text survives.
+//
+// The loop over the KeyMap is the half that outlives this release. It finds
+// the selection bindings by name rather than by the list disableSelection
+// keeps, so a bubbles upgrade that adds another one arrives here enabled and
+// fails, and whether the prompt should have it gets decided then, not
+// discovered by a user.
+func TestPromptArea_SelectionChordsDoNotSelect(t *testing.T) {
+	p := NewPromptArea(testPalette())
+	km := reflect.ValueOf(p.ta.KeyMap)
+	found := 0
+	for i := range km.NumField() {
+		name := km.Type().Field(i).Name
+		if !strings.HasPrefix(name, "Select") && name != "CopySelection" {
+			continue
+		}
+		found++
+		if b, ok := km.Field(i).Interface().(key.Binding); !ok || b.Enabled() {
+			t.Errorf("textarea KeyMap.%s is enabled (keys %v); the prompt draws no selection, so it must be off", name, b.Keys())
+		}
+	}
+	if found == 0 {
+		t.Fatal("textarea.KeyMap has no Select* or CopySelection field; the check above tested nothing")
+	}
+
+	shiftLeft := tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift}
+	cases := []struct {
+		name  string
+		value string
+		keys  []tea.KeyPressMsg
+		want  string
+	}{
+		{
+			"shift+left five times, then a letter", "hello world",
+			[]tea.KeyPressMsg{shiftLeft, shiftLeft, shiftLeft, shiftLeft, shiftLeft, {Code: 'x', Text: "x"}},
+			"hello worldx",
+		},
+		{
+			"ctrl+g, then a letter", "a long prompt",
+			[]tea.KeyPressMsg{{Code: 'g', Mod: tea.ModCtrl}, {Code: 'y', Text: "y"}},
+			"a long prompty",
+		},
+		{
+			"shift+up, then backspace", "line one\nline two",
+			[]tea.KeyPressMsg{{Code: tea.KeyUp, Mod: tea.ModShift}, {Code: tea.KeyBackspace}},
+			"line one\nline tw",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewPromptArea(testPalette())
+			p.Focus()
+			p.SetValue(tc.value)
+			for _, k := range tc.keys {
+				p.Update(k)
+				if p.ta.HasSelection() {
+					t.Fatalf("%s left a selection behind", k.String())
+				}
+			}
+			if got := p.Value(); got != tc.want {
+				t.Errorf("Value() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

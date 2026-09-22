@@ -519,7 +519,7 @@ Layering, outermost to innermost:
   `--dry-run` has always stopped at that exact boundary.
 - **`create` answers a signal; the popup does not have to.** bubbletea
   already notifies on `SIGINT`/`SIGTERM` and turns them into
-  `InterruptMsg`/`QuitMsg` (v2.0.8 `tea.go`), so the popup reaches
+  `InterruptMsg`/`QuitMsg` (v2.0.9 `tea.go`), so the popup reaches
   `runProgram`'s teardown the ordinary way — measured, and closing the
   pane mid-pick kills both the popup and the picker too. `create` had no
   such thing and left the picker running (#252). `main.watchSignals` is

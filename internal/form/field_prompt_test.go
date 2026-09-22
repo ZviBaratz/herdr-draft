@@ -3,7 +3,9 @@ package form
 import (
 	"strings"
 	"testing"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -272,5 +274,61 @@ func TestPromptField_OneRowPanelKeepsTheTextarea(t *testing.T) {
 	}
 	if !strings.Contains(panel, "only line") {
 		t.Errorf("Panel(80, 1) = %q, want the prompt text", panel)
+	}
+}
+
+// TestModel_WordLeftInAnEmptyPromptReturns is widgets'
+// TestPromptArea_WordLeftReturnsAtTheStartOfTheText along the route a
+// keypress actually takes: Model.Update, MapKey, PromptField.Update and only
+// then the textarea. Under charm.land/bubbles/v2 v2.1.1, ⌥← or ⌥B in an
+// empty prompt never came back from the first of those, so the popup stopped
+// answering every key after it, esc included; v2.2.1 fixed the loop upstream
+// (charmbracelet/bubbles#1036). ⌃← is here because v2.2.0 bound it to the
+// same word-left.
+//
+// Two guards come first, because either failing would make the bounded
+// Update below return at once without the loop ever being entered, and the
+// test would pass for that reason instead: the key must be ActionNone in the
+// prompt, so the grammar forwards it rather than consuming it, and the
+// textarea must be focused, since a blurred one ignores every key.
+func TestModel_WordLeftInAnEmptyPromptReturns(t *testing.T) {
+	for _, k := range []tea.KeyPressMsg{
+		{Code: tea.KeyLeft, Mod: tea.ModAlt},
+		{Code: 'b', Mod: tea.ModAlt},
+		{Code: tea.KeyLeft, Mod: tea.ModCtrl},
+	} {
+		t.Run(k.String(), func(t *testing.T) {
+			if action, _ := MapKey(k, FocusZone{Kind: ZonePrompt}, false); action != ActionNone {
+				t.Fatalf("MapKey(%s) in the prompt = %v, want ActionNone (forwarded to the textarea)", k.String(), action)
+			}
+			f := NewPromptField(theme.Default())
+			m := fieldFrame(theme.Default(), f)
+			if !f.area.Focused() {
+				t.Fatal("the prompt's textarea is not focused, so it would ignore the key")
+			}
+			if !returnsWithin(2*time.Second, func() { m.Update(k) }) {
+				t.Fatalf("Model.Update(%s) in an empty prompt did not return within 2s", k.String())
+			}
+			if got := f.Value(); got != "" {
+				t.Errorf("Value() = %q after %s, want the prompt still empty", got, k.String())
+			}
+		})
+	}
+}
+
+// returnsWithin reports whether fn returns within d, running it on a
+// goroutine it cannot stop -- see widgets' copy of this helper for why a
+// failing case leaving that goroutine behind is the right trade.
+func returnsWithin(d time.Duration, fn func()) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
 	}
 }

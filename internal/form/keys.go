@@ -65,7 +65,7 @@
 //     `t.textarea, _ = t.textarea.Update(msg)` and the widget's own v1
 //     keymap handles it. herdr-draft's wrapped charm.land/bubbles/v2
 //     textarea does NOT bind ctrl+j to InsertNewline by default (verified
-//     against DefaultKeyMap in the vendored v2.1.1 source -- only
+//     against DefaultKeyMap in the vendored v2.2.1 source -- only
 //     "enter"/"ctrl+m" do), so spec §6's "⌃J ... newline" requirement has
 //     no widget-level binding to fall back on, and this grammar layer
 //     supplies it directly instead.
@@ -77,7 +77,7 @@
 //     smaller still -- it takes no tea.PasteMsg at all, because MapKey's
 //     signature only accepts tea.KeyPressMsg, a type bracketed-paste
 //     content is never delivered as (bubbletea reports it as a distinct
-//     tea.PasteMsg{Content}, see charm.land/bubbletea/v2@v2.0.8/paste.go).
+//     tea.PasteMsg{Content}, see charm.land/bubbletea/v2@v2.0.9/paste.go).
 //     So the Go type system itself makes "a pasted keyword falls into the
 //     key switch" unreachable; the only behavior HandlePaste still needs
 //     to supply is Atrium's unconditional disarm ("A paste ... disarms the
@@ -323,10 +323,10 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 		// Ctrl+S is the submit-from-anywhere shortcut.
 		return ActionSubmit, armed
 	case "ctrl+j":
-		// Newline-only, and only in the prompt: ctrl+j is bubbles
-		// textarea's own default InsertNewline binding is NOT bound to
-		// this chord (only "enter"/"ctrl+m" are, see
-		// charm.land/bubbles/v2@v2.1.1/textarea/textarea.go
+		// Newline-only, and only in the prompt: bubbles textarea's
+		// default InsertNewline binding is NOT this chord (only
+		// "enter"/"ctrl+m" are, see
+		// charm.land/bubbles/v2@v2.2.1/textarea/textarea.go
 		// DefaultKeyMap), so this grammar layer -- not the widget --
 		// owns interpreting it.
 		if zone.Kind == ZonePrompt {
@@ -337,7 +337,7 @@ func MapKey(msg tea.KeyPressMsg, zone FocusZone, armed bool) (KeyAction, bool) {
 		// The prompt's keep · reap toggle (reap spec §5.2). A chord because
 		// the textarea owns every printable key and the arrows; ⌃X because
 		// nothing else binds it -- not bubbles' textarea DefaultKeyMap
-		// (charm.land/bubbles/v2@v2.1.1), not this grammar, and not herdr's
+		// (charm.land/bubbles/v2@v2.2.1), not this grammar, and not herdr's
 		// default keys, which are prefix-mode apart from ctrl+v.
 		if zone.Kind == ZonePrompt {
 			return ActionToggle, armed
