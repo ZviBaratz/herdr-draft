@@ -642,10 +642,13 @@ var errRefused = errors.New("refusing to run herdr")
 // Only flag *values* are covered. Positional arguments carry the same
 // parsing hazard but cannot take the same answer: PaneRun's argv is a
 // command line whose own flags are the point, and AgentPrompt's text is
-// free prose that may legitimately open with "-". Those need a herdr-side
-// `--` their subcommands honor, not a refusal here. (`agent start`'s name
-// positional is already safe by construction: plan.AgentName always
-// returns a [a-z]-initial slug.)
+// free prose that may legitimately open with "-". PaneRun's would need a
+// herdr-side `--` its subcommand honors, not a refusal here. AgentPrompt's
+// needs nothing: `agent prompt` takes its second positional as the text
+// before it parses a single flag, so a "-"-leading prompt is read as text
+// already (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/agent.rs#L771-L781).
+// (`agent start`'s name positional is already safe by construction:
+// plan.AgentName always returns a [a-z]-initial slug.)
 func appendFlag(args []string, flag, value string) ([]string, error) {
 	if value == "" {
 		return args, nil

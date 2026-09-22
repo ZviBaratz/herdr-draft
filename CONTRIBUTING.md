@@ -8,6 +8,59 @@ the process is heavy.
 an agent working in the repository; this file is the same material for a
 person, plus the parts a contributor needs and an agent does not.
 
+Questions, and ideas you would like to talk through before writing code, go
+to [Discussions](https://github.com/ZviBaratz/herdr-draft/discussions).
+Bugs go to the [issue tracker](https://github.com/ZviBaratz/herdr-draft/issues/new/choose),
+and anything exploitable goes through [SECURITY.md](SECURITY.md) instead.
+Everyone taking part is expected to follow the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+## Prerequisites
+
+- **Go 1.25 or later.** `go.mod` says `go 1.25.0`, and that line is also the
+  floor for everyone who installs the plugin, since herdr builds it on their
+  machine. Do not raise it without a reason worth that cost.
+- **[just](https://github.com/casey/just)**, which runs every recipe below.
+- **staticcheck**, at the version the justfile pins. `just unused` prints
+  the exact `go install` line (and a `go run` alternative) when it is
+  missing.
+- **Python 3.11 or later**, only for `just live`, `just live-selftest`,
+  `just screenshots` and `just frames-selftest`. The two `live` recipes
+  install their one dependency into a scratch virtualenv on first use; the
+  two frame recipes need only the standard library.
+- **herdr 0.9.0 or later**, to run the plugin for real.
+
+## Quickstart
+
+```bash
+git clone https://github.com/ZviBaratz/herdr-draft
+cd herdr-draft
+just build                   # go build, stamped with git describe, into bin/
+herdr plugin link "$PWD"     # register this checkout with herdr
+just check                   # the gate, below
+```
+
+**`herdr plugin link` does not build.** herdr runs the manifest's
+`[[build]]` only from `install`
+([`run_plugin_build_commands` has a single call site, inside
+`plugin_install`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/plugin.rs#L210)),
+so a linked tree with no `bin/herdr-draft` in it registers an action that
+launches nothing. Run `just build` after every change you want to see in the
+popup. herdr registers a link for the current user and every session sees it
+at once, with no restart. `<path>` is positional, a plugin directory or a
+manifest path, not `--path`.
+
+A link and an install with the same plugin id do not stack: `install`
+refuses while a link is registered (*"plugin zvibaratz.draft is already
+linked from a local path; uninstall/unlink it before installing from
+GitHub"*, `herdr:src/cli/plugin.rs` at v0.9.0, `ensure_replacement_allowed`).
+Unlink with `herdr plugin unlink zvibaratz.draft` before moving from a
+development link to a released install.
+
+To look at the form without herdr at all, `just live` runs the real binary
+under a pseudo-terminal with every input stubbed; see
+[Manual smoke](#manual-smoke) below.
+
 ## The gate is `just check`, and it is four steps
 
 ```bash
@@ -21,8 +74,10 @@ just unused          # staticcheck -checks U1000 -tests=false ./...
 go test ./...
 ```
 
-CI runs exactly this recipe, on Linux and macOS, so a green run locally is
-a green run there.
+CI runs exactly this recipe on every push and pull request
+([`.github/workflows/check.yml`](.github/workflows/check.yml)), on Linux and
+macOS, so a green run locally is a green run there. `go test ./...` covers
+the unit tests and the golden-frame tests below, with no real I/O.
 
 **A green `go test ./...` is not enough.** The step that will reject a
 patch unexpectedly is `just unused`, because `go vet` does not detect
@@ -41,8 +96,13 @@ leftover. That directive is the only accepted suppression — there is no
 allow-list file — because the reason has to sit where the next sweep will
 read it.
 
-staticcheck is the one dev tool not in `go.mod`. Run `just unused` without
-it and the error names the pinned install line.
+staticcheck is the one dev tool not in `go.mod`. Its version is pinned in
+the justfile as `staticcheck_version`, which the workflow reads too, and
+`just unused` run without it names the exact install line. It is not a
+`go.mod` tool directive on purpose: that would drag this module's own `go`
+line up to whatever the linter needs, and herdr builds the plugin with
+`go build` on the *user's* machine, so a dev tool must not narrow who can
+install.
 
 ## Golden frames
 
@@ -59,6 +119,12 @@ go test ./internal/app/ -update
 
 The flag is registered per test binary, in those two packages only, so a
 repo-wide run errors on every other package.
+
+**The screenshots in `docs/images/` are drawn from frames too**: the
+`showcase-*` frames in `internal/app/testdata/frames/`. A change that moves
+one needs `go test ./internal/app/ -update` and then `just screenshots`,
+which regenerates the SVGs; otherwise `TestShowcaseImagesAreCurrent` fails.
+`just frames-selftest` checks the frame-to-SVG renderer on its own.
 
 **A frame proves only the state someone thought to fixture.** This project
 shipped a defect in the form's *opening* state — the first thing every user
@@ -83,7 +149,20 @@ never emits.
 
 ## Spec citations
 
-Nine documents in `docs/specs/`, seven of them cited by section:
+herdr-draft is a standalone Go and Bubble Tea binary that drives herdr only
+through its public CLI (`$HERDR_BIN_PATH`, which reaches the server over the
+socket at `$HERDR_SOCKET_PATH`), never the raw socket API. `docs/specs/`
+holds the design records it was built from;
+[`docs/README.md`](docs/README.md#design-records) lists them with their
+status and a reading order. `docs/specs/2026-08-31-herdr-draft-design.md` is
+the original; `docs/specs/2026-09-02-herdr-draft-v2-design.md` supersedes its
+§6 (the form) and §7 (skin and mouse); and
+`docs/specs/2026-09-02-herdr-draft-v3-design.md` supersedes v2's §4, §7 and
+§9 with the dialog that ships. The placement spec then replaces parts of all
+three, and each later spec amends the sentences its feature changes. Each
+one's own header itemises what it replaced.
+
+Ten documents, eight of them cited by section:
 
 | citation | document (`docs/specs/`) |
 |---|---|
@@ -94,6 +173,7 @@ Nine documents in `docs/specs/`, seven of them cited by section:
 | `spawn-skill spec §N` | `2026-09-16-spawn-skill-design.md` |
 | `reap spec §N` | `2026-09-17-pane-reaper-ready-design.md` |
 | `agent-options spec §N` | `2026-09-18-agent-options-design.md` |
+| `draw-first spec §N` | `2026-09-21-draw-first-design.md` (approved, **not yet implemented**) |
 
 The other two are named by filename, because nothing cites them by
 section: `2026-09-07-herdr-membership-assessment.md`, and
@@ -102,8 +182,10 @@ spec's §2.4 and §8.1.
 
 Each supersedes only the sections it names; everything else stays
 authoritative, which is why plenty of live code cites v2 correctly. v3 §13,
-the placement spec's §12, the reap spec's §12 and the agent-options spec's
-§12 each itemise what that document replaced.
+the placement spec's §12, and §12 of the reap, agent-options and draw-first
+specs each itemise what that document replaced. The draw-first spec
+describes intended behaviour until it is implemented, so a citation of it
+names a plan, not the shipped code.
 
 **A bare `spec §N` means v1, and the check that keeps it honest is opening
 v1 §N** — not avoiding numbers that v2 reused. See CLAUDE.md's version of
@@ -230,6 +312,46 @@ accepted the argument.
 
 If you think one deserves revisiting, open an issue arguing against the
 recorded reasoning rather than a PR implementing it.
+
+## The install route
+
+`herdr plugin install` clones the repository into a temporary checkout,
+prints a preview, asks for confirmation, and only then runs the manifest's
+`[[build]]` (`go build -o bin/herdr-draft ./cmd/herdr-draft`, with the plugin
+root as its working directory) before moving the checkout into place. The
+build runs on the **user's** machine, which is why nothing here may raise the
+Go floor. A failed build fails the install with nothing registered, and a
+build that edits `herdr-plugin.toml` on its way past is refused, so the
+manifest the user confirmed is the manifest they get. `-y` / `--yes` is
+required rather than optional when stdin is not a terminal: a scripted
+install without it exits 2 instead of hanging.
+
+**This route has been run from clean.** On 2026-09-09, on a freshly
+provisioned Ubuntu 22.04 x86_64 machine that had never had herdr or this
+plugin on it: git, then herdr 0.9.0's own release binary and Go 1.25.14, and
+nothing else. `herdr plugin install ZviBaratz/herdr-draft -y` printed the
+preview, ran `[[build]]`, registered the plugin and left a working binary:
+`herdr plugin list` reported `zvibaratz.draft (herdr-draft) enabled`, and the
+installed `herdr-draft version` reported `0.1.0` with the resolved commit.
+The build wants no dev tooling: it is a plain `go build`, and it ran with no
+`staticcheck` anywhere on the machine.
+
+What that run did not settle:
+
+- **The popup was not exercised on that machine**, since it needs an
+  attached TUI client, and no session was created end to end there. The real
+  popup's end-to-end run is Cell 1 of
+  [`docs/manual-smoke.md`](docs/manual-smoke.md), recorded on the author's
+  own machine the same day.
+- **It was the author's own cloud instance, not a stranger's.** It proves the
+  install works on a machine nobody prepared for it; a third-party
+  first-install report is still welcome, because `[[build]]` is exactly the
+  step the development route never runs.
+- **An installed plugin's `herdr-draft version` prints no `build` line**, and
+  that is correct rather than a stamping failure: herdr runs `[[build]]` as a
+  plain argv with no shell, so there is nowhere for `git describe` to run. A
+  `commit` line is still there, from the Go toolchain's own VCS stamp, which
+  a build from a git *worktree* does not produce.
 
 ## Manual smoke
 

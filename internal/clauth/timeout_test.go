@@ -244,8 +244,8 @@ func TestTheCLITimeoutMessageCarriesThePrefixTheRowStrips(t *testing.T) {
 func TestTheBudgetIsWhatTheDocumentsSay(t *testing.T) {
 	if cliTimeout != 30*time.Second {
 		t.Errorf("the clauth budget is now %s. Three documents name it and no test reads them: "+
-			"README.md's [clauth] and Troubleshooting sections, the CHANGELOG entry, and the v2 "+
-			"spec's #141 amendment", cliTimeout)
+			"docs/account-picker.md's account-row section, docs/create.md's exit-code section, "+
+			"and the v2 spec's #141 amendment", cliTimeout)
 	}
 }
 

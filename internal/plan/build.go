@@ -75,14 +75,14 @@ const (
 	// LaunchWrapper types `CLAUDE_CONFIG_DIR=<dir> claude <extra args>`,
 	// leaving the pane's own login shell to resolve `claude`.
 	//
-	// Opt-in only (`[clauth] launch = "wrapper"`), and the README says what it
-	// is opting into: on a machine whose shell defines a `claude` FUNCTION,
-	// this reaches that function -- which is what can register a session
-	// holder and launch through a team-lead helper, neither of which
+	// Opt-in only (`[clauth] launch = "wrapper"`), and docs/configuration.md
+	// says what it is opting into: on a machine whose shell defines a `claude`
+	// FUNCTION, this reaches that function -- which is what can register a
+	// session holder and launch through a team-lead helper, neither of which
 	// `clauth start` has ever done. On every other machine `claude` is the
 	// plain binary: the credential is still isolated, and everything else the
-	// wrapper was for is silently absent. That asymmetry is why this is not
-	// the default.
+	// wrapper was for is silently absent. That asymmetry is why this is not the
+	// default.
 	LaunchWrapper
 )
 

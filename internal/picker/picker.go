@@ -7,8 +7,8 @@
 // program: it sources a shell framework, a tenant table and a set of zsh
 // functions, so naming it would have made a whole private toolchain a hidden
 // prerequisite of a public plugin. Documenting the interface instead costs
-// one README section and turns an accidental coupling into something anyone
-// can implement.
+// one page (docs/account-picker.md) and turns an accidental coupling into
+// something anyone can implement.
 //
 // The contract, in full:
 //

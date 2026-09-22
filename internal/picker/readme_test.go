@@ -9,16 +9,18 @@ import (
 	"testing"
 )
 
-// readmeExamplePicker extracts the shell script the README publishes under
-// "Writing one" and makes it executable in a temp dir.
+// documentedExamplePicker extracts the shell script docs/account-picker.md
+// publishes under "Writing one" and makes it executable in a temp dir. (The
+// file keeps its old name: the page it reads was a README section until the
+// user guide moved into docs/.)
 //
 // Extracting the LIVE document rather than keeping a copy here is the whole
 // point of the test below: a copy is one more thing to keep in sync, and the
 // defect this exists to catch is precisely the two drifting apart.
-func readmeExamplePicker(t *testing.T) string {
+func documentedExamplePicker(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("the README's example picker is a POSIX shell script")
+		t.Skip("the documented example picker is a POSIX shell script")
 	}
 
 	const (
@@ -26,40 +28,40 @@ func readmeExamplePicker(t *testing.T) string {
 		fenceOpen  = "```sh\n"
 		fenceClose = "```"
 	)
-	readme := filepath.Join("..", "..", "README.md")
-	src, err := os.ReadFile(readme)
+	doc := filepath.Join("..", "..", "docs", "account-picker.md")
+	src, err := os.ReadFile(doc)
 	if err != nil {
-		t.Fatalf("read README: %v", err)
+		t.Fatalf("read %s: %v", doc, err)
 	}
 
 	rest := string(src)
 	i := strings.Index(rest, heading)
 	if i < 0 {
-		t.Fatalf("README has no %q section -- if it moved, move this test with it", heading)
+		t.Fatalf("%s has no %q section -- if it moved, move this test with it", doc, heading)
 	}
 	rest = rest[i:]
 	j := strings.Index(rest, fenceOpen)
 	if j < 0 {
-		t.Fatalf("README's %q section has no ```sh block", heading)
+		t.Fatalf("%s's %q section has no ```sh block", doc, heading)
 	}
 	rest = rest[j+len(fenceOpen):]
 	k := strings.Index(rest, fenceClose)
 	if k < 0 {
-		t.Fatal("README's example picker block is unterminated")
+		t.Fatalf("%s's example picker block is unterminated", doc)
 	}
 	script := rest[:k]
 	if !strings.HasPrefix(script, "#!/bin/sh") {
-		t.Fatalf("README's example picker does not start with a shebang:\n%s", script)
+		t.Fatalf("%s's example picker does not start with a shebang:\n%s", doc, script)
 	}
 
-	bin := filepath.Join(t.TempDir(), "readme-example-picker")
+	bin := filepath.Join(t.TempDir(), "documented-example-picker")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write example picker: %v", err)
 	}
 	return bin
 }
 
-// The README IS the contract: it is the only thing a stranger implementing a
+// The document IS the contract: it is the only thing a stranger implementing a
 // picker has to work from, so an example that does not satisfy the protocol is
 // not a documentation nit but a wrong contract shipped to everyone who copies
 // it.
@@ -69,12 +71,12 @@ func readmeExamplePicker(t *testing.T) string {
 // above it. It passed the startup probe, so nothing complained -- and then
 // every preview, one per project change, claimed to have built an account
 // directory that was never built.
-func TestTheREADMEsExamplePickerIsConformant(t *testing.T) {
-	c := CLI{Bin: readmeExamplePicker(t)}
+func TestTheDocumentedExamplePickerIsConformant(t *testing.T) {
+	c := CLI{Bin: documentedExamplePicker(t)}
 	ctx := context.Background()
 
 	if err := c.Probe(ctx, "/p/thing"); err != nil {
-		t.Fatalf("the README's example picker does not pass the startup probe: %v", err)
+		t.Fatalf("the documented example picker does not pass the startup probe: %v", err)
 	}
 
 	dry, err := c.Pick(ctx, "/p/thing", Options{DryRun: true})

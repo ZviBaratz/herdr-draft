@@ -303,8 +303,9 @@ func TestPromptArea_UpdateIgnoresInputWhileBlurred(t *testing.T) {
 // assumed). If PromptArea's caller (task 16's form.go) ever forwarded a
 // bare Enter keypress to Update unfiltered instead of routing it through
 // keys.go's MapKey first, it would silently insert a newline instead of
-// advancing -- defeating "bare Enter in the prompt zone advances" (spec
-// §6). PromptArea itself does not rebind or filter this; the grammar layer
+// creating the session -- defeating "`↵` from the prompt submits rather
+// than advancing" (v2 spec §8, which replaced the advance v1 §6 asked
+// for). PromptArea itself does not rebind or filter this; the grammar layer
 // is responsible for intercepting Enter before it ever reaches Update. This
 // test pins the wrapped widget's raw behavior so a future bubbles upgrade
 // that changes it is caught here rather than silently downstream.

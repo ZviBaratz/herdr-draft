@@ -53,7 +53,7 @@ const usage = `herdr-draft -- herdr's new-session plugin
 usage:
   herdr-draft                 open the new-session popup (how herdr launches it)
   herdr-draft create [flags]  create a session without the popup
-  herdr-draft skill           print the agent skill; see README
+  herdr-draft skill           print the agent skill; see docs/spawn-skill.md
   herdr-draft skill --check <path>
                               exit 0 if <path> is what "skill" would print
   herdr-draft version         print the version

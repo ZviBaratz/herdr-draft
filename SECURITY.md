@@ -34,7 +34,7 @@ same way.
   command here that may legitimately be waiting on you to approve a prompt.
   It runs at most once per popup and once per `create --issue`.
 - `[clauth] picker` is an executable implementing the [account picker
-  protocol](README.md#account-picker-protocol), and it runs more often than
+  protocol](docs/account-picker.md#the-account-picker-protocol), and it runs more often than
   the other two. Opening the popup runs it twice — a probe, then a
   `--dry-run` preview for the opening project — and every project change
   runs another preview, whether or not the `account` row is on `auto`.

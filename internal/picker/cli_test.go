@@ -253,13 +253,13 @@ func TestAHangingPickerIsNotARefusal(t *testing.T) {
 	}
 }
 
-// Pick's twin of TestProbeRejectsAnUndocumentedExitCode. The README says "any
-// other exit code is treated as a malfunction, not a refusal, and the picker is
-// reported as unusable rather than obeyed"; that was true of Probe alone, so a
-// picker crashing on exit 1, 7 or 127 reached the user as "picker refused:
-// picker exited 7" -- and, inside `create`, as a usage problem. Fail-closed
-// either way, but a crash described as a decision tells the reader to go
-// looking for a reason that was never given.
+// Pick's twin of TestProbeRejectsAnUndocumentedExitCode. docs/account-picker.md
+// says "any other exit code is treated as a malfunction, not a refusal, and the
+// picker is reported as unusable rather than obeyed"; that was true of Probe alone,
+// so a picker crashing on exit 1, 7 or 127 reached the user as "picker refused:
+// picker exited 7" -- and, inside `create`, as a usage problem. Fail-closed either
+// way, but a crash described as a decision tells the reader to go looking for a
+// reason that was never given.
 func TestPickRejectsAnUndocumentedExitCode(t *testing.T) {
 	bin, _ := stubPicker(t, stubRefused, "Traceback: boom", 7)
 	_, err := CLI{Bin: bin}.Pick(context.Background(), "/p/thing", Options{})

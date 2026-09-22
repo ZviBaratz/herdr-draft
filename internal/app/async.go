@@ -1938,8 +1938,9 @@ func submitStepDetail(op plan.Op, in plan.Input) string {
 			// here is the popup half of that substitution being reported at
 			// the moment it happens -- without it the row is honest about the
 			// command and silent about the mode, and the one setting the user
-			// had to opt into turns itself off with nothing said. The README
-			// documents the fallback; a document is not a report.
+			// had to opt into turns itself off with nothing said.
+			// docs/configuration.md documents the fallback; a document is not
+			// a report.
 			detail += " (wrapper mode had no config dir)"
 		}
 		return withOptions(detail, in)
@@ -2060,9 +2061,12 @@ type statePersistedMsg struct{}
 // makes per-project memory a pure addition with no migration step and no
 // data loss for anyone upgrading.
 //
-// projects.json is skipped when no key resolved -- a submit fired inside
-// the debounce window after a project change, before the dir check
-// answered, has nowhere to record itself. The global tier still records it.
+// projects.json is skipped when no key resolved. A submit fired inside the
+// debounce window after a project change used to record under the
+// PREVIOUS project's key -- not nowhere, as this comment once said. Since
+// #195 handleSubmit holds for the dir check of the path the row holds, so
+// whenever there is a key it is the current project's. The global tier
+// records the submit either way.
 //
 // The write happens in a Cmd rather than inline in the message handler,
 // matching every other I/O-performing source in this file, and its error
