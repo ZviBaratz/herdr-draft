@@ -686,7 +686,11 @@ func confirmPromptLanded(ctx context.Context, r herdrc.Runner, req herdrc.AgentP
 		}
 		return explainPromptKilledAgent(fmt.Errorf("%w: %w", errAgentGoneAfterSend, err))
 	}
-	sig := blockingDialogSignature(screen)
+	// The narrower list: a dialog the agent could only be showing if it
+	// never got the text. A spend dialog is not one -- it is what a
+	// working agent hits -- and blaming it here reports a delivered
+	// prompt as swallowed (dialog.go's swallowingDialogSignatures).
+	sig := swallowingDialogSignature(screen)
 	if sig == "" {
 		return nil
 	}
@@ -1158,6 +1162,17 @@ func explainUnconfirmedPrompt(err error) error {
 // AgentRead that succeeds with a BLANK screen is not an error, so a
 // fallback keyed on error would have skipped the read that could still
 // have found something.
+//
+// The quote is APPENDED, like every other one. A draft of #352 led with
+// the pane instead, reasoning that stepValue keeps the head of a value
+// and a bare timeout is the least informative thing on the line. Measured
+// against the real screen, that was wrong in the direction it was meant
+// to help: with six lines quoted, the head is the ECHOED COMMAND, so a
+// popup showed `the pane shows: ❯ clauth start quantivly-0 -- --v…` and
+// truncated away both the refusal and the timeout. Growing the budget had
+// made leading strictly worse. So the popup shows herdr's error, as it
+// did before, and these lines are read in `create`'s stderr and --json --
+// which is what the paneTailLines comment says and what this now does.
 func withPaneTail(ctx context.Context, r herdrc.Runner, paneID string, err error) error {
 	if paneID == "" {
 		return err
@@ -1166,31 +1181,7 @@ func withPaneTail(ctx context.Context, r herdrc.Runner, paneID string, err error
 	if readErr != nil {
 		return err
 	}
-	return withScreenLead(screen, err)
-}
-
-// withScreenLead is withScreenTail with the pane FIRST, for a failure that
-// has no instruction of its own to lead with.
-//
-// The two orderings are a real distinction rather than an inconsistency,
-// and explainBlockedStart's own comment is where the reasoning is written
-// down: SubmitView.stepValue truncates a step's value keeping the HEAD, so
-// at an 80-cell popup only the opening clause survives, and whatever is
-// most useful belongs there. For a blocked start that is the instruction,
-// and herdr's error goes last. For a bare detection timeout there is no
-// instruction -- "timed out after 1m0.001s" is the least informative thing
-// on the line, and the pane is the most -- so the pane leads and the
-// timeout follows.
-//
-// Without this the six lines below reach `create`'s stderr and --json and
-// nothing else: the timeout text alone is about 55 cells before the
-// separator, and submitStepError sizes the popup's value column at sixty.
-func withScreenLead(screen string, err error) error {
-	tail := lastNonBlankLines(screen, paneTailLines)
-	if tail == "" {
-		return err
-	}
-	return fmt.Errorf("the pane shows: %s; %w", tail, err)
+	return withScreenTail(screen, err)
 }
 
 // withScreenTail is withPaneTail's formatting half, split out so
@@ -1289,11 +1280,17 @@ func agentKindName(kind string) string {
 // known shapes. TestDetectionTailBudgetReachesTheRefusalLine pins both
 // ends of that: six reaches the command, five does not.
 //
-// It costs the popup nothing and, before withScreenLead, gained it
-// nothing either -- SubmitView.stepValue truncates a step's value keeping
-// the HEAD, and the timeout alone fills the value column. Leading with
-// the pane is what puts any of this in front of a popup user; these lines
-// are otherwise read in `create`'s stderr and its --json `error`.
+// It costs the popup nothing and gains it nothing: SubmitView.stepValue
+// truncates a step's value keeping the HEAD, and herdr's own error fills
+// the value column on its own. These lines are read in `create`'s stderr
+// and its --json `error`. Leading with the pane instead was tried and
+// measured worse -- see withPaneTail.
+//
+// NOTE it is shared with explainBlockedStart, through withScreenTail, so
+// moving it moves the blocked-start quote too. That caller appends to
+// herdr's agent_not_ready envelope, where six joined lines is already a
+// long tail; it is the same screen and the same reader, so one budget is
+// right, but a change made for the detection path lands there as well.
 const paneTailLines = 6
 
 // lastNonBlankLines returns the last n non-blank lines of s joined by " | ",
@@ -1616,32 +1613,22 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// which retryBusy one level up still has to recognize.
 				err = explainBlockedStart(ctx, r, req.Kind, req.PaneID, err)
 				// And Path A gets the same pane quote Path B's detection
-				// wait gets, for the same reason and the same failure
-				// (#352's review). `agent start` polls for readiness and
-				// gives up with herdr's `timeout` code -- "timed out
-				// waiting for agent startup"
-				// (herdr:src/cli/agent.rs at v0.9.0, agent_wait_timeout) --
-				// which is neither agent_not_ready nor blocked, so the
-				// line above returns it untouched and nothing reads the
-				// pane. A `claude` or `clauth` wrapper in the pane's shell
-				// refusing the launch lands here exactly as it lands on
-				// the OpAwaitDetection path below, and without this the
-				// two paths report the same failure with and without its
-				// reason.
-				switch {
-				case err == nil:
-				case isBlockedAgentError(err):
-					// explainBlockedStart has already read the pane and
-					// quoted it; a second quote would duplicate it.
-				case errors.Is(err, herdrc.ErrAgentGone):
-					// Already explained by waitThroughDialog.
-				case errors.Is(err, herdrc.ErrPaneBusy):
-					// retryBusy wraps this whole switch, so a pane read
-					// here runs once per retry -- and a busy pane is
-					// herdr's own condition rather than something on the
-					// screen, so the read would cost a subprocess an
-					// attempt and quote nothing worth reading.
-				default:
+				// wait gets, for the same failure: a wrapper in the pane's
+				// shell refusing the launch line herdr typed (#350). herdr
+				// reports that as a startup timeout whose message says only
+				// that it waited, so the reason is on the pane and nowhere
+				// else.
+				//
+				// ONE error, named, rather than everything that is not
+				// already explained. The first draft of this used a
+				// `default:` arm, which #352's review caught: an
+				// agent_name_taken or an agent_start_failed carries its own
+				// diagnosis, and prepending six lines of somebody's shell
+				// prompt to it buys a subprocess and pushes the real reason
+				// out of the popup's value column. Classifying a failure by
+				// what it is not is how that happens, which is the same
+				// lesson #144 records one layer down.
+				if errors.Is(err, herdrc.ErrAgentStartTimeout) {
 					err = withPaneTail(ctx, r, req.PaneID, err)
 				}
 			case OpClauthLaunch:

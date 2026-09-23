@@ -666,9 +666,13 @@ flag* helps in neither case.
 **A failure at the detection step is not a slow agent.** `waiting for
 agent detection ... timed out` says no agent ever appeared in that pane,
 and the ordinary reason is that the launch line never ran — the pane's
-shell refused it (section 5). It is exit 1, so a workspace and a tab
-exist. The error quotes the last lines of the pane, so read the error
-before anything else. Read the pane itself **by pane**, not by agent:
+shell refused it (section 5). It is exit 1, so whatever the placement
+opened is still there: with a worktree, a space and its checkout and
+branch; with `tab-in` or `tab-here`, a tab in a workspace that already
+existed; with `split-here`, a pane beside yours. Read the `--json` ids
+rather than assuming a workspace is yours to clean up. The error quotes
+the last lines of the pane, so read it before anything else, and read the
+pane itself **by pane**, not by agent:
 
 ```bash
 herdr pane read w12:p3 --source detection --format text

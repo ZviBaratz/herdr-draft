@@ -144,7 +144,8 @@ type Runner interface {
 	AgentRead(ctx context.Context, target string) (string, error)
 	// PaneRead reads a pane's screen without going through herdr's agent
 	// layer, which is the only way to see a pane whose launch never
-	// produced an agent for `agent read` to find (#350).
+	// produced an agent for `agent read` to find (#350). plan's
+	// withPaneTail uses it INSTEAD of AgentRead, not after it.
 	PaneRead(ctx context.Context, paneID string) (string, error)
 	// AwaitDetection polls until the agent in paneID is ready. timeout is
 	// the ordinary detection budget; blockedTimeout, when > 0, is the
@@ -943,9 +944,41 @@ func (r *CLIRunner) AgentStart(ctx context.Context, req AgentStartReq) error {
 		args = append(args, "--")
 		args = append(args, req.ExtraArgs...)
 	}
-	_, err = r.runJSON(ctx, args...)
-	return err
+	if _, err = r.runJSON(ctx, args...); err != nil {
+		if herdrErrorCode(err) == agentStartTimeoutCode {
+			return fmt.Errorf("%w: %w", ErrAgentStartTimeout, err)
+		}
+		return err
+	}
+	return nil
 }
+
+// agentStartTimeoutCode is herdr's `error.code` when `agent start`'s
+// readiness poll runs out its deadline: `agent_wait_timeout()`, "timed out
+// waiting for agent startup" (herdr:src/cli/agent.rs at v0.9.0).
+//
+// The same generic word promptWaitTimeoutCode names, and scoped the same
+// way and for the same reason: it is matched against a PARSED envelope
+// field at the one call site that can mean it, never put in
+// codeSentinels, because "timeout" from `agent start` and "timeout" from
+// `agent prompt --wait` are opposite conclusions -- nothing started
+// versus a delivery that cannot be confirmed -- and a shared sentinel
+// would let either be mistaken for the other.
+const agentStartTimeoutCode = "timeout"
+
+// ErrAgentStartTimeout reports that herdr polled for the agent and never
+// saw it. It means the launch produced nothing, which is a different
+// failure from every other way `agent start` can fail: the name being
+// taken, the pane being busy, or herdr refusing a blocked screen all say
+// something about a launch that HAPPENED.
+//
+// That distinction is what plan's OpAgentStart branches on. herdr's own
+// message says only that it waited, so this is the one start failure
+// whose reason is on the pane rather than in the error -- typically the
+// pane's shell refusing the launch line it was typed (#350). Classifying
+// it by exclusion instead would attach a pane quote to an
+// agent_name_taken, whose diagnosis is already in hand.
+var ErrAgentStartTimeout = errors.New("herdr waited for the agent to start and never saw it")
 
 // AgentPrompt runs `herdr agent prompt --wait` (spec §9 step 3).
 func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
@@ -1004,8 +1037,9 @@ func (r *CLIRunner) AgentRead(ctx context.Context, target string) (string, error
 //
 // and exited 1, while `pane read` on the same pane printed the refusal
 // verbatim. That is exactly the pane a detection timeout is standing next
-// to (#350), which is why plan's withPaneTail falls back to this one --
-// the case AgentRead cannot serve is the case the diagnosis is for.
+// to (#350), which is why plan's withPaneTail reads with this one and
+// not with AgentRead at all -- the case AgentRead cannot serve is the
+// only case that diagnosis is for.
 //
 // `--source detection` matches AgentRead's, so the two quote the same
 // screen rather than two subtly different ones; `pane read` accepts the

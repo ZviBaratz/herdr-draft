@@ -1540,6 +1540,49 @@ func fakeHerdrFailEnvelope(t *testing.T, code, message string) string {
 	return bin
 }
 
+// TestCLIRunnerAgentStartTimeout pins the OTHER meaning of herdr's
+// `timeout` code, and the pair below is the point: the same word from two
+// subcommands is two opposite conclusions, so neither may live in
+// codeSentinels where `errors.Is` would find it through the wrong call.
+//
+// From `agent start` it means the readiness poll never saw an agent --
+// nothing started, and the reason is on the pane rather than in the error
+// (#350). From `agent prompt --wait` it means the wait gave up while the
+// agent was demonstrably busy, so delivery is unknown and the text must
+// never be resent (#108).
+func TestCLIRunnerAgentStartTimeout(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "timeout", "timed out waiting for agent startup")
+	r := &CLIRunner{Bin: bin}
+
+	err := r.AgentStart(context.Background(), AgentStartReq{Name: "a", Kind: "claude", PaneID: "w1:p1"})
+	if !errors.Is(err, ErrAgentStartTimeout) {
+		t.Fatalf("AgentStart error = %v, want it to match ErrAgentStartTimeout", err)
+	}
+	// And it must NOT be mistaken for the prompt wait's timeout, which is
+	// the whole reason each is wrapped at its own call site.
+	if errors.Is(err, ErrPromptWaitTimeout) {
+		t.Error("an agent start timeout matched ErrPromptWaitTimeout; the two `timeout` codes mean opposite things")
+	}
+	// herdr's own message survives for the report.
+	if !strings.Contains(err.Error(), "timed out waiting for agent startup") {
+		t.Errorf("error %q does not carry herdr's own message", err)
+	}
+}
+
+// TestCLIRunnerAgentStartOtherErrorsAreNotTimeouts is the scope guard:
+// only the `timeout` code becomes the sentinel, so plan's branch on it
+// cannot catch a failure that carries its own diagnosis.
+func TestCLIRunnerAgentStartOtherErrorsAreNotTimeouts(t *testing.T) {
+	for _, code := range []string{"agent_name_taken", "agent_pane_busy", "agent_not_ready", "agent_start_failed"} {
+		bin := fakeHerdrFailEnvelope(t, code, "refused")
+		r := &CLIRunner{Bin: bin}
+		err := r.AgentStart(context.Background(), AgentStartReq{Name: "a", Kind: "claude", PaneID: "w1:p1"})
+		if errors.Is(err, ErrAgentStartTimeout) {
+			t.Errorf("%s matched ErrAgentStartTimeout, want only herdr's `timeout` code to", code)
+		}
+	}
+}
+
 // TestCLIRunnerAgentPromptWaitTimeout pins the #108 conclusion: herdr's
 // `timeout` code on `agent prompt --wait` means the WAIT gave up, not that
 // the prompt failed to arrive, so it reaches callers as a typed sentinel

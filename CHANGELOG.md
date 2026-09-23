@@ -63,20 +63,23 @@ for why a heading here may read `unreleased`.
   pane already, through `herdr agent read`, which resolves its target
   through herdr's agent registry and so answers `agent_not_found` for the
   one pane this is ever about: the one where no agent started. It now
-  reads by pane instead, quotes six lines rather than three — five to
+  reads by pane instead, and quotes six lines rather than three — five to
   reach the account and the machine that owns it past a two-line shell
-  prompt, six to reach the command that was run — and puts the pane's
-  text *before* herdr's timeout, so a popup, which truncates keeping the
-  start of the line, shows the reason rather than the deadline. A failed
-  `herdr agent start` gets the same quote: it gives up with a bare
-  "timed out waiting for agent startup" and previously read nothing.
+  prompt, six to reach the command that was run. A `herdr agent start`
+  that times out gets the same quote: it gives up with a bare "timed out
+  waiting for agent startup" and previously read nothing. Only that one
+  start failure reads the pane — every other kind already says what went
+  wrong in its own error.
 - **A prompt is never typed into the spend-limit dialog** (#349). Claude
   Code's "You've hit your monthly spend limit" screen is a blocking
   selection dialog whose highlighted option is "Adjust monthly spend
   limit: Unlimited", and the guard that stops a queued prompt's Enter
   answering a dialog did not recognise it — so the one retry a stalled
   send is allowed could have raised your spending cap. It is now two
-  signatures in that list, beside the first-run trust prompt.
+  signatures in that list, beside the first-run trust prompt. Only for
+  the check made *before* a send: seeing that screen afterwards means the
+  agent took the prompt and then hit its cap, so it is no longer read as
+  evidence the text was swallowed.
 - **The spawn skill says what a clean `--dry-run` does not settle**
   (#349, #350, #351). Three facts an agent could not have known from the
   document: `account_usage` covers usage windows only, so a monthly spend

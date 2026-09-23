@@ -61,15 +61,14 @@ type mockRunner struct {
 	// start whose pane cannot be read), so it needs a second dial.
 	readErr error
 
-	// paneReadText and paneReadErr drive PaneRead, withPaneTail's fallback
-	// for a pane herdr has no agent for (#350). They are a separate pair
-	// from readText/readErr because the whole point of the fallback is
-	// that the two reads can disagree: the live case is an AgentRead that
-	// fails with `agent_not_found` next to a PaneRead that prints the
-	// refusal on screen, and one dial could not say that.
+	// paneReadText and paneReadErr drive PaneRead, which is the ONLY read
+	// withPaneTail makes (#352) -- not a fallback after AgentRead. They
+	// are a separate pair from readText/readErr because the two reads
+	// answer differently in the live case: `agent read` fails with
+	// `agent_not_found` on a pane that produced no agent while `pane
+	// read` prints the refusal on it, and one dial could not say that.
 	//
-	// Their zero values keep every test written before the fallback
-	// existed meaning what it meant: an empty screen and no error, which
+	// Their zero values are an empty screen and no error, which
 	// withScreenTail treats as nothing to quote.
 	paneReadText string
 	paneReadErr  error
@@ -1075,16 +1074,13 @@ func TestExecuteFailureAtAgentStart(t *testing.T) {
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
 		"TabRename(tab-1,Fix pagination)",
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
-		// The pane read is not "a further call" in the sense this test
-		// guards -- it makes nothing and changes nothing. A failed
-		// `agent start` reads the pane for the same reason a detection
-		// timeout does: herdr's own error can be a bare "timed out
-		// waiting for agent startup" while the pane holds the shell's
-		// refusal (#352's review).
-		"PaneRead(pane-1)",
+		// And no pane read: this failure is not a startup timeout, so it
+		// carries its own diagnosis and nothing goes looking for one on
+		// the screen (#352's review). TestExecuteAgentStartTimeoutQuotesThePane
+		// is the case that does read.
 	}
 	if !reflect.DeepEqual(m.calls, wantCalls) {
-		t.Fatalf("calls = %v, want %v (nothing after the failure but the read that diagnoses it)", m.calls, wantCalls)
+		t.Fatalf("calls = %v, want %v (no further calls after the failure)", m.calls, wantCalls)
 	}
 
 	if len(progressed) == 0 {
@@ -1966,8 +1962,8 @@ const refusedLaunchScreen = "\u276f clauth start quantivly-0 -- --version\n" +
 	" ~/.herdr/worktrees/herdr-draft/zvi-spawn-skill-account-gaps  zvi/spawn-skill-account-gaps \u00b7\u00b7\u00b7 13:29:26 \n" +
 	"\u276f\n"
 
-// TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor is the half of
-// the enrichment above that never actually ran (#350).
+// TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor is the case
+// the enrichment above never actually served (#350).
 //
 // `herdr agent read` resolves its target through herdr's agent registry.
 // A launch that was refused before the agent started produces no agent,
@@ -1979,11 +1975,10 @@ const refusedLaunchScreen = "\u276f clauth start quantivly-0 -- --version\n" +
 // the one shape it could not read, and every test it had used a fake
 // whose AgentRead answers.
 //
-// So the assertions are about the fallback specifically: that PaneRead is
-// consulted when AgentRead fails, and that what it finds reaches the
-// error. The account and its owner are the two facts a person needs, and
-// they are on the second line of a six-line screen -- reachable only
-// because paneTailLines counts six.
+// So the assertions are that the read goes by PANE and that what it finds
+// reaches the error. The account and its owner are the two facts a person
+// needs, and they are five lines up from the bottom of this screen --
+// reachable only because paneTailLines counts past the shell prompt.
 func TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
@@ -2002,9 +1997,11 @@ func TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor(t *testing.T) {
 		failErr:   timeout,
 		failCount: 1,
 		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
-		// herdr's own answer for a pane it has no agent in. A plain
-		// error would prove the fallback fires; this one also keeps the
-		// fixture honest about what the real read says.
+		// readErr is set although nothing on this path calls AgentRead,
+		// and that is the assertion: if a future change puts an
+		// agent-side read back in front of the pane read, this fixture
+		// fails it with herdr's own answer for a pane it has no agent in
+		// rather than letting it quietly return "".
 		readErr:      errors.New("herdr agent read pane-1 --source detection --format text: exit status 1: {\"error\":{\"code\":\"agent_not_found\",\"message\":\"agent target pane-1 not found\"}}"),
 		paneReadText: refusedLaunchScreen,
 	}
@@ -2021,7 +2018,14 @@ func TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor(t *testing.T) {
 		}
 	}
 	if !readPane {
-		t.Fatal("AgentRead failed and nothing read the pane any other way; the refusal on screen is unreported")
+		t.Fatal("nothing read the pane by pane id; the refusal on screen is unreported")
+	}
+	// And nothing read it by AGENT, which on this pane could only fail.
+	for _, c := range m.calls {
+		if strings.HasPrefix(c, "AgentRead(") {
+			t.Errorf("calls = %v, want no agent-side read: herdr has no agent in this pane", m.calls)
+			break
+		}
 	}
 	last := progressed[len(progressed)-1]
 	msg := last.Err.Error()
@@ -2112,11 +2116,6 @@ func TestExecuteDetectionTimeoutSurvivesAnUnreadablePane(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		// readText and blankReadsFirst are two ways to spell an
-		// uninformative pane, and both have to reach withPaneTail: a
-		// screen of whitespace, and a read that succeeds with nothing in
-		// it at all. The second cannot be spelled with readText any more,
-		// since the fake's zero value is a painted screen (#116).
 		// All three drive PaneRead, which since #352 is the only read
 		// this path makes: a screen of whitespace, a screen with nothing
 		// on it at all, and a read that does not answer.
@@ -2365,18 +2364,70 @@ func TestExecuteAgentStartFailureLeavesOtherErrorsAlone(t *testing.T) {
 		failErr:   refused,
 		failCount: 1,
 		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
-		readText:  trustDialogScreen, // present, and must go unread
+		// On BOTH dials, because the start path reads by pane now and
+		// this screen must go unread either way. Setting only readText
+		// is what #352's review caught: production had moved to
+		// PaneRead, whose zero value is empty, so the assertion below
+		// passed for a second reason and the guard had quietly stopped
+		// guarding.
+		readText:     trustDialogScreen,
+		paneReadText: trustDialogScreen,
 	}
 
 	var progressed []Progress
 	Execute(context.Background(), m, ops, ExecOpts{}, func(p Progress) { progressed = append(progressed, p) })
 
-	if containsCall(m.calls, "AgentRead(pane-1)") {
-		t.Errorf("calls = %v, want NO pane read for a failure that is not agent_not_ready", m.calls)
+	for _, call := range []string{"AgentRead(pane-1)", "PaneRead(pane-1)"} {
+		if containsCall(m.calls, call) {
+			t.Errorf("calls = %v, want NO %s for a failure that is neither agent_not_ready nor a startup timeout", m.calls, call)
+		}
 	}
 	msg := progressed[len(progressed)-1].Err.Error()
-	if strings.Contains(msg, "Quick safety check") || strings.Contains(msg, "answer the dialog") {
+	if strings.Contains(msg, "Quick safety check") || strings.Contains(msg, "answer the dialog") || strings.Contains(msg, "the pane shows") {
 		t.Errorf("start failure = %q, want herdr's own error unembellished", msg)
+	}
+}
+
+// TestExecuteAgentStartTimeoutQuotesThePane is the other side of the scope
+// guard above: the ONE start failure whose reason is not in the error.
+//
+// herdr polls for the agent and gives up with "timed out waiting for agent
+// startup" and nothing else, so a wrapper in the pane's shell that refused
+// the launch line is invisible in the report while sitting on the screen
+// (#350, Path A). The two tests are a pair -- one failure reads the pane,
+// every other one must not -- and neither means much alone.
+func TestExecuteAgentStartTimeoutQuotesThePane(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		failAt: "AgentStart",
+		// herdr's own envelope, through the sentinel herdrc wraps it in
+		// at the one call site that can mean it. A fake whose text
+		// merely contains the code proves nothing (#144).
+		failErr: fmt.Errorf("%w: %s", herdrc.ErrAgentStartTimeout,
+			`herdr agent start x --kind claude: exit status 1: `+
+				`{"error":{"code":"timeout","message":"timed out waiting for agent startup"},"id":"cli:agent:start"}`),
+		failCount:    1,
+		topo:         herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		paneReadText: refusedLaunchScreen,
+	}
+
+	var progressed []Progress
+	Execute(context.Background(), m, ops, ExecOpts{}, func(p Progress) { progressed = append(progressed, p) })
+
+	if !containsCall(m.calls, "PaneRead(pane-1)") {
+		t.Fatalf("calls = %v, want the startup timeout to have read the pane", m.calls)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	for _, want := range []string{"the pane shows", "owned by dev (EC2)", "timed out waiting for agent startup"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("start timeout = %q, want it to carry %q", msg, want)
+		}
 	}
 }
 
@@ -3846,6 +3897,51 @@ func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 	}
 	if strings.Contains(msg, "the agent exited") || strings.Contains(msg, "as the prompt was sent") {
 		t.Errorf("step message = %q, want neither the exit nor its timing asserted", msg)
+	}
+}
+
+// TestExecutePromptSurvivesASpendDialogAfterASuccessfulSend is the
+// counterpart of the test below, and the pair is the whole of #352's
+// pre-send/post-send split.
+//
+// The spend screen is refused BEFORE a send, because its highlighted
+// option costs money. After a send it means the opposite: the agent took
+// the prompt, started working, and hit its monthly cap -- which is exactly
+// what #349 observed, under a `prompt_status: sent` that was true. Adding
+// the spend signatures to the one list used at both moments would have
+// turned that delivered prompt into errPromptSwallowed: a create that
+// exits 1 and tells the user a dialog ate text the agent has, while the
+// skill text added in the same PR says the send succeeded.
+//
+// So: send succeeds, the pane then shows the spend dialog, and Execute
+// must report an ordinary success.
+func TestExecutePromptSurvivesASpendDialogAfterASuccessfulSend(t *testing.T) {
+	withDialogPollInterval(t, 0)
+
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := &mockRunner{
+		topo:           herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		postPromptText: spendLimitScreen,
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: the prompt was delivered and the agent then hit its cap, which is not a failed send: %+v",
+			result.FailedIndex, result)
+	}
+	if result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = true, want false -- herdr accepted the send and nothing contradicts it")
+	}
+	if result.promptUnconfirmedCause == causeSwallowedByDialog {
+		t.Error("the spend dialog was read as evidence the prompt was swallowed; it is evidence the prompt LANDED")
 	}
 }
 

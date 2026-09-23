@@ -239,18 +239,33 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 	// stripping turns an ```sh fence into a bare "sh" sitting directly
 	// above the probe, which reads as a bypass that is not there.
 	raw := strings.Split(renderedSkill(), "\n")
-	var logical []string
+	// Each logical line carries the index of the raw line it STARTED at,
+	// because a continuation advances past raw lines and the two slices
+	// desynchronise otherwise -- so the predecessor lookup below would
+	// read an unrelated line for every probe after the first one
+	// (#352's second review; latent, and exactly in the document shape
+	// the continuation handling was added for).
+	type logicalLine struct {
+		text  string
+		start int
+	}
+	var logical []logicalLine
 	for i := 0; i < len(raw); i++ {
-		line := raw[i]
+		line, start := raw[i], i
 		for strings.HasSuffix(strings.TrimSpace(line), "\\") && i+1 < len(raw) {
 			i++
 			line = strings.TrimSuffix(strings.TrimSpace(line), "\\") + " " + strings.TrimSpace(raw[i])
 		}
-		logical = append(logical, line)
+		logical = append(logical, logicalLine{text: line, start: start})
 	}
+	// "time" matches /usr/bin/time, so the boundary admits a path
+	// separator as well as whitespace -- the earlier `(^|\s)` could not
+	// match one of the six wrappers this test's own comment calls
+	// measured.
+	const boundary = `(^|[\s/])`
 	bypasses := []string{"env", "sh -c", "bash -c", "nice", "setsid", "time", "timeout", "sudo", "xargs", "stdbuf"}
-	for i, line := range logical {
-		clean := strings.ReplaceAll(line, "`", "")
+	for _, ll := range logical {
+		clean := strings.ReplaceAll(ll.text, "`", "")
 		at := strings.Index(clean, probe)
 		if at < 0 {
 			continue
@@ -258,21 +273,30 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 		before := clean[:at]
 		// The predecessor, unless it is a fence or blank -- so a wrapper
 		// in the prose line above is caught too.
-		if i > 0 {
-			prev := strings.TrimSpace(raw[i-1])
+		if ll.start > 0 {
+			prev := strings.TrimSpace(raw[ll.start-1])
 			if prev != "" && !strings.HasPrefix(prev, "```") {
 				before = strings.ReplaceAll(prev, "`", "") + " " + before
 			}
 		}
-		if strings.HasSuffix(strings.TrimSpace(before), "command") {
-			continue // the differential, which the document may show
-		}
+		// The bypass scan runs FIRST. Exempting a leading `command`
+		// before looking would let `env command clauth start …` through,
+		// which is a bypass wearing the exemption as a hat.
+		var found string
 		for _, bypass := range bypasses {
-			if regexp.MustCompile(`(^|\s)` + regexp.QuoteMeta(bypass) + `(\s|$)`).MatchString(before) {
-				t.Errorf("the probe is shown behind %q, which reaches the binary and not the shell's gate:\n  %s", bypass, strings.TrimSpace(line))
+			if regexp.MustCompile(boundary + regexp.QuoteMeta(bypass) + `(\s|$)`).MatchString(before) {
+				found = bypass
 				break
 			}
 		}
+		if found == "" {
+			continue
+		}
+		// The one allowed shape: `command` and nothing else in front.
+		if strings.TrimSpace(before) == "command" {
+			continue
+		}
+		t.Errorf("the probe is shown behind %q, which reaches the binary and not the shell's gate:\n  %s", found, strings.TrimSpace(ll.text))
 	}
 
 	// And the document has to say so, since an agent that knows only the
@@ -905,7 +929,11 @@ func TestSkillSaysWhatADryRunCannotSettle(t *testing.T) {
 			want: []string{
 				"no agent ever appeared",
 				"the pane's\nshell refused it",
-				"a workspace and a tab\nexist",
+				// Not "a workspace and a tab exist": that is untrue for
+				// three of the four placements, and the contract used to
+				// pin the over-claim (#352's second review).
+				"whatever the placement\nopened is still there",
+				"Read the `--json` ids\nrather than assuming",
 				"Re-running the create gets the same refusal",
 				// The pane this paragraph is about is the one `herdr
 				// agent read` cannot resolve, so the section's own

@@ -78,7 +78,7 @@ type fakeRunner struct {
 	// NOT go through herdr's agent registry, and so the only one that can
 	// see a pane whose launch never produced an agent (#350). Empty by
 	// default, which withScreenTail treats as nothing to quote -- a test
-	// that wants the fallback to find something says so.
+	// that wants the diagnosis to find something says so.
 	paneReadText string
 
 	// readTextShowsAfter delays readText until after that many AgentRead
@@ -332,11 +332,11 @@ func (r *fakeRunner) AgentRead(_ context.Context, target string) (string, error)
 	return r.readText, nil
 }
 
-// PaneRead is withPaneTail's fallback for a pane herdr has no agent for
-// (#350). Its zero value is an empty screen rather than a painted one:
-// reaching it at all means AgentRead just failed, and the tests that
-// arrange that failure were written when nothing read the pane a second
-// time -- an unreadable pane has to stay spellable as exactly that.
+// PaneRead is the read a failure diagnosis makes (#352): by pane, so a
+// launch that produced no agent can still be quoted. Its zero value is an
+// empty screen rather than a painted one, which withScreenTail treats as
+// nothing to quote -- so a test that does not set it is unaffected, and
+// an unreadable pane stays spellable as exactly that.
 func (r *fakeRunner) PaneRead(_ context.Context, target string) (string, error) {
 	if err := r.record("PaneRead", target); err != nil {
 		return "", err
@@ -634,8 +634,15 @@ func TestExitOne_ARefusedLaunchCarriesThePaneIntoTheReport(t *testing.T) {
 		t.Run(fmt.Sprintf("json=%v", asJSON), func(t *testing.T) {
 			h := newHarness(t)
 			h.runner.failAt = "AgentStart"
-			h.runner.failErr = errors.New(
-				`{"error":{"code":"timeout","message":"timed out waiting for agent startup"},"id":"cli:agent:start"}`)
+			// codedErr, not errors.New: #144's rule is that a fake whose
+			// TEXT merely contains herdr's code proves nothing, and the
+			// production path branches on the sentinel herdrc wraps this
+			// code in at the one call site that can mean it.
+			h.runner.failErr = codedErr{
+				msg: `herdr agent start x --kind claude: exit status 1: ` +
+					`{"error":{"code":"timeout","message":"timed out waiting for agent startup"},"id":"cli:agent:start"}`,
+				code: herdrc.ErrAgentStartTimeout,
+			}
 			h.runner.paneReadText = refusal
 
 			args := []string{"--title", "fix login redirect", "--no-worktree"}

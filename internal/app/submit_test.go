@@ -203,7 +203,7 @@ func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 	return r.readText, nil
 }
 
-// PaneRead is the read withPaneTail makes (#352): by pane, so that a
+// PaneRead is the only read withPaneTail makes (#352): by pane, so that a
 // launch which never produced an agent can still be quoted.
 //
 // It consults its OWN name on the failure dial. The first version passed

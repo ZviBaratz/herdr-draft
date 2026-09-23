@@ -74,6 +74,34 @@ func TestSpendLimitScreenCarriesNoOlderSignature(t *testing.T) {
 	}
 }
 
+// TestSpendDialogDoesNotAccuseADeliveredPrompt pins the pre-send/post-send
+// split (#352's review).
+//
+// The screen means opposite things at the two moments. Before a send it is
+// a dialog whose Enter costs money, so it must match. After a send it is
+// what an agent hits BECAUSE it took the prompt and started working — #349
+// observed it under a truthful `prompt_status: sent` — so matching it
+// there would report a delivered prompt as swallowed.
+func TestSpendDialogDoesNotAccuseADeliveredPrompt(t *testing.T) {
+	if got := blockingDialogSignature(spendLimitScreen); got == "" {
+		t.Error("the spend screen must still be refused BEFORE a send")
+	}
+	if got := swallowingDialogSignature(spendLimitScreen); got != "" {
+		t.Errorf("swallowingDialogSignature = %q, want \"\": a spend dialog after a send is evidence the prompt LANDED, not that it was eaten", got)
+	}
+	// And the startup dialog is in both, or the post-send check has
+	// stopped catching the case it exists for.
+	if got := swallowingDialogSignature(trustDialogScreenForTest()); got == "" {
+		t.Error("swallowingDialogSignature no longer matches the trust dialog, which is the screen it exists for")
+	}
+}
+
+// trustDialogScreenForTest is the fixture at the top of this file, reused
+// so the assertion above is about the same bytes.
+func trustDialogScreenForTest() string {
+	return " Quick safety check: Is this\n a project you created or\n one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to\n cancel\n"
+}
+
 func TestBlockingDialogSignatureMatchesEachSignatureIndependently(t *testing.T) {
 	for _, sig := range promptDialogSignatures {
 		if got := blockingDialogSignature(sig); got != sig {
