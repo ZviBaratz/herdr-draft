@@ -238,16 +238,16 @@ func paletteStyles(palette theme.Palette) textarea.Styles {
 // bg == lipgloss.NoColor{} is accepted and paints nothing: PaintLine
 // declines that sentinel, so the `terminal` theme's prompt keeps the host
 // terminal's own background. nil is the "never opted in" state.
+func (p *PromptArea) SetFill(bg color.Color) {
+	p.fill = bg
+}
+
 // SetPalette re-bakes the textarea's styles from palette. The fill is NOT
 // re-derived here: it is the caller's choice of ground (see SetFill), so a
 // caller repainting this widget sets both, the same pair it set at
 // construction.
 func (p *PromptArea) SetPalette(palette theme.Palette) {
 	p.ta.SetStyles(paletteStyles(palette))
-}
-
-func (p *PromptArea) SetFill(bg color.Color) {
-	p.fill = bg
 }
 
 // SetRows sets the textarea's height, flooring at PromptAreaMinRows -- the

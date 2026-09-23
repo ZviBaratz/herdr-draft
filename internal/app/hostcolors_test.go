@@ -2,11 +2,15 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/ZviBaratz/herdr-draft/internal/form"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
@@ -31,27 +35,20 @@ var hostPaletteReplies = []string{
 }
 
 // terminalModel is a Model on the `terminal` palette -- the only palette
-// any of this runs for.
+// any of this runs for -- built through the real New.
+//
+// Going through New is the point. An earlier version built on
+// theme.Default() and then hand-copied New's arming into the helper, which
+// meant no test ran the real thing: deleting New's hostWanted loop, or its
+// append to initCmds, passed the whole suite while production rejected
+// every reply and resolved at the deadline with nothing (#348 review, S4).
 func terminalModel(t *testing.T) Model {
 	t.Helper()
 	p, ok := theme.Builtin("terminal")
 	if !ok {
 		t.Fatal(`theme.Builtin("terminal") is not a known builtin`)
 	}
-	m := newTestModel(t, testSetup{})
-	m.palette = p
-	m.form.SetPalette(p)
-	// Re-run New's arming with the palette now in place: newTestModel
-	// builds on theme.Default(), which asks the terminal nothing.
-	m.initCmds = nil
-	if host := m.initHostColorCmds(); len(host) > 0 {
-		m.initCmds = host
-		m.hostWanted = map[uint8]bool{}
-		for _, idx := range theme.QueryIndices(p) {
-			m.hostWanted[idx] = true
-		}
-	}
-	return m
+	return newTestModel(t, testSetup{Palette: &p})
 }
 
 // TestInitHostColors_AsksOnlyForWhatThePaletteDraws pins both halves of the
@@ -217,14 +214,69 @@ func TestHostColors_ALateAnswerIsDropped(t *testing.T) {
 	}
 }
 
-// TestHostColors_TheDecoderStillHandsUsOSC4 is the library seam, and the
-// reason it is a test rather than a comment: OSC 4 reaches Update only
-// because ultraviolet does NOT recognise it and bubbletea's
-// translateInputEvent falls through for what it cannot type. The day a
-// dependency bump learns that sequence, our uv.UnknownOscEvent branch stops
-// matching and the whole feature goes quiet -- no build error, no failing
-// assertion anywhere else, just a palette that silently stops resolving.
-// This goes red instead.
+// TestHostColors_TheOSC4SeamSurvivesADependencyBump drives a REAL
+// tea.Program over the exact bytes a herdr pane answers with, and asserts
+// the reply reaches Update.
+//
+// The feature hangs on two fall-throughs, and an earlier version of this
+// test only covered one. ultraviolet's parseOsc has to return
+// UnknownOscEvent for OSC 4, AND bubbletea's translateInputEvent has to
+// return it unchanged rather than typing it. Driving uv.EventDecoder alone
+// pins the first; a bubbletea bump adding `case uv.UnknownOscEvent:` would
+// switch the feature off with that test still green, while its doc claimed
+// it "goes red instead" (#348 review, S8).
+//
+// So this goes through the whole stack: bytes in on stdin, messages out to
+// a model. Note what it deliberately does NOT do -- record every message.
+// tea.EnvMsg carries the entire process environment, and a debug model that
+// logged it once put this machine's API keys in a transcript.
+func TestHostColors_TheOSC4SeamSurvivesADependencyBump(t *testing.T) {
+	const reply = "\x1b]4;9;rgb:c5c5/5555/5555\x1b\\"
+
+	got := make(chan string, 4)
+	m := seamModel{got: got}
+	p := tea.NewProgram(m,
+		tea.WithInput(strings.NewReader(reply)),
+		tea.WithOutput(io.Discard),
+		tea.WithoutSignalHandler(),
+	)
+	done := make(chan error, 1)
+	go func() { _, err := p.Run(); done <- err }()
+
+	select {
+	case osc := <-got:
+		if osc != reply {
+			t.Errorf("Update received %q, want the bytes that went in, %q", osc, reply)
+		}
+	case <-time.After(5 * time.Second):
+		p.Kill()
+		t.Fatal("no uv.UnknownOscEvent reached Update within 5s.\nThe OSC 4 reply is only visible to this program because neither ultraviolet nor bubbletea recognises it. If a bump has taught either of them that sequence, handleHostOsc must switch to whatever it now returns -- the feature is dead until it does.")
+	}
+	p.Quit()
+	<-done
+}
+
+// seamModel reports the first uv.UnknownOscEvent it is given and nothing
+// else. It is deliberately not a message recorder; see the test's doc.
+type seamModel struct{ got chan string }
+
+func (m seamModel) Init() tea.Cmd { return nil }
+
+func (m seamModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if osc, ok := msg.(uv.UnknownOscEvent); ok {
+		select {
+		case m.got <- string(osc):
+		default:
+		}
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m seamModel) View() tea.View { return tea.NewView("") }
+
+// TestHostColors_TheDecoderStillHandsUsOSC4 pins ultraviolet's half on its
+// own, offline and without a terminal, so a failure says which half broke.
 func TestHostColors_TheDecoderStillHandsUsOSC4(t *testing.T) {
 	for _, in := range []string{hostPaletteReplies[0], "\x1b]4;9;rgb:c5c5/5555/5555\x07"} {
 		var d uv.EventDecoder
@@ -234,15 +286,13 @@ func TestHostColors_TheDecoderStillHandsUsOSC4(t *testing.T) {
 		}
 		osc, ok := ev.(uv.UnknownOscEvent)
 		if !ok {
-			t.Fatalf("Decode(%q) returned %T, want uv.UnknownOscEvent.\nIf the library has learned OSC 4, handleHostOsc must switch to whatever it returns now -- the feature is dead until it does.", in, ev)
+			t.Fatalf("Decode(%q) returned %T, want uv.UnknownOscEvent", in, ev)
 		}
 		if string(osc) != in {
 			t.Errorf("Decode(%q) carried %q -- handleHostOsc parses these bytes", in, string(osc))
 		}
 	}
 
-	// And the two bubbletea DOES type, so a bump that changed those would
-	// be caught here too rather than in a screenshot.
 	var d uv.EventDecoder
 	if _, ev := d.Decode([]byte(hostBgReply)); !isBackgroundEvent(ev) {
 		t.Errorf("Decode(%q) returned %T, want a background colour event", hostBgReply, ev)
@@ -317,13 +367,16 @@ func isIndex(c theme.Color) bool {
 	return ok
 }
 
-// TestHostColors_TheDeadlineAfterAnAnswerIsInert is the other half of "once,
-// and only once", and it is a real hazard rather than tidiness. The budget
-// timer always fires, including after the answers have already landed and
-// been applied. Without the guard that second pass would run ResolveHost on
-// an ALREADY-resolved palette -- whose PanelBG is back to NoColor, so
-// NeedsHostColors says yes again -- and re-seed from values the clamps had
-// already moved.
+// TestHostColors_TheDeadlineAfterAnAnswerIsInert pins that the budget
+// timer, which always fires, changes nothing once the answers have landed.
+//
+// Read what it does NOT pin, because its first version claimed otherwise.
+// It does not pin finishHostColors' hostDone check: remove that, and this
+// still passes, because a second resolve over the measured host is exactly
+// the idempotent case and the screen comes back byte-identical. The check
+// is pinned by TestHostColors_ALateAnswerIsDropped, where the deadline
+// comes FIRST and the answers after, so the second pass has new
+// information and does change the screen (#348 review, S5).
 func TestHostColors_TheDeadlineAfterAnAnswerIsInert(t *testing.T) {
 	m := deliverHostColors(t, terminalModel(t))
 	resolved := m.form.ViewAt(80, 24)
@@ -332,6 +385,48 @@ func TestHostColors_TheDeadlineAfterAnAnswerIsInert(t *testing.T) {
 	m = next.(Model)
 
 	if got := m.form.ViewAt(80, 24); got != resolved {
-		t.Errorf("the budget firing after a completed resolve changed the screen -- it re-resolved an already-resolved palette.\nbefore: %q\nafter:  %q", resolved, got)
+		t.Errorf("the budget firing after a completed resolve changed the screen.\nbefore: %q\nafter:  %q", resolved, got)
+	}
+}
+
+// TestHostColors_AClearDoesNotAskAgain is the ⌃R⌃R path, which had no test
+// at all (#348 review, S3 and S4).
+//
+// The rebuilt Model is handed the RESOLVED palette, whose PanelBG is back
+// to NoColor, so NeedsHostColors says yes again and an earlier version
+// re-sent the whole query and re-resolved. That was defensible only while
+// "the resolve is idempotent" was believed unconditionally, and it is not:
+// a clamp that gives up returns a value that does not clear its floor, so a
+// second pass walks again from a new start. Setup.HostColorsDone carries
+// the answer across instead.
+func TestHostColors_AClearDoesNotAskAgain(t *testing.T) {
+	m := deliverHostColors(t, terminalModel(t))
+
+	next, _ := m.Update(form.ClearRequestedMsg{})
+	fresh, ok := next.(Model)
+	if !ok {
+		t.Fatalf("a clear returned %T, not a Model", next)
+	}
+
+	if !fresh.hostDone {
+		t.Error("the rebuilt Model has not been told the terminal already answered, so it will ask again and re-resolve an already-resolved palette")
+	}
+	for _, cmd := range fresh.initCmds {
+		if cmd == nil {
+			continue
+		}
+		if raw, isRaw := cmd().(tea.RawMsg); isRaw {
+			t.Errorf("the rebuilt Model re-sent an OSC query: %q", fmt.Sprint(raw.Msg))
+		}
+	}
+	// Asserted on the palette, not on the screen: ⌃R⌃R resets the form's
+	// CONTENT by design, so two screens differ for reasons that have
+	// nothing to do with colour. The band is the palette's own fingerprint
+	// -- it exists only on a resolved one.
+	if _, unfilled := fresh.palette.ActiveRowBG.(lipgloss.NoColor); unfilled {
+		t.Error("the rebuilt Model's ActiveRowBG is back to NoColor: it was handed the fallback palette, not the resolved one")
+	}
+	if !strings.Contains(fresh.form.ViewAt(80, 24), "48;2;43;43;43m") {
+		t.Errorf("the rebuilt form does not paint the resolved band.\n%q", fresh.form.ViewAt(80, 24))
 	}
 }

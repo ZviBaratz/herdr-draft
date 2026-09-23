@@ -2,10 +2,13 @@
 
 - **Date:** 2026-09-23
 - **Status:** approved by the owner 2026-09-23 (all six of §2, decision 5
-  with a request to explain it, which §4.2 now does at more length), and
-  **implemented the same day**. §5.2 and §9.2 are corrected from what was
-  approved, where building it found the design wrong; both corrections are
-  marked where they sit rather than silently applied.
+  with a request to explain it, which §4.2 now does at more length),
+  **implemented the same day**, and then **independently reviewed** — a
+  blocker, eight should-fixes and ten nits, all fixed. §5.2, §6.1 and §9.2
+  are corrected from what was approved, where building it or reviewing it
+  found the design wrong; every correction is marked where it sits rather
+  than silently applied. The review is
+  `~/Projects/handoffs/herdr-draft-348-review.md`.
 - **Issue:** #347, which closes with the implementation.
 - **Amends, on approval:** v3 spec §5.3a's "`terminal` is the only
   exemption", which becomes "`terminal` is exempt until the host answers";
@@ -90,6 +93,14 @@ reason it could go the other way.
    as the same rule reaching a different answer: a fill that equals the
    background is not a fill. It is also what un-does #346 on this palette,
    so it is the decision most visible on screen.
+
+   > **Qualified by §5.2, which is where the detail lives.** "Whenever the
+   > background is known" is the approved wording and it is one condition
+   > short: both fills also need the *foreground*, because it is what the
+   > clamp walks toward. With a background and no foreground the row stays
+   > unfilled, which is the right answer rather than a gap — a fill painted
+   > a flat copy of its own background is not one. Noted here because this
+   > is the text that was approved (#348 review, N7).
 4. **`Overlay0` is left following ANSI 7, unfloored** (§5.5), which means on
    a light host the labels walk dark (`DimText`, floored) while the rules
    stay light (`Overlay0`, not floored) — two fields, one source index,
@@ -526,7 +537,7 @@ The reachable cases:
 | the popup opened before herdr learned the host theme | same as above; `theme_sync` would push the theme to the pane later, but the budget is spent |
 | a pane restored across a herdr handoff | §3.4's dropped receiver; no reply |
 | not herdr at all — `just live`, a plain terminal, a pty with nobody on the far end | no reply, budget expires, 250 ms later than otherwise |
-| the terminal answers OSC 11 but not OSC 4 | the background is known, so the fills and the floors apply; each missing index stays an index, unmeasured and unfloored, exactly as today |
+| the terminal answers OSC 11 but not OSC 4 | the background is known, so the fills and the floors apply; each missing index stays an index, unmeasured and unfloored, exactly as today. **Inside herdr this does not happen as written — see §6.1** |
 
 **The background is the one required answer.** Without it there is no ground,
 so there is nothing to measure against and nothing honest to raise anything
@@ -537,6 +548,45 @@ when `toward`/`text` is unmeasurable, so the band and the dim tier stay as
 they are while the semantic clamps — which walk toward black or white and
 need only the grounds — still apply. That falls out of the existing code
 rather than being arranged.
+
+### 6.1 Inside herdr, OSC 4 is never unanswered — it answers ghostty's
+
+**Corrected after implementation**, from the independent review of #348 (its
+S1), and it is the one place where reading herdr's source changed the design
+rather than confirming it.
+
+A herdr pane **always** answers OSC 4. `palette_color_query_response` replies
+from the pane's own palette, and `apply_host_terminal_theme`
+([`terminal.rs#L1177`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/pane/terminal.rs#L1177))
+builds that palette by starting from `ghostty::default_palette()` and
+overwriting only the entries the host actually supplied. On **WSL** the host
+palette is never probed at all — `should_query_host_terminal_palette()` is
+`!running_inside_wsl()`
+([`linux.rs#L45`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/platform/linux.rs#L45))
+— so OSC 10 and 11 carry the host's real foreground and background while
+OSC 4 carries ghostty's Tomorrow Night values. The same holds anywhere the
+host answered herdr's 256-entry probe only partially.
+
+The table row above says such an index "stays an index, exactly as today".
+It would not have: the code would have seen a complete set and floored the
+palette against colours the screen never draws — and, worse, **replaced** a
+word on the strength of measuring ghostty's stand-in. That is a regression
+against today's behaviour on those hosts, not a missed improvement.
+
+So an OSC 4 answer equal to libghostty's default for its index is dropped,
+and that index falls back to staying an index — which is what the row
+promised, now actually reachable. §3.2's own argument is what makes this
+sound: ghostty's defaults are exactly what a failed probe leaves behind, so
+recognising them is recognising the failure.
+
+The cost is a false positive — a user whose scheme genuinely uses one of
+those sixteen values loses the floor on that entry. Measured over the 43
+schemes, that is **zero of 43** on any of the six indices this palette
+draws with, and a false positive errs toward today's screen. The
+maintenance hazard is the other way: if ghostty changes its defaults the
+table stops matching and the WSL case returns silently, which is why the
+values are stated in one place and pinned by a test rather than left
+implicit in a comparison.
 
 ## 7. Where the code goes
 
@@ -769,6 +819,15 @@ benefit is bounded by §5.4's table — 13 of 43 schemes gain only a band.
 - **Flooring `Overlay0` for every theme** (decision 4). If the owner wants
   the divergence closed, it is its own issue, because it moves a value
   seventeen other palettes measure against.
+- **Giving the focused-row input chip a fill of its own**, which §5.2 says
+  this palette does without. The review (N3) is right that §5.2's
+  measurement rules out a band-derived *cursor fill* — the third ground a
+  word is measured on — and says nothing against a separate value for the
+  input, which `InputFill` alone would use and which is a floor ground on
+  no theme. The obstacle is only that `Text` goes back to `NoColor`, so the
+  render-time derivation has nothing to walk toward; a non-emitted
+  derivation target would remove it. That is a follow-up, not a defect
+  here.
 - **Anything about herdr's own rendering.** herdr already picks its selection
   colour from the host background (`automatic_selection_bg`); this design
   does not ask herdr for anything it does not already offer.

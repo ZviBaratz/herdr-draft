@@ -19,7 +19,7 @@ for why a heading here may read `unreleased`.
   It was the one palette this process could not measure: since #304 it
   sends the terminal's own ANSI palette entries rather than an RGB guess,
   which is right, and means no contrast floor could apply to it — a label
-  tier or a `invalid` marker that your scheme draws too faintly stayed too
+  tier or an `invalid` marker that your scheme draws too faintly stayed too
   faint. The popup now asks the terminal what it actually draws (OSC 10,
   11 and 4, answered by herdr 0.9.0 from the host's own theme) and applies
   the same floors every other theme gets. A colour that clears its floor

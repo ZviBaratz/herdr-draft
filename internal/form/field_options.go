@@ -137,9 +137,39 @@ func NewOptionsField(palette theme.Palette) *OptionsField {
 // SetPalette implements paletteSetter: repaint after the host terminal
 // answered (host-colours spec §7.3, #347).
 //
-// The options row owns no sub-widget: it renders its chips itself from
-// f.palette, so the stored value is the whole of it.
-func (f *OptionsField) SetPalette(p theme.Palette) { f.palette = p }
+// It walks every kind this popup has shown, not just the current one, for
+// the reason `kinds` exists at all: going claude -> codex -> claude
+// restores the earlier kind's lines (agent-options spec §7.2), and a line
+// that came back holding the fallback palette would be a repaint that
+// un-did itself on a chip press.
+//
+// Both of a line's widgets need telling, and one of them bakes. This is the
+// finding an independent review opened with, and the first draft of this
+// method said "the options row owns no sub-widget: it renders its chips
+// itself from f.palette, so the stored value is the whole of it." That is
+// false twice over -- newLine builds a widgets.ChipRow per option, and a
+// widgets.PromptArea-style lineInput for a free-text one (claude's model),
+// which bakes its styles and its fill. Worse, the lines exist before any
+// answer can land: New reaches SetKind through syncDerivedInertness, so
+// every one of them is built on the fallback palette.
+//
+// The guard missed it because its fixture set no kind, so there were no
+// lines and a complete SetPalette and the broken one rendered the same
+// bytes. See TestSetPalette_ReachesEverySection's options case, which now
+// sets one.
+func (f *OptionsField) SetPalette(p theme.Palette) {
+	f.palette = p
+	for _, st := range f.kinds {
+		for _, l := range st.lines {
+			l.chips.SetPalette(p)
+			if l.name != nil {
+				// PanelBG, the ground newLine gave it: an option's name
+				// input is drawn in the detail panel, never in a row.
+				l.name.SetPalette(p, p.PanelBG)
+			}
+		}
+	}
+}
 
 // ID identifies this Section for form.go's zoneFor.
 func (f *OptionsField) ID() string { return "options" }

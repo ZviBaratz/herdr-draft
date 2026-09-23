@@ -224,20 +224,38 @@ func ResolveHost(p Palette, host HostColors) Palette {
 // ultraviolet's own parser stops at either, so a program that only handled
 // one would work in a herdr pane and nowhere else.
 //
-// Anything that is not an OSC 4 REPLY reports ok=false rather than a guess:
-// a different OSC, a set rather than a report (`...;#rrggbb` with no `?`
-// asked for), a truncated sequence, a non-numeric or out-of-range index, or
-// a colour ansi.XParseColor declines. This runs over every unrecognised OSC
-// event the program receives, so "not for us" is the common case and has to
-// be cheap and exact.
+// It parses `rgb:` ITSELF rather than calling ansi.XParseColor, and that is
+// the #348 review's S7. XParseColor is deliberately lenient: its rgb:
+// branch discards every strconv error, so `rgb:zz/zz/zz` comes back as
+// opaque BLACK with no complaint -- a colour this package would then
+// measure, floor and quite possibly emit. It also scales every channel by
+// the same `>>8` regardless of width, so the X11 spellings `rgb:f/f/f` and
+// `rgb:fff/fff/fff`, both of which mean white, arrive as #0f0f0f, and a
+// five-digit channel wraps. Inside a herdr pane none of that is reachable,
+// because herdr always sends four digits; this parser is what makes the
+// sentence "anything else reports ok=false" true outside one as well.
 //
-// The result is normalised to an explicit 8-bit color.RGBA. That is not
-// cosmetic: rgb8 requires an opaque value with each byte replicated, which
-// is how it tells a real colour from lipgloss.NoColor and from an ANSI
-// index. XParseColor's rgb: branch already returns exactly that, but its
-// "#"-prefixed branch returns a colorful.Color, whose RGBA() is computed
-// from floats and does not replicate -- so a terminal that answered in hex
-// would produce a palette entry every floor in this package quietly skipped.
+// So: one to four hex digits per channel, scaled the way X11 scales them
+// (v * 255 / (16^n - 1), which sends `f`, `ff`, `fff` and `ffff` all to
+// 255), and a refusal for everything else. That includes the `#rrggbb`
+// form, which is a SET rather than a report: a terminal never sends it to
+// us, and accepting it would make the doc below false in the one direction
+// that matters -- silently taking a value nobody answered with.
+//
+// Anything that is not an OSC 4 report reports ok=false rather than a
+// guess: a different OSC, a truncated sequence, a non-numeric or
+// out-of-range index, or a malformed colour. This runs over every
+// unrecognised OSC event the program receives, so "not for us" is the
+// common case and has to be cheap and exact.
+//
+// The result is an explicit 8-bit color.RGBA. That is for exactness and
+// for a stable concrete type, NOT -- as an earlier draft of this comment
+// claimed -- because rgb8 "requires each byte replicated". rgb8 tells
+// values apart by their TYPE and their alpha and never looks at
+// replication (see it in palette.go), and go-colorful's RGBA() is opaque
+// with channels of exactly v*257 anyway, so nothing here was ever at risk
+// of being silently skipped by a floor. The claim was wrong; the
+// normalisation is still worth having.
 func ParsePaletteReply(s string) (index uint8, c Color, ok bool) {
 	body, found := strings.CutPrefix(s, "\x1b]4;")
 	if !found {
@@ -260,15 +278,102 @@ func ParsePaletteReply(s string) (index uint8, c Color, ok bool) {
 	if err != nil {
 		return 0, nil, false
 	}
-	parsed := ansi.XParseColor(value)
-	if parsed == nil {
+	r, g, b, ok := parseXParseRGB(value)
+	if !ok {
 		return 0, nil, false
 	}
-	r, g, b, a := parsed.RGBA()
-	if a != 0xffff {
-		return 0, nil, false
+	return uint8(n), color.RGBA{r, g, b, 0xff}, true
+}
+
+// parseXParseRGB parses X11's `rgb:R/G/B`, where each channel is one to
+// four hex digits, and scales each to eight bits the way X11 does: the
+// digits are a fraction of that width's maximum, so `f`, `ff`, `fff` and
+// `ffff` all mean full intensity. Anything else -- a missing prefix, the
+// wrong number of channels, an empty or over-long channel, a non-hex digit
+// -- reports false.
+func parseXParseRGB(v string) (r, g, b uint8, ok bool) {
+	body, found := strings.CutPrefix(v, "rgb:")
+	if !found {
+		return 0, 0, 0, false
 	}
-	return uint8(n), color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), 0xff}, true
+	parts := strings.Split(body, "/")
+	if len(parts) != 3 {
+		return 0, 0, 0, false
+	}
+	var out [3]uint8
+	for i, part := range parts {
+		if len(part) == 0 || len(part) > 4 {
+			return 0, 0, 0, false
+		}
+		raw, err := strconv.ParseUint(part, 16, 32)
+		if err != nil {
+			return 0, 0, 0, false
+		}
+		max := uint64(1)<<(4*len(part)) - 1
+		// Rounded rather than truncated, so a 1-digit `8` lands on 0x88
+		// rather than 0x87 -- which is what replicating the digit gives,
+		// and what every other implementation produces.
+		out[i] = uint8((raw*255 + max/2) / max)
+	}
+	return out[0], out[1], out[2], true
+}
+
+// ghosttyDefaults is the palette libghostty starts every pane with, from
+// ghostty's own src/terminal/color.zig (`Name.default`). It is here to be
+// RECOGNISED and refused, not to be used.
+//
+// The reason is #348's review, S1, and it is the one place where reading
+// herdr's source changed the design rather than confirming it. Inside a
+// herdr pane, OSC 4 NEVER goes unanswered: palette_color_query_response
+// always replies, from the pane's own palette, and apply_host_terminal_theme
+// builds that palette by starting from these defaults and overwriting only
+// the entries the host actually supplied
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/pane/terminal.rs#L1177).
+// On WSL the host palette is never probed at all --
+// should_query_host_terminal_palette is `!running_inside_wsl()`
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/platform/linux.rs#L45)
+// -- so OSC 10 and 11 carry the host's real foreground and background while
+// OSC 4 carries these. The same happens anywhere the host answered herdr's
+// 256-entry probe only partially.
+//
+// Left alone, that is worse than doing nothing: the palette would be
+// floored against colours the screen never draws, and a word could be
+// REPLACED on the strength of a measurement of ghostty's stand-in. Today's
+// behaviour on those hosts is indices, unmeasured, which is at least
+// honest. So an OSC 4 answer equal to the default for its index is dropped,
+// and that index falls back to staying an index -- host-colours spec §6's
+// documented partial-answer row, which S1 showed was unreachable as
+// written.
+//
+// The cost is a false positive: a user whose scheme really does use one of
+// these values loses the floor on that entry. Measured over the 43 schemes
+// in hostschemes_test.go, that is **zero of 43** on any of the six indices
+// this palette draws with, and a false positive errs toward today's screen
+// rather than away from it.
+//
+// If ghostty changes these, this table stops matching and the WSL case
+// returns silently. That is the maintenance hazard, and it is why
+// TestGhosttyDefaults_AreTheOnesHerdrStartsFrom exists to state the values
+// in one place rather than leaving them implicit in a comparison.
+var ghosttyDefaults = map[uint8]string{
+	0: "#1d1f21", 1: "#cc6666", 2: "#b5bd68", 3: "#f0c674",
+	4: "#81a2be", 5: "#b294bb", 6: "#8abeb7", 7: "#c5c8c6",
+	8: "#666666", 9: "#d54e53", 10: "#b9ca4a", 11: "#e7c547",
+	12: "#7aa6da", 13: "#c397d8", 14: "#70c0b1", 15: "#eaeaea",
+}
+
+// isGhosttyStandIn reports whether c is exactly what libghostty would have
+// answered for idx with no host palette behind it. See ghosttyDefaults.
+func isGhosttyStandIn(idx uint8, c Color) bool {
+	hex, known := ghosttyDefaults[idx]
+	if !known {
+		return false
+	}
+	want, ok := parseHexColor(hex)
+	if !ok {
+		return false
+	}
+	return sameColor(c, want)
 }
 
 // seedFields performs ResolveHost's step 1 on dst, reading the original
@@ -282,7 +387,11 @@ func seedFields(dst *Palette, src Palette, host HostColors) {
 		}
 		if idx, isIndex := basicIndex(*srcF[i]); isIndex {
 			if c, found := host.Palette[idx]; found {
-				if _, _, _, ok := rgb8(c); ok {
+				// An answer equal to libghostty's own default for this
+				// index is a stand-in, not the host's colour -- see
+				// ghosttyDefaults. Leaving the field an index is exactly
+				// what "this index did not answer" already does.
+				if _, _, _, ok := rgb8(c); ok && !isGhosttyStandIn(idx, c) {
 					*dstF[i] = c
 				}
 			}

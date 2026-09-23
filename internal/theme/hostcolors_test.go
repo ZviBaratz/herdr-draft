@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// hostColorsFor is the terminal palette's own indices answered with the
+// measuredHost is the terminal palette's own indices answered with the
 // values the author's alacritty reported on 2026-09-23 (host-colours spec
 // §3.1). Every word on it clears its floor, which makes it the fixture for
 // "nothing moves but the fills".
@@ -324,6 +324,12 @@ func TestParsePaletteReply(t *testing.T) {
 		{"herdr's own shape, ST-terminated", "\x1b]4;9;rgb:c5c5/5555/5555\x1b\\", 9, "#c55555"},
 		{"BEL-terminated, which other terminals send", "\x1b]4;2;rgb:9090/a9a9/5959\x07", 2, "#90a959"},
 		{"two-digit channels", "\x1b]4;4;rgb:6a/9f/b5\x07", 4, "#6a9fb5"},
+		// X11 scales a channel by its WIDTH, so these three all mean
+		// white. ansi.XParseColor shifts every width by 8 and answers
+		// #0f0f0f for the first two (#348 review, S7).
+		{"one-digit channels are a fraction of 0xf", "\x1b]4;7;rgb:f/f/f\x07", 7, "#ffffff"},
+		{"three-digit channels are a fraction of 0xfff", "\x1b]4;7;rgb:fff/fff/fff\x07", 7, "#ffffff"},
+		{"one-digit mid value rounds like a replicated digit", "\x1b]4;7;rgb:8/8/8\x07", 7, "#888888"},
 		{"index 0", "\x1b]4;0;rgb:1818/1818/1818\x1b\\", 0, "#181818"},
 		{"index 255", "\x1b]4;255;rgb:0000/0000/0000\x1b\\", 255, "#000000"},
 	} {
@@ -357,8 +363,21 @@ func TestParsePaletteReply(t *testing.T) {
 		{"no index separator", "\x1b]4;rgb:c5c5/5555/5555\x07"},
 		{"a non-numeric index", "\x1b]4;x;rgb:c5c5/5555/5555\x07"},
 		{"an out-of-range index", "\x1b]4;256;rgb:c5c5/5555/5555\x07"},
-		{"a colour XParseColor declines", "\x1b]4;9;chartreuse\x07"},
-		{"a set rather than a report", "\x1b]4;9;?\x07"},
+		{"a named colour", "\x1b]4;9;chartreuse\x07"},
+		// This is the QUERY echoed back, not a set -- it was labelled "a
+		// set rather than a report" and tested neither (#348 review, S7).
+		{"the query echoed back", "\x1b]4;9;?\x07"},
+		// The real set form. A terminal never sends it to us, and
+		// accepting it would mean taking a value nobody answered with.
+		{"a set rather than a report", "\x1b]4;9;#ff0000\x07"},
+		// XParseColor discards its strconv errors, so this used to parse
+		// as opaque BLACK with ok=true -- a colour this package would
+		// then have measured, floored and possibly emitted.
+		{"garbage channels", "\x1b]4;9;rgb:zz/zz/zz\x07"},
+		{"a five-digit channel", "\x1b]4;9;rgb:fffff/0000/0000\x07"},
+		{"an empty channel", "\x1b]4;9;rgb://\x07"},
+		{"two channels", "\x1b]4;9;rgb:ff/ff\x07"},
+		{"rgba, which this does not accept", "\x1b]4;9;rgba:ff/ff/ff/ff\x07"},
 		{"truncated after the prefix", "\x1b]4;"},
 	} {
 		t.Run("declines "+tc.name, func(t *testing.T) {
@@ -369,11 +388,17 @@ func TestParsePaletteReply(t *testing.T) {
 	}
 }
 
-// TestParsePaletteReply_NormalisesToReplicatedBytes is the detail that
-// would otherwise be invisible: rgb8 requires an opaque value whose bytes
-// are replicated, and a colour that fails that check is silently skipped by
-// every floor in this package rather than reported.
-func TestParsePaletteReply_NormalisesToReplicatedBytes(t *testing.T) {
+// TestParsePaletteReply_NormalisesToAnExact8BitColour pins the result's
+// concrete type and its channels.
+//
+// The reason is exactness and a stable type, NOT the one an earlier version
+// of this doc gave. It said rgb8 "requires an opaque value whose bytes are
+// replicated" and that a colour failing that is "silently skipped by every
+// floor". rgb8 tells values apart by TYPE and alpha and never looks at
+// replication, and go-colorful's RGBA() is opaque with channels of exactly
+// v*257 -- so nothing was ever at risk of being skipped. Keeping the test
+// and correcting the claim (#348 review, S7).
+func TestParsePaletteReply_NormalisesToAnExact8BitColour(t *testing.T) {
 	_, c, ok := ParsePaletteReply("\x1b]4;9;rgb:c5c5/5555/5555\x1b\\")
 	if !ok {
 		t.Fatal("declined a well-formed reply")
@@ -494,5 +519,124 @@ func TestResolveHost_IsIdempotent(t *testing.T) {
 		once := ResolveHost(base, h)
 		twice := ResolveHost(once, h)
 		assertSamePalette(t, twice, once, s.name+": a second resolve")
+	}
+}
+
+// TestResolveHost_LeavesAnOverrideAlone is what seedFields' skip-what-is-
+// already-measurable check exists for, and until #348's review (S6) nothing
+// tested it.
+//
+// The only override case here was `danger`, and Danger never reaches the
+// branch the skip guards -- it is an ANSI index, so it goes down the index
+// path whether the skip is there or not. The fields that DO reach it are
+// the four NoColor ones, and an override on any of them is a value the user
+// typed: without the skip, a `text` override would be replaced by the host
+// foreground and become every walk's target and raiseDimText's ceiling,
+// while `selection_bg` and `surface` overrides would be re-seeded to the
+// background, raised, and EMITTED in place of what the user asked for.
+func TestResolveHost_LeavesAnOverrideAlone(t *testing.T) {
+	// Values chosen to be legible on the measured host, so nothing below
+	// can be explained away as a clamp doing its job.
+	overrides := map[string]string{
+		"text":         "#eeeeee",
+		"selection_bg": "#3a3a3a",
+		"surface":      "#444444",
+	}
+	p := Resolve(terminalPalette(t), overrides)
+	got := ResolveHost(p, measuredHost())
+
+	for _, tc := range []struct {
+		name string
+		got  Color
+		want string
+	}{
+		{"Text", got.Text, "#eeeeee"},
+		{"ActiveRowBG", got.ActiveRowBG, "#3a3a3a"},
+		{"Surface", got.Surface, "#444444"},
+	} {
+		if !sameColor(tc.got, mustHex(t, tc.want)) {
+			t.Errorf("%s = %v, want the user's own %s -- an override is a value someone typed, and the host must not overwrite it", tc.name, tc.got, tc.want)
+		}
+	}
+
+	// And the override really is the walk target: DimText is ANSI 7,
+	// unmeasurable, so it is seeded from the host and then floored
+	// against grounds built from the overridden values.
+	if _, stillIndex := got.DimText.(ansi.BasicColor); !stillIndex {
+		t.Logf("DimText was raised to %v, which is fine -- what matters is that it was measured against the overridden grounds", got.DimText)
+	}
+}
+
+// TestGhosttyDefaults_AreTheOnesHerdrStartsFrom states the sixteen values in
+// one place, so that a change in ghostty is a visible diff here rather than
+// a silent return of the WSL case. See ghosttyDefaults for why they are
+// recognised at all.
+func TestGhosttyDefaults_AreTheOnesHerdrStartsFrom(t *testing.T) {
+	// ghostty-org/ghostty, src/terminal/color.zig, `Name.default`.
+	want := map[uint8]string{
+		0: "#1d1f21", 1: "#cc6666", 2: "#b5bd68", 3: "#f0c674",
+		4: "#81a2be", 5: "#b294bb", 6: "#8abeb7", 7: "#c5c8c6",
+		8: "#666666", 9: "#d54e53", 10: "#b9ca4a", 11: "#e7c547",
+		12: "#7aa6da", 13: "#c397d8", 14: "#70c0b1", 15: "#eaeaea",
+	}
+	if len(ghosttyDefaults) != len(want) {
+		t.Fatalf("ghosttyDefaults has %d entries, want %d", len(ghosttyDefaults), len(want))
+	}
+	for idx, hex := range want {
+		if ghosttyDefaults[idx] != hex {
+			t.Errorf("index %d = %q, want %q", idx, ghosttyDefaults[idx], hex)
+		}
+	}
+}
+
+// TestResolveHost_RefusesGhosttysStandInPalette is S1 of #348's review: a
+// herdr pane ALWAYS answers OSC 4, and on WSL it answers with libghostty's
+// defaults while OSC 10 and 11 carry the host's real colours. Measuring
+// those would floor the palette against colours the screen never draws.
+func TestResolveHost_RefusesGhosttysStandInPalette(t *testing.T) {
+	// A real host foreground and background, and a palette that is purely
+	// ghostty's stand-in -- exactly the WSL shape.
+	h := HostColors{Palette: map[uint8]Color{}}
+	h.Background, _ = parseHexColor("#012345")
+	h.Foreground, _ = parseHexColor("#fedcba")
+	for _, idx := range []uint8{2, 3, 4, 7, 8, 9} {
+		h.Palette[idx], _ = parseHexColor(ghosttyDefaults[idx])
+	}
+
+	got := ResolveHost(terminalPalette(t), h)
+
+	for name, c := range map[string]Color{
+		"Accent": got.Accent, "Success": got.Success, "Warning": got.Warning,
+		"Danger": got.Danger, "DimText": got.DimText, "Branch": got.Branch,
+		"Border": got.Border, "Overlay0": got.Overlay0,
+	} {
+		if _, stillIndex := c.(ansi.BasicColor); !stillIndex {
+			t.Errorf("%s = %T %v, want it left as an ANSI index: every OSC 4 answer here was ghostty's stand-in, so there was nothing real to measure", name, c, c)
+		}
+	}
+	// The background and foreground are real, so the fills still come back
+	// -- this refuses the palette, not the whole answer.
+	if _, unfilled := got.ActiveRowBG.(lipgloss.NoColor); unfilled {
+		t.Error("the band is gone: OSC 10 and 11 were real, and only the palette entries were refused")
+	}
+}
+
+// TestResolveHost_KeepsAHostColourThatMerelyResemblesOne guards the other
+// direction: the refusal is per index, and a real answer on one index must
+// not be lost because another was a stand-in.
+func TestResolveHost_KeepsAHostColourThatMerelyResemblesOne(t *testing.T) {
+	h := measuredHost()
+	// Index 9 answers with ghostty's red; every other index is the host's.
+	h.Palette[9], _ = parseHexColor(ghosttyDefaults[9])
+
+	got := ResolveHost(terminalPalette(t), h)
+	if _, stillIndex := got.Danger.(ansi.BasicColor); !stillIndex {
+		t.Errorf("Danger = %v, want ANSI 9: that answer was the stand-in", got.Danger)
+	}
+	// And the rest of the palette is unaffected -- on this host they all
+	// clear their floors, so they stay indices too, but the BAND proves
+	// the resolve still ran.
+	if _, unfilled := got.ActiveRowBG.(lipgloss.NoColor); unfilled {
+		t.Error("one refused index stopped the whole resolve")
 	}
 }

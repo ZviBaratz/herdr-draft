@@ -76,7 +76,24 @@ func TestSetPalette_ReachesEverySection(t *testing.T) {
 		{"worktree", func(p theme.Palette) Section { return NewWorktreeField(p) }},
 		{"placement", func(p theme.Palette) Section { return NewPlacementField(p) }},
 		{"agent", func(p theme.Palette) Section { return NewAgentField(p) }},
-		{"options", func(p theme.Palette) Section { return NewOptionsField(p) }},
+		{"options", func(p theme.Palette) Section {
+			f := NewOptionsField(p)
+			// A kind, with a FREE-TEXT option, and it is load-bearing.
+			// OptionsField builds a ChipRow per option and a lineInput
+			// for a free-text one, lazily, in SetKind -- and with no kind
+			// set there are no lines, so a SetPalette that reaches them
+			// and one that does not render the same bytes. That is how
+			// the incomplete version of this shipped past this very test
+			// (B1 of the #348 review).
+			f.SetKind("claude", KindOptions{Specs: []OptionSpec{{
+				Name:     "model",
+				Label:    "model",
+				Flag:     "--model",
+				Choices:  []OptionChoice{{Value: "opus", Label: "opus"}},
+				FreeText: true,
+			}}})
+			return f
+		}},
 		{"account", func(p theme.Palette) Section { return NewAccountField(p) }},
 		{"issue", func(p theme.Palette) Section { return NewIssueField(p) }},
 	} {

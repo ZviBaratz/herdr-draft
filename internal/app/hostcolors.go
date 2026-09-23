@@ -16,9 +16,10 @@ import (
 //
 // It runs for exactly one palette. theme.NeedsHostColors is true only when
 // PanelBG is unmeasurable, which by construction is the `terminal` entry
-// and nothing else (see its doc), so on the other seventeen builtins
-// nothing here sends a byte, allocates a timer or reaches Update --
-// initCmds is byte-identical to what it was before this existed.
+// and nothing else (see its doc). On the other seventeen builtins
+// initHostColorCmds returns nil, so nothing here sends a byte, allocates a
+// timer or reaches Update, and initCmds is byte-identical to what it was
+// before this existed.
 //
 // The measurements behind every number here were taken in a real herdr
 // pane on 2026-09-23 and are recorded in host-colours spec §3. The short
@@ -51,9 +52,17 @@ import (
 // this project already ships and already guards.
 const hostColorBudget = 250 * time.Millisecond
 
-// hostColorDeadlineMsg is the budget firing. It carries no version: unlike
-// every other timer in this package it is armed exactly once, from New, and
-// a ⌃R⌃R rebuild deliberately does NOT re-arm it -- see initHostColorCmds.
+// hostColorDeadlineMsg is the budget firing. It carries no version, unlike
+// every other timer in this package, because there is no stale answer for a
+// version to tell apart: it is armed once per New, and a New that would
+// re-arm it is one where nothing has been asked yet (Setup.HostColorsDone).
+//
+// An earlier draft of this comment claimed a ⌃R⌃R rebuild "deliberately
+// does NOT re-arm it" while the rebuild did exactly that, and pointed at
+// initHostColorCmds, which says nothing about rebuilds. Both halves were
+// wrong, and it took an independent review to notice, because the Model's
+// own comment two files away had already been corrected and the two
+// contradicted each other in silence.
 type hostColorDeadlineMsg struct{}
 
 // initHostColorCmds returns the queries and the timer, or nil when the
@@ -166,15 +175,17 @@ func (m Model) handleHostColorDeadline(hostColorDeadlineMsg) (Model, tea.Cmd) {
 // single hostDone check for the reason the collectors' own doc gives.
 //
 // Before the deadline it waits for a COMPLETE set -- background, foreground
-// and every index asked for -- rather than repainting on each arrival. Two
-// reasons, and the second is the one that would bite. Repainting per answer
-// would mean up to eight repaints where one will do, each of them a
-// palette the floors have only half the information for. And the
-// intermediate palettes are not merely incomplete but wrong in a specific
-// way: theme.ResolveHost measures words against a focused-row fill derived
-// from the background, so a word floored before the background arrived
-// would be floored against a ground that does not exist yet, and then kept,
-// because the next pass would find it already clearing its floor.
+// and every index asked for -- rather than repainting on each arrival.
+// Repainting per answer would mean up to eight repaints where one will do,
+// and that is the whole of the reason: one visible change instead of a
+// cascade.
+//
+// An earlier draft claimed a second and weightier reason, that an
+// intermediate palette would be floored against a ground that did not
+// exist yet and then kept. It would not be kept -- a later pass re-floors
+// every word against the full grounds. What per-answer resolution would
+// really be is path-dependent, which is a reason to prefer one pass and not
+// a reason to fear the other.
 //
 // At the deadline it resolves with whatever it has. theme.ResolveHost
 // itself decides what a partial answer is worth: no background and it
@@ -204,6 +215,12 @@ func (m Model) finishHostColors(deadline bool) (Model, tea.Cmd) {
 	resolved := theme.ResolveHost(m.palette, m.hostColors)
 	m.palette = resolved
 	m.form.SetPalette(resolved)
+	if m.submitView != nil {
+		// Only reachable if a submit began before the answer landed, which
+		// needs a title typed inside ~20ms. Closed rather than documented
+		// as unreachable (#348 review, N6).
+		m.submitView.SetPalette(resolved)
+	}
 	return m, nil
 }
 

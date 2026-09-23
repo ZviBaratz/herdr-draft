@@ -5,10 +5,10 @@ package theme
 // 2, 3, 4, 7, 8 and 9.
 //
 // The 43 below are the evidence base #304 and #345 measured against, and
-// host-colours spec §5.4"s table was produced from them. 42 come from
-// iTerm2-Color-Schemes" ghostty/ directory at
+// host-colours spec §5.4's table was produced from them. 42 come from
+// iTerm2-Color-Schemes' ghostty/ directory at
 // 12d9f63060857aaf673daae635a4c721d12eb586; "zz Canonical Solarized Dark
-// (Xresources)" is hand-built from Solarized"s published Xresources
+// (Xresources)" is hand-built from Solarized's published Xresources
 // mapping.
 //
 // They are COMMITTED here rather than read from the handoff directory they
@@ -26,7 +26,7 @@ type hostScheme struct {
 	ansi [6]string
 }
 
-// hostSchemeIndices names what hostScheme.ansi"s six entries are, so a
+// hostSchemeIndices names what hostScheme.ansi's six entries are, so a
 // reader does not have to count and a test does not have to hardcode.
 var hostSchemeIndices = [6]uint8{2, 3, 4, 7, 8, 9}
 

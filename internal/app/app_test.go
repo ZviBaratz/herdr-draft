@@ -352,6 +352,18 @@ type testSetup struct {
 	// which is two rows since #292: inert with no cache, and a pickable
 	// cached list with one.
 	LinearUnavailable string
+	// Palette overrides theme.Default(), for the tests that need the one
+	// palette New behaves differently for: `terminal`, which is the only
+	// one #347's host-colour queries are armed on.
+	//
+	// It exists because the alternative was a test helper that re-ran
+	// New's arming by hand, and a hand-copied New is a New no test
+	// actually exercises -- deleting the real one passed everything
+	// (#348 review, S4).
+	Palette *theme.Palette
+	// HostColorsDone is Setup's own field, for the ⌃R⌃R path that carries
+	// #347's answer forward instead of asking again.
+	HostColorsDone bool
 }
 
 // testHomeDir is the home every test model collapses paths against. It is
@@ -407,6 +419,11 @@ func newTestModel(t *testing.T, s testSetup) Model {
 		cfg.Agents.Favorites = []string{"claude"}
 	}
 
+	palette := theme.Default()
+	if s.Palette != nil {
+		palette = *s.Palette
+	}
+
 	return New(Setup{
 		Deps: Deps{
 			Runner:     &fakeRunner{workspaces: s.Workspaces},
@@ -421,7 +438,8 @@ func newTestModel(t *testing.T, s testSetup) Model {
 		Config:             cfg,
 		State:              s.State,
 		Projects:           s.Projects,
-		Palette:            theme.Default(),
+		Palette:            palette,
+		HostColorsDone:     s.HostColorsDone,
 		StateDir:           t.TempDir(),
 		Workspaces:         s.Workspaces,
 		ClauthStatus:       s.ClauthStatus,

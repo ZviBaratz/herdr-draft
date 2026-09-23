@@ -12,7 +12,7 @@ account — and drives herdr exclusively through its public CLI
 (`$HERDR_BIN_PATH`), never the raw socket API. The same binary also carries
 a headless `create` verb that produces the same session without the popup.
 
-Ten documents in `docs/specs/`, and the citation convention distinguishes
+Eleven documents in `docs/specs/`, and the citation convention distinguishes
 them. A bare "spec §N" in a code comment means v1, the 2026-08-31 design;
 every other document that code cites by section carries a prefix:
 
@@ -26,6 +26,7 @@ every other document that code cites by section carries a prefix:
 | `reap spec §N` | `2026-09-17-pane-reaper-ready-design.md` | amends v2's §6, §8, §10, §11 and §13 and v1's §12; its §12 itemises |
 | `agent-options spec §N` | `2026-09-18-agent-options-design.md` | reverses v1's §3 and §16 item 3 and v2's §16, and amends v3's §4 and §7.2, v2's §8, §11 and §13 and v1's §12; its §12 itemises |
 | `draw-first spec §N` | `2026-09-21-draw-first-design.md` | amends v1's §6, §8, §9, §10 and §13, v2's §6.1 and §13 and v3's §12; implemented 2026-09-22 (#293, #292); its §12 itemises |
+| `host-colours spec §N` | `2026-09-23-host-colours-design.md` | amends v3's §5.3a (the `terminal` exemption becomes conditional) and §5.4 (the focused row's fill returns); implemented 2026-09-23 (#347); its §13 itemises |
 
 Two more carry no section prefix because nothing cites them by section, so
 name them by filename: `2026-09-07-herdr-membership-assessment.md` is the

@@ -162,7 +162,7 @@ the original; `docs/specs/2026-09-02-herdr-draft-v2-design.md` supersedes its
 three, and each later spec amends the sentences its feature changes. Each
 one's own header itemises what it replaced.
 
-Ten documents, eight of them cited by section:
+Eleven documents, nine of them cited by section:
 
 | citation | document (`docs/specs/`) |
 |---|---|
@@ -173,7 +173,8 @@ Ten documents, eight of them cited by section:
 | `spawn-skill spec §N` | `2026-09-16-spawn-skill-design.md` |
 | `reap spec §N` | `2026-09-17-pane-reaper-ready-design.md` |
 | `agent-options spec §N` | `2026-09-18-agent-options-design.md` |
-| `draw-first spec §N` | `2026-09-21-draw-first-design.md` (approved, **not yet implemented**) |
+| `draw-first spec §N` | `2026-09-21-draw-first-design.md` |
+| `host-colours spec §N` | `2026-09-23-host-colours-design.md` |
 
 The other two are named by filename, because nothing cites them by
 section: `2026-09-07-herdr-membership-assessment.md`, and

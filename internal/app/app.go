@@ -317,6 +317,23 @@ type Setup struct {
 	// fewer than two profiles) it is shown nowhere, deliberately: the popup can
 	// pin no account there, so no picker could have been used.
 	PickerUnavailable string
+	// HostColorsDone carries #347's one answer across a ⌃R⌃R rebuild, so
+	// the rebuilt Model does not ask the terminal a second time.
+	//
+	// It is the answer to the review finding that made this field exist
+	// (S3 of #348's independent review): the resolve is NOT idempotent in
+	// general. It is idempotent wherever every clamp cleared its floor on
+	// the first pass, which is all 43 measured schemes -- but a clamp that
+	// gives up returns a value that does not clear its floor, so a second
+	// pass walks again from a new starting point and can land a step away.
+	// A `[palette]` override makes a give-up likelier.
+	//
+	// Rather than qualify that in two comments, the rebuild stops asking.
+	// The Model's own note already called the answer "a fact about the
+	// terminal rather than about the form", and a fact does not need
+	// re-establishing because the user pressed ⌃R twice. It also saves a
+	// second query and a second repaint.
+	HostColorsDone bool
 
 	// reqs is where every request counter resumes. Only a ⌃R⌃R rebuild
 	// sets it (handleClearRequested, through reqVersions.superseded), past
@@ -1380,30 +1397,12 @@ type Model struct {
 	// already happened. All three stay zero on every palette but `terminal`,
 	// where initHostColorCmds returns nil and nothing is ever sent.
 	//
-	// hostDone is a plain bool rather than a reqVersions counter, and that
-	// is the difference worth noticing: every other async landing here can
-	// be superseded by a ⌃R⌃R rebuild and needs a version to prove it is
-	// not stale. This one does not, and the reason is not that a rebuild
-	// cannot re-ask -- it can and it does. handleClearRequested carries the
-	// RESOLVED palette into the fresh Model, and that palette's PanelBG is
-	// back to NoColor (ResolveHost never emits it), so NeedsHostColors says
-	// yes again and the queries go out a second time.
-	//
-	// That is harmless because the resolve is idempotent, and it is worth
-	// being right about why. It is NOT that seeding skips fields that are
-	// already measurable -- deleting that skip leaves the second pass
-	// landing in the same place, which a mutation confirmed. It is that
-	// both passes floor against the same grounds, because both are handed
-	// the same host colours, and every clamp in this package returns its
-	// input untouched when that input already clears its floor. So
-	// whichever value the second seed produces -- the host's original, or
-	// the raised one the first pass left behind -- the floor lands on the
-	// same colour. TestResolveHost_IsIdempotent pins the result over all 43
-	// schemes rather than leaving it as this argument.
-	//
-	// A version counter would buy nothing here: there is no stale answer to
-	// discard, because the answer is a fact about the terminal rather than
-	// about the form.
+	// hostDone is a plain bool rather than a reqVersions counter, because
+	// there is no stale answer to discard: the question is asked once per
+	// PROCESS, and the answer is a fact about the terminal rather than
+	// about the form. A ⌃R⌃R rebuild carries it forward through
+	// Setup.HostColorsDone and does not ask again -- see that field for why
+	// re-asking was the first design and what was wrong with it.
 	hostColors theme.HostColors
 	hostWanted map[uint8]bool
 	hostDone   bool
@@ -1714,11 +1713,14 @@ func New(s Setup) Model {
 	// that a reply for an index this palette never asked about is refused
 	// on what was SENT, not on what the palette happens to hold when the
 	// answer lands.
-	if host := m.initHostColorCmds(); len(host) > 0 {
-		m.initCmds = append(m.initCmds, host...)
-		m.hostWanted = map[uint8]bool{}
-		for _, idx := range theme.QueryIndices(m.palette) {
-			m.hostWanted[idx] = true
+	m.hostDone = s.HostColorsDone
+	if !m.hostDone {
+		if host := m.initHostColorCmds(); len(host) > 0 {
+			m.initCmds = append(m.initCmds, host...)
+			m.hostWanted = map[uint8]bool{}
+			for _, idx := range theme.QueryIndices(m.palette) {
+				m.hostWanted[idx] = true
+			}
 		}
 	}
 
@@ -2746,6 +2748,10 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		LinearUnavailable: m.linearUnavailable,
 		ClauthUnavailable: m.clauthUnavailable,
 		PickerUnavailable: m.pickerUnavailable,
+		// The palette above is the RESOLVED one, and this says so, so the
+		// fresh Model neither re-asks nor re-resolves it (#347, and S3 of
+		// #348's review).
+		HostColorsDone: m.hostDone,
 
 		// The three waits a rebuild inherits (draw-first spec §7.4). The
 		// key's own message is Bootstrap's and unversioned, so it lands on

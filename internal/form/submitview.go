@@ -154,6 +154,17 @@ func NewSubmitView(palette theme.Palette) *SubmitView {
 	return &SubmitView{palette: palette}
 }
 
+// SetPalette repaints the submit view, for the window N6 of #348's review
+// found: startSubmit builds this from the app's palette at the time, and
+// the host's answer can in principle land after that.
+//
+// It is one line because this view bakes nothing -- every style is rebuilt
+// from p.palette inside ViewAt, the way Picker and ChipRow work. The window
+// it closes is very narrow (a submit needs a title typed, and the answer
+// arrives ~20ms after the first frame), which is an argument for making it
+// impossible rather than for documenting it as unreachable.
+func (v *SubmitView) SetPalette(p theme.Palette) { v.palette = p }
+
 // SetHeader sets the two halves of the header line -- the same pair the
 // form's own header carries (v2 spec §4: the form's name on the left,
 // live context for the selected project on the right). Either may be
