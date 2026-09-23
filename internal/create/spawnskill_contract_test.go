@@ -191,25 +191,35 @@ func TestSkillNamesCheckOnlyForTheSkillVerb(t *testing.T) {
 }
 
 // TestSkillProbesAnAccountBare scopes foreignFlags' `--version` entry and
-// holds the probe to the only spelling that answers truthfully (#350).
+// holds the probe to the only spellings that answer truthfully (#350).
 //
 // The gate that refuses a machine-owned account is not in the clauth
 // binary: it is in the shell in front of it, which is why the refusal
 // reaches a pane at all -- `create` types the launch line and the pane's
 // own shell resolves `clauth`. Measured on 2026-09-23 against clauth
-// 0.15.2: `clauth start quantivly-0 -- --version` refused with exit 3,
+// 0.15.2: `clauth start <profile> -- --version` refused with exit 3,
 // while `env`, `command`, `nice`, `setsid`, `/usr/bin/time` and `sh -c`
 // in front of the same line all printed a version and exited 0. A probe
-// that reaches the binary directly therefore clears an account that the
+// that reaches the binary directly therefore clears an account the
 // session will be refused -- worse than not probing, because it is
 // evidence pointing the wrong way.
 //
-// So: every --version in the document is the probe's, and no line shows
-// the probe behind something that would bypass the shell's own
-// resolution.
+// `command` is the one wrapper the document may show, and only as the
+// differential that tells the reader whether their shell has the gate
+// loaded at all: two identical answers mean the probe proved nothing.
+// That case is not hypothetical -- a non-interactive shell never sources
+// the rc the function lives in -- and an agent that cannot tell it from a
+// healthy account reports the account clear either way.
+//
+// The scan collapses the document's whitespace rather than reading it
+// line by line, which is #352's review finding and CLAUDE.md's own
+// lesson: a qualifier can sit on the line above, so a fenced
+// `timeout 10s \` continued onto the probe's line passes a line-based
+// check while teaching exactly the invocation this forbids.
 func TestSkillProbesAnAccountBare(t *testing.T) {
 	doc := strings.ReplaceAll(renderedSkill(), "`", "")
 	const probe = "clauth start <account> -- --version"
+
 	n := strings.Count(doc, "--version")
 	if n == 0 {
 		t.Fatal("the document never names --version -- if the account probe went, drop foreignFlags' entry with it")
@@ -217,20 +227,65 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 	if got := strings.Count(doc, probe); got != n {
 		t.Errorf("the document names --version %d times, only %d of them as %q", n, got, probe)
 	}
-	// The wrappers are the measured ones plus the two spellings a shell
-	// user reaches for first. Any of them ahead of the probe makes it
-	// answer for the binary instead of for the pane.
-	for _, bypass := range []string{"command clauth", "env clauth", "/usr/bin/env clauth", "sh -c", "bash -c", "nice clauth", "setsid clauth"} {
-		for i, line := range strings.Split(doc, "\n") {
-			if strings.Contains(line, bypass) && strings.Contains(line, "--version") {
-				t.Errorf("line %d runs the account probe through %q, which reaches the binary and not the shell's gate:\n  %s", i+1, bypass, line)
+
+	// Scanned over LOGICAL lines, not physical ones: a shell
+	// continuation is joined to the line it continues, and each line
+	// carries its non-blank predecessor's tail, so a wrapper one line
+	// above the probe is still adjacent to it. That is CLAUDE.md's "join
+	// the paragraph before counting" and it is the half #352's first
+	// draft got wrong.
+	//
+	// It deliberately does NOT run over the backtick-stripped document:
+	// stripping turns an ```sh fence into a bare "sh" sitting directly
+	// above the probe, which reads as a bypass that is not there.
+	raw := strings.Split(renderedSkill(), "\n")
+	var logical []string
+	for i := 0; i < len(raw); i++ {
+		line := raw[i]
+		for strings.HasSuffix(strings.TrimSpace(line), "\\") && i+1 < len(raw) {
+			i++
+			line = strings.TrimSuffix(strings.TrimSpace(line), "\\") + " " + strings.TrimSpace(raw[i])
+		}
+		logical = append(logical, line)
+	}
+	bypasses := []string{"env", "sh -c", "bash -c", "nice", "setsid", "time", "timeout", "sudo", "xargs", "stdbuf"}
+	for i, line := range logical {
+		clean := strings.ReplaceAll(line, "`", "")
+		at := strings.Index(clean, probe)
+		if at < 0 {
+			continue
+		}
+		before := clean[:at]
+		// The predecessor, unless it is a fence or blank -- so a wrapper
+		// in the prose line above is caught too.
+		if i > 0 {
+			prev := strings.TrimSpace(raw[i-1])
+			if prev != "" && !strings.HasPrefix(prev, "```") {
+				before = strings.ReplaceAll(prev, "`", "") + " " + before
+			}
+		}
+		if strings.HasSuffix(strings.TrimSpace(before), "command") {
+			continue // the differential, which the document may show
+		}
+		for _, bypass := range bypasses {
+			if regexp.MustCompile(`(^|\s)` + regexp.QuoteMeta(bypass) + `(\s|$)`).MatchString(before) {
+				t.Errorf("the probe is shown behind %q, which reaches the binary and not the shell's gate:\n  %s", bypass, strings.TrimSpace(line))
+				break
 			}
 		}
 	}
+
 	// And the document has to say so, since an agent that knows only the
 	// command will wrap it the moment it wants a timeout around it.
-	if !strings.Contains(doc, "Run it **bare**") {
+	if !strings.Contains(doc, "Run it bare") {
 		t.Error("the document shows the probe without telling the reader to run it bare")
+	}
+	// The differential has to carry its conclusion, or it is one more
+	// command with no rule attached.
+	for _, want := range []string{"command clauth start <account> -- --version", "you have learnt nothing"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the document never says %q, so the reader cannot tell a loaded gate from an absent one", want)
+		}
 	}
 }
 
@@ -822,7 +877,7 @@ func TestSkillSaysWhatADryRunCannotSettle(t *testing.T) {
 			to:   "**2. Choose the three options**",
 			want: []string{
 				"covers those\n  windows and nothing else",
-				"not a promise the session will start",
+				"not a promise the session\n  will start",
 			},
 		},
 		{

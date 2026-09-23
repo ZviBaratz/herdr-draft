@@ -1134,30 +1134,63 @@ func explainUnconfirmedPrompt(err error) error {
 // original error exactly as it was rather than replacing a real diagnosis
 // with a complaint about not being able to fetch one.
 //
-// It reads the pane TWO ways, and the second is the one that serves the
-// founding case (#350). `herdr agent read` resolves its target through
-// herdr's agent registry, so it answers `agent_not_found` for a pane that
-// never produced an agent -- which is precisely the pane this function is
-// called about, since a launch that started nothing is why detection timed
-// out in the first place. Measured live at 0.9.1 on 2026-09-23: with a
-// refused `clauth start` on screen, `agent read` exited 1 with that code
-// while `pane read` printed the refusal. So the enrichment this comment
-// has always promised could not fire for the failure shape it describes,
-// through every green run of its own tests -- a fake AgentRead answers,
-// and the real one does not. herdrc.PaneRead is the fallback, and the
-// best-effort rule above still holds: both reads failing leaves err
-// untouched.
+// It reads by PANE, not by agent, and that is the whole of #350 (#352).
+// `herdr agent read` resolves its target through herdr's agent registry,
+// so it answers `agent_not_found` for a pane that never produced an agent
+// -- which is precisely the pane this function is called about, since a
+// launch that started nothing is why detection timed out. So the
+// enrichment this comment has always promised could not fire for the
+// failure shape it describes, through every green run of its own tests: a
+// fake AgentRead answers, and the real one does not.
+//
+// `pane read` is a strict superset here rather than a fallback, which is
+// why there is one call and not two. Both subcommands take the same
+// `--source detection --format text` and return the same snapshot; the
+// only difference is how the target is resolved, and this function's
+// paneID is always a topology pane id (agentPane, set from a
+// CreatedTopology's PaneID) and never an agent name. Measured at 0.9.1 on
+// 2026-09-23: on two live AGENT panes the two commands returned
+// byte-identical output, and on a pane whose launch had been refused only
+// `pane read` answered at all. Reading with AgentRead first would spend a
+// subprocess that is known to fail in exactly the case this exists for.
+//
+// Reading by pane also removes an asymmetry a fallback would have had: an
+// AgentRead that succeeds with a BLANK screen is not an error, so a
+// fallback keyed on error would have skipped the read that could still
+// have found something.
 func withPaneTail(ctx context.Context, r herdrc.Runner, paneID string, err error) error {
 	if paneID == "" {
 		return err
 	}
-	screen, readErr := r.AgentRead(ctx, paneID)
+	screen, readErr := r.PaneRead(ctx, paneID)
 	if readErr != nil {
-		if screen, readErr = r.PaneRead(ctx, paneID); readErr != nil {
-			return err
-		}
+		return err
 	}
-	return withScreenTail(screen, err)
+	return withScreenLead(screen, err)
+}
+
+// withScreenLead is withScreenTail with the pane FIRST, for a failure that
+// has no instruction of its own to lead with.
+//
+// The two orderings are a real distinction rather than an inconsistency,
+// and explainBlockedStart's own comment is where the reasoning is written
+// down: SubmitView.stepValue truncates a step's value keeping the HEAD, so
+// at an 80-cell popup only the opening clause survives, and whatever is
+// most useful belongs there. For a blocked start that is the instruction,
+// and herdr's error goes last. For a bare detection timeout there is no
+// instruction -- "timed out after 1m0.001s" is the least informative thing
+// on the line, and the pane is the most -- so the pane leads and the
+// timeout follows.
+//
+// Without this the six lines below reach `create`'s stderr and --json and
+// nothing else: the timeout text alone is about 55 cells before the
+// separator, and submitStepError sizes the popup's value column at sixty.
+func withScreenLead(screen string, err error) error {
+	tail := lastNonBlankLines(screen, paneTailLines)
+	if tail == "" {
+		return err
+	}
+	return fmt.Errorf("the pane shows: %s; %w", tail, err)
 }
 
 // withScreenTail is withPaneTail's formatting half, split out so
@@ -1235,24 +1268,32 @@ func agentKindName(kind string) string {
 	return kind
 }
 
-// paneTailLines is how much of the pane a detection failure quotes: the
-// echoed command, the error, and the new prompt.
+// paneTailLines is how much of the pane a detection failure quotes.
 //
-// Six rather than three, because three was counted against a rejection
-// whose every part was one line -- zsh's "no matches found" (#72) -- and
-// the launcher refusals #350 found are not that shape. Counted on the
-// real screen: the echoed command, three lines of `clauth: refused`, and
-// the user's own two-line prompt underneath. Three therefore quoted the
-// last line of the refusal and then the prompt, naming neither the
-// account nor the machine that owns it -- both of which are on the
-// refusal's first line. Six is what reaches that line on the widest of
-// the two known shapes, not a round number.
+// Three was counted against a rejection whose every part was one line --
+// the echoed command, zsh's "no matches found", the new prompt (#72) --
+// and the launcher refusals #350 found are not that shape. Counted on the
+// real screen (refusedLaunchScreen in exec_test.go, verbatim from a live
+// pane): the echoed command, three lines of `clauth: refused`, then the
+// user's own two-line prompt. Reading from the bottom, that puts the
+// prompt at 1-2, the refusal's continuation lines at 3-4, the line naming
+// the account and the machine that owns it at 5, and the echoed command
+// at 6.
 //
-// Raising it costs the popup nothing: SubmitView.stepValue truncates a
-// step's value keeping the HEAD, so what a narrow popup shows is herdr's
-// own error either way (the same reasoning explainBlockedStart records for
-// putting its instruction first). The lines this buys are read in
-// `create`'s stderr and its --json `error`, which carry the whole string.
+// So three quoted the borrow hint and the prompt and nothing else. FIVE
+// is what first reaches the account and its owner, and six is what
+// reaches the echoed command -- which is not a spare line: the command is
+// the other half of the diagnosis, and on #72's screen it is the whole of
+// it, since there the rejection names the glob and only the echoed line
+// shows what was being launched. Six, then, for the widest of the two
+// known shapes. TestDetectionTailBudgetReachesTheRefusalLine pins both
+// ends of that: six reaches the command, five does not.
+//
+// It costs the popup nothing and, before withScreenLead, gained it
+// nothing either -- SubmitView.stepValue truncates a step's value keeping
+// the HEAD, and the timeout alone fills the value column. Leading with
+// the pane is what puts any of this in front of a popup user; these lines
+// are otherwise read in `create`'s stderr and its --json `error`.
 const paneTailLines = 6
 
 // lastNonBlankLines returns the last n non-blank lines of s joined by " | ",
@@ -1574,6 +1615,35 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// agent_not_ready untouched -- including agent_pane_busy,
 				// which retryBusy one level up still has to recognize.
 				err = explainBlockedStart(ctx, r, req.Kind, req.PaneID, err)
+				// And Path A gets the same pane quote Path B's detection
+				// wait gets, for the same reason and the same failure
+				// (#352's review). `agent start` polls for readiness and
+				// gives up with herdr's `timeout` code -- "timed out
+				// waiting for agent startup"
+				// (herdr:src/cli/agent.rs at v0.9.0, agent_wait_timeout) --
+				// which is neither agent_not_ready nor blocked, so the
+				// line above returns it untouched and nothing reads the
+				// pane. A `claude` or `clauth` wrapper in the pane's shell
+				// refusing the launch lands here exactly as it lands on
+				// the OpAwaitDetection path below, and without this the
+				// two paths report the same failure with and without its
+				// reason.
+				switch {
+				case err == nil:
+				case isBlockedAgentError(err):
+					// explainBlockedStart has already read the pane and
+					// quoted it; a second quote would duplicate it.
+				case errors.Is(err, herdrc.ErrAgentGone):
+					// Already explained by waitThroughDialog.
+				case errors.Is(err, herdrc.ErrPaneBusy):
+					// retryBusy wraps this whole switch, so a pane read
+					// here runs once per retry -- and a busy pane is
+					// herdr's own condition rather than something on the
+					// screen, so the read would cost a subprocess an
+					// attempt and quote nothing worth reading.
+				default:
+					err = withPaneTail(ctx, r, req.PaneID, err)
+				}
 			case OpClauthLaunch:
 				paneID := ""
 				if haveAgentPane {

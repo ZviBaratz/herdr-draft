@@ -61,6 +61,11 @@ type submitFakeRunner struct {
 	// empty one on purpose.
 	readText string
 
+	// paneReadText is what PaneRead answers with -- the read that does
+	// not go through herdr's agent registry, and so the only one that
+	// sees a pane whose launch produced no agent (#352).
+	paneReadText string
+
 	// blankReads makes every AgentRead succeed with nothing in it -- a
 	// pane herdr will answer about and that has not drawn anything yet,
 	// which is the state #116's silent failure came out of.
@@ -198,16 +203,23 @@ func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 	return r.readText, nil
 }
 
-// PaneRead is withPaneTail's fallback (#350). This fake's AgentRead
-// answers whenever `AgentRead` is not on the failure dial, so the
-// fallback is only reached when a test has asked for an unreadable pane
-// -- and then it must not quietly supply one, or the app-layer tests
-// would stop being able to spell that state at all.
+// PaneRead is the read withPaneTail makes (#352): by pane, so that a
+// launch which never produced an agent can still be quoted.
+//
+// It consults its OWN name on the failure dial. The first version passed
+// "AgentRead", which shouldFail appends to r.calls before comparing -- so
+// every fallback read logged a phantom AgentRead and the sequence
+// assertions in this file could not tell the two apart. Given what this
+// change is about, a fake that logs one call under another name is the
+// same hazard one layer down.
+//
+// paneReadText is empty by default, which withScreenLead treats as
+// nothing to quote, so a test that does not care is unaffected.
 func (r *submitFakeRunner) PaneRead(context.Context, string) (string, error) {
-	if r.shouldFail("AgentRead") {
+	if r.shouldFail("PaneRead") {
 		return "", r.failErr
 	}
-	return paintedIdleScreen, nil
+	return r.paneReadText, nil
 }
 
 // paintedIdleScreen is an ordinary, painted, dialog-free pane -- what

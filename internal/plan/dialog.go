@@ -78,6 +78,31 @@ import "strings"
 var promptDialogSignatures = []string{
 	// The screen's own heading: the one line that says what is being asked.
 	"Quick safety check",
+	// Claude Code's monthly-spend-limit screen (#349), which is the second
+	// member of the class this file's header predicted and the reason the
+	// guard was kept: herdr's manifest knows the trust prompt, not the
+	// class. Both lines are verbatim from a live pane, recorded in the
+	// issue and in dialog_test.go's fixture.
+	//
+	// It is worth being explicit about what an unguarded send does here,
+	// because it is worse than the founding case. That one answered "No,
+	// exit" and destroyed a fresh agent; this one's highlighted option is
+	// "Adjust monthly spend limit: Unlimited", so the trailing Enter
+	// raises the user's own spending cap -- a decision that is theirs,
+	// that costs money, and that nobody saw. The reachable path is
+	// narrow but real: `agent prompt` answers agent_prompt_stalled when
+	// herdr observes no working or blocked state, exec.go retries such a
+	// send exactly once through promptIfReady, and without these two
+	// entries that retry's guard passes.
+	//
+	// The heading first, for the reason the ordering comment above gives.
+	"hit your monthly spend limit",
+	// The highlighted option, as a second independent signal, and the one
+	// that still matches if the heading is reworded. Spelled without the
+	// apostrophe the heading carries ("You've") so that a straight-quote
+	// to typographic-quote change upstream cannot silently unmatch both
+	// at once -- the same reason the trust prompt keeps two entries.
+	"Adjust monthly spend limit",
 	// The screen's footer hint -- distinctive phrasing unlikely to appear
 	// in ordinary agent chat output, and present regardless of exactly how
 	// the rest of the screen is worded. Kept as a second, independent

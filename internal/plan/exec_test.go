@@ -295,6 +295,14 @@ func (m *mockRunner) PaneRead(ctx context.Context, paneID string) (string, error
 	if m.paneReadErr != nil {
 		return "", m.paneReadErr
 	}
+	// Through shouldFail like every sibling on this fake. Without it
+	// `failAt: "PaneRead"` is silently a no-op that hands the caller a
+	// successful empty read, so a test written that way would pass for
+	// the wrong reason -- the vacuous-pass shape this package's own
+	// mutation rule exists to catch.
+	if m.shouldFail("PaneRead") {
+		return "", m.failErr
+	}
 	return m.paneReadText, nil
 }
 
@@ -1067,9 +1075,16 @@ func TestExecuteFailureAtAgentStart(t *testing.T) {
 		"WorktreeCreate(/repo,zvi/fix-pagination,main)",
 		"TabRename(tab-1,Fix pagination)",
 		"AgentStart(" + AgentName(in.Title) + ",pane-1)",
+		// The pane read is not "a further call" in the sense this test
+		// guards -- it makes nothing and changes nothing. A failed
+		// `agent start` reads the pane for the same reason a detection
+		// timeout does: herdr's own error can be a bare "timed out
+		// waiting for agent startup" while the pane holds the shell's
+		// refusal (#352's review).
+		"PaneRead(pane-1)",
 	}
 	if !reflect.DeepEqual(m.calls, wantCalls) {
-		t.Fatalf("calls = %v, want %v (no further calls after the failure)", m.calls, wantCalls)
+		t.Fatalf("calls = %v, want %v (nothing after the failure but the read that diagnoses it)", m.calls, wantCalls)
 	}
 
 	if len(progressed) == 0 {
@@ -1898,7 +1913,11 @@ func TestExecuteDetectionTimeoutQuotesThePane(t *testing.T) {
 		failErr:   errors.New("await detection for pane pane-1: timed out after 30.001s"),
 		failCount: 1,
 		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
-		readText: "❯ clauth start personal -- --model claude-opus-5[1m] --effort xhigh\n" +
+		// paneReadText, not readText: zsh rejected the launch, so no
+		// agent was ever registered and `agent read` could not have
+		// resolved this pane. Driving this fixture through AgentRead was
+		// the original test's own version of the defect (#352).
+		paneReadText: "❯ clauth start personal -- --model claude-opus-5[1m] --effort xhigh\n" +
 			"zsh: no matches found: claude-opus-5[1m]\n" +
 			"❯ \n\n\n",
 	}
@@ -2032,27 +2051,48 @@ func TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor(t *testing.T) {
 // TestDetectionTailBudgetReachesTheRefusalLine guards the constant that
 // makes the test above pass, as the only cause it is.
 //
-// paneTailLines went from three to six for one measured reason, and a
-// fixture proving the fallback fires would keep passing at three: the
-// refusal's last line is still quoted, so "the pane shows" appears either
-// way. What three loses is every line that names WHICH account and WHOSE
-// it is -- the last three non-blank lines of this screen are the borrow
-// hint and the user's own two-line prompt. So the budget is asserted
-// against the screen directly, where a change to it fails here rather
-// than silently narrowing a diagnosis somewhere else.
+// A fixture proving the pane is read at all would keep passing at three:
+// the refusal's last line is still quoted, so "the pane shows" appears
+// either way. So the budget is asserted against the screen directly.
+//
+// Both ends, because only the pair pins six. The reviewer of #352 found
+// the first draft asserting the account and its owner, which FIVE lines
+// already reach -- so the test passed unchanged at paneTailLines = 5 and
+// the constant was unguarded in the direction that mattered. The sixth
+// line is the echoed command, and the lower-bound case below is what
+// fails if anyone takes it back.
 func TestDetectionTailBudgetReachesTheRefusalLine(t *testing.T) {
 	tail := lastNonBlankLines(refusedLaunchScreen, paneTailLines)
-	for _, want := range []string{"quantivly-0", "owned by dev (EC2)"} {
+	for _, want := range []string{
+		// The two facts that make the refusal actionable, at line 5.
+		"quantivly-0", "owned by dev (EC2)",
+		// And what was actually run, at line 6 -- the half of the
+		// diagnosis that is the whole of it on #72's screen.
+		"clauth start quantivly-0",
+	} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("a %d-line tail of a refused launch = %q, want it to reach %q",
 				paneTailLines, tail, want)
 		}
 	}
-	// And the other direction: a budget large enough to quote the whole
-	// scrollback would put a screen in an error message. Six is two lines
-	// past what this screen needs, which is the widest known shape.
-	if got := len(strings.Split(tail, " | ")); got > paneTailLines {
-		t.Errorf("tail has %d segments, want at most paneTailLines (%d)", got, paneTailLines)
+	// One line fewer must lose the echoed command. Without this the
+	// constant could be lowered to 5 with every assertion above still
+	// green.
+	if short := lastNonBlankLines(refusedLaunchScreen, paneTailLines-1); strings.Contains(short, "clauth start quantivly-0") {
+		t.Errorf("a %d-line tail still reaches the echoed command (%q), so paneTailLines = %d is not the minimum this test claims",
+			paneTailLines-1, short, paneTailLines)
+	}
+	// And the upper bound, which has to be measured against a screen with
+	// MORE non-blank lines than the budget -- on refusedLaunchScreen the
+	// segment count saturates at six for every n >= 6, so asserting it
+	// there cannot fail for any value of the constant.
+	var deep strings.Builder
+	for i := 0; i < paneTailLines*3; i++ {
+		fmt.Fprintf(&deep, "line %d\n", i)
+	}
+	if got := len(strings.Split(lastNonBlankLines(deep.String(), paneTailLines), " | ")); got != paneTailLines {
+		t.Errorf("a %d-line budget quoted %d lines of a %d-line screen, want exactly the budget",
+			paneTailLines, got, paneTailLines*3)
 	}
 }
 
@@ -2077,33 +2117,27 @@ func TestExecuteDetectionTimeoutSurvivesAnUnreadablePane(t *testing.T) {
 		// screen of whitespace, and a read that succeeds with nothing in
 		// it at all. The second cannot be spelled with readText any more,
 		// since the fake's zero value is a painted screen (#116).
-		readText        string
-		blankReadsFirst int
-		// readErr and paneReadErr spell the third way, which only exists
-		// since #350 gave the enrichment a second read: BOTH of them
-		// failing. One failing is now the ordinary case that produces a
-		// quote, so it stopped being a way to spell an unreadable pane.
-		readErr     error
-		paneReadErr error
+		// All three drive PaneRead, which since #352 is the only read
+		// this path makes: a screen of whitespace, a screen with nothing
+		// on it at all, and a read that does not answer.
+		paneReadText string
+		paneReadErr  error
 	}{
-		{name: "the pane is blank", readText: "\n   \n\n"},
-		{name: "the pane is empty", blankReadsFirst: 1},
+		{name: "the pane is blank", paneReadText: "\n   \n\n"},
+		{name: "the pane is empty", paneReadText: ""},
 		{
-			name:        "neither read answers",
-			readErr:     errors.New("herdr agent read pane-1: exit status 1: {\"error\":{\"code\":\"agent_not_found\"}}"),
+			name:        "the read does not answer",
 			paneReadErr: errors.New("herdr pane read pane-1: exit status 1: {\"error\":{\"code\":\"pane_not_found\"}}"),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &mockRunner{
-				failAt:          "AwaitDetection",
-				failErr:         timeout,
-				failCount:       1,
-				topo:            herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
-				readText:        tc.readText,
-				blankReadsFirst: tc.blankReadsFirst,
-				readErr:         tc.readErr,
-				paneReadErr:     tc.paneReadErr,
+				failAt:       "AwaitDetection",
+				failErr:      timeout,
+				failCount:    1,
+				topo:         herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+				paneReadText: tc.paneReadText,
+				paneReadErr:  tc.paneReadErr,
 			}
 
 			var progressed []Progress
@@ -2496,7 +2530,9 @@ func TestExecutePathBDetectionTimeoutStillQuotesThePane(t *testing.T) {
 		failErr:   errors.New("await detection for pane pane-1: timed out after 30.001s"),
 		failCount: 1,
 		topo:      herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
-		readText:  "❯ clauth start personal --\nzsh: command not found: clauth\n❯ \n",
+		// Same correction as TestExecuteDetectionTimeoutQuotesThePane's:
+		// a launch that never ran leaves no agent to read by.
+		paneReadText: "❯ clauth start personal --\nzsh: command not found: clauth\n❯ \n",
 	}
 
 	var progressed []Progress

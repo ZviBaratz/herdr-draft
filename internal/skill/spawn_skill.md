@@ -227,12 +227,13 @@ credential dead, and how full its usage windows are. Two refusals are none
 of those, and both were observed with every one of them clean:
 
 - A **monthly spend cap is not a usage window.** `account_usage` reports
-  the windows and nothing else — clauth models nothing else — so an
-  account under 20% on every window can still be over its cap. The session
-  is created and the prompt delivered, and the agent then sits on a dialog
-  saying `You've hit your monthly spend limit`. Section 7's quota
-  machinery reads the windows, so it stays silent about this; nothing
-  before section 8's pane read can see it at all.
+  the windows and nothing else, and `clauth status --json` — where it gets
+  them — exposes nothing else either, so an account under 20% on every
+  window can still be over its cap. The session is created and the prompt
+  delivered, and the agent then sits on a dialog saying `You've hit your
+  monthly spend limit`. Section 7's quota machinery reads the windows, so
+  it stays silent about this; nothing before section 8's pane read can see
+  it.
 - The launch can be **refused by whatever stands in for the launcher in
   the pane's shell.** `create` types the launch line into the new pane and
   that pane's own shell resolves `clauth`, so a function or alias in front
@@ -251,11 +252,39 @@ persistent and spends no quota:
 clauth start <account> -- --version
 ```
 
-Either it prints a version, or it prints the refusal. Run it **bare**: a
-gate like that lives in the shell, so `command clauth`, `env clauth`,
-`sh -c` or any other wrapper in front of it reaches the binary directly
-and answers "fine" for an account the pane will refuse. Measured: the same
-account, refused when the name is typed and allowed under a wrapper.
+Either it prints a version, or it prints the refusal.
+
+Two things decide whether that answer means anything.
+
+**Run it bare.** A gate like this lives in the shell, so `command clauth`,
+`env clauth`, a `sh -c`, a `timeout` — any wrapper in front of it — reaches
+the binary directly and answers "fine" for an account the pane will
+refuse. Measured: the same account, refused when the name is typed and
+allowed under six different wrappers.
+
+**Then check that your own shell has the gate at all**, because a shell
+that never loaded it answers "fine" for the same reason a wrapper does,
+and looks identical. Run the probe a second time with `command` in front:
+
+```sh
+command clauth start <account> -- --version
+```
+
+- **The two answers differ** — the gate is loaded, and the bare answer is
+  the real one.
+- **Both refuse** — the gate is in the binary here. The bare answer is
+  still the real one.
+- **Both succeed** — you have learnt nothing. Either the account is fine,
+  or your shell has no gate and the pane's does. Say that rather than
+  reporting the account clear; the pane the session opens runs the user's
+  own interactive shell, which is not necessarily the one you are in.
+
+**Probe the launcher the session will actually use.** The command above is
+the default. A `[clauth] launcher` in `config.toml` replaces it, and
+`[clauth] launch = "wrapper"` runs `claude` under a `CLAUDE_CONFIG_DIR`
+instead — and a refusal can sit in front of either. Nothing in the dry
+run's output names the launcher, so if the user has configured one, probe
+that spelling rather than this one.
 
 If the user has not said anything about accounts, pass neither flag. Show
 which account the session will run under anyway (section 7): it is the
@@ -471,10 +500,11 @@ and a dry run is the cheapest place to catch it. The report is section 8's
   to have room, and with nothing pinned so is the account's name. When
   that is because clauth failed, stderr has a `herdr-draft create:` line
   naming clauth, which is not section 2's warning. **It covers those
-  windows and nothing else.** A monthly spend cap is invisible to it, and
-  so is a launcher that will refuse the account outright (section 5), so
-  a clean reading here is not a promise the session will start — do not
-  offer it to the user as one.
+  windows and nothing else.** A monthly spend cap is invisible to it —
+  clauth reads one from the usage API but does not put it in the status
+  feed this comes from — and so is a launcher that will refuse the account
+  outright (section 5). A clean reading here is not a promise the session
+  will start; do not offer it to the user as one.
 
 **2. Choose the three options** (section 5). If the first dry run's
 `agent_kind` is not `claude`, pass none of them.

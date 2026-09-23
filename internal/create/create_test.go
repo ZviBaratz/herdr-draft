@@ -609,6 +609,76 @@ func TestExitZero_ATabThatKeptHerdrsNameIsStillACreate(t *testing.T) {
 	}
 }
 
+// TestExitOne_ARefusedLaunchCarriesThePaneIntoTheReport is the end-to-end
+// half of #352, on the two surfaces the pane text actually reaches:
+// `create`'s stderr line and its --json `error`.
+//
+// The plan package proves withPaneTail quotes the pane; nothing proved
+// the quote survives into the report a caller reads, and the review of
+// #352 found the create package had no coverage of the fallback finding
+// anything at all -- its fake's paneReadText was set by no test. Which
+// matters more here than it sounds: the popup truncates this string, so
+// these two surfaces are the only ones that carry it whole.
+//
+// The failure shape is the measured one. `agent start` gives up with
+// herdr's own `timeout` code and a message about startup, saying nothing
+// about why, while the pane holds a launcher refusal naming the account
+// and the machine that owns it.
+func TestExitOne_ARefusedLaunchCarriesThePaneIntoTheReport(t *testing.T) {
+	const refusal = "❯ clauth start acct -- --model sonnet\n" +
+		"clauth: refused — 'acct' is owned by other-host (CLAUDE_TENANT_MACHINE_OWNED).\n" +
+		"    Run this work on other-host instead: its machine in herdr's sidebar.\n" +
+		"❯ \n"
+
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%v", asJSON), func(t *testing.T) {
+			h := newHarness(t)
+			h.runner.failAt = "AgentStart"
+			h.runner.failErr = errors.New(
+				`{"error":{"code":"timeout","message":"timed out waiting for agent startup"},"id":"cli:agent:start"}`)
+			h.runner.paneReadText = refusal
+
+			args := []string{"--title", "fix login redirect", "--no-worktree"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			if code := h.run(args...); code != ExitFailed {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitFailed, h.stderr)
+			}
+			if !h.runner.called("PaneRead") {
+				t.Fatalf("calls = %v, want the failed launch to have read the pane", h.runner.calls)
+			}
+
+			// stderr carries the step's failure line either way.
+			stderr := h.stderr.String()
+			for _, want := range []string{"owned by other-host", "clauth start acct"} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr = %q, want it to carry %q from the pane", stderr, want)
+				}
+			}
+			if !asJSON {
+				return
+			}
+			var got map[string]any
+			if err := json.Unmarshal([]byte(h.stdout.String()), &got); err != nil {
+				t.Fatalf("stdout is not one JSON object: %v\n%s", err, h.stdout.String())
+			}
+			msg, _ := got["error"].(string)
+			for _, want := range []string{"the pane shows", "owned by other-host", "clauth start acct"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("--json error = %q, want it to carry %q", msg, want)
+				}
+			}
+			// And herdr's own error is still in there: the pane leads
+			// because it is the more useful half, not because the
+			// timeout stopped being the failure.
+			if !strings.Contains(msg, "timed out waiting for agent startup") {
+				t.Errorf("--json error = %q, want herdr's own failure still reported", msg)
+			}
+		})
+	}
+}
+
 // TestExitOne_PlanFailsAfterTheTopologyExists is v2 spec §13's exit 1: the
 // agent could not start, so the workspace that was already created is
 // reported and -- with the default --on-failure keep -- left alone.

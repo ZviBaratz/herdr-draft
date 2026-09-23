@@ -63,9 +63,20 @@ for why a heading here may read `unreleased`.
   pane already, through `herdr agent read`, which resolves its target
   through herdr's agent registry and so answers `agent_not_found` for the
   one pane this is ever about: the one where no agent started. It now
-  falls back to `herdr pane read`, and quotes six lines rather than
-  three, which is what it takes to reach the account and the machine that
-  owns it past a two-line shell prompt.
+  reads by pane instead, quotes six lines rather than three — five to
+  reach the account and the machine that owns it past a two-line shell
+  prompt, six to reach the command that was run — and puts the pane's
+  text *before* herdr's timeout, so a popup, which truncates keeping the
+  start of the line, shows the reason rather than the deadline. A failed
+  `herdr agent start` gets the same quote: it gives up with a bare
+  "timed out waiting for agent startup" and previously read nothing.
+- **A prompt is never typed into the spend-limit dialog** (#349). Claude
+  Code's "You've hit your monthly spend limit" screen is a blocking
+  selection dialog whose highlighted option is "Adjust monthly spend
+  limit: Unlimited", and the guard that stops a queued prompt's Enter
+  answering a dialog did not recognise it — so the one retry a stalled
+  send is allowed could have raised your spending cap. It is now two
+  signatures in that list, beside the first-run trust prompt.
 - **The spawn skill says what a clean `--dry-run` does not settle**
   (#349, #350, #351). Three facts an agent could not have known from the
   document: `account_usage` covers usage windows only, so a monthly spend
