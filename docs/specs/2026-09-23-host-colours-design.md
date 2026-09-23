@@ -584,9 +584,22 @@ those sixteen values loses the floor on that entry. Measured over the 43
 schemes, that is **zero of 43** on any of the six indices this palette
 draws with, and a false positive errs toward today's screen. The
 maintenance hazard is the other way: if ghostty changes its defaults the
-table stops matching and the WSL case returns silently, which is why the
-values are stated in one place and pinned by a test rather than left
-implicit in a comparison.
+table stops matching and the WSL case returns silently. The test that
+states the values makes a deliberate change visible; it cannot detect
+ghostty drifting, and does not claim to.
+
+**The obvious alternative was detecting WSL ourselves**, the same way herdr
+does (`/proc/sys/kernel/osrelease`, `/proc/version`, the WSL env vars,
+`/run/WSL`), and skipping OSC 4 there. It vendors nobody's constants and
+has no drift hazard, and it was rejected on coverage. WSL is not the only
+way to reach this: a host terminal that does not implement OSC 4 **at all**
+leaves every entry at ghostty's default on any platform, and that is the
+more likely case of the two — plenty of terminals answer OSC 10 and 11 and
+not OSC 4. Recognising the stand-in catches both, because it tests the
+thing that actually went wrong rather than inferring it from the operating
+system. It also keeps `internal/theme` pure, where a `/proc` read would
+not. (The owner delegated this choice on 2026-09-23; this paragraph is the
+reasoning they delegated.)
 
 ## 7. Where the code goes
 
