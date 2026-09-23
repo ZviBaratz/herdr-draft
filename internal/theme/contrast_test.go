@@ -424,12 +424,13 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 			// The exemption is missing data, as everywhere else in this
 			// file, and since #304 none of it is left: terminal's panel_bg
 			// and surface0 are herdr's Color::Reset -- "inherit the host
-			// terminal's background" -- and its focused-row fill and all
-			// five of these fields are ANSI indices, which the terminal
-			// resolves from its own palette. Whether its red reads on its
-			// bright black is a question about the user's terminal, and
-			// TestTerminalPalette_EmitsTheTerminalsOwnColours asserts that
-			// those are the colours it is sent. #276 is open on the answer.
+			// terminal's background" -- and so is its focused-row fill
+			// (#276), while all five of these fields are ANSI indices,
+			// which the terminal resolves from its own palette. So every
+			// word is the terminal's own colour on the terminal's own
+			// background, which is the pairing a terminal palette is
+			// designed for, and TestTerminalPalette_EmitsTheTerminalsOwnColours
+			// asserts that those are the colours it is sent.
 			if _, unknown := palette.PanelBG.(lipgloss.NoColor); unknown {
 				if name != "terminal" {
 					t.Fatalf("PanelBG is NoColor: only the terminal palette may be exempt from the semantic-text floor")
@@ -724,9 +725,9 @@ func TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride(t *testing.T) {
 // were xterm's RGB defaults and went out as truecolor -- `\x1b[38;2;255;0;0m`
 // for Danger -- so a terminal that redefines red still got xterm's.
 //
-// It asserts what Builtin hands out, after floorContrast, and ActiveRowBG
-// is rendered as the BACKGROUND it is, because `\x1b[90m` and `\x1b[100m`
-// are different bytes for the same index. It does NOT pin that a clamp
+// It asserts what Builtin hands out, after floorContrast, and the three
+// backgrounds are rendered as backgrounds, because a foreground and a
+// background SGR are different bytes for the same colour. It does NOT pin that a clamp
 // hands an index back untouched, and cannot: on this palette every clamp
 // is exempted first by its NoColor grounds, so the bytes come out right
 // whether or not rgb8 measures an index. Measured: with rgb8 measuring
@@ -752,8 +753,11 @@ func TestTerminalPalette_EmitsTheTerminalsOwnColours(t *testing.T) {
 		{"Branch", fg(palette.Branch), "\x1b[37mx\x1b[m"},     // Color::Gray
 		{"Border", fg(palette.Border), "\x1b[90mx\x1b[m"},     // Color::DarkGray
 		{"Danger", fg(palette.Danger), "\x1b[91mx\x1b[m"},     // Color::LightRed
-		{"ActiveRowBG", bg(palette.ActiveRowBG), "\x1b[100mx\x1b[m"},
 		// Color::Reset: no SGR at all, the terminal's own colour stays.
+		// ActiveRowBG is one of them since #276: the focused row is marked
+		// by its gutter glyph and bold, and its words sit on the terminal's
+		// own background.
+		{"ActiveRowBG", bg(palette.ActiveRowBG), "x"},
 		{"PanelBG", bg(palette.PanelBG), "x"},
 		{"Text", fg(palette.Text), "x"},
 		{"Surface", bg(palette.Surface), "x"},
@@ -870,14 +874,12 @@ func TestClamps_HandAnIndexBackAsAnIndex(t *testing.T) {
 // grounds allow, and every field it did not touch still reaches the screen
 // as the terminal's own colour.
 //
-// It goes through LoadHerdrPaletteFrom with herdr's own `dark_name =
-// "terminal"` beside `name = "terminal"`, one of the two configs that reach
-// this palette today (`auto_switch = true` with the same dark_name is the
-// other; see resolveBuiltinFromConfig for why `name` alone does not).
+// It goes through LoadHerdrPaletteFrom with herdr's own `name =
+// "terminal"`, the way a user reaches this palette.
 //
 // Two cases, because the grounds decide whether any clamp can run. With
-// only `danger` overridden, every ground is still unmeasurable -- NoColor
-// panel and surface, an indexed focused row -- so the hex red stays exactly
+// only `danger` overridden, every ground is still unmeasurable -- a NoColor
+// panel, surface and focused row -- so the hex red stays exactly
 // as written. With the three grounds overridden too, a word CAN be measured,
 // and an illegible hex `danger` is raised while the indexed Warning beside it
 // is still ANSI 3: the clamp ran, and the index was not in its path.
@@ -895,7 +897,6 @@ func TestLoadHerdrPalette_HexOverridesOnTheTerminalPalette(t *testing.T) {
 	writeFile(t, path, `
 [theme]
 name = "terminal"
-dark_name = "terminal"
 `)
 
 	t.Run("a hex field on unmeasurable grounds is kept as written", func(t *testing.T) {
@@ -903,7 +904,7 @@ dark_name = "terminal"
 		if r := lipgloss.NewStyle().Foreground(got.Danger).Render("x"); r != "\x1b[38;2;255;85;85mx\x1b[m" {
 			t.Errorf("the overridden Danger renders %q, want the user's #ff5555 as truecolor", r)
 		}
-		if got.Warning != ansiIndex(3) || got.ActiveRowBG != ansiIndex(8) {
+		if got.Warning != ansiIndex(3) || got.ActiveRowBG != (lipgloss.NoColor{}) {
 			t.Errorf("fields the override did not name moved: Warning %T %v, ActiveRowBG %T %v", got.Warning, got.Warning, got.ActiveRowBG, got.ActiveRowBG)
 		}
 	})

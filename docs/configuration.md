@@ -374,16 +374,14 @@ the theme `[theme] name` selects, then any colours in herdr's
 `[theme.custom]`. `auto_switch` cannot be resolved from a file, because it
 follows the live terminal's light or dark appearance, so herdr-draft uses
 your configured dark theme (`dark_name`, or catppuccin when that is unset).
-`name = "terminal"` is drawn in that dark theme too.
 
-To draw in the `terminal` palette itself, set `dark_name = "terminal"`
-beside `name = "terminal"`; herdr draws its own `terminal` theme with both.
-That palette sends your terminal's own palette entries, the way herdr's
-`terminal` theme does: red is your terminal's red, and the background, the
-text and the input fields are left as your terminal draws them. The focused
-row is filled with your terminal's bright black. herdr-draft cannot see
-what any of those colours are, so the contrast adjustments described below
-do not apply to it. If a colour is hard to read there, change it in your
+`name = "terminal"` sends your terminal's own palette entries, the way
+herdr's `terminal` theme does: red is your terminal's red, and the
+background, the text and the input fields are left as your terminal draws
+them. The focused row has no fill of its own on this theme, so its words
+stay on your terminal's background; it is marked by the `▌` in the left
+margin and a bold value. herdr-draft cannot see what any of those colours
+are, so the contrast adjustments described below do not apply to it. If a colour is hard to read there, change it in your
 terminal's palette or override it in `[palette]`.
 
 `[palette]` overrides individual colours on top of all that, for when the

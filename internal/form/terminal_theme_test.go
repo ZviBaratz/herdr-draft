@@ -1,6 +1,7 @@
 package form
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -16,10 +17,12 @@ import (
 // the screen still draw xterm's red.
 //
 // The screen is #276's: the project row focused over a path that does not
-// exist, so the word `invalid` is drawn on the focused row's fill. On this
-// theme that pair is now the terminal's ANSI 9 on its ANSI 8, which is the
-// whole of what the fix can promise -- whether the user's red reads on the
-// user's bright black is their palette's business, and #276 is open on it.
+// exist. Any fill on that row is a ground the terminal's palette was not
+// designed for, and every fill this theme tried made `invalid` unreadable
+// on most real schemes (see internal/theme's terminal entry). So the row
+// is unfilled, and must stay so: the word is the terminal's ANSI 9 on the
+// terminal's own background, and the row is marked by its blue gutter glyph
+// and bold, the other two of v3 spec §5.4's signals.
 //
 // Any `38;2;` or `48;2;` is a truecolor sequence, and this theme has no RGB
 // value left to send.
@@ -54,8 +57,20 @@ func TestTerminalTheme_TheScreenSendsOnlyTheTerminalsOwnColours(t *testing.T) {
 	if row == "" {
 		t.Fatalf("no line carries %q -- the fixture is not #276's screen:\n%s", dirRowInvalid, screen)
 	}
-	if !strings.HasPrefix(row, "\x1b[100m") {
-		t.Errorf("the focused row does not open on ANSI 8's background, \\x1b[100m:\n%q", row)
+	for _, sgr := range regexp.MustCompile(`\x1b\[([0-9;]*)m`).FindAllStringSubmatch(row, -1) {
+		for _, param := range strings.Split(sgr[1], ";") {
+			// 40-48 and 100-107 set a background; 49 resets it to the
+			// terminal's own, which is the one this row may use.
+			if len(param) == 2 && param[0] == '4' && param != "49" || len(param) == 3 && strings.HasPrefix(param, "10") {
+				t.Errorf("the focused row paints a background (%q) -- on this theme it has none, so its words stay on the terminal's own (#276):\n%q", sgr[0], row)
+			}
+		}
+	}
+	if !strings.Contains(row, "\x1b[34m"+focusBarGlyph) {
+		t.Errorf("the focused row has no ANSI 4 gutter glyph %q -- without a fill it is one of the two signals left:\n%q", focusBarGlyph, row)
+	}
+	if !strings.Contains(row, "\x1b[1m") {
+		t.Errorf("the focused row's value is not bold -- without a fill that is the other signal left:\n%q", row)
 	}
 	if !strings.Contains(row, "\x1b[91m"+dirRowInvalid) {
 		t.Errorf("%q is not drawn in ANSI 9, \\x1b[91m:\n%q", dirRowInvalid, row)

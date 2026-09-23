@@ -41,12 +41,20 @@ for why a heading here may read `unreleased`.
 - **The `terminal` palette draws in your terminal's own colours** (#304).
   Nine of its twelve colours were xterm's default RGB values, so a terminal
   that redefines red still got xterm's red. They are now ANSI palette
-  entries, as herdr's own `terminal` theme uses, and the focused row is
-  filled with your terminal's bright black instead of a fixed grey. The
-  contrast floors never applied to this palette, and still don't: its
-  colours are whatever your terminal says they are. herdr's
-  `name = "terminal"` on its own still draws in your dark theme; add
-  `dark_name = "terminal"` beside it to reach this palette.
+  entries, as herdr's own `terminal` theme uses. The contrast floors never
+  applied to this palette, and still don't: its colours are whatever your
+  terminal says they are.
+- **herdr's `name = "terminal"` now draws in the `terminal` palette**
+  rather than in your dark theme. It used to fall back because the palette
+  could not be known from a file; now that it sends your terminal's own
+  colours there is nothing to know. `auto_switch` still uses `dark_name`.
+- **The focused row has no fill on the `terminal` theme** (#276). A grey
+  fill drew `invalid` on the project row at 1.00:1, and the terminal's
+  bright black, measured across 43 real terminal colour schemes, still left
+  it under 3:1 on 38 of them. With no fill, the row's words sit on your
+  terminal's own background, where its colours are meant to be read. The
+  row is marked by the `▌` and a bold value; herdr leaves its own cursor
+  row unfilled on this theme too.
 
 ## 0.1.0 — 2026-09-22
 
