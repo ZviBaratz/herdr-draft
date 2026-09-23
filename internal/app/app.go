@@ -1382,11 +1382,28 @@ type Model struct {
 	//
 	// hostDone is a plain bool rather than a reqVersions counter, and that
 	// is the difference worth noticing: every other async landing here can
-	// be superseded by a ⌃R⌃R rebuild and needs a version to prove it is not
-	// stale. This one cannot. The question is asked once per PROCESS, the
-	// answer is a fact about the terminal rather than about the form, and a
-	// rebuilt Model carries the resolved palette forward in Setup.Palette --
-	// so a rebuild has nothing to re-ask and nothing to discard.
+	// be superseded by a ⌃R⌃R rebuild and needs a version to prove it is
+	// not stale. This one does not, and the reason is not that a rebuild
+	// cannot re-ask -- it can and it does. handleClearRequested carries the
+	// RESOLVED palette into the fresh Model, and that palette's PanelBG is
+	// back to NoColor (ResolveHost never emits it), so NeedsHostColors says
+	// yes again and the queries go out a second time.
+	//
+	// That is harmless because the resolve is idempotent, and it is worth
+	// being right about why. It is NOT that seeding skips fields that are
+	// already measurable -- deleting that skip leaves the second pass
+	// landing in the same place, which a mutation confirmed. It is that
+	// both passes floor against the same grounds, because both are handed
+	// the same host colours, and every clamp in this package returns its
+	// input untouched when that input already clears its floor. So
+	// whichever value the second seed produces -- the host's original, or
+	// the raised one the first pass left behind -- the floor lands on the
+	// same colour. TestResolveHost_IsIdempotent pins the result over all 43
+	// schemes rather than leaving it as this argument.
+	//
+	// A version counter would buy nothing here: there is no stale answer to
+	// discard, because the answer is a fact about the terminal rather than
+	// about the form.
 	hostColors theme.HostColors
 	hostWanted map[uint8]bool
 	hostDone   bool

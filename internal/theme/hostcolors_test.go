@@ -471,3 +471,28 @@ func TestResolveHost_SurfaceIsThePanelFill(t *testing.T) {
 		t.Errorf("Surface = %v, want the PANEL fill %v (got the band fill %v?). floorContrast measures words against SurfaceFill(PanelBG); a Surface derived from anything else would floor them against a fill nothing paints.", got.Surface, fromPanel, fromBand)
 	}
 }
+
+// TestResolveHost_IsIdempotent is what makes a ⌃R⌃R rebuild safe. The fresh
+// Model is handed the RESOLVED palette, whose PanelBG is back to NoColor,
+// so NeedsHostColors says yes again and the whole query is re-sent and
+// re-applied. That must land where it landed the first time.
+//
+// It is not obvious that it does, which is why it is pinned: the second
+// pass seeds from values the first pass's clamps already moved.
+//
+// What saves it is that both passes floor against the same grounds -- the
+// host colours do not change between them -- and that every clamp in this
+// package returns its input untouched when that input already clears its
+// floor. So it does not matter which value the second seed produces.
+// Mutation testing is how that explanation got fixed: deleting seedFields'
+// skip-what-is-already-measurable check, which an earlier comment credited
+// for this, changes nothing here.
+func TestResolveHost_IsIdempotent(t *testing.T) {
+	base := terminalPalette(t)
+	for _, s := range hostSchemes {
+		h := s.colors()
+		once := ResolveHost(base, h)
+		twice := ResolveHost(once, h)
+		assertSamePalette(t, twice, once, s.name+": a second resolve")
+	}
+}
