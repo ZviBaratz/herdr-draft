@@ -267,6 +267,17 @@ func NewWorktreeField(palette theme.Palette) *WorktreeField {
 	return w
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+func (w *WorktreeField) SetPalette(p theme.Palette) {
+	w.palette = p
+	w.chips.SetPalette(p)
+	// PanelBG, not ActiveRowBG: panelBranch draws this input inside the
+	// detail panel. Same exception NewWorktreeField calls out.
+	w.branch.SetPalette(p, p.PanelBG)
+	w.base.SetPalette(p)
+}
+
 // ID identifies this Section for form.go's zoneFor. It stays "worktree",
 // v1's chip-row ID, so keys.go's ZoneWorktree mapping and every
 // "chip:worktree:<id>" zone survive the collapse unchanged -- what went

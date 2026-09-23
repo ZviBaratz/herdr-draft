@@ -184,6 +184,16 @@ func NewTitleField(palette theme.Palette) *TitleField {
 	return f
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+func (f *TitleField) SetPalette(p theme.Palette) {
+	f.palette = p
+	// ActiveRowBG again, and for NewTitleField's reason above: this input
+	// is only ever rendered on a focused row.
+	f.input.SetPalette(p, p.ActiveRowBG)
+	f.list.SetPalette(p)
+}
+
 // titleSessionPanesMinCells and titleSessionRepoMinCells are the
 // narrowest those columns are worth drawing in ("1 pane"; a repository
 // name short enough to still name something). Below them the column is

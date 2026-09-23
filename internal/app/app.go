@@ -23,6 +23,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
@@ -316,6 +317,23 @@ type Setup struct {
 	// fewer than two profiles) it is shown nowhere, deliberately: the popup can
 	// pin no account there, so no picker could have been used.
 	PickerUnavailable string
+	// HostColorsDone carries #347's one answer across a ⌃R⌃R rebuild, so
+	// the rebuilt Model does not ask the terminal a second time.
+	//
+	// It is the answer to the review finding that made this field exist
+	// (S3 of #348's independent review): the resolve is NOT idempotent in
+	// general. It is idempotent wherever every clamp cleared its floor on
+	// the first pass, which is all 43 measured schemes -- but a clamp that
+	// gives up returns a value that does not clear its floor, so a second
+	// pass walks again from a new starting point and can land a step away.
+	// A `[palette]` override makes a give-up likelier.
+	//
+	// Rather than qualify that in two comments, the rebuild stops asking.
+	// The Model's own note already called the answer "a fact about the
+	// terminal rather than about the form", and a fact does not need
+	// re-establishing because the user pressed ⌃R twice. It also saves a
+	// second query and a second repaint.
+	HostColorsDone bool
 
 	// reqs is where every request counter resumes. Only a ⌃R⌃R rebuild
 	// sets it (handleClearRequested, through reqVersions.superseded), past
@@ -1372,6 +1390,22 @@ type Model struct {
 	// by bubbletea, which keeps using the pre-Init Model value for its
 	// first real Update call.
 	initCmds []tea.Cmd
+
+	// hostColors, hostWanted and hostDone are the host-colours collection
+	// (#347, hostcolors.go): what the terminal has answered so far, which
+	// palette indices were asked about, and whether the one repaint has
+	// already happened. All three stay zero on every palette but `terminal`,
+	// where initHostColorCmds returns nil and nothing is ever sent.
+	//
+	// hostDone is a plain bool rather than a reqVersions counter, because
+	// there is no stale answer to discard: the question is asked once per
+	// PROCESS, and the answer is a fact about the terminal rather than
+	// about the form. A ⌃R⌃R rebuild carries it forward through
+	// Setup.HostColorsDone and does not ask again -- see that field for why
+	// re-asking was the first design and what was wrong with it.
+	hostColors theme.HostColors
+	hostWanted map[uint8]bool
+	hostDone   bool
 }
 
 var _ tea.Model = Model{}
@@ -1670,6 +1704,25 @@ func New(s Setup) Model {
 			m.initCmds = append(m.initCmds, reload)
 		}
 	}
+	// The host terminal's own colours, for the one palette that cannot be
+	// measured without them (#347, hostcolors.go). Nil on every other
+	// palette, so this line adds nothing to initCmds for seventeen of the
+	// eighteen builtins.
+	//
+	// hostWanted is recorded here rather than recomputed in the handler so
+	// that a reply for an index this palette never asked about is refused
+	// on what was SENT, not on what the palette happens to hold when the
+	// answer lands.
+	m.hostDone = s.HostColorsDone
+	if !m.hostDone {
+		if host := m.initHostColorCmds(); len(host) > 0 {
+			m.initCmds = append(m.initCmds, host...)
+			m.hostWanted = map[uint8]bool{}
+			for _, idx := range theme.QueryIndices(m.palette) {
+				m.hostWanted[idx] = true
+			}
+		}
+	}
 
 	return m
 }
@@ -1777,6 +1830,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLinkedCommit(msg)
 	case baseSettledMsg:
 		return m.handleBaseSettled(msg)
+	case tea.BackgroundColorMsg:
+		return m.handleHostBackground(msg)
+	case tea.ForegroundColorMsg:
+		return m.handleHostForeground(msg)
+	case uv.UnknownOscEvent:
+		return m.handleHostOsc(msg)
+	case hostColorDeadlineMsg:
+		return m.handleHostColorDeadline(msg)
 	default:
 		return m.routeToForm(msg)
 	}
@@ -2687,6 +2748,10 @@ func (m Model) handleClearRequested() (Model, tea.Cmd) {
 		LinearUnavailable: m.linearUnavailable,
 		ClauthUnavailable: m.clauthUnavailable,
 		PickerUnavailable: m.pickerUnavailable,
+		// The palette above is the RESOLVED one, and this says so, so the
+		// fresh Model neither re-asks nor re-resolves it (#347, and S3 of
+		// #348's review).
+		HostColorsDone: m.hostDone,
 
 		// The three waits a rebuild inherits (draw-first spec §7.4). The
 		// key's own message is Bootstrap's and unversioned, so it lands on

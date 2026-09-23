@@ -74,6 +74,15 @@ const (
 // baked into ta once at construction (see NewPromptArea/paletteStyles) and
 // read back out of ta itself thereafter, so there is nothing left in this
 // struct that would ever consult a stored palette again.
+//
+// That is what makes this widget's SetPalette (#347) different in kind from
+// Picker's and ChipRow's, which is worth knowing before reading it: theirs
+// store a new palette for the next View to recompute from, and nothing
+// more. This one has to re-bake, because ta already holds styles built from
+// the old palette and no later View will rebuild them. It is also the
+// reason the setter cannot be complete on its own -- the fill is the
+// caller's (SetFill), so a caller repainting this widget does both, exactly
+// as it did at construction.
 type PromptArea struct {
 	ta   textarea.Model
 	rows int
@@ -94,10 +103,15 @@ type PromptArea struct {
 
 // NewPromptArea returns an empty, blurred PromptArea at
 // PromptAreaPreferredRows, styled from palette. Colors are applied once
-// here, matching Picker/ChipRow's injected-palette idiom (no SetPalette
-// setter exists on any of the three widgets); a form that wants to react
-// to a live palette change (spec §16 non-goal 8: herdr-draft does not do
-// this in v1) would need to reconstruct the widget.
+// here, matching Picker/ChipRow's injected-palette idiom.
+//
+// Until #347 this doc said no SetPalette setter existed on any of the three
+// widgets, and that a form wanting to react to a palette change "would need
+// to reconstruct the widget". All three have one now, and
+// reconstruction is what it exists to avoid: a PromptArea holds the prompt
+// the user has typed. Spec §16 item 8 -- reading herdr THEME changes live
+// -- is untouched by it and still out of scope; what changed is that the
+// startup palette can now arrive a few milliseconds after the widget does.
 func NewPromptArea(palette theme.Palette) *PromptArea {
 	ta := textarea.New()
 	// No left-hand prompt glyph and no line-number gutter: both consume
@@ -226,6 +240,14 @@ func paletteStyles(palette theme.Palette) textarea.Styles {
 // terminal's own background. nil is the "never opted in" state.
 func (p *PromptArea) SetFill(bg color.Color) {
 	p.fill = bg
+}
+
+// SetPalette re-bakes the textarea's styles from palette. The fill is NOT
+// re-derived here: it is the caller's choice of ground (see SetFill), so a
+// caller repainting this widget sets both, the same pair it set at
+// construction.
+func (p *PromptArea) SetPalette(palette theme.Palette) {
+	p.ta.SetStyles(paletteStyles(palette))
 }
 
 // SetRows sets the textarea's height, flooring at PromptAreaMinRows -- the

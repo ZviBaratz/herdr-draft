@@ -72,6 +72,14 @@ func NewChipRow(palette theme.Palette) *ChipRow {
 	return &ChipRow{palette: palette}
 }
 
+// SetPalette stores a new palette for the next render (host-colours spec
+// §7.3, #347). This widget derives every style from c.palette inside
+// View, so storing the new value is the whole of the repaint -- unlike
+// widgets.PromptArea, whose styles are baked into its textarea once and
+// have to be rebuilt. Nothing here is cached, so there is nothing to
+// invalidate.
+func (c *ChipRow) SetPalette(palette theme.Palette) { c.palette = palette }
+
 // SetChips replaces the row's chips and resets the cursor to the first
 // chip.
 func (c *ChipRow) SetChips(chips []Chip) {

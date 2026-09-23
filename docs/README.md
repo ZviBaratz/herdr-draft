@@ -58,7 +58,8 @@ replaces or amends, and itemises the sentences that stop being true.
 | [`/spawn` skill](specs/2026-09-16-spawn-skill-design.md) | the agent-facing skill and `herdr-draft skill` | implemented |
 | [pane-reaper ready](specs/2026-09-17-pane-reaper-ready-design.md) | the prompt's `keep · reap` toggle and `[reaper]` | implemented |
 | [agent options](specs/2026-09-18-agent-options-design.md) | the `options` row: model, effort and permission mode | implemented |
-| [draw first](specs/2026-09-21-draw-first-design.md) | drawing the form at once, before the Linear key, clauth and the account picker have answered | approved, **not implemented** |
+| [draw first](specs/2026-09-21-draw-first-design.md) | drawing the form at once, before the Linear key, clauth and the account picker have answered | implemented |
+| [host colours](specs/2026-09-23-host-colours-design.md) | asking the host terminal what the `terminal` palette's colours actually are, so its contrast floors apply | implemented |
 
 [CONTRIBUTING.md's "Spec citations"](../CONTRIBUTING.md#spec-citations)
 explains how code comments cite these documents.

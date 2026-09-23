@@ -100,6 +100,14 @@ func NewAgentField(palette theme.Palette) *AgentField {
 	}
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+func (f *AgentField) SetPalette(p theme.Palette) {
+	f.palette = p
+	f.chips.SetPalette(p)
+	f.picker.SetPalette(p)
+}
+
 // ID identifies this Section for form.go's zoneFor.
 func (f *AgentField) ID() string { return "agent" }
 

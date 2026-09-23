@@ -235,16 +235,27 @@ var builtinPalettes = map[string]Palette{
 	// ActiveRowBG -- were xterm's default RGB values, sent as truecolor. On a terminal that redefines red --
 	// the reason to choose this theme -- the form drew xterm's red anyway.
 	//
-	// None of this is measurable, and nothing here pretends otherwise: an
-	// index's RGBA() answers with the VGA palette (ANSI 4 is #000080, where
-	// xterm draws #0000ee), which is neither xterm's table nor anything on the
-	// user's screen. rgb8 reports an index as unmeasurable, the same way it
-	// reports NoColor, so every floor in this package exempts this palette,
-	// and every clamp hands an index back as the index it was given.
+	// None of this table is measurable, and nothing here pretends
+	// otherwise: an index's RGBA() answers with the VGA palette (ANSI 4 is
+	// #000080, where xterm draws #0000ee), which is neither xterm's table
+	// nor anything on the user's screen. rgb8 reports an index as
+	// unmeasurable, the same way it reports NoColor, so every floor in this
+	// package exempts this entry AS IT STANDS HERE, and every clamp hands
+	// an index back as the index it was given.
 	//
-	// ActiveRowBG is selection_bg's Color::Reset, a straight translation like
-	// every other field, and so the focused row has NO fill on this theme
-	// (#276). It is marked by the other two of v3 spec §5.4's three signals,
+	// "As it stands here" is the part that changed in #347, and this table
+	// is the fallback rather than the whole story now. ResolveHost asks the
+	// host terminal what it actually draws (hostcolors.go) and returns a
+	// palette in which the floors DO apply: an index that clears its floor
+	// on the real background stays this exact index, and one that does not
+	// is replaced. Builtin("terminal") is unchanged and always will be --
+	// it is what a terminal that answers nothing gets, and what every guard
+	// below pins.
+	//
+	// ActiveRowBG is selection_bg's Color::Reset, a straight translation
+	// like every other field, so the focused row has no fill on this table
+	// (#276), and gains one from ResolveHost wherever the host names a
+	// background (host-colours spec §5.2). It is marked by the other two of v3 spec §5.4's three signals,
 	// the accent gutter glyph and bold, which is also what herdr's own
 	// sidebar does: it fills its keyboard cursor row with selection_bg, so
 	// on this theme that row is unfilled too
@@ -919,10 +930,12 @@ func ensureContrast(bg, fg, toward Color, floor float64) Color {
 // panel did not need; a flicker on every focus move is the worse trade.
 //
 // An unmeasurable fg, or ANY unmeasurable ground, returns fg untouched.
-// Both halves exempt the terminal palette. Its words are ANSI indices
-// (#304), and its panel_bg, surface0 and focused-row fill are Color::Reset
-// -- "inherit the host terminal's background", a value this process cannot
-// know. The first half is also what keeps an index an
+// Both halves exempt the terminal palette as builtinPalettes holds it. Its
+// words are ANSI indices (#304), and its panel_bg, surface0 and
+// focused-row fill are Color::Reset -- "inherit the host terminal's
+// background", a value this process cannot know from config alone. It can
+// now ask the terminal (#347), and a palette that has been through
+// ResolveHost reaches this clamp measurable and is floored like any other. The first half is also what keeps an index an
 // index: this clamp returns a mixed RGBA whenever it raises a colour, and
 // an index that went in and came back as truecolor would no longer be the
 // terminal's own colour. The second half matters for an override. A
@@ -1379,9 +1392,13 @@ func LoadHerdrPaletteFrom(path string, draftOverrides map[string]string) Palette
 // too, because the palette was "unknowable from config alone", and it was:
 // until #304 this package held xterm's RGB guesses at it. It now sends the
 // terminal's own palette entries and draws the focused row unfilled
-// (#276), so there is nothing left to know -- the terminal supplies every
-// colour -- and routing the name anywhere else would draw some other theme
-// under a name that promised the user's own.
+// (#276), so there is nothing left for the CONFIG to say -- the terminal
+// supplies every colour -- and routing the name anywhere else would draw
+// some other theme under a name that promised the user's own.
+//
+// There was something left to know, just not from a file: #347 asks the
+// terminal itself, which is why the sentence above is about config rather
+// than about knowledge.
 func resolveBuiltinFromConfig(theme herdrThemeConfig) (Palette, bool) {
 	name := theme.Name
 	if name == "" {

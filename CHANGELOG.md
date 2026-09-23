@@ -15,6 +15,20 @@ for why a heading here may read `unreleased`.
 
 ### Changed
 
+- **The `terminal` theme learns the host terminal's real colours** (#347).
+  It was the one palette this process could not measure: since #304 it
+  sends the terminal's own ANSI palette entries rather than an RGB guess,
+  which is right, and means no contrast floor could apply to it — a label
+  tier or an `invalid` marker that your scheme draws too faintly stayed too
+  faint. The popup now asks the terminal what it actually draws (OSC 10,
+  11 and 4, answered by herdr 0.9.0 from the host's own theme) and applies
+  the same floors every other theme gets. A colour that clears its floor
+  stays an ANSI index and goes on following your terminal; only one that
+  does not is replaced. The focused row gets its fill back, computed from
+  your real background, which is what #276 removed for want of one.
+  Nothing waits for any of this: the form draws first and repaints once,
+  about 20ms later, and a terminal that does not answer within 250ms keeps
+  exactly today's screen — as do an older herdr and headless `create`.
 - **The popup draws before its slow reads answer** (#293). `Bootstrap` used
   to resolve the Linear API key, read clauth and probe a configured account
   picker before the first frame, so the pane stayed blank for up to sixty
