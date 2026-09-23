@@ -111,14 +111,27 @@ func (m Model) initHostColorCmds() []tea.Cmd {
 // form sees exactly what it saw before this file existed.
 func (m Model) handleHostBackground(msg tea.BackgroundColorMsg) (Model, tea.Cmd) {
 	m.hostColors.Background = msg.Color
-	m, _ = m.finishHostColors(false)
-	return m.routeToForm(msg)
+	m, cmd := m.finishHostColors(false)
+	return m.routeAndBatch(msg, cmd)
 }
 
 func (m Model) handleHostForeground(msg tea.ForegroundColorMsg) (Model, tea.Cmd) {
 	m.hostColors.Foreground = msg.Color
-	m, _ = m.finishHostColors(false)
-	return m.routeToForm(msg)
+	m, cmd := m.finishHostColors(false)
+	return m.routeAndBatch(msg, cmd)
+}
+
+// routeAndBatch forwards msg to the form and keeps whatever Cmd the caller
+// already had. finishHostColors returns nil on every path today, so this is
+// currently a no-op -- and it is written this way rather than with a
+// discard, because a `_` here is the shape that silently drops a Cmd the
+// day that stops being true, and nothing in the suite would say so.
+func (m Model) routeAndBatch(msg tea.Msg, cmd tea.Cmd) (Model, tea.Cmd) {
+	next, routed := m.routeToForm(msg)
+	if cmd == nil {
+		return next, routed
+	}
+	return next, tea.Batch(cmd, routed)
 }
 
 // handleHostOsc takes the OSC replies Bubble Tea does not type.
