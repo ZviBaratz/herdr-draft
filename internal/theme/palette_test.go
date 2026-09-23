@@ -471,7 +471,14 @@ auto_switch = true
 	}
 }
 
-func TestLoadHerdrPaletteFrom_TerminalNameResolvesToDarkVariant(t *testing.T) {
+// TestLoadHerdrPaletteFrom_TerminalNameResolvesToTheTerminalPalette is the
+// reversal of spec §7's fallback. That sent `name = "terminal"` to
+// dark_name because the palette was unknowable from a config file; since
+// #304 it sends the terminal's own palette entries and since #276 it paints
+// no fill of its own, so there is nothing left to know. A dark_name is set
+// here on purpose: the old code would have taken it, so this fails if the
+// fallback comes back.
+func TestLoadHerdrPaletteFrom_TerminalNameResolvesToTheTerminalPalette(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	writeFile(t, path, `
@@ -481,12 +488,36 @@ dark_name = "gruvbox"
 `)
 
 	got := LoadHerdrPaletteFrom(path, nil)
+	terminal, ok := Builtin("terminal")
+	if !ok {
+		t.Fatalf("Builtin(\"terminal\") not found")
+	}
+	if !samePalette(got, terminal) {
+		t.Errorf("name = \"terminal\" did not resolve to the terminal palette: got %+v, want %+v", got, terminal)
+	}
+}
+
+// TestLoadHerdrPaletteFrom_TerminalNameWithAutoSwitchUsesDarkName pins the
+// half of the fallback that stays. auto_switch follows the host's live
+// appearance, which a config file cannot show, and it applies whatever the
+// name is -- herdr itself picks between dark_name and light_name then.
+func TestLoadHerdrPaletteFrom_TerminalNameWithAutoSwitchUsesDarkName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	writeFile(t, path, `
+[theme]
+name = "terminal"
+auto_switch = true
+dark_name = "gruvbox"
+`)
+
+	got := LoadHerdrPaletteFrom(path, nil)
 	gruvbox, ok := Builtin("gruvbox")
 	if !ok {
 		t.Fatalf("Builtin(\"gruvbox\") not found")
 	}
 	if !samePalette(got, gruvbox) {
-		t.Errorf("name = \"terminal\" did not resolve to the configured dark variant: got %+v, want %+v", got, gruvbox)
+		t.Errorf("name = \"terminal\" with auto_switch did not resolve to dark_name: got %+v, want %+v", got, gruvbox)
 	}
 }
 

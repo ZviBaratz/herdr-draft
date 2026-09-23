@@ -378,7 +378,9 @@ formatting here: at 101×30 the frame is
 - **The focused row carries three signals** (v3 spec §5.4): the full-width
   `ActiveRowBG` paint, an accent `▌` in the two-cell gutter, and a bold
   value. All three, on the same row, or it is a regression — v2 shipped the
-  paint alone and it was invisible.
+  paint alone and it was invisible. The exception is the `terminal` theme,
+  which has no fill by design (#276): there the `▌` and the bold are the
+  signals.
 - **The panel below the second rule is the only chooser** — candidate lists,
   the prompt editor, verdicts, notes. It belongs to the focused row and to no
   other. It is capped at fifteen rows (`panelCapRows`, v3 spec §7.2) and
@@ -387,7 +389,9 @@ formatting here: at 101×30 the frame is
   project filter, branch editor and prompt draw on their own background, one
   step off whatever they sit on. An input that looks exactly like the space
   around it is the defect that fill exists to remove, so check it on a light
-  theme too — the fill is derived per theme, not a fixed colour.
+  theme too — the fill is derived per theme, not a fixed colour. The
+  `terminal` theme is the exception: it paints no input fill, and leaves
+  your terminal's own background.
 - **Create is on the footer**, right-aligned, not a row in the stack, with
   `esc cancel` beside it. Its legend names the key that creates from the
   row you are on (#281): `↵ create` on a named title, in the prompt and on
