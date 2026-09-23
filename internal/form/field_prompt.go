@@ -148,6 +148,17 @@ func NewPromptField(palette theme.Palette) *PromptField {
 	return &PromptField{palette: palette, area: area, reap: reap}
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+func (f *PromptField) SetPalette(p theme.Palette) {
+	f.palette = p
+	f.area.SetPalette(p)
+	// The fill is the caller's half of PromptArea's repaint, and it is the
+	// same PanelBG ground NewPromptField chose; see SetPalette there.
+	f.area.SetFill(p.InputFill(p.PanelBG))
+	f.reap.SetPalette(p)
+}
+
 // ID identifies this Section for form.go's zoneFor.
 func (f *PromptField) ID() string { return "prompt" }
 

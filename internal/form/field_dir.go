@@ -243,6 +243,14 @@ func NewDirField(palette theme.Palette) *DirField {
 	return d
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+func (d *DirField) SetPalette(p theme.Palette) {
+	d.palette = p
+	d.input.SetPalette(p, p.ActiveRowBG)
+	d.picker.SetPalette(p)
+}
+
 // ID identifies this Section for form.go's zoneFor.
 func (d *DirField) ID() string { return "dir" }
 

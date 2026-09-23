@@ -205,6 +205,14 @@ func NewIssueField(palette theme.Palette) *IssueField {
 	return f
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+func (f *IssueField) SetPalette(p theme.Palette) {
+	f.palette = p
+	f.input.SetPalette(p, p.ActiveRowBG)
+	f.picker.SetPalette(p)
+}
+
 // ID identifies this Section for form.go's zoneFor.
 func (f *IssueField) ID() string { return "issue" }
 

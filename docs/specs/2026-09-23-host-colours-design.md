@@ -1,8 +1,11 @@
 # herdr-draft — learn the host terminal's real colours
 
 - **Date:** 2026-09-23
-- **Status:** proposed, **not implemented**. §2 is the list the owner has to
-  rule on; nothing below is code until they do.
+- **Status:** approved by the owner 2026-09-23 (all six of §2, decision 5
+  with a request to explain it, which §4.2 now does at more length), and
+  **implemented the same day**. §5.2 and §9.2 are corrected from what was
+  approved, where building it found the design wrong; both corrections are
+  marked where they sit rather than silently applied.
 - **Issue:** #347, which closes with the implementation.
 - **Amends, on approval:** v3 spec §5.3a's "`terminal` is the only
   exemption", which becomes "`terminal` is exempt until the host answers";
@@ -322,27 +325,70 @@ Without it, a seeded `PanelBG` that no clamp touched would be emitted as
 truecolor, and the form would paint over the user's terminal background on
 every theme that needed no raise at all.
 
-### 5.2 The two fills are the exception, and they are why #346 reverses
+### 5.2 The two fills, and why #346 reverses
 
-`ActiveRowBG` and `Surface` become RGB whenever the background is known, even
-though step 3 would otherwise restore them.
+`ActiveRowBG` and `Surface` become RGB whenever the background is known,
+even though step 3 would otherwise restore them. They are the two **fills
+whose entire job is to differ from the ground they sit on**, and an
+inherited fill cannot differ.
 
-This is the same rule reaching a different answer, not a carve-out. Both are
-**fills whose entire job is to differ from the ground they sit on**. Seeded
-from the background they are at 1.00:1 against it, so the floor always moves
-them; "the floor did not move it" is a state they cannot be in. Writing them
-down as always-RGB is therefore describing the outcome, not overriding it —
-but it is worth writing down, because a reader checking step 3 would
-otherwise have to derive it.
+They get there by two different routes, and the design said they got there
+by one. **This section is corrected from what was approved**; the
+implementation found the difference and the correction is recorded rather
+than quietly applied.
 
-What that buys is #346 in reverse, on this palette only. The focused row
-regains the first of v3 spec §5.4's three signals, and `SurfaceFill` regains
-the picker's cursor band and the cancel button's face — the same two regions
-#149 found shipping invisible on twelve builtins. #276's reasoning is not
-wrong and is not deleted; it becomes the **fallback's** reasoning, which is
-where it belongs: with no fill, every word on the focused row sits on the
-terminal's own background, and that is still the right screen when nobody
-answered.
+- **`ActiveRowBG` needs no help.** Seeded from the background it sits at
+  1.00:1 against it, `floorContrast` raises it, and step 3 keeps the raised
+  value. "The floor did not move it" is a state it cannot be in — except
+  with no foreground, where `ensureContrast` has no `toward`, returns its
+  input, and step 3 restores `NoColor`. The row then stays unfilled, which
+  is right: a fill painted a flat copy of the background it sits on is not
+  a fill.
+- **`Surface` is the one field the general rule cannot reach.**
+  `floorContrast` never writes it. The painted value is derived per call
+  site by `InputFill` or `SurfaceFill` from the ground it is composited
+  onto, and both derive by calling `ensureContrast` with `Text` as the
+  target — which step 3 restores to `NoColor`. So at render time they can
+  derive nothing and hand their input straight back, and whatever is in the
+  field **is** the fill, at every call site.
+
+So `Surface` is computed in `ResolveHost`, once, as `SurfaceFill` of the
+background. That is the same expression `floorContrast` used as the third
+ground a word is measured on, so the fill a picker paints its cursor row
+with and the fill the words were floored against are the same value **by
+construction** rather than by coincidence — which is #149's rule, and this
+is the one place on this palette where it has to be asserted rather than
+derived.
+
+**What one value cannot do is serve two grounds**, and the cost lands in one
+place: an input rendered on a *focused row*. Every other theme paints that
+with `InputFill(ActiveRowBG)`, raised away from the band; here it comes out
+as the same `Surface`, raised away from the panel by the same walk and the
+same 1.25 floor that raised `ActiveRowBG` — so the two are equal and the
+input does not read as a chip on the band. That is **not a regression**: on
+this palette an input has had no fill at all since #304, and this leaves
+that one region exactly where it was while fixing the cursor row and the
+cancel button.
+
+Raising `Surface` against `ActiveRowBG` instead was tried, and it is worth
+recording why it lost rather than only that it did. It fixes the input, and
+it makes the cursor fill brighter than any theme ships — which moves the
+third ground every word is measured against. Measured over the 43 schemes,
+that pushed solarized-light's dim tier to 2.483:1 with nowhere left to walk,
+because `raiseDimText`'s ceiling is the theme's own `Text`. One region
+unfilled beats one theme illegible.
+
+What all of this buys is #346 in reverse, on this palette only. The focused
+row regains the first of v3 spec §5.4's three signals, and `SurfaceFill`
+regains the picker's cursor band and the cancel button's face — two of the
+regions #149 found shipping invisible on twelve builtins. The golden frames
+`terminal-theme-fallback` and `terminal-theme-resolved` differ on exactly
+those two lines and nowhere else.
+
+#276's reasoning is not wrong and is not deleted; it becomes the
+**fallback's** reasoning, which is where it belongs: with no fill, every
+word on the focused row sits on the terminal's own background, and that is
+still the right screen when nobody answered.
 
 ### 5.3 RGB versus indices
 
@@ -584,6 +630,35 @@ the resolved palette.
 
 ### 9.2 New unit tests
 
+**Corrected from what was approved.** Every guard below was
+mutation-checked once — break the thing it names, watch it go red, restore
+from a byte-identical backup. Five of the first thirteen mutations
+*survived*, and each survivor was a real finding rather than a
+mis-aimed mutation:
+
+- Two `hostDone` checks, one in each collector and one in
+  `finishHostColors`, **alibied each other**: breaking either left every
+  test green. Collapsed to the single check in `finishHostColors`, which is
+  the only place a decision is made, and the mutation is caught now.
+- `ResolveHost`'s `out.PanelBG = p.PanelBG` is **unreachable belt and
+  braces** — the restore loop already covers it, because `floorContrast`
+  never writes that field. The line stays, and
+  `TestFloorContrast_DoesNotMoveTheInheritedFields` now pins the premise it
+  rests on, so a future floor that did write `PanelBG` goes red here
+  instead of silently emitting the user's background.
+- The `NeedsHostColors` gate was masked by the `len(indices) == 0` check
+  beside it, because catppuccin has no ANSI index either way. The
+  discriminating fixture is a terminal palette with a `[palette] panel_bg`
+  override: indices *and* a known background.
+- Which ground `Surface` is derived from had no guard at all;
+  `TestResolveHost_SurfaceIsThePanelFill` is it.
+- And one mutation exposed a wrong assertion rather than a weak guard:
+  "a background alone is enough to resolve" is false. The words are
+  floored (they need only grounds) and the band is not (it needs the
+  foreground as its walk target), and the test asserted the opposite while
+  passing, because `lipgloss.NoColor` is neither nil nor an index and the
+  check was on the field's shape rather than on the screen.
+
 - **`ResolveHost`, table-driven.** Seed/floor/restore on hand-written
   `HostColors`: a palette that needs nothing comes back byte-identical
   including its indices; one that needs a raise comes back with RGB in
@@ -698,7 +773,21 @@ documents named stays authoritative.
    the terminal supplies every colour". There was something left to know, and
    §3 is it. The sentence's conclusion (route `name = "terminal"` to the
    terminal palette) is unchanged and correct.
-5. **v1 spec §7's** "`name = \"terminal\"` [is] unknowable from config
+5. **`widgets.PromptArea`'s doc comment**, "no SetPalette setter exists on
+   any of the three widgets", and its conclusion that a form wanting to
+   react to a palette change "would need to reconstruct the widget". All
+   three have one now, and reconstruction is what they exist to avoid: a
+   `PromptArea` holds the prompt the user has typed.
+6. **v1 spec §16 item 8**, "Reading herdr theme changes live (v1 reads at
+   startup only)", is NOT amended, and the distinction is the one a future
+   reader is most likely to lose. Nothing here watches herdr's config, and
+   a user who switches herdr themes while the popup is open still sees the
+   palette it opened with — decision 6 keeps that out of scope. What
+   changed is that the palette read *at startup* can now finish arriving a
+   few milliseconds after the first frame. `paletteSetter`'s own doc says
+   so, next to the code that would otherwise look like the thing §16 item 8
+   rules out.
+7. **v1 spec §7's** "`name = \"terminal\"` [is] unknowable from config
    alone: resolve to the configured dark variant and document the
    limitation." Already superseded text (v2 §7 replaced §7, and #345 retired
    the behaviour). Recorded here only because this design is what makes both

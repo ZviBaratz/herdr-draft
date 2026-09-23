@@ -23,6 +23,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
@@ -1372,6 +1373,23 @@ type Model struct {
 	// by bubbletea, which keeps using the pre-Init Model value for its
 	// first real Update call.
 	initCmds []tea.Cmd
+
+	// hostColors, hostWanted and hostDone are the host-colours collection
+	// (#347, hostcolors.go): what the terminal has answered so far, which
+	// palette indices were asked about, and whether the one repaint has
+	// already happened. All three stay zero on every palette but `terminal`,
+	// where initHostColorCmds returns nil and nothing is ever sent.
+	//
+	// hostDone is a plain bool rather than a reqVersions counter, and that
+	// is the difference worth noticing: every other async landing here can
+	// be superseded by a ⌃R⌃R rebuild and needs a version to prove it is not
+	// stale. This one cannot. The question is asked once per PROCESS, the
+	// answer is a fact about the terminal rather than about the form, and a
+	// rebuilt Model carries the resolved palette forward in Setup.Palette --
+	// so a rebuild has nothing to re-ask and nothing to discard.
+	hostColors theme.HostColors
+	hostWanted map[uint8]bool
+	hostDone   bool
 }
 
 var _ tea.Model = Model{}
@@ -1670,6 +1688,22 @@ func New(s Setup) Model {
 			m.initCmds = append(m.initCmds, reload)
 		}
 	}
+	// The host terminal's own colours, for the one palette that cannot be
+	// measured without them (#347, hostcolors.go). Nil on every other
+	// palette, so this line adds nothing to initCmds for seventeen of the
+	// eighteen builtins.
+	//
+	// hostWanted is recorded here rather than recomputed in the handler so
+	// that a reply for an index this palette never asked about is refused
+	// on what was SENT, not on what the palette happens to hold when the
+	// answer lands.
+	if host := m.initHostColorCmds(); len(host) > 0 {
+		m.initCmds = append(m.initCmds, host...)
+		m.hostWanted = map[uint8]bool{}
+		for _, idx := range theme.QueryIndices(m.palette) {
+			m.hostWanted[idx] = true
+		}
+	}
 
 	return m
 }
@@ -1777,6 +1811,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLinkedCommit(msg)
 	case baseSettledMsg:
 		return m.handleBaseSettled(msg)
+	case tea.BackgroundColorMsg:
+		return m.handleHostBackground(msg)
+	case tea.ForegroundColorMsg:
+		return m.handleHostForeground(msg)
+	case uv.UnknownOscEvent:
+		return m.handleHostOsc(msg)
+	case hostColorDeadlineMsg:
+		return m.handleHostColorDeadline(msg)
 	default:
 		return m.routeToForm(msg)
 	}

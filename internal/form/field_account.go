@@ -437,6 +437,13 @@ func NewAccountField(palette theme.Palette) *AccountField {
 	return f
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+func (f *AccountField) SetPalette(p theme.Palette) {
+	f.palette = p
+	f.picker.SetPalette(p)
+}
+
 // accountColumns declares the panel table's columns (v3 spec §8.1/§10.2):
 // the profile name, the plan, then a gauge and a labelled percentage per
 // window in accountWindowLabels, then the reset time.

@@ -86,6 +86,25 @@ func newLineInput(palette theme.Palette, charLimit int, ground theme.Color) *lin
 	return &lineInput{ti: ti, fill: palette.InputFill(ground)}
 }
 
+// SetPalette re-bakes the styles and the fill from p, for the host-colours
+// repaint (host-colours spec §7.3). This widget is one of only two in the
+// package that BAKE a palette-derived value rather than recomputing it per
+// render -- the textinput.Styles above and the fill beside them -- which is
+// why it needs a setter at all while Picker and ChipRow do not.
+//
+// ground is passed again rather than stored, exactly as newLineInput
+// requires it, and for the same reason: the ground is itself a palette
+// field (ActiveRowBG or PanelBG), so a stored copy would be the OLD
+// palette's value and the fill would be computed against a background
+// nothing draws any more. Naming it at the call site keeps the two
+// decisions -- which palette, which ground -- in the one place that knows
+// both, and makes a caller that updates one but not the other fail to
+// compile rather than fail invisibly.
+func (l *lineInput) SetPalette(palette theme.Palette, ground theme.Color) {
+	l.ti.SetStyles(lineInputStyles(palette))
+	l.fill = palette.InputFill(ground)
+}
+
 // lineInputStyles builds a textinput.Styles from palette, matching
 // widgets/textarea.go's paletteStyles convention one level down: Text uses
 // palette.Text focused / palette.DimText blurred, Placeholder is always

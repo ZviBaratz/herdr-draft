@@ -333,6 +333,14 @@ func NewPicker(palette theme.Palette) *Picker {
 	return &Picker{palette: palette}
 }
 
+// SetPalette stores a new palette for the next render (host-colours spec
+// §7.3, #347). This widget derives every style from p.palette inside
+// View, so storing the new value is the whole of the repaint -- unlike
+// widgets.PromptArea, whose styles are baked into its textarea once and
+// have to be rebuilt. Nothing here is cached, so there is nothing to
+// invalidate.
+func (p *Picker) SetPalette(palette theme.Palette) { p.palette = palette }
+
 // SetItems replaces the picker's item set, tagged with a caller-assigned
 // monotonic version. A call whose version is lower than the highest version
 // already accepted is ignored outright -- the stale-result guard ported in

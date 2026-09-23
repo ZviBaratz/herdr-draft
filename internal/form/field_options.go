@@ -134,6 +134,13 @@ func NewOptionsField(palette theme.Palette) *OptionsField {
 	return &OptionsField{palette: palette, kinds: map[string]*kindState{}, state: &kindState{}}
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+//
+// The options row owns no sub-widget: it renders its chips itself from
+// f.palette, so the stored value is the whole of it.
+func (f *OptionsField) SetPalette(p theme.Palette) { f.palette = p }
+
 // ID identifies this Section for form.go's zoneFor.
 func (f *OptionsField) ID() string { return "options" }
 

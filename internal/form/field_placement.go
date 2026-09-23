@@ -101,6 +101,13 @@ func NewPlacementField(palette theme.Palette) *PlacementField {
 	return f
 }
 
+// SetPalette implements paletteSetter: repaint after the host terminal
+// answered (host-colours spec §7.3, #347).
+func (f *PlacementField) SetPalette(p theme.Palette) {
+	f.palette = p
+	f.chips.SetPalette(p)
+}
+
 // SetSpace offers -- or withdraws -- the fourth chip, `tab in <label>`,
 // for the open workspace already holding the selected project (#128;
 // defaults.Resolved.Space). "" means there is none: the chip goes, and a

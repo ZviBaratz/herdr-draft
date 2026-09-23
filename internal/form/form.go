@@ -244,6 +244,25 @@ type (
 	// way is still inert in every other respect. The retry itself is the
 	// app layer's -- this package knows nothing about what failed.
 	retryOnFocus interface{ RetryOnFocus() bool }
+
+	// paletteSetter lets a Section be repainted after construction, for the
+	// one thing that can change a palette once the form exists: the host
+	// terminal answering what colours it actually draws (host-colours spec
+	// §7.3, #347). The sixth optional capability, and shaped like the other
+	// five -- Model.SetPalette type-asserts for it rather than Section
+	// declaring it, because a Section with no palette-derived state has
+	// nothing to say here.
+	//
+	// Note what this is NOT, because the distinction is easy to lose and v1
+	// spec §16 item 8 is the thing it would be lost against. That item puts
+	// "reading herdr theme changes live" out of scope and it STAYS out of
+	// scope: nothing here watches herdr's config, and a user who switches
+	// herdr themes while the popup is open still sees the palette the popup
+	// opened with. This is one late answer to a question asked once at
+	// startup, applied once, ~20ms after the first frame -- the same
+	// startup value, arriving after the draw instead of before it, which is
+	// what draw-first spec §3.1 asks of everything slow.
+	paletteSetter interface{ SetPalette(theme.Palette) }
 )
 
 // zoneKindByID maps a Section's canonical ID() (see Section's own doc
@@ -395,6 +414,36 @@ func New(cfg Setup) Model {
 // so it is stored as DisplayText draws it (#151).
 func (m *Model) SetContext(s string) {
 	m.context = DisplayText(s)
+}
+
+// SetPalette repaints the form and every Section that has palette-derived
+// state, after construction (host-colours spec §7.3). The caller is
+// internal/app, once, when the host terminal has answered what colours it
+// draws; see paletteSetter for why that is not the live-theme-reload v1
+// spec §16 item 8 rules out.
+//
+// POINTER receiver, for SetContext's reason: m.palette is a plain field,
+// and a value receiver would set it on the copy and silently drop it. The
+// Sections are reached through the ring's pointers and would have been
+// updated either way, which is exactly what would have made the bug
+// invisible -- every row would repaint and the form's OWN styles (the
+// rules, the header, the footer) would not.
+//
+// Sections that do not implement paletteSetter are skipped rather than
+// reconstructed. Reconstructing was the alternative, and it is what
+// widgets/textarea.go's NewPromptArea doc used to say a caller would have
+// to do; it is rejected because a Section holds what the user has typed,
+// and a palette landing must never cost a keystroke.
+func (m *Model) SetPalette(p theme.Palette) {
+	m.palette = p
+	if m.ring == nil {
+		return
+	}
+	for _, s := range m.ring.sections {
+		if ps, ok := s.(paletteSetter); ok {
+			ps.SetPalette(p)
+		}
+	}
 }
 
 // SubmitMsg is emitted (as a tea.Cmd's result) when the grammar's
@@ -1098,6 +1147,11 @@ type createSection struct {
 func newCreateSection(palette theme.Palette) *createSection {
 	return &createSection{palette: palette}
 }
+
+// SetPalette implements paletteSetter. The button's face is rebuilt from
+// the palette on every render (createButtonFace), so storing it is all
+// there is to do.
+func (c *createSection) SetPalette(p theme.Palette) { c.palette = p }
 
 func (c *createSection) ID() string    { return "create" }
 func (c *createSection) Enabled() bool { return true }
