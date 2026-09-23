@@ -70,6 +70,12 @@ func (r *fakeRunner) AgentRead(context.Context, string) (string, error) {
 	// rather than a ready state, and this fake exists to be uninteresting.
 	return paintedIdleScreen, nil
 }
+func (r *fakeRunner) PaneRead(context.Context, string) (string, error) {
+	// The read a failure diagnosis makes (#352) -- by pane, not by
+	// agent. This fake exists to be uninteresting, so it answers with
+	// the same ordinary painted pane AgentRead does.
+	return paintedIdleScreen, nil
+}
 func (r *fakeRunner) AwaitDetection(context.Context, string, time.Duration, time.Duration) error {
 	return nil
 }

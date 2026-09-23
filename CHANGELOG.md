@@ -69,6 +69,44 @@ for why a heading here may read `unreleased`.
   terminal's own background, where its colours are meant to be read. The
   row is marked by the `▌` and a bold value; herdr leaves its own cursor
   row unfilled on this theme too.
+- **A launch the pane's shell refused says so** (#350). When a create's
+  launch line is rejected before the agent starts — a `clauth` wrapper
+  refusing a machine-owned account, a shell rejecting a glob in
+  `[agents.extra_args]` — the pane holds the reason, and the failure
+  reported only `waiting for agent detection … timed out`. It quoted the
+  pane already, through `herdr agent read`, which resolves its target
+  through herdr's agent registry and so answers `agent_not_found` for the
+  one pane this is ever about: the one where no agent started. It now
+  reads by pane instead, and quotes six lines rather than three — five to
+  reach the account and the machine that owns it past a two-line shell
+  prompt, six to reach the command that was run. A `herdr agent start`
+  that times out gets the same quote: it gives up with a bare "timed out
+  waiting for agent startup" and previously read nothing. Only that one
+  start failure reads the pane — every other kind already says what went
+  wrong in its own error.
+- **A prompt is never typed into the spend-limit dialog** (#349). Claude
+  Code's "You've hit your monthly spend limit" screen is a blocking
+  selection dialog whose highlighted option is "Adjust monthly spend
+  limit: Unlimited", and the guard that stops a queued prompt's Enter
+  answering a dialog did not recognise it — so the one retry a stalled
+  send is allowed could have raised your spending cap. It is now two
+  signatures in that list, beside the first-run trust prompt. Seeing that
+  screen *after* a send is judged the way every other dialog is — by
+  whether the prompt is still on the pane under it. With the prompt
+  visible the agent took it and then hit its cap, and the create is a
+  success; with no trace of it the Enter went into the dialog, and the
+  create says so rather than reporting clean over a raised cap.
+- **The spawn skill says what a clean `--dry-run` does not settle**
+  (#349, #350, #351). Three facts an agent could not have known from the
+  document: `account_usage` covers usage windows only, so a monthly spend
+  cap is invisible to it and a clean reading is not a promise the session
+  will start; an account can be refused at launch by whatever stands in
+  for the launcher in the pane's shell, which section 5 now says how to
+  probe — bare, since a wrapper around the probe reaches the binary and
+  answers for an account the pane will refuse; and a `--no-worktree`
+  session carries no worktree metadata, so the sidebar has nothing to
+  group it under and `--placement new-space` gives it a space outside the
+  repository it is working in.
 
 ## 0.1.0 — 2026-09-22
 

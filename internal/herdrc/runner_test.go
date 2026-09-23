@@ -599,6 +599,54 @@ func TestCLIRunnerAgentRead(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerPaneRead pins PaneRead's argv the way the test above pins
+// AgentRead's, and the two spellings are meant to be read side by side:
+// the subcommand differs and nothing else does. That is the claim
+// plan.withPaneTail rests on -- one snapshot, reached two ways -- and it
+// was verified live at 0.9.1 by reading the same agent pane both ways and
+// comparing bytes.
+//
+// It exists because #352's review found the fallback's only new
+// production argv untested while every sibling in this file pinned its
+// own. A wrong flag spelling or a route through runJSON would have
+// shipped green behind fakes, which is the exact defect that PR was
+// written to fix.
+func TestCLIRunnerPaneRead(t *testing.T) {
+	screen := "some pane text\nsecond line"
+	bin, argvLog := fakeHerdr(t, screen)
+	r := &CLIRunner{Bin: bin}
+
+	got, err := r.PaneRead(context.Background(), "w1:p1")
+	if err != nil {
+		t.Fatalf("PaneRead: %v", err)
+	}
+	if !strings.Contains(got, screen) {
+		t.Errorf("PaneRead text = %q, want it to contain %q", got, screen)
+	}
+
+	wantArgv := "pane read w1:p1 --source detection --format text"
+	if gotArgv := readArgvLog(t, argvLog); gotArgv != wantArgv {
+		t.Errorf("argv = %q, want %q", gotArgv, wantArgv)
+	}
+}
+
+// TestCLIRunnerPaneReadNonZeroExit keeps the failure path a failure. The
+// enrichment that calls this is best-effort and drops the error, so a
+// PaneRead that swallowed a non-zero exit and returned "" would look
+// identical to a blank pane at every layer above.
+func TestCLIRunnerPaneReadNonZeroExit(t *testing.T) {
+	bin := fakeHerdrFail(t, "pane w1:p1 not found")
+	r := &CLIRunner{Bin: bin}
+
+	_, err := r.PaneRead(context.Background(), "w1:p1")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "pane w1:p1 not found") {
+		t.Errorf("error %q does not contain stderr content", err.Error())
+	}
+}
+
 func TestCLIRunnerAgentReadNonZeroExit(t *testing.T) {
 	bin := fakeHerdrFail(t, "agent target w1:p1 not found")
 	r := &CLIRunner{Bin: bin}
@@ -1490,6 +1538,49 @@ func fakeHerdrFailEnvelope(t *testing.T, code, message string) string {
 		t.Fatal(err)
 	}
 	return bin
+}
+
+// TestCLIRunnerAgentStartTimeout pins the OTHER meaning of herdr's
+// `timeout` code, and the pair below is the point: the same word from two
+// subcommands is two opposite conclusions, so neither may live in
+// codeSentinels where `errors.Is` would find it through the wrong call.
+//
+// From `agent start` it means the readiness poll never saw an agent --
+// nothing started, and the reason is on the pane rather than in the error
+// (#350). From `agent prompt --wait` it means the wait gave up while the
+// agent was demonstrably busy, so delivery is unknown and the text must
+// never be resent (#108).
+func TestCLIRunnerAgentStartTimeout(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "timeout", "timed out waiting for agent startup")
+	r := &CLIRunner{Bin: bin}
+
+	err := r.AgentStart(context.Background(), AgentStartReq{Name: "a", Kind: "claude", PaneID: "w1:p1"})
+	if !errors.Is(err, ErrAgentStartTimeout) {
+		t.Fatalf("AgentStart error = %v, want it to match ErrAgentStartTimeout", err)
+	}
+	// And it must NOT be mistaken for the prompt wait's timeout, which is
+	// the whole reason each is wrapped at its own call site.
+	if errors.Is(err, ErrPromptWaitTimeout) {
+		t.Error("an agent start timeout matched ErrPromptWaitTimeout; the two `timeout` codes mean opposite things")
+	}
+	// herdr's own message survives for the report.
+	if !strings.Contains(err.Error(), "timed out waiting for agent startup") {
+		t.Errorf("error %q does not carry herdr's own message", err)
+	}
+}
+
+// TestCLIRunnerAgentStartOtherErrorsAreNotTimeouts is the scope guard:
+// only the `timeout` code becomes the sentinel, so plan's branch on it
+// cannot catch a failure that carries its own diagnosis.
+func TestCLIRunnerAgentStartOtherErrorsAreNotTimeouts(t *testing.T) {
+	for _, code := range []string{"agent_name_taken", "agent_pane_busy", "agent_not_ready", "agent_start_failed"} {
+		bin := fakeHerdrFailEnvelope(t, code, "refused")
+		r := &CLIRunner{Bin: bin}
+		err := r.AgentStart(context.Background(), AgentStartReq{Name: "a", Kind: "claude", PaneID: "w1:p1"})
+		if errors.Is(err, ErrAgentStartTimeout) {
+			t.Errorf("%s matched ErrAgentStartTimeout, want only herdr's `timeout` code to", code)
+		}
+	}
 }
 
 // TestCLIRunnerAgentPromptWaitTimeout pins the #108 conclusion: herdr's

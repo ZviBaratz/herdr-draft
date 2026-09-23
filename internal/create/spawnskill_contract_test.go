@@ -45,6 +45,11 @@ var foreignFlags = map[string]bool{
 	"--source": true, // herdr agent read
 	"--format": true, // herdr agent read
 	"--check":  true, // herdr-draft skill (#311); TestSkillNamesCheckOnlyForTheSkillVerb scopes it
+	// clauth's, in section 5's ownership probe -- `clauth start <account>
+	// -- --version`, which is claude's own --version reached through
+	// clauth (#350). Scoped by TestSkillProbesAnAccountBare, which also
+	// holds the probe to the one spelling that works.
+	"--version": true,
 }
 
 // createFlags is every flag create really accepts, from the FlagSet
@@ -182,6 +187,154 @@ func TestSkillNamesCheckOnlyForTheSkillVerb(t *testing.T) {
 	}
 	if got := strings.Count(doc, "skill --check"); got != n {
 		t.Errorf("the document names --check %d times, only %d of them as `skill --check`", n, got)
+	}
+}
+
+// TestSkillProbesAnAccountBare scopes foreignFlags' `--version` entry and
+// holds the probe to the only spellings that answer truthfully (#350).
+//
+// The gate that refuses a machine-owned account is not in the clauth
+// binary: it is in the shell in front of it, which is why the refusal
+// reaches a pane at all -- `create` types the launch line and the pane's
+// own shell resolves `clauth`. Measured on 2026-09-23 against clauth
+// 0.15.2: `clauth start <profile> -- --version` refused with exit 3,
+// while `env`, `command`, `nice`, `setsid`, `/usr/bin/time` and `sh -c`
+// in front of the same line all printed a version and exited 0. A probe
+// that reaches the binary directly therefore clears an account the
+// session will be refused -- worse than not probing, because it is
+// evidence pointing the wrong way.
+//
+// `command` is the one wrapper the document may show, and only as the
+// differential that tells the reader whether their shell has the gate
+// loaded at all: two identical answers mean the probe proved nothing.
+// That case is not hypothetical -- a non-interactive shell never sources
+// the rc the function lives in -- and an agent that cannot tell it from a
+// healthy account reports the account clear either way.
+//
+// The scan collapses the document's whitespace rather than reading it
+// line by line, which is #352's review finding and CLAUDE.md's own
+// lesson: a qualifier can sit on the line above, so a fenced
+// `timeout 10s \` continued onto the probe's line passes a line-based
+// check while teaching exactly the invocation this forbids.
+func TestSkillProbesAnAccountBare(t *testing.T) {
+	doc := strings.ReplaceAll(renderedSkill(), "`", "")
+	const probe = "clauth start <account> -- --version"
+
+	n := strings.Count(doc, "--version")
+	if n == 0 {
+		t.Fatal("the document never names --version -- if the account probe went, drop foreignFlags' entry with it")
+	}
+	if got := strings.Count(doc, probe); got != n {
+		t.Errorf("the document names --version %d times, only %d of them as %q", n, got, probe)
+	}
+
+	// Scanned over LOGICAL lines, not physical ones: a shell
+	// continuation is joined to the line it continues, and each line
+	// carries its non-blank predecessor's tail, so a wrapper one line
+	// above the probe is still adjacent to it. That is CLAUDE.md's "join
+	// the paragraph before counting" and it is the half #352's first
+	// draft got wrong.
+	//
+	// It deliberately does NOT run over the backtick-stripped document:
+	// stripping turns an ```sh fence into a bare "sh" sitting directly
+	// above the probe, which reads as a bypass that is not there.
+	raw := strings.Split(renderedSkill(), "\n")
+	// Each logical line carries the index of the raw line it STARTED at,
+	// because a continuation advances past raw lines and the two slices
+	// desynchronise otherwise -- so the predecessor lookup below would
+	// read an unrelated line for every probe after the first one
+	// (#352's second review; latent, and exactly in the document shape
+	// the continuation handling was added for).
+	type logicalLine struct {
+		text  string
+		start int
+	}
+	var logical []logicalLine
+	for i := 0; i < len(raw); i++ {
+		line, start := raw[i], i
+		for strings.HasSuffix(strings.TrimSpace(line), "\\") && i+1 < len(raw) {
+			i++
+			line = strings.TrimSuffix(strings.TrimSpace(line), "\\") + " " + strings.TrimSpace(raw[i])
+		}
+		logical = append(logical, logicalLine{text: line, start: start})
+	}
+	// "time" matches /usr/bin/time, so the boundary admits a path
+	// separator as well as whitespace -- the earlier `(^|\s)` could not
+	// match one of the six wrappers this test's own comment calls
+	// measured.
+	const boundary = `(^|[\s/])`
+	bypassNames := []string{"env", "sh -c", "bash -c", "nice", "setsid", "time", "timeout", "sudo", "xargs", "stdbuf"}
+	// Compiled once. The inner loop used to build ten of these per
+	// matching line.
+	type bypass struct {
+		name string
+		re   *regexp.Regexp
+	}
+	bypasses := make([]bypass, 0, len(bypassNames))
+	for _, n := range bypassNames {
+		bypasses = append(bypasses, bypass{name: n, re: regexp.MustCompile(boundary + regexp.QuoteMeta(n) + `(\s|$)`)})
+	}
+	// Which logical lines sit inside a fenced block, because the
+	// predecessor rule only makes sense there.
+	inFence := make([]bool, len(logical))
+	fenced := false
+	for i, ll := range logical {
+		if strings.HasPrefix(strings.TrimSpace(ll.text), "```") {
+			fenced = !fenced
+			continue
+		}
+		inFence[i] = fenced
+	}
+	for i, ll := range logical {
+		clean := strings.ReplaceAll(ll.text, "`", "")
+		at := strings.Index(clean, probe)
+		if at < 0 {
+			continue
+		}
+		before := clean[:at]
+		// The predecessor, but only for a probe inside a code fence,
+		// where a bare word before it really is a command. In prose it
+		// is a sentence: the third review found this rule would flag
+		// the document's own "Run the probe a second TIME with
+		// `command` in front", and that it survived only because a
+		// fence line happened to sit in between.
+		if inFence[i] && ll.start > 0 {
+			prev := strings.TrimSpace(raw[ll.start-1])
+			if prev != "" && !strings.HasPrefix(prev, "```") {
+				before = strings.ReplaceAll(prev, "`", "") + " " + before
+			}
+		}
+		// The bypass scan runs FIRST. Exempting a leading `command`
+		// before looking would let `env command clauth start …` through,
+		// which is a bypass wearing the exemption as a hat.
+		var found string
+		for _, b := range bypasses {
+			if b.re.MatchString(before) {
+				found = b.name
+				break
+			}
+		}
+		if found == "" {
+			continue
+		}
+		// The one allowed shape: `command` and nothing else in front.
+		if strings.TrimSpace(before) == "command" {
+			continue
+		}
+		t.Errorf("the probe is shown behind %q, which reaches the binary and not the shell's gate:\n  %s", found, strings.TrimSpace(ll.text))
+	}
+
+	// And the document has to say so, since an agent that knows only the
+	// command will wrap it the moment it wants a timeout around it.
+	if !strings.Contains(doc, "Run it bare") {
+		t.Error("the document shows the probe without telling the reader to run it bare")
+	}
+	// The differential has to carry its conclusion, or it is one more
+	// command with no rule attached.
+	for _, want := range []string{"command clauth start <account> -- --version", "you have learnt nothing"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the document never says %q, so the reader cannot tell a loaded gate from an absent one", want)
+		}
 	}
 }
 
@@ -711,6 +864,122 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 			}
 			if i > 0 && at < strings.Index(text, where.order[i-1]) {
 				t.Errorf("%s says %q before %q; the two branches have swapped", where.name, w, where.order[i-1])
+			}
+		}
+	}
+}
+
+// TestSkillSaysWhatADryRunCannotSettle holds the three facts a clean dry
+// run does not carry, each where the reader is standing when they need it
+// (#349, #350, #351).
+//
+// All three were found the same way, by a session that dry-ran clean and
+// then watched the create fail or land wrong, so the shape of the defect
+// is the same each time: advice that is correct, followed correctly, with
+// the fact underneath it missing. That is why each is pinned to its own
+// SECTION rather than to the document -- a sentence about the spend cap
+// filed anywhere but beside `account_usage` is a sentence nobody reaches
+// while reading a clean `account_usage`.
+func TestSkillSaysWhatADryRunCannotSettle(t *testing.T) {
+	lines := strings.Split(renderedSkill(), "\n")
+	for _, where := range []struct {
+		name, from, to string
+		want           []string
+	}{
+		{
+			// #351: the placement advice was right; what it never said is
+			// that a session without a worktree has no repo grouping to
+			// place, whatever the flag. Sibling sessions with worktrees
+			// are what made overriding the rule look safe, so the
+			// document names that reasoning too.
+			name: "section 4 on what a --no-worktree session cannot be grouped by",
+			from: "**A `--no-worktree` session also loses the grouping.**",
+			to:   "**Any other existing workspace can be named outright:**",
+			want: []string{
+				"worktree metadata", "`herdr workspace list`",
+				"no `--placement` value puts it back",
+				"the grouping belongs to the\nworkspace",
+				"Sibling sessions that have both are no\nguide",
+			},
+		},
+		{
+			// #349 and #350 together: the two refusals a resolved account
+			// can still meet, and the probe that answers for the second.
+			// The probe's own spelling is TestSkillProbesAnAccountBare's.
+			name: "section 5 on an account that resolves but cannot launch",
+			from: "**An account that resolves is not an account that can launch.**",
+			to:   "If the user has not said anything about accounts",
+			want: []string{
+				"monthly spend cap is not a usage window",
+				"`account_usage` reports\n  the windows and nothing else",
+				"refused by whatever stands in for the launcher in\n  the pane's shell",
+				"is owned by <machine>",
+				"nothing fails until the detection step\n  gives up — thirty seconds by default",
+			},
+		},
+		{
+			// #349: section 7 builds the whole quota ritual on this
+			// object, so the limit of what it models belongs in the
+			// sentence that describes it, not in a footnote.
+			name: "section 7's account_usage reading",
+			from: "- `account_usage`: how full the account the session would bill is.",
+			to:   "**2. Choose the three options**",
+			want: []string{
+				"covers those\n  windows and nothing else",
+				"not a promise the session\n  will start",
+			},
+		},
+		{
+			// #349 item 3: the pane read already told the agent to look
+			// for a trust dialog and a login chooser. This screen reports
+			// `sent`, truthfully, which is what makes it the one worth
+			// showing rather than describing.
+			name: "section 8's pane read",
+			from: "**Finish by looking at the pane**",
+			to:   "## Precedence over herdr's own skill",
+			want: []string{
+				"spend-limit dialog",
+				"You've hit your monthly spend limit",
+				"Adjust monthly spend limit",
+				"hand over and not one to clear",
+			},
+		},
+		{
+			// A detection timeout is the shape the refusal arrives in,
+			// and it reads as a slow agent. Exit 1 also means something
+			// was created, which the retry advice has to account for.
+			name: "section 8 on a detection timeout",
+			from: "**A failure at the detection step is not a slow agent.**",
+			to:   "**Check `launch_options` and `agent_args`",
+			want: []string{
+				"no agent ever appeared",
+				"the pane's\nshell refused it",
+				// Not "a workspace and a tab exist": that is untrue for
+				// three of the four placements, and the contract used to
+				// pin the over-claim (#352's second review). The third
+				// review then found the replacement omitted `new-space`
+				// and ignored --on-failure clean, so all five outcomes
+				// are named here.
+				"under the default\n`--on-failure keep`",
+				"with `new-space`, a bare\ntop-level workspace",
+				"if you passed `--on-failure clean`, read the clean's own fields",
+				"Re-running the create gets the same refusal",
+				// The pane this paragraph is about is the one `herdr
+				// agent read` cannot resolve, so the section's own
+				// closing command is the wrong one here and the
+				// document has to say which is right.
+				"herdr pane read",
+				// Quoted rather than backticked, as the document spells
+				// every other herdr error code: TestSkillNamesOnlyRealJSONKeys
+				// reads a backticked snake_case word as a --json key.
+				`"agent_not_found"`,
+			},
+		},
+	} {
+		text := strings.Join(linesBetween(t, lines, where.from, where.to), "\n")
+		for _, w := range where.want {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s never says %q", where.name, w)
 			}
 		}
 	}

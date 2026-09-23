@@ -49,10 +49,11 @@
 // than trusting "herdr says detected" to mean "safe to type into".
 //
 // Keep this signature list SMALL and EXPLICIT: every entry is verbatim
-// text observed live from Claude Code's actual trust-dialog screen during
-// the v1 close-out live checkpoint (2026-09-01, herdr 0.8.2) -- that
-// screen is preserved verbatim in dialog_test.go's own fixture, which is
-// the surviving record of it -- not a broad heuristic
+// text observed live from a real Claude Code dialog, and each screen is
+// preserved verbatim in a dialog_test.go fixture that is the surviving
+// record of it. Two entries came off the first-run trust screen at the v1
+// close-out live checkpoint (2026-09-01, herdr 0.8.2) and two off the
+// monthly-spend-limit screen in #349 (2026-09-23). Not a broad heuristic
 // that risks false-positiving on ordinary chat output and blocking a
 // legitimate prompt. A heuristic here is acceptable -- silently destroying
 // an agent, the alternative, is not.
@@ -68,8 +69,8 @@ import "strings"
 //
 // It is ordered most-nameable first, because that report is now quoted
 // back to the user (exec.go's explainBlockedStart and promptIfReady both
-// put it in their failure message) and the two entries are not equally
-// useful there. "it is showing \"Quick safety check\"" names a screen
+// put it in their failure message) and the entries are not equally useful
+// there -- each screen's heading leads, its looser signal follows. "it is showing \"Quick safety check\"" names a screen
 // someone can match against their own pane; "it is showing \"Enter to
 // confirm\"" describes a footer that half of every TUI has. Both are
 // equally good at DETECTING -- keeping both is what makes the match
@@ -78,10 +79,60 @@ import "strings"
 var promptDialogSignatures = []string{
 	// The screen's own heading: the one line that says what is being asked.
 	"Quick safety check",
-	// The screen's footer hint -- distinctive phrasing unlikely to appear
-	// in ordinary agent chat output, and present regardless of exactly how
-	// the rest of the screen is worded. Kept as a second, independent
-	// signal in case a future Claude Code version reworks the heading.
+	// Claude Code's monthly-spend-limit screen (#349), which is the second
+	// member of the class this file's header predicted and the reason the
+	// guard was kept: herdr's manifest knows the trust prompt, not the
+	// class. Both lines are verbatim from a live pane, recorded in the
+	// issue and in dialog_test.go's fixture.
+	//
+	// These two entries live in ONE list used at both moments, and #352
+	// tried splitting them out of the post-send check on the grounds that
+	// a spend dialog seen after a send is what a WORKING agent hits, so
+	// blaming it would report a delivered prompt as swallowed. That is
+	// true and it is not this list's job: confirmPromptLanded already has
+	// the discriminator, in promptIsVerifiable and promptOnScreen, and its
+	// errors run one way on purpose -- it never calls a landed prompt
+	// missing. Splitting the list bypassed that judgement instead of
+	// letting it make it, and the verdict it forced was the expensive one:
+	// a prompt the dialog ate during #116's measured startup window would
+	// have been reported as a clean success, over a spend cap the Enter
+	// had just raised. A screen still on the pane with no trace of the
+	// prompt is unconfirmed, which is the posture the whole file exists
+	// to reach.
+	//
+	// The cost of one list is a false refusal when a PROMPT quotes these
+	// words -- and spawn_skill.md now does, in section 8, so a session
+	// spawned to work on this feature can carry them. It only bites on a
+	// stall retry, since the pane holds no prompt echo before the first
+	// send and confirmPromptLanded's promptOnScreen covers the rest; and
+	// a refusal that reports is the side this file errs on deliberately.
+	//
+	// It is worth being explicit about what an unguarded send does here,
+	// because it is worse than the founding case. That one answered "No,
+	// exit" and destroyed a fresh agent; this one's highlighted option is
+	// "Adjust monthly spend limit: Unlimited", so the trailing Enter
+	// raises the user's own spending cap -- a decision that is theirs,
+	// that costs money, and that nobody saw. The reachable path is
+	// narrow but real: `agent prompt` answers agent_prompt_stalled when
+	// herdr observes no working or blocked state, exec.go retries such a
+	// send exactly once through promptIfReady, and without these two
+	// entries that retry's guard passes.
+	//
+	// The heading first, for the reason the ordering comment above gives.
+	"hit your monthly spend limit",
+	// The highlighted option, as a second independent signal, and the one
+	// that still matches if the heading is reworded. Spelled without the
+	// apostrophe the heading carries ("You've") so that a straight-quote
+	// to typographic-quote change upstream cannot silently unmatch both
+	// at once -- the same reason the trust prompt keeps two entries.
+	"Adjust monthly spend limit",
+	// The trust screen's footer hint -- distinctive phrasing unlikely to
+	// appear in ordinary agent chat output, and present regardless of
+	// exactly how the rest of that screen is worded. Kept as an
+	// independent signal in case a future Claude Code version reworks the
+	// heading above. Last because it is the loosest: it is also the
+	// permission-prompt footer, so it names a screen least usefully when
+	// quoted back.
 	"Enter to confirm",
 }
 
