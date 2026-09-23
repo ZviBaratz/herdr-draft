@@ -188,11 +188,42 @@ ForegroundColorMsg #d8d8d8
 uv.UnknownOscEvent "\x1b]4;1;rgb:acac/4242/4242\x1b\\"      (… 2, 3, 4, 7, 8, 9)
 ```
 
-### 3.4 The popup pane: verified in source, not seen on screen
+### 3.4 The popup pane: verified in source, then measured
 
-This is the one gap, and #347 names it: the measurement above was taken in an
-ordinary pane, not in a plugin popup. The popup cannot be exercised without
-the owner's live plugin install, which this work may not touch.
+This was the one gap, and #347 names it: the measurement above was taken in
+an ordinary pane, not in a plugin popup, and a popup cannot be exercised
+without a registered plugin — which the owner's live install is, and which
+this work may not touch.
+
+**It is now measured too** (2026-09-23, after the implementation landed).
+The reproduction is
+`~/Projects/handoffs/herdr-draft-347-popup-verification/`, and the trick is
+to impersonate the host rather than to borrow one: an isolated herdr
+(`--session hcprobe`, scratch `XDG_CONFIG_HOME`) started under a pty the
+harness owns, which answers that client's host-terminal probe with
+**sentinel** colours — background `#012345`, foreground `#fedcba`, palette
+index N as `#{N:02x}abcd`. A scratch plugin with `placement = "popup"` is
+linked into that session and opened with `herdr plugin pane open`.
+
+Every sentinel came back:
+
+```
+\x1b]11;rgb:0101/2323/4545\x1b\      -> #012345
+\x1b]10;rgb:fefe/dcdc/baba\x1b\      -> #fedcba
+\x1b]4;4;rgb:0404/abab/cdcd\x1b\     -> #04abcd, and so for 0..15
+```
+
+Those values exist nowhere but in the harness, so the popup pane served the
+palette of the terminal the client was attached to. Together with §3.1 —
+a *real* host, measured in an ordinary pane — the chain is complete at both
+ends. Two incidental confirmations: the popup's process had a real
+controlling tty, and `HERDR_PANE_ID` was unset in it, which is
+CONTRIBUTING.md's "the real popup has no pane id of its own" seen from the
+inside.
+
+The source reading that stood in for this is below, and it is kept rather
+than deleted: it is what said where to look, and it is the part that
+generalises to a herdr this experiment did not run against.
 
 What the source says, at the pin:
 
@@ -746,7 +777,7 @@ benefit is bounded by §5.4's table — 13 of 43 schemes gain only a band.
 
 | risk | standing | what would settle it |
 |---|---|---|
-| the **popup** pane does not answer (§3.4) | source-verified at the pin, not seen | an isolated herdr test session under a scratch `XDG_CONFIG_HOME`, driven by a pty harness that answers OSC 10/11/4 with sentinel colours, with a scratch plugin whose popup runs the probe. Roughly an hour. If it comes back negative the feature never activates and §6's fallback stands — nothing regresses |
+| ~~the **popup** pane does not answer~~ | **closed 2026-09-23** (§3.4): the experiment described here was run, and every sentinel came back | — |
 | the repaint is visible and annoying | unmeasured; §3.5 says ~20 ms | §9.3, on screen, on a theme where several words move at once |
 | a `uv` bump retypes OSC 4 | unguarded today | §9.2's decoder test |
 | `raiseSemanticText` walks a word 195 units and it looks wrong | measured, not judged | §9.3, on a light host |
