@@ -724,10 +724,14 @@ func TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride(t *testing.T) {
 // were xterm's RGB defaults and went out as truecolor -- `\x1b[38;2;255;0;0m`
 // for Danger -- so a terminal that redefines red still got xterm's.
 //
-// It asserts what Builtin hands out, after floorContrast, so it also covers
-// every clamp handing an index back untouched; and ActiveRowBG is rendered
-// as the BACKGROUND it is, because `\x1b[90m` and `\x1b[100m` are different
-// bytes for the same index.
+// It asserts what Builtin hands out, after floorContrast, and ActiveRowBG
+// is rendered as the BACKGROUND it is, because `\x1b[90m` and `\x1b[100m`
+// are different bytes for the same index. It does NOT pin that a clamp
+// hands an index back untouched, and cannot: on this palette every clamp
+// is exempted first by its NoColor grounds, so the bytes come out right
+// whether or not rgb8 measures an index. Measured: with rgb8 measuring
+// indices again, this test passes. That half is
+// TestClamps_HandAnIndexBackAsAnIndex's and the override test's.
 func TestTerminalPalette_EmitsTheTerminalsOwnColours(t *testing.T) {
 	palette, ok := Builtin("terminal")
 	if !ok {
@@ -867,8 +871,9 @@ func TestClamps_HandAnIndexBackAsAnIndex(t *testing.T) {
 // as the terminal's own colour.
 //
 // It goes through LoadHerdrPaletteFrom with herdr's own `dark_name =
-// "terminal"`, the one config that reaches this palette today (see
-// resolveBuiltinFromConfig for why `name = "terminal"` alone does not).
+// "terminal"` beside `name = "terminal"`, one of the two configs that reach
+// this palette today (`auto_switch = true` with the same dark_name is the
+// other; see resolveBuiltinFromConfig for why `name` alone does not).
 //
 // Two cases, because the grounds decide whether any clamp can run. With
 // only `danger` overridden, every ground is still unmeasurable -- NoColor
@@ -876,6 +881,14 @@ func TestClamps_HandAnIndexBackAsAnIndex(t *testing.T) {
 // as written. With the three grounds overridden too, a word CAN be measured,
 // and an illegible hex `danger` is raised while the indexed Warning beside it
 // is still ANSI 3: the clamp ran, and the index was not in its path.
+//
+// Only Warning, Success and Accent are checked there, and the guard in that
+// case asserts why: they are the indices whose library stand-in (VGA
+// #808000, #008000, #000080) fails the floor on these grounds, so an rgb8
+// that measured them would walk them. ANSI 7's stand-in, #c0c0c0, already
+// clears 3:1 here, so Branch and DimText would come back unchanged with or
+// without the exemption and could not fail for the reason this test gives.
+// raiseDimText keeping an index is TestClamps_HandAnIndexBackAsAnIndex's.
 func TestLoadHerdrPalette_HexOverridesOnTheTerminalPalette(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -921,9 +934,15 @@ dark_name = "terminal"
 			{"Warning", got.Warning, ansiIndex(3)},
 			{"Success", got.Success, ansiIndex(2)},
 			{"Accent", got.Accent, ansiIndex(4)},
-			{"Branch", got.Branch, ansiIndex(7)},
-			{"DimText", got.DimText, ansiIndex(7)},
 		} {
+			// The premise: the library's stand-in for this index fails the
+			// floor here, so a clamp that measured it would have walked it.
+			// Without that, the row passes for a second reason.
+			r, g, b, _ := tc.want.RGBA()
+			standIn := color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: 0xff}
+			if clearsFloor(standIn, grounds, SemanticTextContrastFloor) {
+				t.Fatalf("%s's stand-in %v already clears the floor on %v -- this row cannot tell an exempt index from a measured one", tc.field, standIn, grounds)
+			}
 			if tc.got != tc.want {
 				t.Errorf("%s = %T %v, want the ANSI index %v it was -- a clamp that ran on this palette mixed an index (#304)", tc.field, tc.got, tc.got, tc.want)
 			}

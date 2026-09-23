@@ -48,7 +48,7 @@
 //	                            row is exactly that keyboard cursor. v2
 //	                            used active_row_bg, which marks herdr's
 //	                            *active workspace* against sidebar_bg, a
-//	                            different thing (v3 spec §5.1).
+//	                            different thing (v3 spec §5.3).
 //	peach      -> Warning       herdr's "interrupted / warning states"
 //	                            color, used for rate-limited and degraded
 //	                            markers.
@@ -440,7 +440,7 @@ func Default() Palette {
 // hand-edited TOML. An unrecognized key is a silent no-op.
 //
 // ActiveRowBG additionally answers to `selection_bg`, its herdr source name
-// (v3 spec §5.1) -- a hand-editing user who has herdr's palette in front of
+// (v3 spec §5.3) -- a hand-editing user who has herdr's palette in front of
 // them is as likely to reach for that as for ours. Note for anyone adding
 // another alias: Resolve iterates its override map, so no caller may ever
 // emit two keys that reach the same field, or which one wins is
@@ -1221,7 +1221,7 @@ func rgb8(c Color) (r, g, b uint8, ok bool) {
 // override tables have no equivalent field here and are intentionally not
 // decoded.
 //
-// active_row_bg was decoded until v3 spec §5.1 moved ActiveRowBG onto
+// active_row_bg was decoded until v3 spec §5.3 moved ActiveRowBG onto
 // selection_bg. It is deliberately gone rather than kept alongside its
 // replacement: both would write the same field, and Resolve iterates a map,
 // so a user who set both keys would get whichever the runtime happened to
@@ -1244,7 +1244,7 @@ type herdrThemeCustom struct {
 	Surface0 string `toml:"surface0"`
 	Peach    string `toml:"peach"`
 	Mauve    string `toml:"mauve"`
-	// Decoded for the same reason one round later: v3 spec §5.1-§5.2 pointed
+	// Decoded for the same reason one round later: v3 spec §5.2-§5.3 pointed
 	// ActiveRowBG at selection_bg and added Overlay0.
 	SelectionBG string `toml:"selection_bg"`
 	Overlay0    string `toml:"overlay0"`

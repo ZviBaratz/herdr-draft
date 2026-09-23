@@ -79,7 +79,7 @@ func TestResolve_V2PaletteKeys(t *testing.T) {
 	}
 }
 
-// TestResolve_V3PaletteKeys covers the keys v3 spec §5.1-§5.2 added to
+// TestResolve_V3PaletteKeys covers the keys v3 spec §5.2-§5.3 added to
 // applyOverrideKey: Overlay0, and the herdr source name ActiveRowBG now also
 // answers to now that it is sourced from selection_bg.
 func TestResolve_V3PaletteKeys(t *testing.T) {
@@ -269,7 +269,7 @@ panel_bg = "#101010"
 // keys, so a user who retunes them in herdr must get the same colors here
 // rather than the builtin's.
 //
-// active_row_bg was the fourth key here until v3 spec §5.1 moved ActiveRowBG
+// active_row_bg was the fourth key here until v3 spec §5.3 moved ActiveRowBG
 // onto selection_bg. It moved to the v3 test below rather than being
 // repointed in place, because the key that reaches the field is now a v3
 // concern and the value has to clear the contrast floor to stay a pure
@@ -318,7 +318,7 @@ mauve = "#bbbbbb"
 }
 
 // TestLoadHerdrPaletteFrom_V3CustomKeys covers the [theme.custom] keys v3
-// spec §5.1-§5.2 brought into herdrThemeCustom. Both override values are
+// spec §5.2-§5.3 brought into herdrThemeCustom. Both override values are
 // chosen to clear ActiveRowContrastFloor against dracula's panel_bg, so this
 // stays an assertion about key routing; floorContrast raising an illegible
 // one is TestLoadHerdrPalette_FloorsAnIllegibleOverride's job.
@@ -354,7 +354,7 @@ overlay0 = "#666666"
 }
 
 // TestLoadHerdrPaletteFrom_ActiveRowBGCustomKeyIsIgnored pins the key v3 spec
-// §5.1 took out of herdrThemeCustom. herdr's active_row_bg marks its
+// §5.3 took out of herdrThemeCustom. herdr's active_row_bg marks its
 // *active workspace*, not its keyboard cursor; honoring it here would undo
 // the remapping, and decoding it alongside selection_bg would be a
 // nondeterministic double-write into one field (see herdrThemeCustom's doc).
