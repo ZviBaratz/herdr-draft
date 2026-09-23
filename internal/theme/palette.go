@@ -48,7 +48,7 @@
 //	                            row is exactly that keyboard cursor. v2
 //	                            used active_row_bg, which marks herdr's
 //	                            *active workspace* against sidebar_bg, a
-//	                            different thing (v3 spec §5.1).
+//	                            different thing (v3 spec §5.3).
 //	peach      -> Warning       herdr's "interrupted / warning states"
 //	                            color, used for rate-limited and degraded
 //	                            markers.
@@ -88,12 +88,25 @@
 // table, spec §12) is applied last and wins any conflict. Any stage that
 // fails -- an unknown name, a missing or unparsable config file, an invalid
 // override color -- falls back to the previous stage's result, ultimately
-// Default(). `auto_switch` and the `terminal` theme both depend on
-// information this package can't see from a static config file alone
-// (live host light/dark appearance, and the user's own terminal ANSI
-// palette, respectively); both resolve best-effort to the configured dark
-// variant (`theme.dark_name`, defaulting to "catppuccin") instead. Pixel
+// Default(). `auto_switch` depends on information this package can't see
+// from a static config file alone -- the live host's light/dark appearance
+// -- and resolves to the configured dark variant (`theme.dark_name`,
+// defaulting to "catppuccin") instead. `name = "terminal"` resolves the
+// same way, though its reason has gone: see resolveBuiltinFromConfig. Pixel
 // parity with herdr is explicitly not a goal (spec §7).
+//
+// The terminal palette is the one entry that is not a table of RGB values
+// (#304). Its twelve fields are either an ANSI palette index -- sent as
+// `\x1b[91m`, which the host terminal resolves from its own palette -- or
+// lipgloss.NoColor{}, which sends nothing and leaves the terminal's own
+// foreground or background in place. That is what herdr's own terminal()
+// palette does with ratatui's named colours, and it is the whole of what
+// the palette guarantees: every colour on screen is one the user's
+// terminal chose. What it leaves to the terminal is everything a
+// measurement would need. This process never learns what RGB value an index
+// becomes, so no contrast floor in this package applies to that palette,
+// and rgb8 reports every indexed colour as unmeasurable rather than
+// measuring the library's stand-in for it.
 package theme
 
 import (
@@ -105,6 +118,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/BurntSushi/toml"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Color is the color type used by Palette's fields: the standard library
@@ -181,13 +195,20 @@ type Palette struct {
 // reports success/failure rather than trusting the input.
 func hex(s string) Color { return lipgloss.Color(s) }
 
+// ansiIndex builds a Color that is one of the terminal's sixteen palette
+// entries -- ratatui's named colours, which herdr's terminal() palette is
+// written in. It is only used for that table entry. No override can produce
+// one, because parseHexColor accepts hex and nothing else.
+func ansiIndex(n uint8) Color { return ansi.BasicColor(n) }
+
 // builtinPalettes holds every palette herdr's Palette::from_name accepts,
 // translated per the package doc's field mapping. Keys are canonical theme
 // names (see canonicalThemeName); use Builtin to look one up by any name or
 // alias herdr accepts -- not this map directly, since ActiveRowBG here is
 // the raw translation, before ensureContrast raises it to its floor.
 //
-// One value is not a straight translation: terminal's ActiveRowBG. See the
+// One value is not a straight translation: terminal's ActiveRowBG, which
+// comes from a different herdr field from every other palette's. See the
 // note on that entry.
 var builtinPalettes = map[string]Palette{
 	"catppuccin": {
@@ -202,30 +223,61 @@ var builtinPalettes = map[string]Palette{
 		Success: hex("#40a02b"), Border: hex("#e6e9ef"), Surface: hex("#ccd0da"),
 		ActiveRowBG: hex("#bdd0f5"), Warning: hex("#fe640b"), Branch: hex("#8839ef"),
 	},
-	// herdr's terminal() palette uses the host terminal's own ANSI colors
-	// (ratatui Color::Blue/Reset/Gray/... ) rather than fixed RGB, so there
-	// is no single correct hex translation -- these are the standard xterm
-	// 16-color defaults, a best-effort approximation: Color::Blue #0000ee
-	// (ANSI 4), Color::Green #00cd00 (2), Color::Yellow #cdcd00 (3),
-	// Color::Gray #e5e5e5 (7), Color::DarkGray #7f7f7f (8), Color::LightRed
-	// #ff0000 (9). Overlay0 is overlay0's Color::Gray and Border is
-	// surface_dim's Color::DarkGray. panel_bg, text and surface0 use herdr's
-	// Color::Reset, translated to lipgloss.NoColor{} (no foreground/
-	// background override), the closest analog to "inherit the terminal's
-	// own color".
+	// herdr's terminal() palette
+	// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/app/state.rs#L128-L150)
+	// is written in ratatui's named colours, which are the host terminal's
+	// own palette entries rather than RGB values, and this entry is written
+	// in the same thing (#304): Color::Blue is ANSI 4, Color::Green 2,
+	// Color::Yellow 3, Color::Gray 7, Color::DarkGray 8 and Color::LightRed
+	// 9, each emitted as the SGR code for that index so the terminal draws
+	// its own blue, green and red. Overlay0 is overlay0's Color::Gray and
+	// Border is surface_dim's Color::DarkGray. panel_bg, text and surface0 are
+	// herdr's Color::Reset, translated to lipgloss.NoColor{}, which emits no
+	// colour at all and leaves the terminal's own in place.
 	//
-	// ActiveRowBG is the one hand-picked value in this table. herdr's
-	// terminal selection_bg is Color::Reset, and a Reset *background* is
-	// not a color at all -- it is the absence of a fill, so it cannot mark
-	// a row, and ensureContrast cannot raise it either (there is no known
-	// panel_bg here to raise it against). It therefore keeps
-	// active_row_bg's Color::DarkGray, which is what this palette drew the
-	// focused row with before v3 spec §5.1 repointed the field.
+	// Until #304 the nine indexed fields were xterm's default RGB values for
+	// those indices, sent as truecolor. On a terminal that redefines red --
+	// the reason to choose this theme -- the form drew xterm's red anyway.
+	//
+	// None of this is measurable, and nothing here pretends otherwise: an
+	// index's RGBA() answers with the VGA palette (ANSI 4 is #000080, where
+	// xterm draws #0000ee), which is neither xterm's table nor anything on the
+	// user's screen. rgb8 reports an index as unmeasurable, the same way it
+	// reports NoColor, so every floor in this package exempts this palette,
+	// and every clamp hands an index back as the index it was given.
+	//
+	// ActiveRowBG is the one value that is not selection_bg's. herdr's
+	// terminal selection_bg is Color::Reset, and a Reset *background* is not
+	// a colour at all -- it is the absence of a fill, so it cannot mark a
+	// row. It therefore keeps active_row_bg's Color::DarkGray, which is what
+	// this palette drew the focused row with before v3 spec §5.3 repointed
+	// the field, and since #304 it is that colour's index, 8, like the rest.
+	//
+	// That was a decision rather than a translation. Until #304 the fill was
+	// #7f7f7f, on the argument that a mid grey carries an inherited
+	// foreground of either polarity -- 4.00:1 against white and 5.24:1
+	// against black. Real terminal foregrounds are not white or black.
+	// Measured against 43 real schemes (42 from iTerm2-Color-Schemes'
+	// ghostty/ at 12d9f63060857aaf673daae635a4c721d12eb586, plus Solarized's
+	// canonical Xresources), the scheme's own foreground is under 3:1 on
+	// #7f7f7f in 27 of them, and 1.01:1 on Solarized Dark Patched, whose
+	// foreground #708284 is itself a mid grey: every ordinary word on the
+	// focused row is invisible there. On the scheme's own ANSI 8 that count
+	// is 20 of 43, and each of the five indexed word colours is under 3:1 on
+	// fewer schemes, with a higher median. ANSI 9 is under 3:1 on all 43 on
+	// #7f7f7f, median 1.22:1, and on 38 on ANSI 8, median 1.78:1; ANSI 7, the
+	// label tier, goes from 32 to 15.
+	//
+	// What ANSI 8 costs is the band. #7f7f7f clears ActiveRowContrastFloor
+	// against every scheme's background, and ANSI 8 misses it on one:
+	// canonical Solarized makes bright black its own background, so the fill
+	// disappears there and the focused row is left with the accent gutter
+	// glyph and bold, the other two of v3 spec §5.4's three signals.
 	"terminal": {
-		Accent: hex("#0000ee"), PanelBG: lipgloss.NoColor{}, Text: lipgloss.NoColor{},
-		DimText: hex("#e5e5e5"), Overlay0: hex("#e5e5e5"), Danger: hex("#ff0000"),
-		Success: hex("#00cd00"), Border: hex("#7f7f7f"), Surface: lipgloss.NoColor{},
-		ActiveRowBG: hex("#7f7f7f"), Warning: hex("#cdcd00"), Branch: hex("#e5e5e5"),
+		Accent: ansiIndex(4), PanelBG: lipgloss.NoColor{}, Text: lipgloss.NoColor{},
+		DimText: ansiIndex(7), Overlay0: ansiIndex(7), Danger: ansiIndex(9),
+		Success: ansiIndex(2), Border: ansiIndex(8), Surface: lipgloss.NoColor{},
+		ActiveRowBG: ansiIndex(8), Warning: ansiIndex(3), Branch: ansiIndex(7),
 	},
 	"tokyo-night": {
 		Accent: hex("#7aa2f7"), PanelBG: hex("#1a1b26"), Text: hex("#c0caf5"),
@@ -388,7 +440,7 @@ func Default() Palette {
 // hand-edited TOML. An unrecognized key is a silent no-op.
 //
 // ActiveRowBG additionally answers to `selection_bg`, its herdr source name
-// (v3 spec §5.1) -- a hand-editing user who has herdr's palette in front of
+// (v3 spec §5.3) -- a hand-editing user who has herdr's palette in front of
 // them is as likely to reach for that as for ours. Note for anyone adding
 // another alias: Resolve iterates its override map, so no caller may ever
 // emit two keys that reach the same field, or which one wins is
@@ -803,6 +855,9 @@ func (p Palette) SurfaceFill(ground Color) Color {
 // That is the terminal palette, whose panel_bg is herdr's Color::Reset:
 // "inherit the host terminal's background" is a value this process cannot
 // know, so there is no ratio to compute and nothing honest to raise it to.
+// Its focused-row fill is an ANSI index (#304), which is unmeasurable for
+// the same reason, and returning it untouched is also what keeps it an
+// index -- the walk would hand back an RGBA.
 func ensureContrast(bg, fg, toward Color, floor float64) Color {
 	_, _, _, bgOK := rgb8(bg)
 	_, _, _, towardOK := rgb8(toward)
@@ -860,16 +915,17 @@ func ensureContrast(bg, fg, toward Color, floor float64) Color {
 // does not change color when its row takes focus. The price is a raise the
 // panel did not need; a flicker on every focus move is the worse trade.
 //
-// An unmeasurable fg, or ANY unmeasurable ground, returns fg untouched. The
-// second half is what exempts the terminal palette, and the reason is worth
-// stating because the defect it leaves behind is real: herdr gives that
-// theme Color::Reset for panel_bg and surface0 -- "inherit the host
-// terminal's background", a value this process cannot know -- while its
-// active_row_bg is a plain #7f7f7f, against which its #ff0000 Danger
-// measures 1.00:1. One value serves all three grounds, so raising it to
-// clear the one ground we can see is a bet about the two we cannot: darken
-// it for that grey and it disappears on a black terminal instead. The fix
-// that theme needs is to its own values, not to this clamp.
+// An unmeasurable fg, or ANY unmeasurable ground, returns fg untouched.
+// Both halves exempt the terminal palette. Its words are ANSI indices and
+// so is its focused-row fill (#304), and its panel_bg and surface0 are
+// Color::Reset -- "inherit the host terminal's background", a value this
+// process cannot know. The first half is also what keeps an index an
+// index: this clamp returns a mixed RGBA whenever it raises a colour, and
+// an index that went in and came back as truecolor would no longer be the
+// terminal's own colour. The second half matters for an override. A
+// `[palette] danger = "#ff5555"` on that theme is hex and measurable, but
+// it is drawn on grounds that are not, so there is still nothing honest to
+// raise it against.
 func raiseSemanticText(fg Color, grounds []Color, floor float64) Color {
 	if _, _, _, ok := rgb8(fg); !ok {
 		return fg
@@ -1125,19 +1181,28 @@ func linearizeChannel(v uint8) float64 {
 // alpha-premultiplied channels, and every measurable Palette value is opaque
 // with each byte replicated (0x89 becomes 0x8989), which makes >>8 exact.
 //
-// The unmeasurable case is lipgloss.NoColor{} -- herdr's Color::Reset,
-// "inherit the terminal's own color" -- and it has to be recognized by type,
-// because its RGBA reports opaque black, which no arithmetic can tell from a
-// real #000000. Nothing else reaches a Palette field here: builtinPalettes
-// holds hex literals and NoColor, and every override goes through
-// parseHexColor, which accepts hex and nothing else. nil and a translucent
-// value are rejected too, so a future source of either surfaces as a
-// contrast check that declines to answer rather than one that answers wrong.
+// There are two unmeasurable cases, and both have to be recognized by type,
+// because both report an RGBA that no arithmetic can tell from a real value.
+// lipgloss.NoColor{} -- herdr's Color::Reset, "inherit the terminal's own
+// color" -- reports opaque black. An ANSI palette index (#304) reports the
+// VGA palette's value for that index, so ANSI 9 comes back as #ff0000 and
+// ANSI 4 as #000080: numbers, but not the colour on anybody's screen, since
+// the terminal draws an index from its own palette. Measuring one would
+// produce a ratio that looks like a measurement and is not one. It would
+// also be the first step towards a clamp handing back a mixed RGBA in place
+// of the index, which would quietly undo #304.
+//
+// Only the terminal entry in builtinPalettes holds indices. Every other
+// entry holds hex literals, and every override goes through parseHexColor,
+// which accepts hex and nothing else. nil and a translucent value are
+// rejected too, so a future source of either surfaces as a contrast check
+// that declines to answer rather than one that answers wrong.
 func rgb8(c Color) (r, g, b uint8, ok bool) {
 	if c == nil {
 		return 0, 0, 0, false
 	}
-	if _, isNoColor := c.(lipgloss.NoColor); isNoColor {
+	switch c.(type) {
+	case lipgloss.NoColor, ansi.BasicColor, ansi.IndexedColor:
 		return 0, 0, 0, false
 	}
 	cr, cg, cb, ca := c.RGBA()
@@ -1156,7 +1221,7 @@ func rgb8(c Color) (r, g, b uint8, ok bool) {
 // override tables have no equivalent field here and are intentionally not
 // decoded.
 //
-// active_row_bg was decoded until v3 spec §5.1 moved ActiveRowBG onto
+// active_row_bg was decoded until v3 spec §5.3 moved ActiveRowBG onto
 // selection_bg. It is deliberately gone rather than kept alongside its
 // replacement: both would write the same field, and Resolve iterates a map,
 // so a user who set both keys would get whichever the runtime happened to
@@ -1179,7 +1244,7 @@ type herdrThemeCustom struct {
 	Surface0 string `toml:"surface0"`
 	Peach    string `toml:"peach"`
 	Mauve    string `toml:"mauve"`
-	// Decoded for the same reason one round later: v3 spec §5.1-§5.2 pointed
+	// Decoded for the same reason one round later: v3 spec §5.2-§5.3 pointed
 	// ActiveRowBG at selection_bg and added Overlay0.
 	SelectionBG string `toml:"selection_bg"`
 	Overlay0    string `toml:"overlay0"`
@@ -1303,11 +1368,20 @@ func LoadHerdrPaletteFrom(path string, draftOverrides map[string]string) Palette
 }
 
 // resolveBuiltinFromConfig picks the Builtin palette selected by a herdr
-// [theme] table. auto_switch and name = "terminal" both depend on
-// information a static config file can't provide (live host appearance,
-// and the user's own terminal ANSI colors); both resolve best-effort to
-// theme.dark_name (defaulting to "catppuccin") instead -- see the package
-// doc's resolution-order section.
+// [theme] table. auto_switch depends on information a static config file
+// can't provide, the live host appearance, and resolves to theme.dark_name
+// (defaulting to "catppuccin") instead.
+//
+// name = "terminal" resolves the same way, and the reason spec §7 gave for
+// that -- the palette is "unknowable from config alone" -- stopped being
+// true with #304. The terminal palette no longer has to know the user's
+// colours, because it sends ANSI indices and the terminal supplies them.
+// The fallback is kept because removing it is a decision this code cannot
+// make alone. A user on that theme draws in their dark theme today, where
+// every floor in this package holds. Routing them to the terminal palette
+// would draw the focused project row's `invalid` in their ANSI 9 on their
+// ANSI 8, which #276 is open on. dark_name = "terminal" reaches the
+// terminal palette through this same branch.
 func resolveBuiltinFromConfig(theme herdrThemeConfig) (Palette, bool) {
 	name := theme.Name
 	if name == "" {

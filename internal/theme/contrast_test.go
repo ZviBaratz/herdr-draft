@@ -3,9 +3,13 @@ package theme
 import (
 	"image/color"
 	"math"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // overlay0ContrastFloor is v3 spec §5.3's floor for the rule stroke. Unlike
@@ -418,16 +422,14 @@ func TestBuiltinPalettes_SemanticTextIsLegibleOnEveryGround(t *testing.T) {
 			}
 
 			// The exemption is missing data, as everywhere else in this
-			// file, but it is worth saying what is missing: terminal's
-			// panel_bg and surface0 are herdr's Color::Reset -- "inherit
-			// the host terminal's background" -- while its active_row_bg is
-			// a plain #7f7f7f. So a word there IS drawn on one ground this
-			// process can measure, and on that ground terminal's #ff0000
-			// Danger is 1.00:1. It is exempt anyway because one value
-			// serves all three grounds and raising it for the ground we can
-			// see is a bet about the two we cannot; see raiseSemanticText,
-			// and note that this leaves a real defect in that theme's own
-			// values rather than in this clamp.
+			// file, and since #304 none of it is left: terminal's panel_bg
+			// and surface0 are herdr's Color::Reset -- "inherit the host
+			// terminal's background" -- and its focused-row fill and all
+			// five of these fields are ANSI indices, which the terminal
+			// resolves from its own palette. Whether its red reads on its
+			// bright black is a question about the user's terminal, and
+			// TestTerminalPalette_EmitsTheTerminalsOwnColours asserts that
+			// those are the colours it is sent. #276 is open on the answer.
 			if _, unknown := palette.PanelBG.(lipgloss.NoColor); unknown {
 				if name != "terminal" {
 					t.Fatalf("PanelBG is NoColor: only the terminal palette may be exempt from the semantic-text floor")
@@ -542,10 +544,10 @@ func TestRaiseSemanticText_RaisesAnIllegibleValue(t *testing.T) {
 }
 
 // TestRaiseSemanticText_UnmeasurableInputsPassThrough pins the terminal
-// palette's case from both sides. An unmeasurable ground is the one that
-// matters: that theme's panel_bg and surface0 are herdr's Color::Reset, and
-// one raised value would have to serve them and its real #7f7f7f
-// active_row_bg at once.
+// palette's case from both sides: that theme's panel_bg and surface0 are
+// herdr's Color::Reset, and its words are ANSI indices (#304). The indexed
+// half has a test of its own, TestClamps_HandAnIndexBackAsAnIndex, because
+// colorEqual cannot tell an index from the RGB its library stand-in reports.
 func TestRaiseSemanticText_UnmeasurableInputsPassThrough(t *testing.T) {
 	fg := lipgloss.Color("#805050") // illegible on every ground below
 	dark := lipgloss.Color("#1a1a1a")
@@ -714,77 +716,238 @@ func TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride(t *testing.T) {
 	}
 }
 
-// TestTerminalPalette_FocusedRowCarriesAnInheritedForeground is the one
-// floor in this file that measures a SINGLE palette, and the reason is that
-// terminal is the only one whose foreground is unknown: herdr gives that
-// theme Color::Reset for text and panel_bg alike, so the words on a focused
-// row are drawn in whatever the host terminal's own foreground is. The
-// other seventeen have a Text this package can read, and their focused rows
-// are covered by ActiveRowContrastFloor against a PanelBG it can read too.
+// TestTerminalPalette_EmitsTheTerminalsOwnColours is #304, and it asserts
+// BYTES rather than a ratio because a ratio is the one thing this palette
+// cannot have. Every coloured field is an ANSI palette index, which the
+// host terminal resolves from its own palette, and the three herdr gives
+// Color::Reset emit nothing at all. Before #304 the nine indexed fields
+// were xterm's RGB defaults and went out as truecolor -- `\x1b[38;2;255;0;0m`
+// for Danger -- so a terminal that redefines red still got xterm's.
 //
-// What is asserted is the property #7f7f7f was actually chosen for, which
-// is nowhere written down as a floor: an unknown foreground is near-black
-// or near-white -- the host's background is equally unknown and a terminal
-// nobody can read is not a terminal -- so the fill has to carry BOTH. A mid
-// grey does, at 4.00:1 against white and 5.25:1 against black.
-//
-// SemanticTextContrastFloor and not 4.5:1, and the choice has to be said
-// out loud here because the subject is ordinary body text rather than a
-// one-word marker, which is the case that constant's own doc argues 3:1 is
-// weakest for. Asserted at 4.5 this test FAILS on its own subject: #7f7f7f
-// is 4.00:1 to white, and the carrying band tightens from [0.1000, 0.3000]
-// to [0.1750, 0.1833], which its 0.2122 is outside. That is not a reason to
-// pick the floor that passes. It is the impossibility below getting worse:
-// at a body-text figure, no fill carries the inherited foreground at all,
-// let alone the red as well. 3:1 is used because it is the floor this
-// package actually enforces on words, and because the conclusion the test
-// exists for only gets stronger at any higher one.
-//
-// This is a guard, not a fix, and the defect it guards is the one #276 is
-// open on: that same fill draws terminal's #ff0000 Danger at 1.00:1, so the
-// word `invalid` is invisible on the focused project row of that theme.
-// #276's candidate fix is to repoint this field, and the measurement here
-// is why that cannot be it. Carrying an unknown foreground of either
-// polarity at SemanticTextContrastFloor pins the fill's relative luminance
-// to [0.1000, 0.3000]; #ff0000's relative luminance is 0.2126, inside that
-// same band; and two luminances both inside it can differ by at most
-// 2.333:1. There is no fill. What the candidates cost, measured: #363636
-// gives the red 3.02:1 and takes a dark inherited foreground to 1.74:1,
-// #e5e5e5 gives it 3.17:1 and takes a light one to 1.26:1 -- one word
-// legible and every other word on the row gone.
-//
-// And the ANSI set is inconsistent with itself even setting the inherited
-// foreground aside: Accent's #0000ee needs a fill of luminance >= 0.2852
-// and Success's #00cd00 one of <= 0.1122, so no single fill carries those
-// two either, whatever is done about the red.
-func TestTerminalPalette_FocusedRowCarriesAnInheritedForeground(t *testing.T) {
+// It asserts what Builtin hands out, after floorContrast, and ActiveRowBG
+// is rendered as the BACKGROUND it is, because `\x1b[90m` and `\x1b[100m`
+// are different bytes for the same index. It does NOT pin that a clamp
+// hands an index back untouched, and cannot: on this palette every clamp
+// is exempted first by its NoColor grounds, so the bytes come out right
+// whether or not rgb8 measures an index. Measured: with rgb8 measuring
+// indices again, this test passes. That half is
+// TestClamps_HandAnIndexBackAsAnIndex's and the override test's.
+func TestTerminalPalette_EmitsTheTerminalsOwnColours(t *testing.T) {
 	palette, ok := Builtin("terminal")
 	if !ok {
 		t.Fatal("Builtin(\"terminal\") not found")
 	}
-	// The premise, asserted rather than assumed: if herdr ever gives this
-	// theme a Text and a panel_bg this package can read, the floors above
-	// stop exempting it and this test has nothing left to say.
-	if _, inherit := palette.Text.(lipgloss.NoColor); !inherit {
-		t.Fatalf("the terminal palette's Text is %v, not NoColor -- this test's premise has changed", palette.Text)
-	}
+	fg := func(c Color) string { return lipgloss.NewStyle().Foreground(c).Render("x") }
+	bg := func(c Color) string { return lipgloss.NewStyle().Background(c).Render("x") }
 
-	for _, inherited := range []struct {
-		where string
-		value Color
+	for _, tc := range []struct {
+		field     string
+		got, want string
 	}{
-		{"a light foreground on a dark terminal", lipgloss.Color("#ffffff")},
-		{"a dark foreground on a light terminal", lipgloss.Color("#000000")},
+		{"Accent", fg(palette.Accent), "\x1b[34mx\x1b[m"},     // Color::Blue
+		{"Success", fg(palette.Success), "\x1b[32mx\x1b[m"},   // Color::Green
+		{"Warning", fg(palette.Warning), "\x1b[33mx\x1b[m"},   // Color::Yellow
+		{"DimText", fg(palette.DimText), "\x1b[37mx\x1b[m"},   // Color::Gray
+		{"Overlay0", fg(palette.Overlay0), "\x1b[37mx\x1b[m"}, // Color::Gray
+		{"Branch", fg(palette.Branch), "\x1b[37mx\x1b[m"},     // Color::Gray
+		{"Border", fg(palette.Border), "\x1b[90mx\x1b[m"},     // Color::DarkGray
+		{"Danger", fg(palette.Danger), "\x1b[91mx\x1b[m"},     // Color::LightRed
+		{"ActiveRowBG", bg(palette.ActiveRowBG), "\x1b[100mx\x1b[m"},
+		// Color::Reset: no SGR at all, the terminal's own colour stays.
+		{"PanelBG", bg(palette.PanelBG), "x"},
+		{"Text", fg(palette.Text), "x"},
+		{"Surface", bg(palette.Surface), "x"},
 	} {
-		got, ok := contrastRatio(inherited.value, palette.ActiveRowBG)
-		if !ok {
-			t.Fatalf("the focused row's fill is unmeasurable against %s", inherited.where)
-		}
-		if got < SemanticTextContrastFloor-contrastAssertionEpsilon {
-			t.Errorf("%s reads at %.3f:1 on the focused row, want >= %.2f:1 -- every ordinary word on that row is drawn in it, and trading them for one semantic colour is not a fix for #276",
-				inherited.where, got, SemanticTextContrastFloor)
+		if tc.got != tc.want {
+			t.Errorf("terminal's %s renders %q, want %q -- the terminal palette must send the terminal's own colours, not an RGB guess at them (#304)",
+				tc.field, tc.got, tc.want)
 		}
 	}
+}
+
+// TestBuiltinPalettes_OnlyTerminalEmitsIndexedColours is the other side of
+// the test above: an index is correct for exactly one palette. Every other
+// builtin is herdr's RGB table and has to reach the screen as the RGB it
+// was written in, and every one of them is measured by the floors in this
+// file -- which is only true while none of their fields is an index, since
+// rgb8 reports an index as unmeasurable and every floor would quietly exempt
+// it.
+//
+// Each field is rendered and the bytes are checked, on top of the type,
+// because the bytes are what the terminal receives.
+func TestBuiltinPalettes_OnlyTerminalEmitsIndexedColours(t *testing.T) {
+	paletteType := reflect.TypeOf(Palette{})
+	for name := range builtinPalettes {
+		if name == "terminal" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			palette, ok := Builtin(name)
+			if !ok {
+				t.Fatalf("Builtin(%q) not found", name)
+			}
+			value := reflect.ValueOf(palette)
+			for i := range value.NumField() {
+				field := paletteType.Field(i).Name
+				c, _ := value.Field(i).Interface().(Color)
+				switch c.(type) {
+				case ansi.BasicColor, ansi.IndexedColor:
+					t.Errorf("%s is the ANSI index %v -- only the terminal palette may hand its colours to the terminal's own palette", field, c)
+					continue
+				}
+				if _, _, _, ok := rgb8(c); !ok {
+					t.Errorf("%s = %v is unmeasurable, so every floor would exempt it", field, c)
+				}
+				if got := lipgloss.NewStyle().Foreground(c).Render("x"); !strings.HasPrefix(got, "\x1b[38;2;") {
+					t.Errorf("%s renders %q, want a truecolor sequence", field, got)
+				}
+			}
+		})
+	}
+}
+
+// TestRGB8_AnIndexedColourIsUnmeasurable pins the decision #304 had to
+// make about what the contrast machinery does with an index, and why a
+// number is the wrong answer. ansi.BasicColor(9).RGBA() does not decline:
+// it reports the VGA palette's #ff0000, and ANSI 4 its #000080, which is
+// neither xterm's #0000ee nor anything the user's terminal draws. A ratio
+// computed from that looks like a measurement and is not one, which is the
+// failure this whole file exists to prevent. So an index is unmeasurable,
+// exactly as NoColor is, for the same reason: this process does not know
+// the colour on the screen.
+func TestRGB8_AnIndexedColourIsUnmeasurable(t *testing.T) {
+	for _, c := range []Color{ansi.BasicColor(9), ansi.BasicColor(0), ansi.IndexedColor(208), lipgloss.Color("9"), lipgloss.Color("208")} {
+		if r, g, b, ok := rgb8(c); ok {
+			t.Errorf("rgb8(%T %v) = #%02x%02x%02x, want unmeasurable -- that is the library's stand-in, not the terminal's colour", c, c, r, g, b)
+		}
+		if ratio, ok := contrastRatio(c, lipgloss.Color("#ffffff")); ok {
+			t.Errorf("contrastRatio(%T %v, white) = %.3f:1, want unmeasurable", c, c, ratio)
+		}
+	}
+}
+
+// TestClamps_HandAnIndexBackAsAnIndex is the invariant #304 names: every
+// clamp in this package returns a MIXED RGBA whenever it raises a colour,
+// so an index let through one would come back as truecolor and quietly undo
+// the change. Over the builtins that cannot happen -- terminal's grounds are
+// all unmeasurable and every clamp exempts it on those alone -- which is
+// exactly why it needs its own test. A `[palette]` override can give that
+// palette measurable grounds, and then the index itself is the only thing
+// standing between the clamp and a mix.
+//
+// So the grounds here are measurable and chosen so that the VGA stand-in
+// for each index FAILS its floor on them: an rgb8 that measured an index
+// would walk it. And the comparison is by identity, not colorEqual, which
+// compares RGBA and cannot tell ANSI 9 from a hex #ff0000 at all.
+func TestClamps_HandAnIndexBackAsAnIndex(t *testing.T) {
+	grey := lipgloss.Color("#7f7f7f") // VGA #ff0000 is 1.00:1 on it, #808080 1.01:1, #c0c0c0 2.20:1
+	grounds := []Color{grey, grey, grey}
+	text := lipgloss.Color("#000000")
+
+	for _, tc := range []struct {
+		name  string
+		index Color
+		got   Color
+	}{
+		{"ensureContrast", ansiIndex(8), ensureContrast(grey, ansiIndex(8), text, ActiveRowContrastFloor)},
+		{"raiseSemanticText", ansiIndex(9), raiseSemanticText(ansiIndex(9), grounds, SemanticTextContrastFloor)},
+		{"raiseDimText", ansiIndex(7), raiseDimText(ansiIndex(7), grounds, text, DimTextContrastFloor)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.index {
+				t.Errorf("%s turned the ANSI index %v into %T %v -- an index is the terminal's own colour, and a mix of it is not (#304)",
+					tc.name, tc.index, tc.got, tc.got)
+			}
+		})
+	}
+}
+
+// TestLoadHerdrPalette_HexOverridesOnTheTerminalPalette is the override
+// path. A `[palette]` key replaces one field with hex and leaves the rest as
+// the table has them, so an override on this palette always produces the
+// mixed case -- some fields indexed, some hex -- and it has to work in both
+// directions: the hex override is honoured as written and floored where its
+// grounds allow, and every field it did not touch still reaches the screen
+// as the terminal's own colour.
+//
+// It goes through LoadHerdrPaletteFrom with herdr's own `dark_name =
+// "terminal"` beside `name = "terminal"`, one of the two configs that reach
+// this palette today (`auto_switch = true` with the same dark_name is the
+// other; see resolveBuiltinFromConfig for why `name` alone does not).
+//
+// Two cases, because the grounds decide whether any clamp can run. With
+// only `danger` overridden, every ground is still unmeasurable -- NoColor
+// panel and surface, an indexed focused row -- so the hex red stays exactly
+// as written. With the three grounds overridden too, a word CAN be measured,
+// and an illegible hex `danger` is raised while the indexed Warning beside it
+// is still ANSI 3: the clamp ran, and the index was not in its path.
+//
+// Only Warning, Success and Accent are checked there, and the guard in that
+// case asserts why: they are the indices whose library stand-in (VGA
+// #808000, #008000, #000080) fails the floor on these grounds, so an rgb8
+// that measured them would walk them. ANSI 7's stand-in, #c0c0c0, already
+// clears 3:1 here, so Branch and DimText would come back unchanged with or
+// without the exemption and could not fail for the reason this test gives.
+// raiseDimText keeping an index is TestClamps_HandAnIndexBackAsAnIndex's.
+func TestLoadHerdrPalette_HexOverridesOnTheTerminalPalette(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	writeFile(t, path, `
+[theme]
+name = "terminal"
+dark_name = "terminal"
+`)
+
+	t.Run("a hex field on unmeasurable grounds is kept as written", func(t *testing.T) {
+		got := LoadHerdrPaletteFrom(path, map[string]string{"danger": "#ff5555"})
+		if r := lipgloss.NewStyle().Foreground(got.Danger).Render("x"); r != "\x1b[38;2;255;85;85mx\x1b[m" {
+			t.Errorf("the overridden Danger renders %q, want the user's #ff5555 as truecolor", r)
+		}
+		if got.Warning != ansiIndex(3) || got.ActiveRowBG != ansiIndex(8) {
+			t.Errorf("fields the override did not name moved: Warning %T %v, ActiveRowBG %T %v", got.Warning, got.Warning, got.ActiveRowBG, got.ActiveRowBG)
+		}
+	})
+
+	t.Run("a hex field on measurable grounds is floored and the indices are not", func(t *testing.T) {
+		illegible := "#303030"
+		got := LoadHerdrPaletteFrom(path, map[string]string{
+			"panel_bg":      "#202020",
+			"surface":       "#000000",
+			"text":          "#ffffff",
+			"active_row_bg": "#404040",
+			"danger":        illegible,
+		})
+		grounds := []Color{got.PanelBG, got.ActiveRowBG, got.SurfaceFill(got.PanelBG)}
+		if !clearsFloor(lipgloss.Color("#ffffff"), grounds, SemanticTextContrastFloor) {
+			t.Fatalf("fixture grounds %v leave no room for a word -- the clamp would have nowhere to go", grounds)
+		}
+		if colorEqual(got.Danger, lipgloss.Color(illegible)) {
+			t.Errorf("the illegible hex Danger %s survived unfloored on grounds that are all measurable", illegible)
+		}
+		if !clearsFloor(got.Danger, grounds, SemanticTextContrastFloor) {
+			t.Errorf("the floored Danger %v does not clear %.1f:1 on %v", got.Danger, SemanticTextContrastFloor, grounds)
+		}
+		for _, tc := range []struct {
+			field     string
+			got, want Color
+		}{
+			{"Warning", got.Warning, ansiIndex(3)},
+			{"Success", got.Success, ansiIndex(2)},
+			{"Accent", got.Accent, ansiIndex(4)},
+		} {
+			// The premise: the library's stand-in for this index fails the
+			// floor here, so a clamp that measured it would have walked it.
+			// Without that, the row passes for a second reason.
+			r, g, b, _ := tc.want.RGBA()
+			standIn := color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: 0xff}
+			if clearsFloor(standIn, grounds, SemanticTextContrastFloor) {
+				t.Fatalf("%s's stand-in %v already clears the floor on %v -- this row cannot tell an exempt index from a measured one", tc.field, standIn, grounds)
+			}
+			if tc.got != tc.want {
+				t.Errorf("%s = %T %v, want the ANSI index %v it was -- a clamp that ran on this palette mixed an index (#304)", tc.field, tc.got, tc.got, tc.want)
+			}
+		}
+	})
 }
 
 // semanticSeparationFloor is a tripwire, not a perceptual metric: plain
@@ -922,9 +1085,10 @@ func TestFarthestEnd_PicksTheDirectionWithRoomLeft(t *testing.T) {
 	}{
 		{"dark grounds leave room upward", []Color{lipgloss.Color("#1e1e2e"), lipgloss.Color("#313244")}, white},
 		{"light grounds leave room downward", []Color{lipgloss.Color("#eff1f5"), lipgloss.Color("#ccd0da")}, black},
-		// The mid grey that makes the question real: terminal's #7f7f7f has
-		// 3.95:1 to white and 5.32:1 to black, so down is the answer even
-		// though nothing about it reads as a "light" theme.
+		// The mid grey that makes the question real, and the fill terminal's
+		// focused row had until #304: #7f7f7f has 4.00:1 to white and 5.24:1
+		// to black, so down is the answer even though nothing about it reads
+		// as a "light" theme.
 		{"a mid grey still has a better side", []Color{lipgloss.Color("#7f7f7f")}, black},
 	}
 	for _, tc := range cases {

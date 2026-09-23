@@ -226,9 +226,13 @@ These are known and understood. Please read them before filing a bug.
   and nothing else: a worktree session's checkout and branch stay, and are
   yours to remove.
 
-- **The `terminal` theme and `auto_switch` are drawn in your dark theme.**
-  One takes its colours from your terminal and the other follows its light
-  or dark appearance, and neither can be read from herdr's config file. Use
+- **herdr's `name = "terminal"` and `auto_switch` are drawn in your dark
+  theme.** `auto_switch` follows your terminal's light or dark appearance,
+  which herdr's config file cannot tell herdr-draft. For the `terminal`
+  palette, set `dark_name = "terminal"` beside `name = "terminal"`. It
+  sends your terminal's own palette entries, so its colours are whatever
+  your terminal's palette makes them, and herdr-draft does not adjust them
+  for contrast. Use
   [`[palette]`](configuration.md#palette) if the result reads wrong.
 
 ## State
