@@ -40,10 +40,10 @@ for why a heading here may read `unreleased`.
   the same exit code.
 - **The `terminal` palette draws in your terminal's own colours** (#304).
   Nine of its twelve colours were xterm's default RGB values, so a terminal
-  that redefines red still got xterm's red. They are now ANSI palette
-  entries, as herdr's own `terminal` theme uses. The contrast floors never
-  applied to this palette, and still don't: its colours are whatever your
-  terminal says they are.
+  that redefines red still got xterm's red. They now come from your
+  terminal's own palette, as herdr's own `terminal` theme's do. The
+  contrast floors never applied to this palette, and still don't: its
+  colours are whatever your terminal says they are.
 - **herdr's `name = "terminal"` now draws in the `terminal` palette**
   rather than in your dark theme. It used to fall back because the palette
   could not be known from a file; now that it sends your terminal's own

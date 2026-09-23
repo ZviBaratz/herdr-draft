@@ -381,8 +381,9 @@ background, the text and the input fields are left as your terminal draws
 them. The focused row has no fill of its own on this theme, so its words
 stay on your terminal's background; it is marked by the `▌` in the left
 margin and a bold value. herdr-draft cannot see what any of those colours
-are, so the contrast adjustments described below do not apply to it. If a colour is hard to read there, change it in your
-terminal's palette or override it in `[palette]`.
+are, so the contrast adjustments described below do not apply to it. If a
+colour is hard to read there, change it in your terminal's palette or
+override it in `[palette]`.
 
 `[palette]` overrides individual colours on top of all that, for when the
 theme reads wrong:

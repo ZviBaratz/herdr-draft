@@ -206,10 +206,6 @@ func ansiIndex(n uint8) Color { return ansi.BasicColor(n) }
 // names (see canonicalThemeName); use Builtin to look one up by any name or
 // alias herdr accepts -- not this map directly, since ActiveRowBG here is
 // the raw translation, before ensureContrast raises it to its floor.
-//
-// One value is not a straight translation: terminal's ActiveRowBG, which
-// comes from a different herdr field from every other palette's. See the
-// note on that entry.
 var builtinPalettes = map[string]Palette{
 	"catppuccin": {
 		Accent: hex("#89b4fa"), PanelBG: hex("#181825"), Text: hex("#cdd6f4"),
@@ -231,12 +227,12 @@ var builtinPalettes = map[string]Palette{
 	// Color::Yellow 3, Color::Gray 7, Color::DarkGray 8 and Color::LightRed
 	// 9, each emitted as the SGR code for that index so the terminal draws
 	// its own blue, green and red. Overlay0 is overlay0's Color::Gray and
-	// Border is surface_dim's Color::DarkGray. panel_bg, text and surface0 are
-	// herdr's Color::Reset, translated to lipgloss.NoColor{}, which emits no
-	// colour at all and leaves the terminal's own in place.
+	// Border is surface_dim's Color::DarkGray. panel_bg, text, surface0 and
+	// selection_bg are herdr's Color::Reset, translated to lipgloss.NoColor{},
+	// which emits no colour at all and leaves the terminal's own in place.
 	//
-	// Until #304 the nine indexed fields were xterm's default RGB values for
-	// those indices, sent as truecolor. On a terminal that redefines red --
+	// Until #304 nine of these fields -- the eight now indexed, and
+	// ActiveRowBG -- were xterm's default RGB values, sent as truecolor. On a terminal that redefines red --
 	// the reason to choose this theme -- the form drew xterm's red anyway.
 	//
 	// None of this is measurable, and nothing here pretends otherwise: an
@@ -250,11 +246,12 @@ var builtinPalettes = map[string]Palette{
 	// every other field, and so the focused row has NO fill on this theme
 	// (#276). It is marked by the other two of v3 spec §5.4's three signals,
 	// the accent gutter glyph and bold, which is also what herdr's own
-	// sidebar does: it draws its keyboard cursor with selection_bg, so on
-	// this theme the cursor row is unfilled too
-	// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/client/shell/sidebar.rs#L50-L61
-	// -- except on the focused workspace's row, which it fills
-	// active_row_bg).
+	// sidebar does: it fills its keyboard cursor row with selection_bg, so
+	// on this theme that row is unfilled too
+	// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/client/shell/sidebar.rs#L297-L304,
+	// in render_sidebar). Only its collapsed sidebar makes an exception, and
+	// only for the focused workspace's row, which it fills active_row_bg
+	// (#L50-L61 of the same file).
 	//
 	// Every fill this palette ever gave the focused row was a decision, and
 	// every one made the row's own words hard to read. Until #304 it was
@@ -272,14 +269,14 @@ var builtinPalettes = map[string]Palette{
 	// not on bright black. With no fill, every word on the focused row is
 	// on exactly that background. The foreground is at least 4.13:1 on all
 	// 43, and ANSI 9 is under 3:1 on four, never under 2.24:1. The label
-	// tier, ANSI 7, is under 3:1 on 11, mostly light schemes, which is the
+	// tier, ANSI 7, is under 3:1 on 11, all of them light schemes, which is the
 	// same on every row and the same in herdr (subtext0 is Color::Gray).
 	//
 	// What that costs is the band, and on this theme only. The gutter glyph
 	// is Accent, ANSI 4, which is under 3:1 against the background on six of
 	// the 43 (at worst 1.81:1), so on those the glyph is the weaker signal and
-	// bold carries more of it. The submit view's running or failed step,
-	// which borrows this fill, keeps its state glyph the same way.
+	// bold carries more of it. The step the submit view highlights, which
+	// borrows this fill, keeps its state glyph the same way.
 	"terminal": {
 		Accent: ansiIndex(4), PanelBG: lipgloss.NoColor{}, Text: lipgloss.NoColor{},
 		DimText: ansiIndex(7), Overlay0: ansiIndex(7), Danger: ansiIndex(9),

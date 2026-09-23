@@ -720,18 +720,18 @@ func TestLoadHerdrPalette_FloorsAnIllegibleSemanticOverride(t *testing.T) {
 // TestTerminalPalette_EmitsTheTerminalsOwnColours is #304, and it asserts
 // BYTES rather than a ratio because a ratio is the one thing this palette
 // cannot have. Every coloured field is an ANSI palette index, which the
-// host terminal resolves from its own palette, and the three herdr gives
-// Color::Reset emit nothing at all. Before #304 the nine indexed fields
+// host terminal resolves from its own palette, and the four herdr gives
+// Color::Reset emit nothing at all. Before #304 nine of these fields
 // were xterm's RGB defaults and went out as truecolor -- `\x1b[38;2;255;0;0m`
 // for Danger -- so a terminal that redefines red still got xterm's.
 //
 // It asserts what Builtin hands out, after floorContrast, and the three
 // backgrounds are rendered as backgrounds, because a foreground and a
-// background SGR are different bytes for the same colour. It does NOT pin that a clamp
-// hands an index back untouched, and cannot: on this palette every clamp
-// is exempted first by its NoColor grounds, so the bytes come out right
-// whether or not rgb8 measures an index. Measured: with rgb8 measuring
-// indices again, this test passes. That half is
+// background SGR are different bytes for the same colour. It does NOT pin
+// that a clamp hands an index back untouched, and cannot: on this palette
+// every clamp is exempted first by its NoColor grounds, so the bytes come
+// out right whether or not rgb8 measures an index. Measured: with rgb8
+// measuring indices again, this test passes. That half is
 // TestClamps_HandAnIndexBackAsAnIndex's and the override test's.
 func TestTerminalPalette_EmitsTheTerminalsOwnColours(t *testing.T) {
 	palette, ok := Builtin("terminal")
