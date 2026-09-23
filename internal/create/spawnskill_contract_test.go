@@ -263,17 +263,42 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 	// match one of the six wrappers this test's own comment calls
 	// measured.
 	const boundary = `(^|[\s/])`
-	bypasses := []string{"env", "sh -c", "bash -c", "nice", "setsid", "time", "timeout", "sudo", "xargs", "stdbuf"}
-	for _, ll := range logical {
+	bypassNames := []string{"env", "sh -c", "bash -c", "nice", "setsid", "time", "timeout", "sudo", "xargs", "stdbuf"}
+	// Compiled once. The inner loop used to build ten of these per
+	// matching line.
+	type bypass struct {
+		name string
+		re   *regexp.Regexp
+	}
+	bypasses := make([]bypass, 0, len(bypassNames))
+	for _, n := range bypassNames {
+		bypasses = append(bypasses, bypass{name: n, re: regexp.MustCompile(boundary + regexp.QuoteMeta(n) + `(\s|$)`)})
+	}
+	// Which logical lines sit inside a fenced block, because the
+	// predecessor rule only makes sense there.
+	inFence := make([]bool, len(logical))
+	fenced := false
+	for i, ll := range logical {
+		if strings.HasPrefix(strings.TrimSpace(ll.text), "```") {
+			fenced = !fenced
+			continue
+		}
+		inFence[i] = fenced
+	}
+	for i, ll := range logical {
 		clean := strings.ReplaceAll(ll.text, "`", "")
 		at := strings.Index(clean, probe)
 		if at < 0 {
 			continue
 		}
 		before := clean[:at]
-		// The predecessor, unless it is a fence or blank -- so a wrapper
-		// in the prose line above is caught too.
-		if ll.start > 0 {
+		// The predecessor, but only for a probe inside a code fence,
+		// where a bare word before it really is a command. In prose it
+		// is a sentence: the third review found this rule would flag
+		// the document's own "Run the probe a second TIME with
+		// `command` in front", and that it survived only because a
+		// fence line happened to sit in between.
+		if inFence[i] && ll.start > 0 {
 			prev := strings.TrimSpace(raw[ll.start-1])
 			if prev != "" && !strings.HasPrefix(prev, "```") {
 				before = strings.ReplaceAll(prev, "`", "") + " " + before
@@ -283,9 +308,9 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 		// before looking would let `env command clauth start …` through,
 		// which is a bypass wearing the exemption as a hat.
 		var found string
-		for _, bypass := range bypasses {
-			if regexp.MustCompile(boundary + regexp.QuoteMeta(bypass) + `(\s|$)`).MatchString(before) {
-				found = bypass
+		for _, b := range bypasses {
+			if b.re.MatchString(before) {
+				found = b.name
 				break
 			}
 		}
@@ -889,7 +914,7 @@ func TestSkillSaysWhatADryRunCannotSettle(t *testing.T) {
 				"`account_usage` reports\n  the windows and nothing else",
 				"refused by whatever stands in for the launcher in\n  the pane's shell",
 				"is owned by <machine>",
-				"nothing fails until the detection step\n  gives up a minute later",
+				"nothing fails until the detection step\n  gives up — thirty seconds by default",
 			},
 		},
 		{
@@ -931,9 +956,13 @@ func TestSkillSaysWhatADryRunCannotSettle(t *testing.T) {
 				"the pane's\nshell refused it",
 				// Not "a workspace and a tab exist": that is untrue for
 				// three of the four placements, and the contract used to
-				// pin the over-claim (#352's second review).
-				"whatever the placement\nopened is still there",
-				"Read the `--json` ids\nrather than assuming",
+				// pin the over-claim (#352's second review). The third
+				// review then found the replacement omitted `new-space`
+				// and ignored --on-failure clean, so all five outcomes
+				// are named here.
+				"under the default\n`--on-failure keep`",
+				"with `new-space`, a bare\ntop-level workspace",
+				"if you passed `--on-failure clean`, read the clean's own fields",
 				"Re-running the create gets the same refusal",
 				// The pane this paragraph is about is the one `herdr
 				// agent read` cannot resolve, so the section's own

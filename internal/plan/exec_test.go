@@ -3900,48 +3900,79 @@ func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 	}
 }
 
-// TestExecutePromptSurvivesASpendDialogAfterASuccessfulSend is the
-// counterpart of the test below, and the pair is the whole of #352's
-// pre-send/post-send split.
+// TestExecuteSpendDialogAfterASendIsDecidedByTheProbe pins who decides
+// when the spend screen is on the pane after a send, and the answer is
+// promptOnScreen rather than the signature list (#352, round three).
 //
-// The spend screen is refused BEFORE a send, because its highlighted
-// option costs money. After a send it means the opposite: the agent took
-// the prompt, started working, and hit its monthly cap -- which is exactly
-// what #349 observed, under a `prompt_status: sent` that was true. Adding
-// the spend signatures to the one list used at both moments would have
-// turned that delivered prompt into errPromptSwallowed: a create that
-// exits 1 and tells the user a dialog ate text the agent has, while the
-// skill text added in the same PR says the send succeeded.
+// The screen means two different things at that moment. An agent that
+// TOOK the prompt, worked and hit its cap is showing it with the prompt
+// still in its scrollback (#349's case). An agent whose prompt the dialog
+// ate during #116's measured startup window is showing it with no trace
+// of the prompt at all -- and the Enter that vanished chose "Adjust
+// monthly spend limit: Unlimited".
 //
-// So: send succeeds, the pane then shows the spend dialog, and Execute
-// must report an ordinary success.
-func TestExecutePromptSurvivesASpendDialogAfterASuccessfulSend(t *testing.T) {
+// A draft of this PR excluded the screen from the post-send check to
+// protect the first case. That forced the SUCCESS verdict on both, so the
+// second became a clean create over a raised spend cap. The discriminator
+// was already there; the fix is to let it decide.
+func TestExecuteSpendDialogAfterASendIsDecidedByTheProbe(t *testing.T) {
 	withDialogPollInterval(t, 0)
 
-	in := validInput()
-	in.UseWorktree = true
-	in.Prompt = "implement the fix"
-	ops, err := Build(in)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	for _, tc := range []struct {
+		name            string
+		screen          string
+		wantConfirmedOK bool
+	}{
+		{
+			// The prompt is on the pane under the dialog: it landed, and
+			// the agent hit its cap working on it.
+			name:            "the prompt is still on screen",
+			screen:          "implement the fix, carefully and with tests\n\n" + spendLimitScreen,
+			wantConfirmedOK: true,
+		},
+		{
+			// Nothing of the prompt anywhere: the dialog is what the
+			// Enter went into.
+			name:            "no trace of the prompt",
+			screen:          spendLimitScreen,
+			wantConfirmedOK: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := validInput()
+			in.UseWorktree = true
+			in.Prompt = "implement the fix, carefully and with tests"
+			ops, err := Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
 
-	m := &mockRunner{
-		topo:           herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
-		postPromptText: spendLimitScreen,
-	}
+			m := &mockRunner{
+				topo:           herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+				postPromptText: tc.screen,
+			}
+			result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute}, nil)
 
-	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: time.Minute}, nil)
-
-	if result.FailedIndex != -1 {
-		t.Fatalf("FailedIndex = %d, want -1: the prompt was delivered and the agent then hit its cap, which is not a failed send: %+v",
-			result.FailedIndex, result)
-	}
-	if result.PromptUnconfirmed {
-		t.Errorf("PromptUnconfirmed = true, want false -- herdr accepted the send and nothing contradicts it")
-	}
-	if result.promptUnconfirmedCause == causeSwallowedByDialog {
-		t.Error("the spend dialog was read as evidence the prompt was swallowed; it is evidence the prompt LANDED")
+			if tc.wantConfirmedOK {
+				if result.FailedIndex != -1 {
+					t.Fatalf("FailedIndex = %d, want -1: the prompt is on the pane, so it landed: %+v", result.FailedIndex, result)
+				}
+				if result.PromptUnconfirmed {
+					t.Error("PromptUnconfirmed = true, want false -- the prompt is visible under the dialog")
+				}
+				return
+			}
+			if result.FailedIndex == -1 {
+				t.Fatal("Execute reported a clean create over a dialog with no trace of the prompt -- " +
+					"that screen's highlighted option raises the user's spend cap")
+			}
+			if !result.PromptUnconfirmed {
+				t.Error("PromptUnconfirmed = false, want true -- herdr accepted the send, so the posture cannot go back to unsent")
+			}
+			if result.promptUnconfirmedCause != causeSwallowedByDialog {
+				t.Errorf("cause = %q, want %q", result.promptUnconfirmedCause, causeSwallowedByDialog)
+			}
+		})
 	}
 }
 

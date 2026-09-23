@@ -213,7 +213,7 @@ func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 // change is about, a fake that logs one call under another name is the
 // same hazard one layer down.
 //
-// paneReadText is empty by default, which withScreenLead treats as
+// paneReadText is empty by default, which withScreenTail treats as
 // nothing to quote, so a test that does not care is unaffected.
 func (r *submitFakeRunner) PaneRead(context.Context, string) (string, error) {
 	if r.shouldFail("PaneRead") {

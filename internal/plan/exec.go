@@ -686,11 +686,7 @@ func confirmPromptLanded(ctx context.Context, r herdrc.Runner, req herdrc.AgentP
 		}
 		return explainPromptKilledAgent(fmt.Errorf("%w: %w", errAgentGoneAfterSend, err))
 	}
-	// The narrower list: a dialog the agent could only be showing if it
-	// never got the text. A spend dialog is not one -- it is what a
-	// working agent hits -- and blaming it here reports a delivered
-	// prompt as swallowed (dialog.go's swallowingDialogSignatures).
-	sig := swallowingDialogSignature(screen)
+	sig := blockingDialogSignature(screen)
 	if sig == "" {
 		return nil
 	}

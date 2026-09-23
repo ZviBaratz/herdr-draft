@@ -85,6 +85,28 @@ var promptDialogSignatures = []string{
 	// class. Both lines are verbatim from a live pane, recorded in the
 	// issue and in dialog_test.go's fixture.
 	//
+	// These two entries live in ONE list used at both moments, and #352
+	// tried splitting them out of the post-send check on the grounds that
+	// a spend dialog seen after a send is what a WORKING agent hits, so
+	// blaming it would report a delivered prompt as swallowed. That is
+	// true and it is not this list's job: confirmPromptLanded already has
+	// the discriminator, in promptIsVerifiable and promptOnScreen, and its
+	// errors run one way on purpose -- it never calls a landed prompt
+	// missing. Splitting the list bypassed that judgement instead of
+	// letting it make it, and the verdict it forced was the expensive one:
+	// a prompt the dialog ate during #116's measured startup window would
+	// have been reported as a clean success, over a spend cap the Enter
+	// had just raised. A screen still on the pane with no trace of the
+	// prompt is unconfirmed, which is the posture the whole file exists
+	// to reach.
+	//
+	// The cost of one list is a false refusal when a PROMPT quotes these
+	// words -- and spawn_skill.md now does, in section 8, so a session
+	// spawned to work on this feature can carry them. It only bites on a
+	// stall retry, since the pane holds no prompt echo before the first
+	// send and confirmPromptLanded's promptOnScreen covers the rest; and
+	// a refusal that reports is the side this file errs on deliberately.
+	//
 	// It is worth being explicit about what an unguarded send does here,
 	// because it is worse than the founding case. That one answered "No,
 	// exit" and destroyed a fresh agent; this one's highlighted option is
@@ -114,56 +136,13 @@ var promptDialogSignatures = []string{
 	"Enter to confirm",
 }
 
-// swallowingDialogSignatures is the subset of the list above that a
-// dialog seen AFTER a send may be blamed on, and it is a subset for one
-// reason: the two questions are not the same question.
-//
-// Before a send, the question is "is this screen unsafe to type into?",
-// and every entry above answers yes. After a send, confirmPromptLanded
-// asks the narrower "is this screen evidence the text did not land?" --
-// and for the spend dialog the answer is the opposite. That screen
-// appears BECAUSE the agent took the prompt and began working; #349
-// recorded it arriving under a truthful `prompt_status: sent`, and this
-// PR's own section 8 tells the reader so. Matching it there turned a
-// delivered prompt into errPromptSwallowed: a create that exits 1 and
-// tells the user a dialog ate their text, about a prompt the agent has
-// (#352's review caught it before it shipped).
-//
-// The startup dialogs are the other way round. A trust prompt is on
-// screen before the agent can process anything, so finding one after a
-// send means the send went into it. "Enter to confirm" is kept with
-// them, and it is the loose one -- it is also Claude Code's
-// permission-prompt footer, which an agent that RECEIVED the prompt can
-// raise (CLAUDE.md says so) -- but promptIsVerifiable and promptOnScreen
-// already gate that case, and dropping it would lose the footer's cover
-// for a reworded trust screen.
-//
-// So: a new signature goes in the list above always, and in this one only
-// if seeing it after a send is evidence the prompt was NOT received.
-var swallowingDialogSignatures = []string{
-	"Quick safety check",
-	"Enter to confirm",
-}
-
-// swallowingDialogSignature is blockingDialogSignature over that subset,
-// for the post-send check alone.
-func swallowingDialogSignature(text string) string {
-	return firstSignature(text, swallowingDialogSignatures)
-}
-
 // blockingDialogSignature reports the first promptDialogSignatures entry
 // found in text, or "" if none match. text is expected to be a pane's
 // `agent read --source detection --format text` output (see
 // herdrc.CLIRunner.AgentRead) -- a pure function over that text, with no
 // I/O of its own, so it is trivially unit-testable without a Runner.
 func blockingDialogSignature(text string) string {
-	return firstSignature(text, promptDialogSignatures)
-}
-
-// firstSignature is the shared scan, so the two lists cannot drift in how
-// they are matched -- only in what they contain.
-func firstSignature(text string, signatures []string) string {
-	for _, sig := range signatures {
+	for _, sig := range promptDialogSignatures {
 		if strings.Contains(text, sig) {
 			return sig
 		}

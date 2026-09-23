@@ -76,10 +76,12 @@ for why a heading here may read `unreleased`.
   limit: Unlimited", and the guard that stops a queued prompt's Enter
   answering a dialog did not recognise it — so the one retry a stalled
   send is allowed could have raised your spending cap. It is now two
-  signatures in that list, beside the first-run trust prompt. Only for
-  the check made *before* a send: seeing that screen afterwards means the
-  agent took the prompt and then hit its cap, so it is no longer read as
-  evidence the text was swallowed.
+  signatures in that list, beside the first-run trust prompt. Seeing that
+  screen *after* a send is judged the way every other dialog is — by
+  whether the prompt is still on the pane under it. With the prompt
+  visible the agent took it and then hit its cap, and the create is a
+  success; with no trace of it the Enter went into the dialog, and the
+  create says so rather than reporting clean over a raised cap.
 - **The spawn skill says what a clean `--dry-run` does not settle**
   (#349, #350, #351). Three facts an agent could not have known from the
   document: `account_usage` covers usage windows only, so a monthly spend

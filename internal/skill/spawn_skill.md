@@ -240,8 +240,9 @@ of those, and both were observed with every one of them clean:
   of it decides whether the launch happens (the same shell resolution
   sections 7 and 8 note for `[clauth] launcher` and `agent_args`). A
   refusal there starts no agent, so nothing fails until the detection step
-  gives up a minute later: exit 1, with a workspace and a tab already
-  made, and the reason only on the pane. The observed one is machine
+  gives up — thirty seconds by default, longer where `[timeouts]
+  detection_ms` says so — with exit 1, whatever the placement had already
+  opened, and the reason only on the pane. The observed one is machine
   ownership — `clauth: refused — '<account>' is owned by <machine>` — for
   an account whose credential is healthy and whose windows have room.
 
@@ -262,22 +263,27 @@ the binary directly and answers "fine" for an account the pane will
 refuse. Measured: the same account, refused when the name is typed and
 allowed under six different wrappers.
 
-**Then check that your own shell has the gate at all**, because a shell
-that never loaded it answers "fine" for the same reason a wrapper does,
-and looks identical. Run the probe a second time with `command` in front:
+**If it refused, you are done** — that is the real answer, and the
+account is out. Do not reach for `CLAUDE_FOREIGN_PROFILE_OK=1`, or for
+any wrapper: both exist to run the account anyway, and that is the
+user's decision to make, not yours to make for them by probing.
+
+**If it succeeded, check that your shell has the gate at all**, because a
+shell that never loaded it answers "fine" for the same reason a bypass
+does, and the two look identical. Only then, run it once more with
+`command` in front:
 
 ```sh
 command clauth start <account> -- --version
 ```
 
-- **The two answers differ** — the gate is loaded, and the bare answer is
-  the real one.
-- **Both refuse** — the gate is in the binary here. The bare answer is
-  still the real one.
+- **The two answers differ** — the gate is loaded and the bare answer was
+  real. The account is usable.
 - **Both succeed** — you have learnt nothing. Either the account is fine,
-  or your shell has no gate and the pane's does. Say that rather than
-  reporting the account clear; the pane the session opens runs the user's
-  own interactive shell, which is not necessarily the one you are in.
+  or your shell has no gate and the pane's does. Say *unknown* rather
+  than reporting the account clear: the pane the session opens runs the
+  user's own interactive shell, which is not necessarily the one you are
+  in.
 
 **Probe the launcher the session will actually use.** The command above is
 the default. A `[clauth] launcher` in `config.toml` replaces it, and
@@ -666,11 +672,14 @@ flag* helps in neither case.
 **A failure at the detection step is not a slow agent.** `waiting for
 agent detection ... timed out` says no agent ever appeared in that pane,
 and the ordinary reason is that the launch line never ran — the pane's
-shell refused it (section 5). It is exit 1, so whatever the placement
-opened is still there: with a worktree, a space and its checkout and
-branch; with `tab-in` or `tab-here`, a tab in a workspace that already
-existed; with `split-here`, a pane beside yours. Read the `--json` ids
-rather than assuming a workspace is yours to clean up. The error quotes
+shell refused it (section 5). It is exit 1, so under the default
+`--on-failure keep` whatever the placement opened is still there: with a
+worktree, a space and its checkout and branch; with `new-space`, a bare
+top-level workspace; with `tab-in` or `tab-here`, a tab in a workspace
+that already existed; with `split-here`, a pane beside yours. Read the
+`--json` ids rather than assuming a workspace is yours to clean up — and
+if you passed `--on-failure clean`, read the clean's own fields instead,
+since it may have removed them. The error quotes
 the last lines of the pane, so read it before anything else, and read the
 pane itself **by pane**, not by agent:
 

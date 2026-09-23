@@ -615,7 +615,7 @@ func TestExitZero_ATabThatKeptHerdrsNameIsStillACreate(t *testing.T) {
 //
 // The plan package proves withPaneTail quotes the pane; nothing proved
 // the quote survives into the report a caller reads, and the review of
-// #352 found the create package had no coverage of the fallback finding
+// #352 found the create package had no coverage of the pane read finding
 // anything at all -- its fake's paneReadText was set by no test. Which
 // matters more here than it sounds: the popup truncates this string, so
 // these two surfaces are the only ones that carry it whole.
@@ -676,9 +676,9 @@ func TestExitOne_ARefusedLaunchCarriesThePaneIntoTheReport(t *testing.T) {
 					t.Errorf("--json error = %q, want it to carry %q", msg, want)
 				}
 			}
-			// And herdr's own error is still in there: the pane leads
-			// because it is the more useful half, not because the
-			// timeout stopped being the failure.
+			// And herdr's own error is still in there. The quote is
+			// appended to it, not put in front of it: leading with the
+			// pane was tried and measured worse (exec.go's withPaneTail).
 			if !strings.Contains(msg, "timed out waiting for agent startup") {
 				t.Errorf("--json error = %q, want herdr's own failure still reported", msg)
 			}
