@@ -45,6 +45,11 @@ var foreignFlags = map[string]bool{
 	"--source": true, // herdr agent read
 	"--format": true, // herdr agent read
 	"--check":  true, // herdr-draft skill (#311); TestSkillNamesCheckOnlyForTheSkillVerb scopes it
+	// clauth's, in section 5's ownership probe -- `clauth start <account>
+	// -- --version`, which is claude's own --version reached through
+	// clauth (#350). Scoped by TestSkillProbesAnAccountBare, which also
+	// holds the probe to the one spelling that works.
+	"--version": true,
 }
 
 // createFlags is every flag create really accepts, from the FlagSet
@@ -182,6 +187,50 @@ func TestSkillNamesCheckOnlyForTheSkillVerb(t *testing.T) {
 	}
 	if got := strings.Count(doc, "skill --check"); got != n {
 		t.Errorf("the document names --check %d times, only %d of them as `skill --check`", n, got)
+	}
+}
+
+// TestSkillProbesAnAccountBare scopes foreignFlags' `--version` entry and
+// holds the probe to the only spelling that answers truthfully (#350).
+//
+// The gate that refuses a machine-owned account is not in the clauth
+// binary: it is in the shell in front of it, which is why the refusal
+// reaches a pane at all -- `create` types the launch line and the pane's
+// own shell resolves `clauth`. Measured on 2026-09-23 against clauth
+// 0.15.2: `clauth start quantivly-0 -- --version` refused with exit 3,
+// while `env`, `command`, `nice`, `setsid`, `/usr/bin/time` and `sh -c`
+// in front of the same line all printed a version and exited 0. A probe
+// that reaches the binary directly therefore clears an account that the
+// session will be refused -- worse than not probing, because it is
+// evidence pointing the wrong way.
+//
+// So: every --version in the document is the probe's, and no line shows
+// the probe behind something that would bypass the shell's own
+// resolution.
+func TestSkillProbesAnAccountBare(t *testing.T) {
+	doc := strings.ReplaceAll(renderedSkill(), "`", "")
+	const probe = "clauth start <account> -- --version"
+	n := strings.Count(doc, "--version")
+	if n == 0 {
+		t.Fatal("the document never names --version -- if the account probe went, drop foreignFlags' entry with it")
+	}
+	if got := strings.Count(doc, probe); got != n {
+		t.Errorf("the document names --version %d times, only %d of them as %q", n, got, probe)
+	}
+	// The wrappers are the measured ones plus the two spellings a shell
+	// user reaches for first. Any of them ahead of the probe makes it
+	// answer for the binary instead of for the pane.
+	for _, bypass := range []string{"command clauth", "env clauth", "/usr/bin/env clauth", "sh -c", "bash -c", "nice clauth", "setsid clauth"} {
+		for i, line := range strings.Split(doc, "\n") {
+			if strings.Contains(line, bypass) && strings.Contains(line, "--version") {
+				t.Errorf("line %d runs the account probe through %q, which reaches the binary and not the shell's gate:\n  %s", i+1, bypass, line)
+			}
+		}
+	}
+	// And the document has to say so, since an agent that knows only the
+	// command will wrap it the moment it wants a timeout around it.
+	if !strings.Contains(doc, "Run it **bare**") {
+		t.Error("the document shows the probe without telling the reader to run it bare")
 	}
 }
 
@@ -711,6 +760,114 @@ func TestSkillWeighsTheAccountUsage(t *testing.T) {
 			}
 			if i > 0 && at < strings.Index(text, where.order[i-1]) {
 				t.Errorf("%s says %q before %q; the two branches have swapped", where.name, w, where.order[i-1])
+			}
+		}
+	}
+}
+
+// TestSkillSaysWhatADryRunCannotSettle holds the three facts a clean dry
+// run does not carry, each where the reader is standing when they need it
+// (#349, #350, #351).
+//
+// All three were found the same way, by a session that dry-ran clean and
+// then watched the create fail or land wrong, so the shape of the defect
+// is the same each time: advice that is correct, followed correctly, with
+// the fact underneath it missing. That is why each is pinned to its own
+// SECTION rather than to the document -- a sentence about the spend cap
+// filed anywhere but beside `account_usage` is a sentence nobody reaches
+// while reading a clean `account_usage`.
+func TestSkillSaysWhatADryRunCannotSettle(t *testing.T) {
+	lines := strings.Split(renderedSkill(), "\n")
+	for _, where := range []struct {
+		name, from, to string
+		want           []string
+	}{
+		{
+			// #351: the placement advice was right; what it never said is
+			// that a session without a worktree has no repo grouping to
+			// place, whatever the flag. Sibling sessions with worktrees
+			// are what made overriding the rule look safe, so the
+			// document names that reasoning too.
+			name: "section 4 on what a --no-worktree session cannot be grouped by",
+			from: "**A `--no-worktree` session also loses the grouping.**",
+			to:   "**Any other existing workspace can be named outright:**",
+			want: []string{
+				"worktree metadata", "`herdr workspace list`",
+				"no `--placement` value puts it back",
+				"the grouping belongs to the\nworkspace",
+				"Sibling sessions that have both are no\nguide",
+			},
+		},
+		{
+			// #349 and #350 together: the two refusals a resolved account
+			// can still meet, and the probe that answers for the second.
+			// The probe's own spelling is TestSkillProbesAnAccountBare's.
+			name: "section 5 on an account that resolves but cannot launch",
+			from: "**An account that resolves is not an account that can launch.**",
+			to:   "If the user has not said anything about accounts",
+			want: []string{
+				"monthly spend cap is not a usage window",
+				"`account_usage` reports\n  the windows and nothing else",
+				"refused by whatever stands in for the launcher in\n  the pane's shell",
+				"is owned by <machine>",
+				"nothing fails until the detection step\n  gives up a minute later",
+			},
+		},
+		{
+			// #349: section 7 builds the whole quota ritual on this
+			// object, so the limit of what it models belongs in the
+			// sentence that describes it, not in a footnote.
+			name: "section 7's account_usage reading",
+			from: "- `account_usage`: how full the account the session would bill is.",
+			to:   "**2. Choose the three options**",
+			want: []string{
+				"covers those\n  windows and nothing else",
+				"not a promise the session will start",
+			},
+		},
+		{
+			// #349 item 3: the pane read already told the agent to look
+			// for a trust dialog and a login chooser. This screen reports
+			// `sent`, truthfully, which is what makes it the one worth
+			// showing rather than describing.
+			name: "section 8's pane read",
+			from: "**Finish by looking at the pane**",
+			to:   "## Precedence over herdr's own skill",
+			want: []string{
+				"spend-limit dialog",
+				"You've hit your monthly spend limit",
+				"Adjust monthly spend limit",
+				"hand over and not one to clear",
+			},
+		},
+		{
+			// A detection timeout is the shape the refusal arrives in,
+			// and it reads as a slow agent. Exit 1 also means something
+			// was created, which the retry advice has to account for.
+			name: "section 8 on a detection timeout",
+			from: "**A failure at the detection step is not a slow agent.**",
+			to:   "**Check `launch_options` and `agent_args`",
+			want: []string{
+				"no agent ever appeared",
+				"the pane's\nshell refused it",
+				"a workspace and a tab\nexist",
+				"Re-running the create gets the same refusal",
+				// The pane this paragraph is about is the one `herdr
+				// agent read` cannot resolve, so the section's own
+				// closing command is the wrong one here and the
+				// document has to say which is right.
+				"herdr pane read",
+				// Quoted rather than backticked, as the document spells
+				// every other herdr error code: TestSkillNamesOnlyRealJSONKeys
+				// reads a backticked snake_case word as a --json key.
+				`"agent_not_found"`,
+			},
+		},
+	} {
+		text := strings.Join(linesBetween(t, lines, where.from, where.to), "\n")
+		for _, w := range where.want {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s never says %q", where.name, w)
 			}
 		}
 	}

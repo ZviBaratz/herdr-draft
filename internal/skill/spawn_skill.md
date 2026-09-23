@@ -181,12 +181,26 @@ pane lands.
 `HERDR_WORKSPACE_ID` / `HERDR_TAB_ID` / `HERDR_PANE_ID` that herdr sets in
 every pane. `new-space` and `tab-in` need none of them.
 
+**A `--no-worktree` session also loses the grouping.** The sidebar groups a
+space under a repository from worktree metadata herdr keeps on the space
+itself — in `herdr workspace list` it is a `worktree` block naming the
+repo. A session without a worktree has none, so a space of its own is a
+bare top-level space, sitting outside the repository whose code it is
+working in, and no `--placement` value puts it back. What it can do is join
+a space that already has that metadata: the grouping belongs to the
+workspace, so a tab in the repository's own space is grouped with it. That
+is the difference between `tab-in` and `new-space` here, and it is not
+visible in the table above.
+
 **Leave `--placement` off unless you mean it.** With nothing passed and no
 worktree, `create` picks `tab-in` when `herdr workspace list` already shows a
 workspace on the project's checkout, and `new-space` when it does not — so
 the repository's own space collects its sessions as tabs instead of a new
 top-level space appearing per task. Pass `--placement new-space` to insist
-on a space of its own.
+on a space of its own — and without a worktree that is the choice above, a
+space with no repository over it. Sibling sessions that have both are no
+guide: they got the space and the grouping from the worktree, and one
+without the other is what this flag is offering.
 
 **Any other existing workspace can be named outright:** `--workspace <id>`
 (ids from `herdr workspace list`) puts the tab in that workspace and implies
@@ -206,6 +220,42 @@ another without pretending to be a pane there.
   pass it speculatively, and do not pass it at all unless the user has a
   picker configured — without one it is a usage error, not a quiet
   fallback.
+
+**An account that resolves is not an account that can launch.** What a dry
+run settles is that the account exists, that clauth does not report its
+credential dead, and how full its usage windows are. Two refusals are none
+of those, and both were observed with every one of them clean:
+
+- A **monthly spend cap is not a usage window.** `account_usage` reports
+  the windows and nothing else — clauth models nothing else — so an
+  account under 20% on every window can still be over its cap. The session
+  is created and the prompt delivered, and the agent then sits on a dialog
+  saying `You've hit your monthly spend limit`. Section 7's quota
+  machinery reads the windows, so it stays silent about this; nothing
+  before section 8's pane read can see it at all.
+- The launch can be **refused by whatever stands in for the launcher in
+  the pane's shell.** `create` types the launch line into the new pane and
+  that pane's own shell resolves `clauth`, so a function or alias in front
+  of it decides whether the launch happens (the same shell resolution
+  sections 7 and 8 note for `[clauth] launcher` and `agent_args`). A
+  refusal there starts no agent, so nothing fails until the detection step
+  gives up a minute later: exit 1, with a workspace and a tab already
+  made, and the reason only on the pane. The observed one is machine
+  ownership — `clauth: refused — '<account>' is owned by <machine>` — for
+  an account whose credential is healthy and whose windows have room.
+
+**So probe an account you have not seen launch.** It starts nothing
+persistent and spends no quota:
+
+```sh
+clauth start <account> -- --version
+```
+
+Either it prints a version, or it prints the refusal. Run it **bare**: a
+gate like that lives in the shell, so `command clauth`, `env clauth`,
+`sh -c` or any other wrapper in front of it reaches the binary directly
+and answers "fine" for an account the pane will refuse. Measured: the same
+account, refused when the name is typed and allowed under a wrapper.
 
 If the user has not said anything about accounts, pass neither flag. Show
 which account the session will run under anyway (section 7): it is the
@@ -420,7 +470,11 @@ and a dry run is the cheapest place to catch it. The report is section 8's
   Absent means herdr-draft could not say: the usage is unknown, not known
   to have room, and with nothing pinned so is the account's name. When
   that is because clauth failed, stderr has a `herdr-draft create:` line
-  naming clauth, which is not section 2's warning.
+  naming clauth, which is not section 2's warning. **It covers those
+  windows and nothing else.** A monthly spend cap is invisible to it, and
+  so is a launcher that will refuse the account outright (section 5), so
+  a clean reading here is not a promise the session will start — do not
+  offer it to the user as one.
 
 **2. Choose the three options** (section 5). If the first dry run's
 `agent_kind` is not `claude`, pass none of them.
@@ -505,7 +559,10 @@ creates nothing now, since `create` cannot schedule it.
 
 `clauth status --json` lists the accounts and their windows, so you can
 see which ones have room; a dry run naming one reports the same windows
-for that account, and neither spends anything. A candidate whose
+for that account, and neither spends anything. Neither settles whether an
+account can launch here, though — section 5's probe is what does, and an
+account you are about to offer in place of the user's is exactly the one
+worth probing first. A candidate whose
 `account_usage` comes back absent is unknown rather than free, so leave
 it off the list. An account whose credential clauth reports dead — the
 word is `broken` — is refused with exit 2, which makes it not a candidate
@@ -575,6 +632,26 @@ whoever owns it. Something outside — Linear not answering, or a credential
 helper waiting on an approval nobody gave — may well answer next time, so
 one retry is reasonable before you escalate. Re-running with a *different
 flag* helps in neither case.
+
+**A failure at the detection step is not a slow agent.** `waiting for
+agent detection ... timed out` says no agent ever appeared in that pane,
+and the ordinary reason is that the launch line never ran — the pane's
+shell refused it (section 5). It is exit 1, so a workspace and a tab
+exist. The error quotes the last lines of the pane, so read the error
+before anything else. Read the pane itself **by pane**, not by agent:
+
+```bash
+herdr pane read w12:p3 --source detection --format text
+```
+
+The `herdr agent read` at the end of this section resolves its target
+through herdr's agent registry, so on this pane — the one whose whole
+problem is that no agent started — it answers "agent_not_found" and tells
+you nothing. That is the one case the two commands are not
+interchangeable. Re-running the create gets the same refusal, so fix the
+account or the launcher first; and if the refusal names an account, say
+which one, because the user's next create will pick the same one by
+default.
 
 **Check `launch_options` and `agent_args` against what the user
 approved.** `launch_options` is what the agent was started with for each
@@ -660,10 +737,26 @@ herdr agent read w12:p3 --source detection --format text
 ```
 
 A launch that reported success can still be sitting on a first-run trust
-dialog, a login chooser, or a permission prompt — the agent asking a
-question nobody is there to answer. If it is, tell the user which pane and
-what it is asking. That, and the pane id, is the whole report the user
-needs from you.
+dialog, a login chooser, a permission prompt, or a spend-limit dialog —
+the agent asking a question nobody is there to answer. If it is, tell the
+user which pane and what it is asking. That, and the pane id, is the whole
+report the user needs from you.
+
+The spend dialog is the one to know by sight, because everything before
+this point reports success:
+
+```
+You've hit your monthly spend limit · your weekly limit resets <date>
+What do you want to do?
+  > Adjust monthly spend limit: Unlimited
+    Wait for limit to reset
+```
+
+`prompt_status` is `sent` and it is true — the prompt reached the agent
+and the agent cannot act on it. The highlighted option raises the user's
+spending, and an Enter into that pane chooses it, so this is a screen to
+hand over and not one to clear. It is not `account_usage`'s to predict
+(section 5).
 
 ## Precedence over herdr's own skill
 

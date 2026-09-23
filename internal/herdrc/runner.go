@@ -142,6 +142,10 @@ type Runner interface {
 	AgentStart(ctx context.Context, req AgentStartReq) error
 	AgentPrompt(ctx context.Context, req AgentPromptReq) error
 	AgentRead(ctx context.Context, target string) (string, error)
+	// PaneRead reads a pane's screen without going through herdr's agent
+	// layer, which is the only way to see a pane whose launch never
+	// produced an agent for `agent read` to find (#350).
+	PaneRead(ctx context.Context, paneID string) (string, error)
 	// AwaitDetection polls until the agent in paneID is ready. timeout is
 	// the ordinary detection budget; blockedTimeout, when > 0, is the
 	// separate budget a blocked agent gets (#115) -- pass 0 to keep
@@ -984,6 +988,31 @@ func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 // is evidence-based").
 func (r *CLIRunner) AgentRead(ctx context.Context, target string) (string, error) {
 	return r.runText(ctx, "agent", "read", target, "--source", "detection", "--format", "text")
+}
+
+// PaneRead runs `herdr pane read <pane_id> --source detection --format
+// text`: the same screen AgentRead returns, asked for by PANE rather than
+// by agent.
+//
+// The distinction is the whole reason it exists. `herdr agent read`
+// resolves its target through herdr's agent registry, so a pane that
+// never produced an agent is not a target it has: measured live against
+// 0.9.1 on 2026-09-23, reading a pane whose typed launch had been refused
+// by a shell wrapper answered
+//
+//	{"error":{"code":"agent_not_found","message":"agent target wD2:p2 not found"}}
+//
+// and exited 1, while `pane read` on the same pane printed the refusal
+// verbatim. That is exactly the pane a detection timeout is standing next
+// to (#350), which is why plan's withPaneTail falls back to this one --
+// the case AgentRead cannot serve is the case the diagnosis is for.
+//
+// `--source detection` matches AgentRead's, so the two quote the same
+// screen rather than two subtly different ones; `pane read` accepts the
+// same source vocabulary (verified live at 0.9.1: detection, recent and
+// visible all answered on a non-agent pane).
+func (r *CLIRunner) PaneRead(ctx context.Context, paneID string) (string, error) {
+	return r.runText(ctx, "pane", "read", paneID, "--source", "detection", "--format", "text")
 }
 
 // ErrAgentBlocked reports an agent that herdr has detected and is running,

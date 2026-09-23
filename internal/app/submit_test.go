@@ -198,6 +198,18 @@ func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 	return r.readText, nil
 }
 
+// PaneRead is withPaneTail's fallback (#350). This fake's AgentRead
+// answers whenever `AgentRead` is not on the failure dial, so the
+// fallback is only reached when a test has asked for an unreadable pane
+// -- and then it must not quietly supply one, or the app-layer tests
+// would stop being able to spell that state at all.
+func (r *submitFakeRunner) PaneRead(context.Context, string) (string, error) {
+	if r.shouldFail("AgentRead") {
+		return "", r.failErr
+	}
+	return paintedIdleScreen, nil
+}
+
 // paintedIdleScreen is an ordinary, painted, dialog-free pane -- what
 // submitFakeRunner.AgentRead reports whenever no dial asks for something
 // else. See internal/plan's constant of the same name for why the fake's

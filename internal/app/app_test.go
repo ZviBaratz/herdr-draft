@@ -70,6 +70,11 @@ func (r *fakeRunner) AgentRead(context.Context, string) (string, error) {
 	// rather than a ready state, and this fake exists to be uninteresting.
 	return paintedIdleScreen, nil
 }
+func (r *fakeRunner) PaneRead(context.Context, string) (string, error) {
+	// Never reached while AgentRead answers; this fake's pane is an
+	// ordinary readable one.
+	return paintedIdleScreen, nil
+}
 func (r *fakeRunner) AwaitDetection(context.Context, string, time.Duration, time.Duration) error {
 	return nil
 }

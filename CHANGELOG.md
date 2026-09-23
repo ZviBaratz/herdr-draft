@@ -55,6 +55,28 @@ for why a heading here may read `unreleased`.
   terminal's own background, where its colours are meant to be read. The
   row is marked by the `▌` and a bold value; herdr leaves its own cursor
   row unfilled on this theme too.
+- **A launch the pane's shell refused says so** (#350). When a create's
+  launch line is rejected before the agent starts — a `clauth` wrapper
+  refusing a machine-owned account, a shell rejecting a glob in
+  `[agents.extra_args]` — the pane holds the reason, and the failure
+  reported only `waiting for agent detection … timed out`. It quoted the
+  pane already, through `herdr agent read`, which resolves its target
+  through herdr's agent registry and so answers `agent_not_found` for the
+  one pane this is ever about: the one where no agent started. It now
+  falls back to `herdr pane read`, and quotes six lines rather than
+  three, which is what it takes to reach the account and the machine that
+  owns it past a two-line shell prompt.
+- **The spawn skill says what a clean `--dry-run` does not settle**
+  (#349, #350, #351). Three facts an agent could not have known from the
+  document: `account_usage` covers usage windows only, so a monthly spend
+  cap is invisible to it and a clean reading is not a promise the session
+  will start; an account can be refused at launch by whatever stands in
+  for the launcher in the pane's shell, which section 5 now says how to
+  probe — bare, since a wrapper around the probe reaches the binary and
+  answers for an account the pane will refuse; and a `--no-worktree`
+  session carries no worktree metadata, so the sidebar has nothing to
+  group it under and `--placement new-space` gives it a space outside the
+  repository it is working in.
 
 ## 0.1.0 — 2026-09-22
 

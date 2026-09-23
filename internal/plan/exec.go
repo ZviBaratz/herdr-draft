@@ -1133,13 +1133,29 @@ func explainUnconfirmedPrompt(err error) error {
 // only enriches it. A read that fails, or returns nothing, leaves the
 // original error exactly as it was rather than replacing a real diagnosis
 // with a complaint about not being able to fetch one.
+//
+// It reads the pane TWO ways, and the second is the one that serves the
+// founding case (#350). `herdr agent read` resolves its target through
+// herdr's agent registry, so it answers `agent_not_found` for a pane that
+// never produced an agent -- which is precisely the pane this function is
+// called about, since a launch that started nothing is why detection timed
+// out in the first place. Measured live at 0.9.1 on 2026-09-23: with a
+// refused `clauth start` on screen, `agent read` exited 1 with that code
+// while `pane read` printed the refusal. So the enrichment this comment
+// has always promised could not fire for the failure shape it describes,
+// through every green run of its own tests -- a fake AgentRead answers,
+// and the real one does not. herdrc.PaneRead is the fallback, and the
+// best-effort rule above still holds: both reads failing leaves err
+// untouched.
 func withPaneTail(ctx context.Context, r herdrc.Runner, paneID string, err error) error {
 	if paneID == "" {
 		return err
 	}
 	screen, readErr := r.AgentRead(ctx, paneID)
 	if readErr != nil {
-		return err
+		if screen, readErr = r.PaneRead(ctx, paneID); readErr != nil {
+			return err
+		}
 	}
 	return withScreenTail(screen, err)
 }
@@ -1219,11 +1235,25 @@ func agentKindName(kind string) string {
 	return kind
 }
 
-// paneTailLines is how much of the pane a detection failure quotes. Three
-// is enough for a shell rejection (the echoed command, the error, the new
-// prompt) and small enough that the failure screen stays readable -- this
-// text reaches a UI that surfaces it to the user, not a log.
-const paneTailLines = 3
+// paneTailLines is how much of the pane a detection failure quotes: the
+// echoed command, the error, and the new prompt.
+//
+// Six rather than three, because three was counted against a rejection
+// whose every part was one line -- zsh's "no matches found" (#72) -- and
+// the launcher refusals #350 found are not that shape. Counted on the
+// real screen: the echoed command, three lines of `clauth: refused`, and
+// the user's own two-line prompt underneath. Three therefore quoted the
+// last line of the refusal and then the prompt, naming neither the
+// account nor the machine that owns it -- both of which are on the
+// refusal's first line. Six is what reaches that line on the widest of
+// the two known shapes, not a round number.
+//
+// Raising it costs the popup nothing: SubmitView.stepValue truncates a
+// step's value keeping the HEAD, so what a narrow popup shows is herdr's
+// own error either way (the same reasoning explainBlockedStart records for
+// putting its instruction first). The lines this buys are read in
+// `create`'s stderr and its --json `error`, which carry the whole string.
+const paneTailLines = 6
 
 // lastNonBlankLines returns the last n non-blank lines of s joined by " | ",
 // trimmed, or "" when there are none.

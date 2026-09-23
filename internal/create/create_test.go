@@ -74,6 +74,13 @@ type fakeRunner struct {
 	failAt     string
 	readText   string
 
+	// paneReadText is what PaneRead answers with: the pane read that does
+	// NOT go through herdr's agent registry, and so the only one that can
+	// see a pane whose launch never produced an agent (#350). Empty by
+	// default, which withScreenTail treats as nothing to quote -- a test
+	// that wants the fallback to find something says so.
+	paneReadText string
+
 	// readTextShowsAfter delays readText until after that many AgentRead
 	// calls, answering with a painted, dialog-free pane until then. The
 	// ORDER is what it exists for: the guard's first read passes, the send
@@ -323,6 +330,18 @@ func (r *fakeRunner) AgentRead(_ context.Context, target string) (string, error)
 		return paintedIdleScreen, nil
 	}
 	return r.readText, nil
+}
+
+// PaneRead is withPaneTail's fallback for a pane herdr has no agent for
+// (#350). Its zero value is an empty screen rather than a painted one:
+// reaching it at all means AgentRead just failed, and the tests that
+// arrange that failure were written when nothing read the pane a second
+// time -- an unreadable pane has to stay spellable as exactly that.
+func (r *fakeRunner) PaneRead(_ context.Context, target string) (string, error) {
+	if err := r.record("PaneRead", target); err != nil {
+		return "", err
+	}
+	return r.paneReadText, nil
 }
 
 const paintedIdleScreen = "> Sonnet 5 · claude-code\n  Type your message...\n"
