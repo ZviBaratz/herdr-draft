@@ -242,12 +242,16 @@ of those, and both were observed with every one of them clean:
   refusal there starts no agent, so nothing fails until the detection step
   gives up — thirty seconds by default, longer where `[timeouts]
   detection_ms` says so — with exit 1, whatever the placement had already
-  opened, and the reason only on the pane. The observed one is machine
-  ownership — `clauth: refused — '<account>' is owned by <machine>` — for
-  an account whose credential is healthy and whose windows have room.
+  opened, and the reason only on the pane. A gate like this may refuse one
+  account or every account. The one observed refuses every account: while
+  a configuration file the user's shell reads is broken, it prints
+  `clauth: refused — the tenants file cannot be trusted, and no launch
+  proceeds until it can.` for any account, its credential healthy and its
+  windows clean.
 
-**So probe an account you have not seen launch.** It starts nothing
-persistent and spends no quota:
+**So probe a launch you have not seen succeed** — before the first create
+of a session, and before one that pins an account or a launcher you have
+not launched with yet. It starts nothing persistent and spends no quota:
 
 ```sh
 clauth start <account> -- --version
@@ -255,42 +259,43 @@ clauth start <account> -- --version
 
 Either it prints a version, or it prints the refusal.
 
-Two things decide whether that answer means anything.
-
 **Run it bare.** A gate like this lives in the shell, so `command clauth`,
 `env clauth`, a `sh -c`, a `timeout` — any wrapper in front of it — reaches
-the binary directly and answers "fine" for an account the pane will
-refuse. Measured: the same account, refused when the name is typed and
-allowed under six different wrappers.
+the binary directly and answers "fine" for a launch the pane will refuse.
+Measured: the same account, refused when the name is typed and allowed
+under six different wrappers.
 
-**If it refused, you are done** — that is the real answer, and the
-account is out. Do not reach for `CLAUDE_FOREIGN_PROFILE_OK=1`, or for
-any wrapper: both exist to run the account anyway, and that is the
-user's decision to make, not yours to make for them by probing.
+**If it refused, you are done** — that is the real answer, and nothing you
+pass to `create` changes it. Read what the refusal names. One that names
+the account rules out that account. One that names no account, like the
+one above, rules out every account, so another account is not an option
+to offer: report the refusal as printed, and leave the fix to the user. Do
+not reach for a wrapper to get past it either. That runs the launch
+anyway, which is the user's decision to make, not yours to make for them
+by probing.
 
-**If it succeeded, check that your shell has the gate at all**, because a
-shell that never loaded it answers "fine" for the same reason a bypass
-does, and the two look identical. Only then, run it once more with
-`command` in front:
+**If it printed a version, ask your shell what `clauth` is**, because a
+shell that never loaded the gate reaches the binary just as a wrapper
+does, and the two answers look identical:
 
 ```sh
-command clauth start <account> -- --version
+type clauth
 ```
 
-- **The two answers differ** — the gate is loaded and the bare answer was
-  real. The account is usable.
-- **Both succeed** — you have learnt nothing. Either the account is fine,
-  or your shell has no gate and the pane's does. Say *unknown* rather
-  than reporting the account clear: the pane the session opens runs the
-  user's own interactive shell, which is not necessarily the one you are
-  in.
+- **A shell function or an alias** — your shell has the gate, the probe
+  went through it, and the version is its real answer.
+- **A path to the binary** — your shell has no gate, so the version proves
+  only that the binary runs, and about the pane you have learnt nothing.
+  Say *unknown* rather than reporting the launch clear: the pane the
+  session opens runs the user's own interactive shell, which is not
+  necessarily the one you are in.
 
 **Probe the launcher the session will actually use.** The command above is
 the default. A `[clauth] launcher` in `config.toml` replaces it, and
 `[clauth] launch = "wrapper"` runs `claude` under a `CLAUDE_CONFIG_DIR`
 instead — and a refusal can sit in front of either. Nothing in the dry
 run's output names the launcher, so if the user has configured one, probe
-that spelling rather than this one.
+that spelling rather than this one, and ask `type` about its first word.
 
 If the user has not said anything about accounts, pass neither flag. Show
 which account the session will run under anyway (section 7): it is the
@@ -691,10 +696,11 @@ The `herdr agent read` at the end of this section resolves its target
 through herdr's agent registry, so on this pane — the one whose whole
 problem is that no agent started — it answers "agent_not_found" and tells
 you nothing. That is the one case the two commands are not
-interchangeable. Re-running the create gets the same refusal, so fix the
-account or the launcher first; and if the refusal names an account, say
-which one, because the user's next create will pick the same one by
-default.
+interchangeable. Re-running the create gets the same refusal, so whatever
+it names has to be fixed first — by the user, when it is their shell's
+configuration. If it names an account, say which one, because the user's
+next create will pick the same one by default; if it names none, no other
+account launches either (section 5).
 
 **Check `launch_options` and `agent_args` against what the user
 approved.** `launch_options` is what the agent was started with for each

@@ -1954,6 +1954,14 @@ func TestExecuteDetectionTimeoutQuotesThePane(t *testing.T) {
 // is half of what makes this screen hard: the refusal is four lines and
 // the prompt two more, which is why paneTailLines had to grow past the
 // three that a one-line zsh rejection needed (#72).
+//
+// A dated recording, and kept as one on purpose. The wrapper that printed
+// it stopped refusing by machine ownership on 2026-10-10, so this exact
+// text no longer reaches a pane; what the tests below assert -- that a
+// refusal on a pane with no agent is read by pane and quoted -- does not
+// depend on which refusal it is. It stays because paneTailLines was
+// counted against it, line by line, and a hand-written stand-in for the
+// refusal that remains would not be a measurement.
 const refusedLaunchScreen = "\u276f clauth start quantivly-0 -- --version\n" +
 	"clauth: refused \u2014 'quantivly-0' is owned by dev (EC2) (CLAUDE_TENANT_MACHINE_OWNED).\n" +
 	"    Run this work on dev (EC2) instead: its machine in herdr's sidebar.\n" +

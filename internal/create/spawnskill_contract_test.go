@@ -45,7 +45,7 @@ var foreignFlags = map[string]bool{
 	"--source": true, // herdr agent read
 	"--format": true, // herdr agent read
 	"--check":  true, // herdr-draft skill (#311); TestSkillNamesCheckOnlyForTheSkillVerb scopes it
-	// clauth's, in section 5's ownership probe -- `clauth start <account>
+	// clauth's, in section 5's launch probe -- `clauth start <account>
 	// -- --version`, which is claude's own --version reached through
 	// clauth (#350). Scoped by TestSkillProbesAnAccountBare, which also
 	// holds the probe to the one spelling that works.
@@ -193,23 +193,27 @@ func TestSkillNamesCheckOnlyForTheSkillVerb(t *testing.T) {
 // TestSkillProbesAnAccountBare scopes foreignFlags' `--version` entry and
 // holds the probe to the only spellings that answer truthfully (#350).
 //
-// The gate that refuses a machine-owned account is not in the clauth
-// binary: it is in the shell in front of it, which is why the refusal
-// reaches a pane at all -- `create` types the launch line and the pane's
-// own shell resolves `clauth`. Measured on 2026-09-23 against clauth
-// 0.15.2: `clauth start <profile> -- --version` refused with exit 3,
-// while `env`, `command`, `nice`, `setsid`, `/usr/bin/time` and `sh -c`
-// in front of the same line all printed a version and exited 0. A probe
-// that reaches the binary directly therefore clears an account the
-// session will be refused -- worse than not probing, because it is
-// evidence pointing the wrong way.
+// A gate that refuses a launch is not in the clauth binary: it is in the
+// shell in front of it, which is why the refusal reaches a pane at all --
+// `create` types the launch line and the pane's own shell resolves
+// `clauth`. Measured on 2026-09-23 against clauth 0.15.2, on the
+// per-account gate that existed then: `clauth start <profile> --
+// --version` refused with exit 3, while `env`, `command`, `nice`,
+// `setsid`, `/usr/bin/time` and `sh -c` in front of the same line all
+// printed a version and exited 0. A probe that reaches the binary
+// directly therefore clears a launch the session will be refused --
+// worse than not probing, because it is evidence pointing the wrong way.
 //
-// `command` is the one wrapper the document may show, and only as the
-// differential that tells the reader whether their shell has the gate
-// loaded at all: two identical answers mean the probe proved nothing.
-// That case is not hypothetical -- a non-interactive shell never sources
-// the rc the function lives in -- and an agent that cannot tell it from a
-// healthy account reports the account clear either way.
+// No wrapper may sit in front of the probe, `command` included. Until
+// 2026-10-10 the document showed `command clauth start …` as a
+// differential, run after a bare probe succeeded, meant to tell a loaded
+// gate from an absent one. It never could: the bare run had already gone
+// through any gate there was, so the `command` run succeeded too, and
+// "both succeed" -- the answer it told the reader to report as unknown --
+// was the only answer it could give. Once the gate stopped refusing per
+// account that became the answer on every healthy machine. The check
+// that does separate the two cases is asking the shell what `clauth` IS,
+// so `type clauth` is pinned below instead.
 //
 // The scan collapses the document's whitespace rather than reading it
 // line by line, which is #352's review finding and CLAUDE.md's own
@@ -263,7 +267,7 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 	// match one of the six wrappers this test's own comment calls
 	// measured.
 	const boundary = `(^|[\s/])`
-	bypassNames := []string{"env", "sh -c", "bash -c", "nice", "setsid", "time", "timeout", "sudo", "xargs", "stdbuf"}
+	bypassNames := []string{"command", "env", "sh -c", "bash -c", "nice", "setsid", "time", "timeout", "sudo", "xargs", "stdbuf"}
 	// Compiled once. The inner loop used to build ten of these per
 	// matching line.
 	type bypass struct {
@@ -304,9 +308,6 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 				before = strings.ReplaceAll(prev, "`", "") + " " + before
 			}
 		}
-		// The bypass scan runs FIRST. Exempting a leading `command`
-		// before looking would let `env command clauth start …` through,
-		// which is a bypass wearing the exemption as a hat.
 		var found string
 		for _, b := range bypasses {
 			if b.re.MatchString(before) {
@@ -317,10 +318,6 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 		if found == "" {
 			continue
 		}
-		// The one allowed shape: `command` and nothing else in front.
-		if strings.TrimSpace(before) == "command" {
-			continue
-		}
 		t.Errorf("the probe is shown behind %q, which reaches the binary and not the shell's gate:\n  %s", found, strings.TrimSpace(ll.text))
 	}
 
@@ -329,9 +326,15 @@ func TestSkillProbesAnAccountBare(t *testing.T) {
 	if !strings.Contains(doc, "Run it bare") {
 		t.Error("the document shows the probe without telling the reader to run it bare")
 	}
-	// The differential has to carry its conclusion, or it is one more
-	// command with no rule attached.
-	for _, want := range []string{"command clauth start <account> -- --version", "you have learnt nothing"} {
+	// A version is only an answer from a shell that has the gate, so the
+	// document has to show the check that says so, and each of its two
+	// outcomes has to carry its conclusion -- a check with no rule
+	// attached is one more command the reader runs and then ignores.
+	for _, want := range []string{
+		"type clauth",
+		"A shell function or an alias** — your shell has the gate",
+		"about the pane you have learnt nothing",
+	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("the document never says %q, so the reader cannot tell a loaded gate from an absent one", want)
 		}
@@ -913,7 +916,14 @@ func TestSkillSaysWhatADryRunCannotSettle(t *testing.T) {
 				"monthly spend cap is not a usage window",
 				"`account_usage` reports\n  the windows and nothing else",
 				"refused by whatever stands in for the launcher in\n  the pane's shell",
-				"is owned by <machine>",
+				// The observed refusal, and that it is account-wide: on
+				// its own the quote reads as one more per-account gate.
+				"`clauth: refused — the tenants file cannot be trusted",
+				"may refuse one\n  account or every account",
+				// What follows from each kind of refusal, which is the
+				// part an agent acts on: offering another account against
+				// an account-wide refusal is the wrong move.
+				"One that names no account, like the\none above, rules out every account",
 				"nothing fails until the detection step\n  gives up — thirty seconds by default",
 			},
 		},
@@ -964,6 +974,7 @@ func TestSkillSaysWhatADryRunCannotSettle(t *testing.T) {
 				"with `new-space`, a bare\ntop-level workspace",
 				"if you passed `--on-failure clean`, read the clean's own fields",
 				"Re-running the create gets the same refusal",
+				"if it names none, no other\naccount launches either",
 				// The pane this paragraph is about is the one `herdr
 				// agent read` cannot resolve, so the section's own
 				// closing command is the wrong one here and the
