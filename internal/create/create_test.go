@@ -623,7 +623,9 @@ func TestExitZero_ATabThatKeptHerdrsNameIsStillACreate(t *testing.T) {
 // The failure shape is the measured one. `agent start` gives up with
 // herdr's own `timeout` code and a message about startup, saying nothing
 // about why, while the pane holds a launcher refusal naming the account
-// and the machine that owns it.
+// and the machine that owns it. That refusal was retired on 2026-10-10
+// and is kept as the fixture anyway: what is under test is that the pane's
+// text reaches the report, whichever refusal the text is.
 func TestExitOne_ARefusedLaunchCarriesThePaneIntoTheReport(t *testing.T) {
 	const refusal = "❯ clauth start acct -- --model sonnet\n" +
 		"clauth: refused — 'acct' is owned by other-host (CLAUDE_TENANT_MACHINE_OWNED).\n" +

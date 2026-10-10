@@ -70,16 +70,17 @@ for why a heading here may read `unreleased`.
   row is marked by the `▌` and a bold value; herdr leaves its own cursor
   row unfilled on this theme too.
 - **A launch the pane's shell refused says so** (#350). When a create's
-  launch line is rejected before the agent starts — a `clauth` wrapper
-  refusing a machine-owned account, a shell rejecting a glob in
+  launch line is rejected before the agent starts — a shell function in
+  front of `clauth` refusing the launch, a shell rejecting a glob in
   `[agents.extra_args]` — the pane holds the reason, and the failure
   reported only `waiting for agent detection … timed out`. It quoted the
   pane already, through `herdr agent read`, which resolves its target
   through herdr's agent registry and so answers `agent_not_found` for the
   one pane this is ever about: the one where no agent started. It now
-  reads by pane instead, and quotes six lines rather than three — five to
-  reach the account and the machine that owns it past a two-line shell
-  prompt, six to reach the command that was run. A `herdr agent start`
+  reads by pane instead, and quotes six lines rather than three — on the
+  refusal it was measured against, five to reach the line naming the
+  account past a two-line shell prompt, six to reach the command that was
+  run. A `herdr agent start`
   that times out gets the same quote: it gives up with a bare "timed out
   waiting for agent startup" and previously read nothing. Only that one
   start failure reads the pane — every other kind already says what went
@@ -107,6 +108,19 @@ for why a heading here may read `unreleased`.
   session carries no worktree metadata, so the sidebar has nothing to
   group it under and `--placement new-space` gives it a space outside the
   repository it is working in.
+- **The spawn skill's launch probe no longer assumes the gate refuses one
+  account at a time.** The refusal section 5 quoted, machine ownership, is
+  gone from the wrapper it came from; the one that remains refuses every
+  account while a configuration file the shell reads is broken, so section
+  5 now quotes that one and says what follows from each kind — a refusal
+  naming no account rules out every account, and another account is not
+  an option to offer. It also replaces the `command clauth start …`
+  differential, which could only ever answer "both succeed" after a bare
+  probe had succeeded and so told the reader *unknown* on every healthy
+  machine, with `type clauth`: a shell function or alias means the probe
+  went through the gate, and a path means it did not. The
+  `CLAUDE_FOREIGN_PROFILE_OK` override is no longer mentioned, since it no
+  longer exists.
 
 ## 0.1.0 — 2026-09-22
 
