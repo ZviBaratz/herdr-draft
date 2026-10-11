@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -1188,7 +1189,7 @@ func withPaneTail(ctx context.Context, r herdrc.Runner, paneID string, err error
 // shows" the same way, since a reader who has seen one failure quote a
 // pane should recognize the next.
 func withScreenTail(screen string, err error) error {
-	tail := lastNonBlankLines(screen, paneTailLines)
+	tail := paneTail(screen)
 	if tail == "" {
 		return err
 	}
@@ -1255,26 +1256,74 @@ func agentKindName(kind string) string {
 	return kind
 }
 
-// paneTailLines is how much of the pane a detection failure quotes.
+// paneTail is what a failure quotes of screen: the last paneTailLines
+// non-blank lines, reaching further only to take in a launcher refusal and
+// the command above it (#357).
+//
+// A fixed count is fitted to one refusal and misses the next. Six was
+// counted against the ownership refusal (refusedLaunchScreen in
+// exec_test.go) and reached its echoed command exactly; the tenants-file
+// refusal that replaced it (tenantsRefusalScreen, recorded the same way)
+// prints six lines of its own, and six quoted zsh's error and three hint
+// lines -- neither the word `refused` nor what was run. Raising the count
+// to the nine that screen needs would hold until the wrapper's wording
+// next changed. So the quote is anchored on the refusal instead: it starts
+// one line above the lowest line refusalLine matches, which on both
+// recorded screens is the echoed command.
+//
+// The anchor only ever EXTENDS the quote. A refusal that sits inside the
+// usual tail -- the ownership one, or a one-line refusal under a short
+// prompt -- gets the same paneTailLines it got before, so every screen
+// without a long refusal on it reads exactly as it did.
+func paneTail(screen string) string {
+	return lastNonBlankLines(screen, max(paneTailLines, refusalDepth(screen)))
+}
+
+// refusalLine matches the first line of a wrapper's refusal, in the
+// `<program>: refused` shape every launcher wrapper observed so far has
+// used (`clauth: refused — …`, and the wrapper prints the same line for
+// `claude` and `hspawn`). Anchored to the start of the line and to a
+// program-name shape, so that an agent's own prose saying something was
+// refused does not stretch a blocked-start quote: explainBlockedStart
+// shares this through withScreenTail.
+var refusalLine = regexp.MustCompile(`^[\w.+-]+: refused\b`)
+
+// refusalDepth returns how many non-blank lines, counted from the bottom
+// of screen, reach the line above its lowest refusal line -- or 0 when no
+// refusal line is within paneTailMaxLines of the bottom.
+//
+// The +1 is the echoed command, which is half of any launch diagnosis and
+// the whole of #72's. A refusal found at the very edge of the window is
+// quoted without it rather than not at all.
+func refusalDepth(screen string) int {
+	lines := strings.Split(screen, "\n")
+	depth := 0
+	for i := len(lines) - 1; i >= 0 && depth < paneTailMaxLines; i-- {
+		t := strings.TrimSpace(lines[i])
+		if t == "" {
+			continue
+		}
+		depth++
+		if refusalLine.MatchString(t) {
+			return min(depth+1, paneTailMaxLines)
+		}
+	}
+	return 0
+}
+
+// paneTailLines is how much of the pane a failure quotes when no refusal
+// line reaches further (paneTail).
 //
 // Three was counted against a rejection whose every part was one line --
-// the echoed command, zsh's "no matches found", the new prompt (#72) --
-// and the launcher refusals #350 found are not that shape. Counted on the
-// real screen (refusedLaunchScreen in exec_test.go, verbatim from a live
-// pane): the echoed command, three lines of `clauth: refused`, then the
-// user's own two-line prompt. Reading from the bottom, that puts the
-// prompt at 1-2, the refusal's continuation lines at 3-4, the line naming
-// the account and the machine that owns it at 5, and the echoed command
-// at 6.
-//
-// So three quoted the borrow hint and the prompt and nothing else. FIVE
-// is what first reaches the account and its owner, and six is what
-// reaches the echoed command -- which is not a spare line: the command is
-// the other half of the diagnosis, and on #72's screen it is the whole of
-// it, since there the rejection names the glob and only the echoed line
-// shows what was being launched. Six, then, for the widest of the two
-// known shapes. TestDetectionTailBudgetReachesTheRefusalLine pins both
-// ends of that: six reaches the command, five does not.
+// the echoed command, zsh's "no matches found", the new prompt (#72). Six
+// was counted against the ownership refusal (#350): the echoed command,
+// three lines of `clauth: refused`, then the user's own two-line prompt,
+// which put the command sixth from the bottom. That screen is now reached
+// by the refusal anchor at any value of this constant, so six is no longer
+// load-bearing there. It is kept rather than lowered for a refusal the
+// anchor cannot recognise -- a wrapper that words its refusal some other
+// way -- which gets the reach the last one measured needed, and because
+// lowering it would shorten every other quote for no measured gain.
 //
 // It costs the popup nothing and gains it nothing: SubmitView.stepValue
 // truncates a step's value keeping the HEAD, and herdr's own error fills
@@ -1288,6 +1337,13 @@ func agentKindName(kind string) string {
 // long tail; it is the same screen and the same reader, so one budget is
 // right, but a change made for the detection path lands there as well.
 const paneTailLines = 6
+
+// paneTailMaxLines bounds how far up paneTail looks for a refusal, and so
+// how long a quote can grow. The tenants-file refusal needs nine; twelve
+// leaves room for a fault that runs to a few lines of its own, while a
+// refusal further up than that is more likely an earlier command's than
+// this launch's, and the quote is one joined line in an error message.
+const paneTailMaxLines = 12
 
 // lastNonBlankLines returns the last n non-blank lines of s joined by " | ",
 // trimmed, or "" when there are none.

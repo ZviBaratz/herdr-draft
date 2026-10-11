@@ -1960,14 +1960,41 @@ func TestExecuteDetectionTimeoutQuotesThePane(t *testing.T) {
 // text no longer reaches a pane; what the tests below assert -- that a
 // refusal on a pane with no agent is read by pane and quoted -- does not
 // depend on which refusal it is. It stays because paneTailLines was
-// counted against it, line by line, and a hand-written stand-in for the
-// refusal that remains would not be a measurement.
+// counted against it, line by line, and because it is the refusal the
+// anchor (paneTail) has to reach without extending the quote at all;
+// tenantsRefusalScreen below is the one that remains.
 const refusedLaunchScreen = "\u276f clauth start quantivly-0 -- --version\n" +
 	"clauth: refused \u2014 'quantivly-0' is owned by dev (EC2) (CLAUDE_TENANT_MACHINE_OWNED).\n" +
 	"    Run this work on dev (EC2) instead: its machine in herdr's sidebar.\n" +
 	"    To borrow it on purpose, for one command: CLAUDE_FOREIGN_PROFILE_OK=1 clauth \u2026\n" +
 	"\n" +
 	" ~/.herdr/worktrees/herdr-draft/zvi-spawn-skill-account-gaps  zvi/spawn-skill-account-gaps \u00b7\u00b7\u00b7 13:29:26 \n" +
+	"\u276f\n"
+
+// tenantsRefusalScreen is the launcher refusal that replaced the one
+// above, recorded the same way on 2026-10-11 against herdr 0.9.1 (#357):
+// `clauth start acct -- --version` typed into an ordinary interactive zsh
+// in a disposable session, with CLAUDE_TENANTS_FILE pointed at a scratch
+// file holding a lone CRLF. The wrapper refuses before clauth runs, for
+// any account, so `acct` names none. Byte for byte from `herdr pane read
+// --source detection --format text`, except that the prompt's run of 169
+// middle dots is spelled with strings.Repeat rather than typed out.
+//
+// It is the screen a fixed count could not keep up with: the refusal is
+// six lines, because the wrapper prefaces zsh's own error with a line of
+// its own, so under the two-line prompt the `refused` headline is eighth
+// from the bottom and the echoed command ninth. The width it was recorded
+// at does not matter -- the detection source returned the same logical
+// lines, unwrapped, from panes 200, 100 and 50 columns wide.
+var tenantsRefusalScreen = "\u276f clauth start acct -- --version\n" +
+	"clauth: refused \u2014 the tenants file cannot be trusted, and no launch proceeds until it can.\n" +
+	"    /var/tmp/hd357/claude-tenants.zsh did not run cleanly, so what it declares is not trustworthy:\n" +
+	"    /var/tmp/hd357/claude-tenants.zsh:1: command not found: ^M\n" +
+	"    A tenants file must be self-contained and silent. Check for CRLF line endings,\n" +
+	"    a byte-order mark, or an assignment to a table this reader does not declare.\n" +
+	"    Check it parses with: zsh -n /var/tmp/hd357/claude-tenants.zsh\n" +
+	"\n" +
+	"\ue0b2 /var/tmp/hd357 \ue0b0" + strings.Repeat("\u00b7", 169) + "\ue0b2 10:52:33 \ue0b0\n" +
 	"\u276f\n"
 
 // TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor is the case
@@ -1986,7 +2013,7 @@ const refusedLaunchScreen = "\u276f clauth start quantivly-0 -- --version\n" +
 // So the assertions are that the read goes by PANE and that what it finds
 // reaches the error. The account and its owner are the two facts a person
 // needs, and they are five lines up from the bottom of this screen --
-// reachable only because paneTailLines counts past the shell prompt.
+// reachable only because the quote (paneTail) counts past the shell prompt.
 func TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor(t *testing.T) {
 	in := validInput()
 	in.UseWorktree = true
@@ -2060,52 +2087,143 @@ func TestExecuteDetectionTimeoutReadsThePaneHerdrHasNoAgentFor(t *testing.T) {
 	}
 }
 
-// TestDetectionTailBudgetReachesTheRefusalLine guards the constant that
-// makes the test above pass, as the only cause it is.
-//
-// A fixture proving the pane is read at all would keep passing at three:
-// the refusal's last line is still quoted, so "the pane shows" appears
-// either way. So the budget is asserted against the screen directly.
-//
-// Both ends, because only the pair pins six. The reviewer of #352 found
-// the first draft asserting the account and its owner, which FIVE lines
-// already reach -- so the test passed unchanged at paneTailLines = 5 and
-// the constant was unguarded in the direction that mattered. The sixth
-// line is the echoed command, and the lower-bound case below is what
-// fails if anyone takes it back.
-func TestDetectionTailBudgetReachesTheRefusalLine(t *testing.T) {
-	tail := lastNonBlankLines(refusedLaunchScreen, paneTailLines)
-	for _, want := range []string{
-		// The two facts that make the refusal actionable, at line 5.
-		"quantivly-0", "owned by dev (EC2)",
-		// And what was actually run, at line 6 -- the half of the
-		// diagnosis that is the whole of it on #72's screen.
-		"clauth start quantivly-0",
-	} {
-		if !strings.Contains(tail, want) {
-			t.Errorf("a %d-line tail of a refused launch = %q, want it to reach %q",
-				paneTailLines, tail, want)
+// TestExecuteDetectionTimeoutQuotesTheWholeTenantsRefusal is the test
+// above on the refusal that replaced the ownership one (#357), and the
+// one that fails if withScreenTail stops going through paneTail: the
+// tests below call paneTail directly and cannot see that.
+func TestExecuteDetectionTimeoutQuotesTheWholeTenantsRefusal(t *testing.T) {
+	in := validInput()
+	in.UseWorktree = true
+	in.AccountPin = "acct"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	m := &mockRunner{
+		failAt:       "AwaitDetection",
+		failErr:      errors.New("await detection for pane pane-1: timed out after 1m0.001s"),
+		failCount:    1,
+		topo:         herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		paneReadText: tenantsRefusalScreen,
+	}
+	var progressed []Progress
+	Execute(context.Background(), m, ops, ExecOpts{}, func(p Progress) { progressed = append(progressed, p) })
+	msg := progressed[len(progressed)-1].Err.Error()
+	for _, want := range []string{"the pane shows", "clauth: refused", "clauth start acct", "command not found: ^M"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("detection failure = %q, want it to carry %q from the pane", msg, want)
 		}
 	}
-	// One line fewer must lose the echoed command. Without this the
-	// constant could be lowered to 5 with every assertion above still
-	// green.
-	if short := lastNonBlankLines(refusedLaunchScreen, paneTailLines-1); strings.Contains(short, "clauth start quantivly-0") {
-		t.Errorf("a %d-line tail still reaches the echoed command (%q), so paneTailLines = %d is not the minimum this test claims",
-			paneTailLines-1, short, paneTailLines)
+}
+
+// TestDetectionTailBudgetReachesTheRefusalLine holds paneTail to both
+// recorded refusals, and the refusal anchor to being the reason it reaches
+// the second one (#357).
+//
+// The ownership screen needs six lines and the tenants-file screen nine.
+// A fixed count of nine would pass the first two assertions as well, so
+// the third is what pins the mechanism: the plain paneTailLines tail of
+// the tenants screen must NOT reach the refusal, or this test would keep
+// passing with the anchor deleted.
+func TestDetectionTailBudgetReachesTheRefusalLine(t *testing.T) {
+	for _, tc := range []struct {
+		name, screen string
+		want         []string
+	}{
+		// The two facts that made the ownership refusal actionable, at
+		// line 5, and what was actually run, at line 6 -- the half of the
+		// diagnosis that is the whole of it on #72's screen.
+		{"the ownership refusal", refusedLaunchScreen,
+			[]string{"quantivly-0", "owned by dev (EC2)", "clauth start quantivly-0"}},
+		// The headline at line 8 and the command at line 9, above a fault
+		// and three hint lines that never say a launch was refused.
+		{"the tenants-file refusal", tenantsRefusalScreen,
+			[]string{"clauth: refused", "the tenants file cannot be trusted", "clauth start acct"}},
+	} {
+		tail := paneTail(tc.screen)
+		for _, want := range tc.want {
+			if !strings.Contains(tail, want) {
+				t.Errorf("the quote of %s = %q, want it to reach %q", tc.name, tail, want)
+			}
+		}
 	}
-	// And the upper bound, which has to be measured against a screen with
-	// MORE non-blank lines than the budget -- on refusedLaunchScreen the
-	// segment count saturates at six for every n >= 6, so asserting it
-	// there cannot fail for any value of the constant.
-	var deep strings.Builder
-	for i := 0; i < paneTailLines*3; i++ {
-		fmt.Fprintf(&deep, "line %d\n", i)
+
+	// The anchor as the only cause: the tail without it stops short.
+	if plain := lastNonBlankLines(tenantsRefusalScreen, paneTailLines); strings.Contains(plain, "refused") {
+		t.Errorf("a plain %d-line tail already reaches the tenants refusal (%q), so nothing here shows the anchor is what reaches it",
+			paneTailLines, plain)
 	}
-	if got := len(strings.Split(lastNonBlankLines(deep.String(), paneTailLines), " | ")); got != paneTailLines {
-		t.Errorf("a %d-line budget quoted %d lines of a %d-line screen, want exactly the budget",
-			paneTailLines, got, paneTailLines*3)
+	// And it stops at the command. Measured under earlier output, since
+	// the fixture itself has only nine non-blank lines and a quote of it
+	// cannot overshoot: whatever sits above the command is not this
+	// launch's.
+	under := "earlier output\n" + "more of it\n" + tenantsRefusalScreen
+	if tail := paneTail(under); !strings.HasPrefix(tail, "\u276f clauth start acct") {
+		t.Errorf("the quote of the tenants refusal under earlier output = %q, want it to start at the echoed command", tail)
 	}
+
+	// paneTailLines is what a refusal the anchor cannot recognise gets,
+	// and its doc comment says six because that reaches the command on
+	// the last refusal measured. So reword that refusal's headline out of
+	// the anchor's shape and put earlier output above it: the quote must
+	// start exactly at the command. Five misses it, seven takes in the
+	// line above, and the comparison is with the screen rather than with
+	// the constant, which is what the check this replaced got wrong --
+	// comparing a depth to paneTailLines passes at every value of it.
+	unrecognised := "earlier output\n" + strings.Replace(refusedLaunchScreen, "clauth: refused", "clauth: declined", 1)
+	if tail := paneTail(unrecognised); !strings.HasPrefix(tail, "\u276f clauth start quantivly-0") {
+		t.Errorf("the quote of an unrecognised refusal = %q, want it to start at the echoed command, six lines up", tail)
+	}
+}
+
+// TestPaneTailAnchorOnlyExtends pins the edges of the refusal anchor
+// (#357): what counts as a refusal line, how far up one is looked for,
+// and that a refusal never SHORTENS a quote.
+func TestPaneTailAnchorOnlyExtends(t *testing.T) {
+	// history returns n numbered non-blank lines, so a quote's depth can
+	// be read back from the first line it includes.
+	history := func(n int) string {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "out %02d\n", i)
+		}
+		return b.String()
+	}
+	depth := func(tail string) int { return len(strings.Split(tail, " | ")) }
+
+	t.Run("a one-line refusal near the bottom keeps the usual depth", func(t *testing.T) {
+		screen := history(20) + "\u276f launch\nclauth: refused \u2014 short\n\u276f\n"
+		if got := depth(paneTail(screen)); got != paneTailLines {
+			t.Errorf("quoted %d lines, want paneTailLines = %d: the anchor must extend a quote, never cut one", got, paneTailLines)
+		}
+	})
+
+	t.Run("a refusal past the window is not looked for", func(t *testing.T) {
+		// The refusal is one line beyond paneTailMaxLines.
+		screen := "\u276f launch\nclauth: refused \u2014 old\n" + history(paneTailMaxLines)
+		tail := paneTail(screen)
+		if strings.Contains(tail, "refused") || depth(tail) != paneTailLines {
+			t.Errorf("quote = %q (%d lines), want the plain %d-line tail: a refusal %d lines up is out of reach",
+				tail, depth(tail), paneTailLines, paneTailMaxLines+1)
+		}
+	})
+
+	t.Run("a refusal at the window's edge is quoted without its command", func(t *testing.T) {
+		screen := "\u276f launch\nclauth: refused \u2014 edge\n" + history(paneTailMaxLines-1)
+		tail := paneTail(screen)
+		if !strings.Contains(tail, "refused") || strings.Contains(tail, "launch") || depth(tail) != paneTailMaxLines {
+			t.Errorf("quote = %q (%d lines), want the refusal and no more: %d lines is the cap",
+				tail, depth(tail), paneTailMaxLines)
+		}
+	})
+
+	t.Run("prose that mentions a refusal is not one", func(t *testing.T) {
+		// Mid-sentence, so not a wrapper's headline.
+		screen := "the request was refused by the server\n" + history(paneTailLines+2)
+		if got := depth(paneTail(screen)); got != paneTailLines {
+			t.Errorf("quoted %d lines, want paneTailLines = %d: only a `<program>: refused` line anchors", got, paneTailLines)
+		}
+	})
 }
 
 // TestExecuteDetectionTimeoutSurvivesAnUnreadablePane keeps the enrichment
