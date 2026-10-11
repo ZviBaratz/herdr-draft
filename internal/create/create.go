@@ -184,6 +184,11 @@ type GitSource interface {
 	// its base names in the linked checkout.
 	PrimaryCheckout(ctx context.Context, dir string) (string, error)
 	ResolveCommit(ctx context.Context, dir, ref string) (string, error)
+	// BaseBehind is how far a base that is a local branch trails the
+	// remote-tracking branch it tracks, as of the last fetch -- that
+	// branch's short name and the count, or ("", 0) for any other base
+	// (gitx.BaseBehind, #354).
+	BaseBehind(ctx context.Context, dir, ref string) (string, int, error)
 }
 
 // ClauthSource is clauth's status feed -- the same one-method interface

@@ -83,7 +83,7 @@
 //
 // THE RULE, and the only one to keep in mind when adding a call here:
 // every question is bounded exactly once, at the outermost point where a
-// timeout can still be told apart from an answer. The six GitSource
+// timeout can still be told apart from an answer. The seven GitSource
 // methods are bounded at the method, because each call site sees the error
 // and can refuse. app.SettleBase and app.NamesHead are bounded as a UNIT,
 // over the RAW source, because they swallow ResolveCommit's error into a
@@ -103,7 +103,7 @@ import (
 )
 
 // preflightCheckDeadline bounds every question the pre-flight asks git
-// (#272) -- the six GitSource methods and the two composites built from
+// (#272) -- the seven GitSource methods and the two composites built from
 // them, and nothing else. See the file comment on what is beside them and
 // still unbounded.
 //
@@ -117,10 +117,14 @@ import (
 // or two `git rev-parse` calls, single-digit milliseconds on a filesystem
 // that is working and seconds only on one that is not.
 //
-// It costs at most ONE budget, not six. The pre-flight asks its questions
+// It costs at most ONE budget, not seven. The pre-flight asks its questions
 // in order and a timeout refuses the create outright, so the first stalled
 // question is the only one ever reached -- unlike the popup, where four
-// independent checks can each spend their own.
+// independent checks can each spend their own. The one exception is the
+// stale-base question (#354), which only advises and so goes on past its
+// timeout: a mount that stalls in the instant between the base resolving
+// and that question can cost a second budget. It is asked of a base git
+// resolved a moment before, so that instant is the whole window.
 //
 // A constant rather than a [timeouts] key, for fetchPruneTimeout's and
 // blockingCheckDeadline's reason: it is a safety bound, not a tuning knob,
@@ -169,7 +173,7 @@ func (checkTimeout) Is(target error) bool { return target == errCheckTimedOut }
 //
 // It bounds the ANSWER, not the call -- app.AwaitCheck's own doc comment
 // has the measured reason, and it is the half that matters here too: two
-// of the six take no context at all, and on the stalled mount this is
+// of the seven take no context at all, and on the stalled mount this is
 // about, a cancelled context returns nothing sooner than no context would.
 // The price is the same one the popup pays, and it is cheaper here: the
 // goroutine left on a call that may never come back holds it only until
@@ -325,6 +329,21 @@ func (b boundedGit) BranchExists(ctx context.Context, dir, name string) (bool, e
 func (b boundedGit) ResolveCommit(ctx context.Context, dir, ref string) (string, error) {
 	return boundedErr(ctx, b.deadline, fmt.Sprintf("resolving base %q in %s", ref, dir),
 		func(ctx context.Context) (string, error) { return b.git.ResolveCommit(ctx, dir, ref) })
+}
+
+// BaseBehind is asked after the base is final, and only ever advises: see
+// resolveRequest's call, where a timeout is printed and the create goes on.
+func (b boundedGit) BaseBehind(ctx context.Context, dir, ref string) (string, int, error) {
+	type answer struct {
+		upstream string
+		behind   int
+	}
+	out, err := boundedErr(ctx, b.deadline, fmt.Sprintf("checking whether base %q is behind its upstream in %s", ref, dir),
+		func(ctx context.Context) (answer, error) {
+			up, n, err := b.git.BaseBehind(ctx, dir, ref)
+			return answer{up, n}, err
+		})
+	return out.upstream, out.behind, err
 }
 
 // SettleBase is app.SettleBase under the bound, as a unit -- see THE RULE

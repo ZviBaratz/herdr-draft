@@ -213,6 +213,9 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	if err != nil {
 		return resolution{}, err
 	}
+	if w := baseBehindWarning(ctx, in, t, deps.checks()); w != "" {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
+	}
 	if err := requireContext(hctx, in); err != nil {
 		return resolution{}, err
 	}
@@ -763,6 +766,36 @@ func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]strin
 		prov[defaults.FieldBaseRef] = provenanceCheckout
 	}
 	return in, nil
+}
+
+// baseBehindWarning is the line to print when the base a worktree is cut
+// from is a local branch behind the remote-tracking branch it tracks, and
+// "" when there is nothing to say (#354). git resolves a bare `main` as
+// refs/heads/main, wherever it was last left -- on a machine that works
+// only in worktrees nobody moves it, and every session cut from it starts
+// that far behind without a word.
+//
+// Asked of the base withBase settled, from whichever source: a remembered
+// or configured `main` is as stale as a typed one. An unset base is HEAD,
+// the caller's own checkout, and is not asked about.
+//
+// It only advises. No fetch, so the count is as of the last one, and a
+// question git did not answer -- an error or the bound -- is a line saying
+// so, never a refusal: refusing a create over a check nobody needed to pass
+// would be #272's "unknown is not invalid" turned round.
+func baseBehindWarning(ctx context.Context, in plan.Input, t tiers, git boundedGit) string {
+	if !in.UseWorktree || !t.isGitRepo || in.BaseRef == "" {
+		return ""
+	}
+	upstream, behind, err := git.BaseBehind(ctx, in.ProjectDir, in.BaseRef)
+	if err != nil {
+		return fmt.Sprintf("could not tell whether base %q is behind its upstream (%v); going ahead", in.BaseRef, err)
+	}
+	note := app.BaseBehindNote(in.BaseRef, upstream, behind)
+	if note == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s as of the last fetch -- pass --base %s to start from it, or update %s", note, upstream, in.BaseRef)
 }
 
 // agentKind resolves the agent kind: --agent when given (rejected unless

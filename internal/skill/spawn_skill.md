@@ -134,8 +134,14 @@ you are doing right now.
   every other unset value — usually `HEAD`, which is *your current commit*,
   though a repository's own `.herdr-draft.toml` can set a different
   default. Decide it rather than leave it: if you are on a feature branch
-  and the new work should start from `main`, pass it, and section 7 shows
-  the base either way. `--base HEAD` is your current commit whatever a
+  and the new work should start from main, say so with `--base`, and
+  section 7 shows the base either way. **A bare branch name is the local branch**, wherever
+  it was last left. Nothing is fetched first, and a repository worked only
+  through worktrees rarely moves its local `main`. So pass the remote's
+  copy, `--base origin/main`, unless the user means their local branch.
+  A local base that is behind the branch it tracks, as of the last
+  fetch, gets a `herdr-draft create:` line on stderr saying how far behind,
+  and is used anyway. `--base HEAD` is your current commit whatever a
   default says. With a worktree, a `--base` that names no commit is
   refused with exit 2 and nothing created. A remembered or configured one
   that names no commit is dropped for `HEAD`, with a `herdr-draft create:`
@@ -415,7 +421,7 @@ For a real handoff, **write it to a durable file first and pipe that in**:
 
 ```bash
 # with section 2's three exports above it, in the same command
-"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree --base main --prompt - < ~/handoffs/login-redirect.md
+"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree --base origin/main --prompt - < ~/handoffs/login-redirect.md
 ```
 
 Two reasons, both practical: the user can read the brief before the
@@ -471,7 +477,7 @@ command you mean to offer, leave `--model`, `--effort`,
 
 ```bash
 # with section 2's three exports above it, in the same command
-"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree --base main --prompt - --dry-run --json < ~/handoffs/login-redirect.md
+"{{HERDR_DRAFT_BIN}}" create --title "fix the login redirect loop" --worktree --base origin/main --prompt - --dry-run --json < ~/handoffs/login-redirect.md
 ```
 
 A dry run resolves and checks everything a create would, reports what it
@@ -480,7 +486,8 @@ would create, and stops. Nothing is created or remembered, and
 real pick can still come out differently. The exit code is 0 when the
 create would go ahead. Otherwise it is 2 or 3, with the reason the real
 create would give. Read its stderr too: section 2's warning appears there,
-and a dry run is the cheapest place to catch it. The report is section 8's
+and so does section 3's line about a local base behind its upstream. A dry
+run is the cheapest place to catch either. The report is section 8's
 `--json` object, with `dry_run` true and no ids. What you read from it:
 
 - `launch_options`: what each session option would be without your
