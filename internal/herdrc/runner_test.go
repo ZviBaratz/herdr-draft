@@ -1639,15 +1639,13 @@ func TestCLIRunnerAgentPromptTimeoutIsNotSubstringMatched(t *testing.T) {
 }
 
 // fakeHerdrStaged writes a disposable herdr that answers the first n
-// invocations with firstStdout and every later one with secondStdout --
-// or, when secondStdout is "", fails the way `agent get` fails once there
-// is no agent in the pane at all (exit 1, "not found" on stderr).
+// invocations with firstStdout and every later one with secondStdout.
 //
 // It is fakeHerdrFlaky's mirror image. That one fails and then recovers,
 // which is what a poll waiting for something to APPEAR needs; this one
 // changes a settled answer, which is what a poll watching a state
-// TRANSITION needs -- an agent that is blocked and then becomes ready, or
-// blocked and then stops being reported at all (#115).
+// TRANSITION needs -- an agent that is blocked and then becomes ready
+// (#115).
 func fakeHerdrStaged(t *testing.T, n int, firstStdout, secondStdout string) (bin, argvLog string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -1655,9 +1653,6 @@ func fakeHerdrStaged(t *testing.T, n int, firstStdout, secondStdout string) (bin
 	counter := filepath.Join(dir, "count")
 	bin = filepath.Join(dir, "herdr")
 	second := "cat <<'EOF'\n" + secondStdout + "\nEOF\n"
-	if secondStdout == "" {
-		second = "echo \"not found\" 1>&2\nexit 1\n"
-	}
 	script := "#!/bin/sh\n" +
 		"echo \"$@\" >> " + argvLog + "\n" +
 		"n=$(cat " + counter + " 2>/dev/null || echo 0)\n" +
@@ -1702,17 +1697,32 @@ func TestCLIRunnerAwaitDetectionWaitsThroughBlocked(t *testing.T) {
 //
 // Asserted as a lower bound on elapsed time, never an upper one: the point
 // is that the wait outlived the base deadline, and pinning how far past it
-// went would be pinning the load on the machine running the test. The base
-// budget is likewise generous enough for one `agent get` to actually
-// COMPLETE -- an earlier draft used 20ms, which killed the first poll at
-// its own deadline and read as pending, so the test failed for a reason
-// that had nothing to do with what it is about.
+// went would be pinning the load on the machine running the test. The
+// bound is the whole blocked budget, and that is exact rather than tight:
+// the deadline moves to blockedTimeout from the first sighting, which can
+// only come after the wait began.
+//
+// The poll is answered in process, and must stay that way (#353). This
+// used to fork fakeHerdr, and so needed one `agent get` to COMPLETE inside
+// the base budget before the thing under test could even begin. A first
+// draft at 20ms failed that way unloaded; at 100ms it still failed on a
+// starved machine -- 2/12 under a 5% CPU quota, 10/12 under 2% -- either
+// with no poll landing at all, or with one landing and the next ones
+// killed, which read as pending and tripped the gone verdict. Raising the
+// budget only moves that line. The arithmetic is what this test is about,
+// and the subprocess path has tests of its own
+// (TestCLIRunnerAwaitDetectionWaitsThroughBlocked drives blocked through
+// a real fork).
 func TestCLIRunnerAwaitDetectionBlockedBudgetOutlivesTheBase(t *testing.T) {
-	bin, argvLog := fakeHerdr(t, blockedAgentJSON())
-	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+	const blocked = 600 * time.Millisecond
+	polls := 0
+	poll := func(context.Context) detectionState {
+		polls++
+		return detectionBlocked
+	}
 
 	start := time.Now()
-	err := r.AwaitDetection(context.Background(), "w1:p2", 100*time.Millisecond, 600*time.Millisecond)
+	err := awaitDetection(context.Background(), "w1:p2", 100*time.Millisecond, blocked, 5*time.Millisecond, poll)
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -1724,10 +1734,10 @@ func TestCLIRunnerAwaitDetectionBlockedBudgetOutlivesTheBase(t *testing.T) {
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("error = %q, want a timeout", err.Error())
 	}
-	if elapsed < 400*time.Millisecond {
-		t.Errorf("gave up after %v, want it to outlive the 100ms base deadline and run out the 600ms blocked budget", elapsed)
+	if elapsed < blocked {
+		t.Errorf("gave up after %v, want it to outlive the 100ms base deadline and run out the %v blocked budget", elapsed, blocked)
 	}
-	if polls := strings.Count(readArgvLog(t, argvLog), "\n"); polls < 2 {
+	if polls < 2 {
 		t.Errorf("polled %d time(s); a blocked agent under a blocked budget is pending, so the poll must carry on", polls)
 	}
 }
@@ -1740,12 +1750,24 @@ func TestCLIRunnerAwaitDetectionBlockedBudgetOutlivesTheBase(t *testing.T) {
 // budget on a session that is already gone, so an agent that WAS blocked
 // and has since stopped being reported for a full base timeout ends the
 // wait with a sentinel of its own.
+//
+// In process for the reason TestCLIRunnerAwaitDetectionBlockedBudgetOutlivesTheBase
+// is (#353): forked, it needed one `agent get` to complete inside the base
+// budget, and a starved machine read the miss as a plain timeout. That a
+// failed `agent get` reads as pending is pinned through a real fork by
+// TestCLIRunnerAwaitDetectionTimeout and its neighbours.
 func TestCLIRunnerAwaitDetectionGivesUpWhenTheAgentStopsBeingReported(t *testing.T) {
-	bin, _ := fakeHerdrStaged(t, 2, blockedAgentJSON(), "")
-	r := &CLIRunner{Bin: bin, PollInterval: 5 * time.Millisecond}
+	polls := 0
+	poll := func(context.Context) detectionState {
+		polls++
+		if polls <= 2 {
+			return detectionBlocked
+		}
+		return detectionPending
+	}
 
 	start := time.Now()
-	err := r.AwaitDetection(context.Background(), "w1:p2", 150*time.Millisecond, 30*time.Second)
+	err := awaitDetection(context.Background(), "w1:p2", 150*time.Millisecond, 30*time.Second, 5*time.Millisecond, poll)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, ErrAgentGone) {
