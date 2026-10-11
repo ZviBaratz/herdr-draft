@@ -85,6 +85,16 @@ for why a heading here may read `unreleased`.
   waiting for agent startup" and previously read nothing. Only that one
   start failure reads the pane — every other kind already says what went
   wrong in its own error.
+- **A refused launch is quoted from the refusal down** (#357). The six
+  lines a detection or startup timeout quotes were counted against one
+  wrapper's refusal, and the refusal that wrapper prints now is longer:
+  six lines of its own above a two-line prompt, so the quote showed the
+  file's error and three hints but neither the word `refused` nor the
+  command that was run. A fixed count fitted to the next refusal would miss
+  the one after it, so the quote now reaches up to the lowest
+  `<program>: refused` line and the command above it, up to twelve lines.
+  It only ever grows: a screen with no such line, or one whose refusal is
+  already inside the six, is quoted exactly as before.
 - **A prompt is never typed into the spend-limit dialog** (#349). Claude
   Code's "You've hit your monthly spend limit" screen is a blocking
   selection dialog whose highlighted option is "Adjust monthly spend
