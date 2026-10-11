@@ -107,7 +107,11 @@ flags:
   --base REF         worktree base ref (default: HEAD). Inside a linked
                      worktree it is resolved there, so HEAD is the commit
                      that worktree is on. With a worktree, a REF that
-                     names no commit is refused
+                     names no commit is refused. A bare branch name is the
+                     LOCAL branch, wherever it was last left: pass
+                     origin/main for the remote's. One that is behind the
+                     branch it tracks, as of the last fetch, gets a line
+                     on stderr; nothing is fetched
   --worktree         create a git worktree
   --no-worktree      do not create a worktree
   --reap             end the prompt with pane-reaper's instruction, so the

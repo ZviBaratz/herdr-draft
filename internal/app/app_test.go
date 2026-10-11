@@ -121,6 +121,14 @@ type fakeGit struct {
 	// other call a submit blocks on, and the other one quitting cancels.
 	resolveCtxs []context.Context
 
+	// behind answers BaseBehind, keyed "<dir> <ref>" like commits: the
+	// upstream a local base trails and by how much (#354). A ref with no
+	// entry has nothing to say, which is most of them. behindErr fails every
+	// question, and behindCalls records each in the same form.
+	behind      map[string]fakeBehind
+	behindErr   error
+	behindCalls []string
+
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
@@ -222,6 +230,22 @@ func (g *fakeGit) ResolveCommit(ctx context.Context, dir, ref string) (string, e
 		return c, nil
 	}
 	return "", fmt.Errorf("fakeGit: no commit for %q in %s", ref, dir)
+}
+
+// fakeBehind is one BaseBehind answer.
+type fakeBehind struct {
+	upstream string
+	count    int
+}
+
+func (g *fakeGit) BaseBehind(_ context.Context, dir, ref string) (string, int, error) {
+	key := dir + " " + ref
+	g.behindCalls = append(g.behindCalls, key)
+	if g.behindErr != nil {
+		return "", 0, g.behindErr
+	}
+	b := g.behind[key]
+	return b.upstream, b.count, nil
 }
 func (g *fakeGit) ListBranches(_ context.Context, dir string, _ int) ([]string, error) {
 	g.listBranchesCalls++
@@ -2318,7 +2342,7 @@ func pumpAsync(t *testing.T, m Model, cmds []tea.Cmd) Model {
 		}
 		switch msg := cmd().(type) {
 		case dirDebounceMsg, dirResultMsg, baseDebounceMsg, baseResultMsg,
-			baseSettledMsg, browseDebounceMsg, browseResultMsg:
+			baseSettledMsg, baseBehindMsg, browseDebounceMsg, browseResultMsg:
 			next, out := m.Update(msg)
 			m = next.(Model)
 			queue = append(queue, out)

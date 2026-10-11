@@ -407,6 +407,18 @@ type fakeGit struct {
 	resolveCalls []string
 	// branchAsks records every name BranchExists was asked about.
 	branchAsks []string
+	// behind answers BaseBehind, keyed "<dir> <ref>" like commits; a ref
+	// with no entry has nothing to say. behindErr fails every question,
+	// and behindCalls records each (#354).
+	behind      map[string]fakeBehind
+	behindErr   error
+	behindCalls []string
+}
+
+// fakeBehind is one BaseBehind answer.
+type fakeBehind struct {
+	upstream string
+	count    int
 }
 
 var _ GitSource = (*fakeGit)(nil)
@@ -441,6 +453,16 @@ func (g *fakeGit) ResolveCommit(_ context.Context, dir, ref string) (string, err
 		return c, nil
 	}
 	return "", fmt.Errorf("fakeGit: no commit for %q in %s", ref, dir)
+}
+
+func (g *fakeGit) BaseBehind(_ context.Context, dir, ref string) (string, int, error) {
+	key := dir + " " + ref
+	g.behindCalls = append(g.behindCalls, key)
+	if g.behindErr != nil {
+		return "", 0, g.behindErr
+	}
+	b := g.behind[key]
+	return b.upstream, b.count, nil
 }
 
 // fakeLinear implements IssueSource.

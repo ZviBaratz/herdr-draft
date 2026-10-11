@@ -38,6 +38,59 @@ func FullRefName(ctx context.Context, repoDir, name string) (string, error) {
 	return out, nil
 }
 
+// BaseBehind reports how far a worktree base that is a local branch trails
+// the remote-tracking branch it tracks: the short name of that upstream
+// (origin/main) and the commits it has that the branch does not (#354).
+// Anything else is ("", 0, nil), which means "nothing to say" rather than
+// "up to date": a remote-tracking ref, a tag or a commit is its own
+// answer, a branch that tracks nothing has nothing to trail, and one that
+// tracks another local branch (remote ".") is not the stale copy of a
+// remote this exists to catch -- the same refs/remotes/ rule plan's
+// untrackBase applies to the upstream a new branch was given.
+//
+// Why a bare name needs asking about at all: git resolves `main` as
+// refs/heads/main, so `--base main` cuts from wherever the local branch was
+// last left. On a machine that works only in worktrees nobody moves it,
+// and every lane cut from it starts behind without a word.
+//
+// It reads local refs only and fetches nothing, so the count is as of the
+// last fetch: it can under-count and cannot over-count. It goes through
+// runGit like ResolveRef and CommitsAhead rather than IsGitRepo's fast path,
+// because it runs once per create and once per base change in the form --
+// nowhere near the hottest calls that path exists for.
+func BaseBehind(ctx context.Context, repoDir, ref string) (upstream string, behind int, err error) {
+	full, err := FullRefName(ctx, repoDir, ref)
+	if err != nil {
+		return "", 0, err
+	}
+	branch, ok := strings.CutPrefix(full, "refs/heads/")
+	if !ok {
+		return "", 0, nil
+	}
+	tracked, err := Upstream(ctx, repoDir, branch)
+	if err != nil {
+		return "", 0, err
+	}
+	short, ok := strings.CutPrefix(tracked, "refs/remotes/")
+	if !ok {
+		return "", 0, nil
+	}
+	// A configured upstream whose ref is gone -- pruned, or never fetched --
+	// is "[gone]" to git and nothing to count against here. Asked with
+	// show-ref, which tells "no such ref" from a failure, so a git that did
+	// not answer is reported rather than read as "gone".
+	if exists, err := anyRefExists(ctx, repoDir, tracked); err != nil {
+		return "", 0, err
+	} else if !exists {
+		return "", 0, nil
+	}
+	behind, err = CommitsAhead(ctx, repoDir, tracked, full)
+	if err != nil {
+		return "", 0, err
+	}
+	return short, behind, nil
+}
+
 // AutoSetupMerge returns branch.autoSetupMerge as git would read it in
 // repoDir, from whichever config file sets it, and "" when none does.
 // git compares its value exactly (`strcmp`, git_default_branch_config in

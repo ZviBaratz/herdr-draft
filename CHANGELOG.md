@@ -15,6 +15,20 @@ for why a heading here may read `unreleased`.
 
 ### Changed
 
+- **A base that is a local branch behind its upstream says so** (#354).
+  git resolves `--base main` as the local `main`, wherever it was last
+  left, and nothing is fetched first. In a repository worked only through
+  worktrees nobody moves that branch, so sessions started arbitrarily far
+  behind `origin/main` without a word, and reasoned about code that had
+  since changed. When the base a worktree is cut from is a local branch
+  behind the remote-tracking branch it tracks, `create` now prints one
+  `herdr-draft create:` line with the count and the `--base` that starts
+  from the remote's copy, a `--dry-run` included. The popup shows the same
+  note on the worktree panel, re-counted after its own fetch. Both count
+  as of the last fetch, add no network call, and never refuse a create:
+  the base used is still the base asked for. `create --help` and the spawn
+  skill now say that a bare branch name is the local one, and the skill's
+  examples pass `--base origin/main`.
 - **The `terminal` theme learns the host terminal's real colours** (#347).
   It was the one palette this process could not measure: since #304 it
   sends the terminal's own ANSI palette entries rather than an RGB guess,

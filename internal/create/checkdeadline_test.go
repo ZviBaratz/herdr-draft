@@ -95,6 +95,11 @@ func (g *hangingGit) ResolveCommit(ctx context.Context, dir, ref string) (string
 	return g.fakeGit.ResolveCommit(ctx, dir, ref)
 }
 
+func (g *hangingGit) BaseBehind(ctx context.Context, dir, ref string) (string, int, error) {
+	g.hang("BaseBehind")
+	return g.fakeGit.BaseBehind(ctx, dir, ref)
+}
+
 // hungHarness is a harness whose git stalls on one named call and whose
 // deadline is short enough for a test to wait it out.
 func hungHarness(t *testing.T, call string) *harness {

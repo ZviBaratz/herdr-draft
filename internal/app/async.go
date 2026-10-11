@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -689,6 +690,11 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 	m.baseListNote = ""
 	m.refreshBaseStatus()
 	m.refreshFormContext()
+	// A held base lands with the list, and this handler does not route
+	// through reactToChanges, so the stale-base note is asked here (#354).
+	// The fetch's own re-list re-asks even about an unmoved base: the fetch
+	// is what moves origin/main, the side of the count the base does not.
+	behind := m.scheduleBaseBehind(relist)
 
 	path := msg.req.key
 	var cmd tea.Cmd
@@ -696,7 +702,7 @@ func (m Model) handleBaseResult(msg baseResultMsg) (Model, tea.Cmd) {
 		m.fetchedRepos[path] = true
 		cmd = m.runFetchPrune(path)
 	}
-	return m, tea.Batch(settle, cmd)
+	return m, tea.Batch(settle, cmd, behind)
 }
 
 func (m Model) runFetchPrune(path string) tea.Cmd {
@@ -955,9 +961,91 @@ func (m Model) handleBaseSettled(msg baseSettledMsg) (Model, tea.Cmd) {
 		// The app moved the base, not the user -- see snapshotAppliedDefaults.
 		m.snapshotAppliedDefaults()
 	}
+	// Either branch above can have moved the base on screen, and this
+	// handler does not route through reactToChanges (#354).
+	behind := m.scheduleBaseBehind(false)
 	if m.submitHeld {
-		return m.handleSubmit()
+		next, cmd := m.handleSubmit()
+		return next, tea.Batch(cmd, behind)
 	}
+	return m, behind
+}
+
+// --- a base behind its upstream (#354) ------------------------------------
+
+// baseBehindMsg is the answer about the base one (project, base, worktree)
+// triple named: the note to show, "" for nothing to say. version is
+// reqs.baseBehind at scheduling time.
+type baseBehindMsg struct {
+	version int
+	note    string
+}
+
+// scheduleBaseBehind asks, off the update loop, whether the base on screen
+// is a local branch behind the remote-tracking branch it tracks (#354). git
+// resolves a bare `main` as the local branch, and in a repository worked
+// only through worktrees nobody moves it -- while the base list offers it
+// under that one name, origin's copy folded into it (gitx.ListBranches).
+//
+// It asks only when the triple it is about has moved since it last asked,
+// or when force says the refs have: the form's own fetch is what moves
+// origin/main, so the note re-asks when the re-list after it lands. Moving the triple drops
+// the old note at once, because it described a base no longer on screen; a
+// forced re-ask keeps it until the answer replaces it.
+//
+// It is called wherever the base can move: reactToChanges for anything the
+// user does, and the base list and base settle landing for what the app
+// does, since neither of those routes through reactToChanges.
+//
+// It holds no submit and refuses nothing, so it is not one of the checks
+// #202 bounds for that reason. It is bounded anyway, by the same two
+// helpers, because it shells out from a tea.Cmd and a quit must kill it
+// (Lifetime). A timeout or a failure leaves no note: what a person can do
+// with "could not tell" is nothing, and the base itself was already
+// checked by the question that matters.
+func (m *Model) scheduleBaseBehind(force bool) tea.Cmd {
+	dir := m.dir.Value()
+	base := m.worktree.Base()
+	on := m.worktree.On()
+	key := dir + "\x00" + base + "\x00" + strconv.FormatBool(on)
+	if key == m.lastBehindKey && !force {
+		return nil
+	}
+	if key != m.lastBehindKey {
+		m.lastBehindKey = key
+		m.baseBehindNote = ""
+		m.showRepoConfig()
+	}
+	m.reqs.baseBehind++
+	if !on || base == "" || dir == "" {
+		return nil
+	}
+	v := m.reqs.baseBehind
+	git, path := m.deps.Git, pathx.ExpandTilde(dir)
+	lt, deadline := m.checkBudget()
+	return func() tea.Msg {
+		msg, ok := awaitCheck(lt, deadline, func(ctx context.Context) baseBehindMsg {
+			upstream, behind, err := git.BaseBehind(ctx, path, base)
+			if err != nil {
+				return baseBehindMsg{version: v}
+			}
+			return baseBehindMsg{version: v, note: BaseBehindNote(base, upstream, behind)}
+		})
+		if !ok {
+			return baseBehindMsg{version: v}
+		}
+		return msg
+	}
+}
+
+// handleBaseBehind shows the answer about the base still on screen, and
+// drops one about a base, project or toggle that has moved since.
+func (m Model) handleBaseBehind(msg baseBehindMsg) (Model, tea.Cmd) {
+	if msg.version != m.reqs.baseBehind {
+		return m, nil
+	}
+	m.baseBehindNote = msg.note
+	m.showRepoConfig()
 	return m, nil
 }
 
@@ -2618,6 +2706,10 @@ func (gitxSource) PrimaryCheckout(ctx context.Context, dir string) (string, erro
 
 func (gitxSource) ResolveCommit(ctx context.Context, dir, ref string) (string, error) {
 	return gitx.ResolveRef(ctx, dir, ref)
+}
+
+func (gitxSource) BaseBehind(ctx context.Context, dir, ref string) (string, int, error) {
+	return gitx.BaseBehind(ctx, dir, ref)
 }
 
 func (gitxSource) ListSubdirs(dir string, limit int) []string {

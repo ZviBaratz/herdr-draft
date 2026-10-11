@@ -1054,6 +1054,13 @@ func (g formGit) PrimaryCheckout(_ context.Context, dir string) (string, error) 
 	return "", nil
 }
 
+// BaseBehind has nothing to say about any base: the note it feeds is
+// printed, not built into plan.Input, so it is no part of what this file
+// compares.
+func (formGit) BaseBehind(context.Context, string, string) (string, int, error) {
+	return "", 0, nil
+}
+
 // ResolveCommit answers in the checkout the project is, as commandCase's
 // fake does: in the lane when there is one, and in the repository only when
 // there is not, so a commit read in any other checkout -- the primary's HEAD
