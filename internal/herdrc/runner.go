@@ -1256,9 +1256,20 @@ func classifyAgent(a agentInfo) detectionState {
 // ever started once the deadline has already passed. The context is built
 // per poll rather than once, because the deadline moves.
 func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout, blockedTimeout time.Duration) error {
+	return awaitDetection(ctx, paneID, timeout, blockedTimeout, r.pollInterval(),
+		func(ctx context.Context) detectionState { return r.pollDetection(ctx, paneID) })
+}
+
+// awaitDetection is AwaitDetection's loop, with the poll handed in. Split
+// out for the reason classifyAgent is split from pollDetection: the
+// deadline arithmetic -- when the blocked budget takes over, when a run of
+// unanswered polls after blocked means gone -- is testable without a
+// subprocess, and a test of it that forks one is measuring the machine's
+// scheduler instead (#353). poll receives a context bound to the current
+// deadline, which moves.
+func awaitDetection(ctx context.Context, paneID string, timeout, blockedTimeout, interval time.Duration, poll func(context.Context) detectionState) error {
 	start := time.Now()
 	deadline := start.Add(timeout)
-	interval := r.pollInterval()
 	// lastBlocked is when the agent was most recently seen blocked, and
 	// zero until it ever is -- which is also what makes ErrAgentGone
 	// unreachable for a pane that never showed a dialog.
@@ -1278,7 +1289,7 @@ func (r *CLIRunner) AwaitDetection(ctx context.Context, paneID string, timeout, 
 		}
 
 		pollCtx, cancel := context.WithDeadline(ctx, deadline)
-		state := r.pollDetection(pollCtx, paneID)
+		state := poll(pollCtx)
 		cancel()
 
 		switch state {
