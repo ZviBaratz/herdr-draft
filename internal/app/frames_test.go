@@ -1040,18 +1040,21 @@ func TestAssembledForm_ConfigWarnings(t *testing.T) {
 // resolves, dropped to the HEAD row with the note saying so, and one the
 // branch list does not name but git resolves, offered right after the HEAD
 // row. The fixture's list is the two branches every other frame shows, so
-// the offered row is visibly not one of them.
+// the offered row is visibly not one of them. The third is #354's: a base
+// that resolves and stands, but is the local branch, behind origin's copy.
 func TestAssembledForm_RememberedBase(t *testing.T) {
 	const cwd = "/home/zvi/Projects/herdr-draft"
 	for _, tc := range []struct{ name, base string }{
 		{"dropped", "gone-branch"},
 		{"offered", "release/1.2"},
+		{"behind", "main"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			git := newFakeGit()
 			git.listBranchesResult = []string{"main", "release/1.4"}
 			git.currentBranchResult = "main"
-			git.commits = map[string]string{cwd + " release/1.2": "3d4e5f6"}
+			git.commits = map[string]string{cwd + " release/1.2": "3d4e5f6", cwd + " main": "0a1b2c3"}
+			git.behind = map[string]fakeBehind{cwd + " main": {"origin/main", 38}}
 			setup := frameSetup(false)
 			setup.Git = git
 			setup.Projects = memoryFor(map[string]config.ProjectDefaults{

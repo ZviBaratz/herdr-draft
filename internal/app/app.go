@@ -161,6 +161,11 @@ type gitSource interface {
 	// what a worktree session from a lane needs (#171).
 	PrimaryCheckout(ctx context.Context, dir string) (string, error)
 	ResolveCommit(ctx context.Context, dir, ref string) (string, error)
+	// BaseBehind is how far a base that is a local branch trails the
+	// remote-tracking branch it tracks, as of the last fetch: its short
+	// name and the count, or ("", 0) for any other base (gitx.BaseBehind,
+	// #354).
+	BaseBehind(ctx context.Context, dir, ref string) (string, int, error)
 	ListSubdirs(dir string, limit int) []string
 	ResolvePath(path string) string
 	ListBranches(ctx context.Context, dir string, limit int) ([]string, error)
@@ -867,6 +872,10 @@ type reqVersions struct {
 	// -- or by a form a ⌃R⌃R discarded -- must not release the next hold,
 	// and the version it carries is what says so.
 	accountWait int
+	// baseBehind is the stale-base note's (#354). It holds no submit, so
+	// nothing waits on it; it is here so a rebuilt form cannot be handed a
+	// note about a base the discarded form was showing.
+	baseBehind int
 }
 
 // superseded is what a ⌃R⌃R rebuild starts from: every counter one past
@@ -894,6 +903,7 @@ func (v reqVersions) superseded() reqVersions {
 		picker:      v.picker + 1,
 		clauth:      v.clauth + 1,
 		accountWait: v.accountWait + 1,
+		baseBehind:  v.baseBehind + 1,
 	}
 }
 
@@ -979,6 +989,15 @@ type Model struct {
 	// still stands (#194). "" when nothing was dropped.
 	baseSettleLanded int
 	baseNote         string
+
+	// baseBehindNote is BaseBehindNote about the base on screen: "" unless
+	// it is a local branch behind the remote-tracking branch it tracks
+	// (#354). Advisory -- it holds no submit -- and asked again whenever
+	// the base, the project or the worktree toggle moves, and after the
+	// form's own fetch, which is what moves the remote-tracking side.
+	// lastBehindKey is that triple as last asked about.
+	baseBehindNote string
+	lastBehindKey  string
 
 	// checkDeadline overrides blockingCheckDeadline, the bound on every
 	// check a submit waits for (#202). Zero -- which is what production
@@ -1830,6 +1849,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLinkedCommit(msg)
 	case baseSettledMsg:
 		return m.handleBaseSettled(msg)
+	case baseBehindMsg:
+		return m.handleBaseBehind(msg)
 	case tea.BackgroundColorMsg:
 		return m.handleHostBackground(msg)
 	case tea.ForegroundColorMsg:
@@ -2885,6 +2906,9 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	}
 
 	m.syncDerivedInertness()
+	// After syncDerivedInertness, which can turn the worktree toggle inert
+	// and so off: the note is about the base a submit would use (#354).
+	cmds = append(cmds, m.scheduleBaseBehind(false))
 	// v2 spec §11's provenance follows the touched flags noteUserEdits
 	// set at the top of this function: a value the user has just moved is
 	// no longer the repository's, and the line saying it was has to go
@@ -3269,6 +3293,11 @@ func (m *Model) showRepoConfig() {
 	if m.baseNote != "" {
 		notes = append(notes, m.baseNote)
 	}
+	// Last, because it is advisory where the two above report something
+	// thrown away: a short panel gives it up first (#354).
+	if m.baseBehindNote != "" {
+		notes = append(notes, m.baseBehindNote)
+	}
 	m.worktree.SetNotes(notes)
 }
 
@@ -3399,6 +3428,27 @@ func BranchPrefixWarning(cfg config.Config, res defaults.Resolved) string {
 		return ""
 	}
 	return cfg.BranchPrefixWarning
+}
+
+// BaseBehindNote is what both paths say about a base that is a local
+// branch trailing its upstream (#354), and "" when there is nothing to say:
+// no upstream to trail, or none of it unseen. git resolves a bare `main` as
+// the local branch, wherever it was last left, so a session cut from it
+// starts that far behind and nothing about the result looks stale.
+//
+// Short because the popup draws a note as one line, cut to the panel; the
+// headless command adds what only it can say -- that the count is as of the
+// last fetch, and which flag starts from the remote's copy instead.
+// Exported for internal/create, for BranchPrefixWarning's reason.
+func BaseBehindNote(ref, upstream string, behind int) string {
+	if upstream == "" || behind <= 0 {
+		return ""
+	}
+	commits := "commits"
+	if behind == 1 {
+		commits = "commit"
+	}
+	return fmt.Sprintf("local %s is %d %s behind %s", ref, behind, commits, upstream)
 }
 
 // branchPrefixNotes is BranchPrefixWarning as the worktree panel's note list:
