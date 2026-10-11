@@ -319,10 +319,12 @@ func TestListBranchesSplitsOnlyWhereOriginsCopyHasCommitsTheLocalLacks(t *testin
 }
 
 // The split is keyed on the branch's own upstream, the ref BaseBehind
-// counts against, so the row and the note cannot disagree. A branch that
-// tracks nothing trails nothing, however far origin's copy of its name has
-// moved. One that tracks origin/main is behind origin/main, which says
-// nothing about origin's copy of its own name.
+// counts against, so the row and the note cannot disagree. Here origin's
+// copy of every branch has moved on. A branch that tracks nothing trails
+// nothing, however far that is. One that tracks origin/main is behind
+// origin/main, which says nothing about origin's copy of its own name --
+// and since that copy names another commit, the question is asked of it,
+// so this is the case that holds the upstream to the branch's own name.
 func TestListBranchesSplitsOnlyAgainstTheBranchsOwnUpstream(t *testing.T) {
 	upstream := mkRepo(t)
 	gitRun(t, upstream, "branch", "-q", "loose")
@@ -334,6 +336,8 @@ func TestListBranchesSplitsOnlyAgainstTheBranchsOwnUpstream(t *testing.T) {
 
 	gitRun(t, upstream, "checkout", "-q", "loose")
 	gitCommitAt(t, upstream, "loose moved on", time.Now().Add(time.Hour))
+	gitRun(t, upstream, "checkout", "-q", "topic")
+	gitCommitAt(t, upstream, "topic moved on", time.Now().Add(90*time.Minute))
 	gitRun(t, upstream, "checkout", "-q", "main")
 	gitCommitAt(t, upstream, "main moved on", time.Now().Add(2*time.Hour))
 	gitRun(t, clone, "fetch", "-q")
@@ -341,15 +345,17 @@ func TestListBranchesSplitsOnlyAgainstTheBranchsOwnUpstream(t *testing.T) {
 	if up, n, err := BaseBehind(ctx, clone, "topic"); err != nil || up != "origin/main" || n == 0 {
 		t.Fatalf("setup: BaseBehind(topic) = %q, %d, %v, want it behind origin/main", up, n, err)
 	}
-	if revOf(t, clone, "loose") == revOf(t, clone, "origin/loose") {
-		t.Fatal("setup: origin/loose has not moved on from loose")
+	for _, branch := range []string{"loose", "topic"} {
+		if revOf(t, clone, branch) == revOf(t, clone, "origin/"+branch) {
+			t.Fatalf("setup: origin/%s has not moved on from %s", branch, branch)
+		}
 	}
 
 	got, err := ListBranches(ctx, clone, 10)
 	if err != nil {
 		t.Fatalf("ListBranches: %v", err)
 	}
-	if want := []string{"main", "origin/main", "loose", "topic"}; !slices.Equal(got, want) {
+	if want := []string{"main", "origin/main", "topic", "loose"}; !slices.Equal(got, want) {
 		t.Errorf("ListBranches = %q, want %q -- only main trails origin's copy of itself", got, want)
 	}
 	for _, branch := range []string{"main", "loose", "topic"} {

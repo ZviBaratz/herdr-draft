@@ -984,11 +984,16 @@ type baseBehindMsg struct {
 // scheduleBaseBehind asks, off the update loop, whether the base on screen
 // is a local branch behind the remote-tracking branch it tracks (#354). git
 // resolves a bare `main` as the local branch, and in a repository worked
-// only through worktrees nobody moves it. The note is what makes the base
-// list's second row worth reading: a local branch behind origin's copy of
-// itself has that copy listed directly under it (gitx.ListBranches, #361),
-// so the base the note names is one row down, and picking it clears the
-// note, since a remote-tracking ref trails nothing.
+// only through worktrees nobody moves it.
+//
+// In the common case the note points at a row. A local branch behind
+// origin's copy of ITSELF -- the clone's own main -- has that copy listed
+// directly under it (gitx.ListBranches, #361), and picking it clears the
+// note, since a remote-tracking ref trails nothing. Not every note has that
+// row. A branch tracking another name (topic tracking origin/main), or
+// another remote (main tracking upstream/main), is told what it trails, and
+// that ref is listed on its own terms or not at all. So is a pair the
+// 50-row cap cut short (maxBaseRefs).
 //
 // It asks only when the triple it is about has moved since it last asked,
 // or when force says the refs have: the form's own fetch is what moves
