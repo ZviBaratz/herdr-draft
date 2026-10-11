@@ -151,3 +151,66 @@ func execGit(dir string, args ...string) *exec.Cmd {
 	cmd.Env = gitTestEnv()
 	return cmd
 }
+
+// TestBaseBehind counts how far a local branch named as a base trails the
+// remote-tracking branch it tracks (#354), and stays silent for every base
+// that is not a stale copy of a remote's: the remote's own ref, a tag, a
+// commit, a branch tracking nothing, and one tracking a local branch.
+func TestBaseBehind(t *testing.T) {
+	isolateGitConfig(t)
+	ctx := context.Background()
+	upstream := mkRepo(t)
+	repo := cloneOf(t, upstream)
+
+	// origin moves on three commits and the clone fetches them, which moves
+	// origin/main and leaves the local main where the clone left it.
+	for _, msg := range []string{"one", "two", "three"} {
+		gitRun(t, upstream, "commit", "-q", "--allow-empty", "-m", msg)
+	}
+	gitRun(t, repo, "fetch", "-q")
+	gitRun(t, repo, "tag", "v1", "main")
+	gitRun(t, repo, "branch", "--no-track", "loose", "main")
+	gitRun(t, repo, "branch", "--no-track", "follower", "main")
+	gitRun(t, repo, "branch", "--set-upstream-to=main", "follower")
+	gitRun(t, repo, "branch", "--no-track", "current", "origin/main")
+	gitRun(t, repo, "branch", "--set-upstream-to=origin/main", "current")
+	gitRun(t, repo, "branch", "--no-track", "gone", "main")
+	gitRun(t, repo, "config", "branch.gone.remote", "origin")
+	gitRun(t, repo, "config", "branch.gone.merge", "refs/heads/never-fetched")
+
+	for _, tc := range []struct {
+		ref          string
+		wantUpstream string
+		wantBehind   int
+	}{
+		{"main", "origin/main", 3},
+		{"heads/main", "origin/main", 3},
+		{"refs/heads/main", "origin/main", 3},
+		// Up to date is a count of zero, still naming what it was checked
+		// against: the caller decides that zero needs no line.
+		{"current", "origin/main", 0},
+		{"origin/main", "", 0},
+		{"v1", "", 0},
+		{revParse(t, repo, "main"), "", 0},
+		{"loose", "", 0},
+		{"follower", "", 0},
+		{"gone", "", 0},
+	} {
+		up, behind, err := BaseBehind(ctx, repo, tc.ref)
+		if err != nil || up != tc.wantUpstream || behind != tc.wantBehind {
+			t.Errorf("BaseBehind(%s) = %q, %d, %v, want %q, %d, nil", tc.ref, up, behind, err, tc.wantUpstream, tc.wantBehind)
+		}
+	}
+
+	// Ahead is not behind: commits only the local branch has are its own
+	// work, not a stale start.
+	gitRun(t, repo, "checkout", "-q", "current")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "mine")
+	if up, behind, err := BaseBehind(ctx, repo, "current"); err != nil || up != "origin/main" || behind != 0 {
+		t.Errorf("BaseBehind(current) ahead of origin/main = %q, %d, %v, want origin/main, 0, nil", up, behind, err)
+	}
+
+	if _, _, err := BaseBehind(ctx, t.TempDir(), "main"); err == nil {
+		t.Error("BaseBehind in a non-repository returned no error; that is not the same answer as \"nothing to say\"")
+	}
+}
