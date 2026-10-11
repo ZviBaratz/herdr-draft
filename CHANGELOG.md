@@ -15,6 +15,18 @@ for why a heading here may read `unreleased`.
 
 ### Changed
 
+- **The popup's base list offers `origin/<name>` under a local `<name>`
+  that is behind it** (#361). The list folded origin's copy of a branch
+  into the local branch's row however far apart the two were, so once a
+  clone had a local `main` it could not offer `origin/main` at all. The
+  worktree panel's note (#354) said `main` was behind `origin/main`, and
+  the only ways on were to cancel and update `main` by hand, or to cut from
+  it knowing it was stale. A local branch whose upstream is origin's copy
+  of it, and which that copy has commits it lacks, now has `origin/<name>`
+  on the row directly under it. A branch that is current, or only ahead,
+  is still one row. The extra row counts against the list's 50. A
+  remembered or configured `main` stays on the local branch, as it does in
+  `create`; picking `origin/main` is up to you, and clears the note.
 - **A base that is a local branch behind its upstream says so** (#354).
   git resolves `--base main` as the local `main`, wherever it was last
   left, and nothing is fetched first. In a repository worked only through

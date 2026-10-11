@@ -225,6 +225,179 @@ func TestListBranchesOffersARemoteOnlyBranchByANameThatResolves(t *testing.T) {
 	}
 }
 
+// assertListAgreesWithBaseBehind holds the list to the rule it shares with
+// the worktree panel's note (#361): origin's copy of branch is a row of its
+// own, directly under branch, exactly when BaseBehind would say branch
+// trails origin's copy of itself. Any other upstream is not this rule's.
+func assertListAgreesWithBaseBehind(t *testing.T, repo string, got []string, branch string) {
+	t.Helper()
+	upstream, behind, err := BaseBehind(context.Background(), repo, branch)
+	if err != nil {
+		t.Fatalf("BaseBehind(%s): %v", branch, err)
+	}
+	i := slices.Index(got, branch)
+	if i < 0 {
+		t.Fatalf("ListBranches = %q, missing %q", got, branch)
+	}
+	split := i+1 < len(got) && got[i+1] == "origin/"+branch
+	if want := behind > 0 && upstream == "origin/"+branch; split != want {
+		t.Errorf("ListBranches = %q: origin/%s directly under %s is %v, want %v -- BaseBehind says %d behind %q",
+			got, branch, branch, split, want, behind, upstream)
+	}
+}
+
+// #361: the list folded origin/<name> into a local <name>'s row however far
+// apart the two were, so once a clone had a local main the popup could not
+// offer origin/main at all -- while #354's note, on the same panel, said
+// main was behind it. A local branch behind origin's copy of itself now has
+// that copy directly under it, and loses it again once it catches up.
+func TestListBranchesOffersOriginsCopyUnderABehindLocalBranch(t *testing.T) {
+	upstream := mkRepo(t)
+	clone := cloneOf(t, upstream)
+	gitCommitAt(t, upstream, "moved on", time.Now().Add(time.Hour))
+	gitRun(t, clone, "fetch", "-q")
+	ctx := context.Background()
+	if revOf(t, clone, "main") == revOf(t, clone, "origin/main") {
+		t.Fatal("setup: main is not behind origin/main")
+	}
+
+	got, err := ListBranches(ctx, clone, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if want := []string{"main", "origin/main"}; !slices.Equal(got, want) {
+		t.Fatalf("ListBranches with main behind origin/main = %q, want %q", got, want)
+	}
+	for _, name := range got {
+		if _, err := ResolveRef(ctx, clone, name); err != nil {
+			t.Errorf("ListBranches offered %q, which names nothing in the clone: %v", name, err)
+		}
+	}
+	assertListAgreesWithBaseBehind(t, clone, got, "main")
+
+	gitRun(t, clone, "merge", "-q", "--ff-only", "origin/main")
+	got, err = ListBranches(ctx, clone, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if want := []string{"main"}; !slices.Equal(got, want) {
+		t.Fatalf("ListBranches with main caught up = %q, want %q -- one row again", got, want)
+	}
+	assertListAgreesWithBaseBehind(t, clone, got, "main")
+}
+
+// Behind is what splits a branch, not "different". A local main with work
+// origin lacks starts from a newer place than origin/main, and a second row
+// would offer an older start point under the same name. Once origin moves
+// on too, the two have diverged and origin's copy holds commits the local
+// one lacks, which is behind again.
+func TestListBranchesSplitsOnlyWhereOriginsCopyHasCommitsTheLocalLacks(t *testing.T) {
+	upstream := mkRepo(t)
+	clone := cloneOf(t, upstream)
+	ctx := context.Background()
+
+	gitCommitAt(t, clone, "local work", time.Now().Add(time.Hour))
+	got, err := ListBranches(ctx, clone, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if want := []string{"main"}; !slices.Equal(got, want) {
+		t.Errorf("ListBranches with main ahead of origin/main = %q, want %q", got, want)
+	}
+	assertListAgreesWithBaseBehind(t, clone, got, "main")
+
+	gitCommitAt(t, upstream, "moved on", time.Now().Add(2*time.Hour))
+	gitRun(t, clone, "fetch", "-q")
+	got, err = ListBranches(ctx, clone, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if want := []string{"main", "origin/main"}; !slices.Equal(got, want) {
+		t.Errorf("ListBranches with main diverged from origin/main = %q, want %q", got, want)
+	}
+	assertListAgreesWithBaseBehind(t, clone, got, "main")
+}
+
+// The split is keyed on the branch's own upstream, the ref BaseBehind
+// counts against, so the row and the note cannot disagree. Here origin's
+// copy of every branch has moved on. A branch that tracks nothing trails
+// nothing, however far that is. One that tracks origin/main is behind
+// origin/main, which says nothing about origin's copy of its own name --
+// and since that copy names another commit, the question is asked of it,
+// so this is the case that holds the upstream to the branch's own name.
+func TestListBranchesSplitsOnlyAgainstTheBranchsOwnUpstream(t *testing.T) {
+	upstream := mkRepo(t)
+	gitRun(t, upstream, "branch", "-q", "loose")
+	gitRun(t, upstream, "branch", "-q", "topic")
+	clone := cloneOf(t, upstream)
+	gitRun(t, clone, "branch", "-q", "--no-track", "loose", "origin/loose")
+	gitRun(t, clone, "branch", "-q", "--no-track", "topic", "origin/topic")
+	gitRun(t, clone, "branch", "-q", "--set-upstream-to=origin/main", "topic")
+
+	gitRun(t, upstream, "checkout", "-q", "loose")
+	gitCommitAt(t, upstream, "loose moved on", time.Now().Add(time.Hour))
+	gitRun(t, upstream, "checkout", "-q", "topic")
+	gitCommitAt(t, upstream, "topic moved on", time.Now().Add(90*time.Minute))
+	gitRun(t, upstream, "checkout", "-q", "main")
+	gitCommitAt(t, upstream, "main moved on", time.Now().Add(2*time.Hour))
+	gitRun(t, clone, "fetch", "-q")
+	ctx := context.Background()
+	if up, n, err := BaseBehind(ctx, clone, "topic"); err != nil || up != "origin/main" || n == 0 {
+		t.Fatalf("setup: BaseBehind(topic) = %q, %d, %v, want it behind origin/main", up, n, err)
+	}
+	for _, branch := range []string{"loose", "topic"} {
+		if revOf(t, clone, branch) == revOf(t, clone, "origin/"+branch) {
+			t.Fatalf("setup: origin/%s has not moved on from %s", branch, branch)
+		}
+	}
+
+	got, err := ListBranches(ctx, clone, 10)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if want := []string{"main", "origin/main", "topic", "loose"}; !slices.Equal(got, want) {
+		t.Errorf("ListBranches = %q, want %q -- only main trails origin's copy of itself", got, want)
+	}
+	for _, branch := range []string{"main", "loose", "topic"} {
+		assertListAgreesWithBaseBehind(t, clone, got, branch)
+	}
+}
+
+// The pair sits where the newer of the two sorts, which is where the folded
+// row sat before, with origin's copy directly under the local name rather
+// than at its own place in the list: it is the row a person reading the
+// note is looking for. Both rows count against the limit, and a pair that
+// does not fit gives its one slot to the local name, the row the list
+// offered before.
+func TestListBranchesPutsOriginsCopyDirectlyUnderTheLocalBranch(t *testing.T) {
+	upstream := mkRepo(t)
+	clone := cloneOf(t, upstream)
+	now := time.Now()
+	gitRun(t, clone, "checkout", "-qb", "feature")
+	gitCommitAt(t, clone, "feature", now.Add(time.Hour))
+	gitRun(t, clone, "checkout", "-q", "main")
+	gitCommitAt(t, upstream, "moved on", now.Add(2*time.Hour))
+	gitRun(t, clone, "fetch", "-q")
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		limit int
+		want  []string
+	}{
+		{10, []string{"main", "origin/main", "feature"}},
+		{2, []string{"main", "origin/main"}},
+		{1, []string{"main"}},
+	} {
+		got, err := ListBranches(ctx, clone, tc.limit)
+		if err != nil {
+			t.Fatalf("ListBranches(limit %d): %v", tc.limit, err)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("ListBranches(limit %d) = %q, want %q", tc.limit, got, tc.want)
+		}
+	}
+}
+
 // #148: `origin` is %(refname:short) for refs/remotes/origin/HEAD, a
 // symref naming the remote's default branch rather than a branch of its
 // own. The old check compared the short name with "HEAD", which it never

@@ -381,15 +381,32 @@ func checkoutDirs(ctx context.Context, dir string) (gitDirs, error) {
 // popup's path and on `create --base`'s alike. A limit of 0 (or negative)
 // yields no results.
 //
-// A branch with a local copy is one row, under its local name, however
-// many commits origin's copy is ahead or behind. A branch only origin has
-// is offered as origin/<name> (#198). It used to be offered by its bare
-// name, with origin/ stripped, and that name is no ref in the clone: git
-// 2.53 given it as a worktree's start point checks out a new local branch
-// named after it, tracking origin's, and the branch the session asked for
-// is never made. Every name is git's own %(refname:short), which is the
-// shortest spelling that is still unambiguous (`heads/develop` beside a tag
-// called develop), so none of them needs a special case downstream.
+// A branch with a local copy is one row, under its local name -- spec §6
+// field 4's "deduped across `origin/`" -- unless the local copy is behind
+// origin's (#361). A branch only origin has is offered as origin/<name>
+// (#198). It used to be offered by its bare name, with origin/ stripped,
+// and that name is no ref in the clone: git 2.53 given it as a worktree's
+// start point checks out a new local branch named after it, tracking
+// origin's, and the branch the session asked for is never made. Every name
+// is git's own %(refname:short), which is the shortest spelling that is
+// still unambiguous (`heads/develop` beside a tag called develop), so none
+// of them needs a special case downstream.
+//
+// The exception is a local branch whose upstream is origin's copy of
+// itself and which that copy has commits it lacks (behind, or diverged).
+// Folded, the list could offer only the local branch, while the worktree
+// panel's note said it was behind origin/<name> (#354): the base the note
+// pointed at was not on the list. So origin's copy gets a row of its own,
+// directly under the local name, and the pair sits where the newer of the
+// two sorts, which is where the folded row sat. It is keyed on the branch's
+// configured upstream, the ref BaseBehind counts against, so the row is
+// there whenever that note names origin/<name>, limit permitting. A branch
+// that is current or ahead stays one row: origin's copy would be an older
+// start point under the same name.
+//
+// limit counts rows, so each such pair costs one more of them. A pair that
+// does not fit gives its one remaining slot to the local name, which is the
+// row the list offered before.
 //
 // A remote's HEAD is dropped (#148). It is a symref naming the remote's
 // default branch, which is listed on its own, and git shortens
@@ -400,32 +417,50 @@ func checkoutDirs(ctx context.Context, dir string) (gitDirs, error) {
 // detached HEAD's "(HEAD detached at <sha>)" row, which is not one, never
 // reaches the list either.
 func ListBranches(ctx context.Context, repoDir string, limit int) ([]string, error) {
+	// Tab-separated, because the fields after the first two are often
+	// empty, and a refname cannot hold a tab. runGit trims the output, which
+	// takes a last line's empty trailing fields with it, so each line is
+	// padded back out before it is read.
 	out, err := runGit(ctx, repoDir, "for-each-ref", "--sort=-committerdate",
-		"--format=%(refname) %(refname:short) %(symref)", "refs/heads", "refs/remotes")
+		"--format=%(refname)%09%(refname:short)%09%(symref)%09%(objectname)%09%(upstream)",
+		"refs/heads", "refs/remotes")
 	if err != nil {
 		return nil, fmt.Errorf("list branches: %w", err)
 	}
 
-	type ref struct {
-		full, short string
-		symref      bool
-	}
-	var refs []ref
-	local := make(map[string]string) // branch name -> its short name
+	var refs []listedRef
+	local := make(map[string]listedRef)  // branch name -> its local copy
+	origin := make(map[string]listedRef) // branch name -> origin's copy
 	for _, line := range strings.Split(out, "\n") {
-		f := strings.Fields(line)
-		if len(f) < 2 {
+		f := strings.Split(line, "\t")
+		for len(f) < 5 {
+			f = append(f, "")
+		}
+		if f[0] == "" || f[1] == "" {
 			continue
 		}
-		r := ref{full: f[0], short: f[1], symref: len(f) > 2}
+		r := listedRef{full: f[0], short: f[1], symref: f[2] != "", object: f[3], upstream: f[4]}
 		if name, ok := strings.CutPrefix(r.full, "refs/heads/"); ok {
-			local[name] = r.short
+			local[name] = r
+		} else if name, ok := strings.CutPrefix(r.full, "refs/remotes/origin/"); ok {
+			origin[name] = r
 		}
 		refs = append(refs, r)
 	}
 
+	behind, err := behindOrigin(ctx, repoDir, local, origin)
+	if err != nil {
+		return nil, fmt.Errorf("list branches: %w", err)
+	}
+
 	var result []string
 	seen := make(map[string]bool)
+	add := func(name string) {
+		if !seen[name] && len(result) < limit {
+			seen[name] = true
+			result = append(result, name)
+		}
+	}
 	for _, r := range refs {
 		if len(result) >= limit {
 			break
@@ -433,19 +468,80 @@ func ListBranches(ctx context.Context, repoDir string, limit int) ([]string, err
 		if r.symref && strings.HasPrefix(r.full, "refs/remotes/") {
 			continue
 		}
-		name := r.short
-		if branch, ok := strings.CutPrefix(r.full, "refs/remotes/origin/"); ok {
-			if short, ok := local[branch]; ok {
-				name = short
-			}
-		}
-		if seen[name] {
+		branch, isCopy := branchOf(r.full)
+		l, hasLocal := local[branch]
+		if !isCopy || !hasLocal {
+			add(r.short)
 			continue
 		}
-		seen[name] = true
-		result = append(result, name)
+		// Either copy, met first, places the row: the local name, and
+		// origin's directly under it when the local copy is behind.
+		add(l.short)
+		if behind[branch] {
+			add(origin[branch].short)
+		}
 	}
 	return result, nil
+}
+
+// listedRef is one line of ListBranches' for-each-ref: a ref's full and
+// short names, whether it is a symref, the commit it names, and the full
+// name of its upstream ("" for none, and for every remote-tracking ref).
+type listedRef struct {
+	full, short, object, upstream string
+	symref                        bool
+}
+
+// branchOf is the branch a ref is a copy of -- <name> for refs/heads/<name>
+// and for origin's refs/remotes/origin/<name> -- and false for any other
+// ref, another remote's included.
+func branchOf(full string) (string, bool) {
+	if name, ok := strings.CutPrefix(full, "refs/heads/"); ok {
+		return name, true
+	}
+	return strings.CutPrefix(full, "refs/remotes/origin/")
+}
+
+// behindOrigin reports which local branches are behind origin's copy of
+// themselves (#361): the upstream is that copy, and it has commits the
+// branch lacks -- %(upstream:trackshort)'s "<", or "<>" when the two have
+// diverged.
+//
+// It asks only about a branch whose upstream is origin's copy and which
+// names a different commit, and asks nothing at all when there is none,
+// which is the common case. %(upstream:trackshort) walks the history
+// between a branch and its upstream, for every ref it is asked of, so
+// putting it in ListBranches' own query paid that walk for every branch
+// with an upstream -- each topic branch tracking origin/main included,
+// which this question is never about. Measured in a 5,000-commit repository
+// with 300 of those, up to 4,500 commits behind: 12ms for the list without
+// the atom, 79ms with it, and a commit-graph made no difference, since a
+// count has to visit every commit it counts.
+func behindOrigin(ctx context.Context, repoDir string, local, origin map[string]listedRef) (map[string]bool, error) {
+	var ask []string
+	for name, l := range local {
+		if o, ok := origin[name]; ok && l.upstream == o.full && l.object != o.object {
+			ask = append(ask, l.full)
+		}
+	}
+	if len(ask) == 0 {
+		return nil, nil
+	}
+	// Full refnames as patterns, which for-each-ref matches literally: git
+	// refuses the glob characters in a refname, and a branch cannot exist
+	// beside one nested under its own name.
+	out, err := runGit(ctx, repoDir, append([]string{"for-each-ref", "--format=%(refname)%09%(upstream:trackshort)"}, ask...)...)
+	if err != nil {
+		return nil, err
+	}
+	behind := make(map[string]bool)
+	for _, line := range strings.Split(out, "\n") {
+		full, track, _ := strings.Cut(line, "\t")
+		if name, ok := strings.CutPrefix(full, "refs/heads/"); ok && strings.HasPrefix(track, "<") {
+			behind[name] = true
+		}
+	}
+	return behind, nil
 }
 
 // BranchExists reports whether name exists as a local branch or as an

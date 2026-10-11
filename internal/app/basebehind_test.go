@@ -18,10 +18,21 @@ import (
 // "" leaves the HEAD row selected.
 func behindModel(t *testing.T, base string, behind map[string]fakeBehind) (Model, *fakeGit) {
 	t.Helper()
+	return behindModelListing(t, []string{"main", "origin/next"}, base, behind)
+}
+
+// behindModelListing is behindModel over a branch list of its own, drawn
+// from main, origin/main and origin/next, all three of which resolve.
+func behindModelListing(t *testing.T, refs []string, base string, behind map[string]fakeBehind) (Model, *fakeGit) {
+	t.Helper()
 	git := newFakeGit()
-	git.listBranchesResult = []string{"main", "origin/next"}
+	git.listBranchesResult = refs
 	git.currentBranchResult = "feature"
-	git.commits = map[string]string{"/repo-a main": "0a1b2c3", "/repo-a origin/next": "1b2c3d4"}
+	git.commits = map[string]string{
+		"/repo-a main":        "0a1b2c3",
+		"/repo-a origin/main": "2c3d4e5",
+		"/repo-a origin/next": "1b2c3d4",
+	}
 	git.behind = behind
 	m := memoryModel(t, "/repo-a", memoryFor(map[string]config.ProjectDefaults{
 		"/repo-a": {Worktree: ptrBool(true), Base: base},
@@ -103,10 +114,9 @@ func TestBaseBehindNote(t *testing.T) {
 	}
 }
 
-// TestPopup_ALocalBaseBehindItsUpstreamSaysSo is #354 in the popup: the
-// base list offers main under its local name, origin's copy folded into it,
-// so picking it cuts from wherever the local branch was left. The panel
-// says how far behind that is.
+// TestPopup_ALocalBaseBehindItsUpstreamSaysSo is #354 in the popup: main
+// is the local branch, so picking it cuts from wherever that was left. The
+// panel says how far behind that is.
 func TestPopup_ALocalBaseBehindItsUpstreamSaysSo(t *testing.T) {
 	m, _ := behindModel(t, "", map[string]fakeBehind{"/repo-a main": {"origin/main", 38}})
 
@@ -288,5 +298,120 @@ func TestPopup_ADroppedBaseTakesItsNoteWithIt(t *testing.T) {
 	}
 	if m.baseBehindNote != "" {
 		t.Errorf("note after gone was dropped = %q, want none", m.baseBehindNote)
+	}
+}
+
+// listedDirectlyUnder reports whether the worktree panel draws the base row
+// below on the line straight after the base row above.
+func listedDirectlyUnder(panel, above, below string) bool {
+	prev := ""
+	for line := range strings.Lines(panel) {
+		line = strings.TrimSpace(line)
+		if prev == above && line == below {
+			return true
+		}
+		prev = line
+	}
+	return false
+}
+
+// TestPopup_ABehindMainHasOriginsCopyUnderIt is #361's own story. The note
+// said main was behind origin/main, and origin/main was not on the list,
+// folded into main's row. gitx.ListBranches now lists it directly under a
+// local main that is behind it. A remembered main stays main -- the tier
+// asked for the local branch, and create keeps it too -- with the note
+// naming the row one down. Picking that row is the person's move, and it
+// clears the note: a remote-tracking ref trails nothing.
+func TestPopup_ABehindMainHasOriginsCopyUnderIt(t *testing.T) {
+	m, _ := behindModelListing(t, []string{"main", "origin/main", "origin/next"}, "main",
+		map[string]fakeBehind{"/repo-a main": {"origin/main", 5}})
+
+	if got := m.worktree.Base(); got != "main" {
+		t.Fatalf("Base() = %q, want the remembered main, not origin's copy", got)
+	}
+	panel := worktreePanel(t, m)
+	if !strings.Contains(panel, "local main is 5 commits behind origin/main") {
+		t.Errorf("the worktree panel does not say main is behind origin/main:\n%s", panel)
+	}
+	if !listedDirectlyUnder(panel, "main", "origin/main") {
+		t.Errorf("origin/main is not listed directly under main:\n%s", panel)
+	}
+
+	m = pickBaseAndPump(t, m, "origin/main")
+
+	if m.baseBehindNote != "" {
+		t.Errorf("note on origin/main = %q, want none", m.baseBehindNote)
+	}
+	if got := m.PlanInput().BaseRef; got != "origin/main" {
+		t.Errorf("plan.Input.BaseRef = %q, want origin/main", got)
+	}
+}
+
+// TestPopup_TheFetchListsOriginsCopyWithoutMovingTheBase is #212's ground.
+// The form's own fetch is what moves origin/main, so it is what puts
+// origin/main on the list under a main that was current a moment before: a
+// row appears inside a list the person may already be pointing into. The
+// base stays the ref it was, whether that is a remembered main above the
+// new row or a pick below it, and a remembered one is still the tier's.
+func TestPopup_TheFetchListsOriginsCopyWithoutMovingTheBase(t *testing.T) {
+	for _, tc := range []struct{ name, remembered, picked string }{
+		{"a remembered main above the new row", "main", ""},
+		{"a picked base below it", "", "origin/next"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, git := behindModel(t, tc.remembered, map[string]fakeBehind{"/repo-a main": {"origin/main", 0}})
+			want := tc.remembered
+			if tc.picked != "" {
+				m = pickBaseAndPump(t, m, tc.picked)
+				want = tc.picked
+			}
+			if got := m.worktree.Base(); got != want {
+				t.Fatalf("setup: Base() = %q, want %q", got, want)
+			}
+			touched := m.baseTouched
+
+			git.behind = map[string]fakeBehind{"/repo-a main": {"origin/main", 5}}
+			m = prune(t, m, git, []string{"main", "origin/main", "origin/next"})
+
+			if got := m.worktree.Base(); got != want {
+				t.Errorf("Base() after the re-list = %q, want %q", got, want)
+			}
+			if m.baseTouched != touched {
+				t.Errorf("baseTouched after the re-list = %v, want %v: nobody moved the base", m.baseTouched, touched)
+			}
+			panel := worktreePanel(t, m)
+			if !listedDirectlyUnder(panel, "main", "origin/main") {
+				t.Errorf("origin/main is not listed directly under main after the fetch:\n%s", panel)
+			}
+			if want == "main" && m.baseBehindNote != "local main is 5 commits behind origin/main" {
+				t.Errorf("note after the fetch = %q, want main's count", m.baseBehindNote)
+			}
+		})
+	}
+}
+
+// TestPopup_AChosenOriginCopyFoldedBackStaysSelected: a picked origin/main
+// can leave the list the other way. Another pane updating the local main
+// while the popup is open makes the fetch's re-list fold origin/main back
+// into main's row, so the ref the person chose is no longer listed. That is
+// #212's shape exactly, and its answer holds: the ref is kept on offer,
+// settled, and still selected, rather than the branch that moved into its
+// row.
+func TestPopup_AChosenOriginCopyFoldedBackStaysSelected(t *testing.T) {
+	m, git := behindModelListing(t, []string{"main", "origin/main", "origin/next"}, "",
+		map[string]fakeBehind{"/repo-a main": {"origin/main", 5}})
+	m = pickBaseAndPump(t, m, "origin/main")
+
+	git.behind = nil
+	m = prune(t, m, git, []string{"main", "origin/next"})
+
+	if got := m.worktree.Base(); got != "origin/main" {
+		t.Errorf("Base() after the fold = %q, want the person's own origin/main", got)
+	}
+	if got := m.PlanInput().BaseRef; got != "origin/main" {
+		t.Errorf("plan.Input.BaseRef = %q, want origin/main", got)
+	}
+	if panel := worktreePanel(t, m); strings.Contains(panel, "ignoring base") {
+		t.Errorf("the worktree panel reports a base that stands:\n%s", panel)
 	}
 }
