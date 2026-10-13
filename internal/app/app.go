@@ -2659,7 +2659,7 @@ func (m Model) buildPlanInput() plan.Input {
 		// The chip keeps whatever was chosen or remembered, so turning the
 		// worktree off shows it again; with a worktree it does not apply
 		// (placement spec §14).
-		Placement:        plan.EffectivePlacement(useWorktree, m.placement.Value()),
+		Placement:        plan.EffectivePlacement(useWorktree, false, m.placement.Value()),
 		Space:            m.resolved.Space,
 		AgentKind:        m.agent.Value(),
 		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],

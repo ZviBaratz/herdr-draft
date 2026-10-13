@@ -52,8 +52,8 @@ const (
 // before building, so a remembered or configured placement can never pull
 // a worktree session out of its space on one path and not the other, and
 // Build refuses an Input that skipped it.
-func EffectivePlacement(useWorktree bool, chosen Placement) Placement {
-	if useWorktree {
+func EffectivePlacement(useWorktree, remote bool, chosen Placement) Placement {
+	if useWorktree || remote {
 		return PlacementNewSpace
 	}
 	return chosen
@@ -163,6 +163,13 @@ type Input struct {
 	Ctx                             herdrc.Context
 	DetectionTimeout, PromptTimeout time.Duration
 	TrustRepository                 bool
+
+	// Machine is the herdr machine the session runs on, the zero value for
+	// this one (machine spec §8.1). A remote session's space is always a
+	// new one there (EffectivePlacement), its directory is Machine.Dir,
+	// and it has no account pin and no lane commit -- both are things only
+	// this machine has, so Build refuses them.
+	Machine Machine
 }
 
 // LinkedCheckout is what a worktree session has to know about a project
@@ -197,6 +204,9 @@ type LinkedCheckout struct {
 // clean's branch operations both read it, so the branch is looked for
 // where it was made even once the lane that asked for it is gone.
 func WorktreeSource(in Input) string {
+	if in.Machine.Remote() {
+		return in.Machine.Dir
+	}
 	if in.Linked.RepoRoot != "" {
 		return in.Linked.RepoRoot
 	}
@@ -285,6 +295,10 @@ type Op struct {
 	Rename    *herdrc.TabRenameReq       // OpTabRename
 	Timeout   time.Duration              // OpAwaitDetection, and OpAgentStart's #115 fallback
 
+	// Machine is the session's machine, stamped on every op by Build so
+	// Execute scopes herdr and git to it (machine spec §8.1).
+	Machine Machine
+
 	// AgentKind is OpAwaitDetection's other field: the kind being waited
 	// for, carried for MESSAGES only and never for behaviour. Path B is
 	// claude-only today (launchOps gates on it), so exec.go could have
@@ -328,6 +342,9 @@ func Build(in Input) ([]Op, error) {
 	if in.Placement == PlacementTabIn && in.Space.WorkspaceID == "" {
 		return nil, fmt.Errorf("plan: build: placement tab-in needs an open workspace to place the tab in, and none was named")
 	}
+	if err := remoteRefusal(in); err != nil {
+		return nil, err
+	}
 
 	topology := topologyOp(in)
 	ops := append(topology, nameTabOp(in, topology)...)
@@ -349,7 +366,38 @@ func Build(in Input) ([]Op, error) {
 			Timeout: in.DetectionTimeout,
 		})
 	}
+	if in.Machine.Remote() {
+		ops[0].Label += " on " + in.Machine.Label
+		for i := range ops {
+			ops[i].Machine = in.Machine
+		}
+	}
 	return ops, nil
+}
+
+// remoteRefusal is why in cannot run on its machine, or nil (machine spec
+// §6). Each refused field needs something only this machine has -- the
+// caller's pane or one of this server's spaces, a clauth profile, a commit
+// only this clone holds -- or something only the clone probe can supply.
+// Both callers refuse them first, with their own words; this is the floor.
+func remoteRefusal(in Input) error {
+	if !in.Machine.Remote() {
+		return nil
+	}
+	where := in.Machine.Label
+	switch {
+	case in.Machine.Dir == "":
+		return fmt.Errorf("plan: build: no directory on %s for the session -- the clone probe supplies it", where)
+	case in.Placement != PlacementNewSpace:
+		return fmt.Errorf("plan: build: a session on %s runs in a new space there, so placement %s does not apply -- route it through EffectivePlacement first", where, placementName(in.Placement))
+	case in.AccountPin != "":
+		return fmt.Errorf("plan: build: %s uses its own login, so account %s cannot be pinned there", where, in.AccountPin)
+	case in.Linked != LinkedCheckout{}:
+		return fmt.Errorf("plan: build: a lane's commit is on this machine only, so a session on %s cannot be cut from it", where)
+	case in.UseWorktree && in.BaseRef == "":
+		return fmt.Errorf("plan: build: a worktree on %s needs a base it can fetch, and none was resolved", where)
+	}
+	return nil
 }
 
 // topologyOp returns the op that establishes where a session lives: the
@@ -390,11 +438,22 @@ func topologyOp(in Input) []Op {
 		Kind:  OpWorkspaceCreate,
 		Label: "creating workspace",
 		Workspace: &herdrc.WorkspaceCreateReq{
-			Cwd:   in.ProjectDir,
+			Cwd:   sessionDir(in),
 			Label: in.Title,
 			Focus: true,
 		},
 	}}
+}
+
+// sessionDir is the directory a session without a worktree opens in:
+// ProjectDir here, and the project's directory there for a session on
+// another machine (Machine.Dir -- absolute, because `workspace create
+// --cwd` is not tilde-expanded by the server, machine spec §3.2).
+func sessionDir(in Input) string {
+	if in.Machine.Remote() {
+		return in.Machine.Dir
+	}
+	return in.ProjectDir
 }
 
 // nameTabOp returns the op that names the tab a space op opened, after the

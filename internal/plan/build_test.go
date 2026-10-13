@@ -47,10 +47,10 @@ func kindsOf(ops []Op) []OpKind {
 // in the worktree's own space; without one, the choice stands untouched.
 func TestEffectivePlacement_AWorktreeSessionRunsInItsOwnSpace(t *testing.T) {
 	for _, p := range []Placement{PlacementNewSpace, PlacementTabHere, PlacementSplitHere, PlacementTabIn} {
-		if got := EffectivePlacement(true, p); got != PlacementNewSpace {
+		if got := EffectivePlacement(true, false, p); got != PlacementNewSpace {
 			t.Errorf("EffectivePlacement(worktree, %v) = %v, want %v", p, got, PlacementNewSpace)
 		}
-		if got := EffectivePlacement(false, p); got != p {
+		if got := EffectivePlacement(false, false, p); got != p {
 			t.Errorf("EffectivePlacement(no worktree, %v) = %v, want it unchanged", p, got)
 		}
 	}

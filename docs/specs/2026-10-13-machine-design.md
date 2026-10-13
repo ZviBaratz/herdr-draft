@@ -425,8 +425,10 @@ In order, on the remote, with nothing in herdr asked until the third step:
    fetch is fatal**: a base that might be a month stale is the failure this
    step exists to prevent.
 2. Resolve the base there (`commitAt`). It is fatal too.
-3. `herdr --machine <id> worktree create --cwd ~/<rel>`. The server expands
-   `~` (§3.2).
+3. `herdr --machine <id> worktree create --cwd <dir>`, where `<dir>` is the
+   absolute directory the clone probe reported. The server would expand
+   `~/<rel>` too (§3.2), but one absolute directory serves both this call
+   and `workspace create`, which would not.
 4. `untrackBase` there (#221).
 
 A failure in step 1 or 2 means herdr was never asked, so `create` exits 4.
@@ -445,7 +447,9 @@ that matters: two repositories, "laptop" and "remote", each with a branch
 
 These name the machine:
 
-- each step label (`worktree on dev (EC2)`);
+- the first step's label (`creating worktree on dev (EC2)`), which names
+  where the session's space is going; the steps after it are in that
+  space;
 - `explainBlockedStart`;
 - the pane tail;
 - the trust-wait hint, which tells the reader to switch herdr to that

@@ -629,7 +629,7 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	if useWorktree && !req.set["placement"] {
 		prov[defaults.FieldPlacement] = provenanceWorktree
 	}
-	placement = plan.EffectivePlacement(useWorktree, placement)
+	placement = plan.EffectivePlacement(useWorktree, false, placement)
 
 	kind, err := agentKind(req, res, kinds, prov)
 	if err != nil {
