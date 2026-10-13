@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -110,4 +111,19 @@ func plainStderr(stderr string) string {
 		return stderr
 	}
 	return msg
+}
+
+// Reason is err as one sentence for a person: herdr's own stderr when err is
+// a herdr failure that said something, unwrapped from the Debug form
+// plainStderr strips, and err's whole text otherwise. For a row that has no
+// room for the argv in front of the reason -- which on a machine-scoped call
+// opens with a 32-hex profile id. Display only, like plainStderr.
+func Reason(err error) string {
+	var e *cliError
+	if errors.As(err, &e) {
+		if s := strings.TrimSpace(plainStderr(e.stderr)); s != "" {
+			return s
+		}
+	}
+	return err.Error()
 }

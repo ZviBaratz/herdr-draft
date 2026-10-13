@@ -192,3 +192,23 @@ func TestCLIErrorShowsAWrappedTransportFailurePlainly(t *testing.T) {
 		t.Error("a transport failure was marked nothing-created")
 	}
 }
+
+// TestReasonIsHerdrsOwnWords: a refusal row has room for herdr's sentence,
+// not the argv in front of it -- which, on a machine call, is a 32-hex
+// profile id. Anything that is not a herdr failure is its own text.
+func TestReasonIsHerdrsOwnWords(t *testing.T) {
+	bin := fakeHerdrFail(t, strings.ReplaceAll(forwardingRefused, `"`, `\"`))
+	_, err := (&CLIRunner{Bin: bin}).On("af0915ce").WorkspaceList(context.Background())
+	want := "machine 'dev (EC2)': remote Herdr does not support machine API forwarding; update Herdr on this machine"
+	if got := Reason(err); got != want {
+		t.Errorf("Reason = %q\nwant     %q", got, want)
+	}
+	silent := fakeHerdrFail(t, "")
+	_, err = (&CLIRunner{Bin: silent}).WorkspaceList(context.Background())
+	if got := Reason(err); got != "herdr workspace list: exit status 1" {
+		t.Errorf("Reason of a silent failure = %q, want the whole error", got)
+	}
+	if got := Reason(errors.New("plain")); got != "plain" {
+		t.Errorf("Reason(plain) = %q", got)
+	}
+}
