@@ -450,7 +450,10 @@ func ParsePlacement(s string) (plan.Placement, bool) {
 // (app.persistStateCmd) and `create` (remember) both call this, so the two
 // paths cannot record differently.
 func RememberedPlacement(in plan.Input, previous string) string {
-	if in.UseWorktree {
+	// A session on another machine was forced to a new space there for the
+	// same kind of reason, and is no evidence of what this machine's next
+	// session wants (machine spec §6.2).
+	if in.UseWorktree || in.Machine.Remote() {
 		return previous
 	}
 	return PlacementValue(in.Placement)

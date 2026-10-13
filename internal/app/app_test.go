@@ -129,6 +129,15 @@ type fakeGit struct {
 	behindErr   error
 	behindCalls []string
 
+	// The laptop-side ref questions a remote session asks
+	// (machine.RefReader): fullRefs answers FullRefName (origin/<x>
+	// resolves to its remote-tracking ref by itself), originHead
+	// OriginHead, originBranches OriginBranchExists, originURL OriginURL.
+	fullRefs       map[string]string
+	originHead     string
+	originBranches map[string]bool
+	originURL      string
+
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
@@ -243,6 +252,24 @@ type fakeBehind struct {
 	upstream string
 	count    int
 }
+
+func (g *fakeGit) FullRefName(_ context.Context, _ string, name string) (string, error) {
+	if full, ok := g.fullRefs[name]; ok {
+		return full, nil
+	}
+	if strings.HasPrefix(name, "origin/") {
+		return "refs/remotes/" + name, nil
+	}
+	return "", fmt.Errorf("fakeGit: %q names no ref", name)
+}
+
+func (g *fakeGit) OriginHead(context.Context, string) (string, error) { return g.originHead, nil }
+
+func (g *fakeGit) OriginBranchExists(_ context.Context, _ string, name string) (bool, error) {
+	return g.originBranches[name], nil
+}
+
+func (g *fakeGit) OriginURL(context.Context, string) (string, error) { return g.originURL, nil }
 
 func (g *fakeGit) BaseBehind(_ context.Context, dir, ref string) (string, int, error) {
 	key := dir + " " + ref

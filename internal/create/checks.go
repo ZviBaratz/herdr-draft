@@ -100,6 +100,7 @@ import (
 
 	"github.com/ZviBaratz/herdr-draft/internal/app"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
+	"github.com/ZviBaratz/herdr-draft/internal/machine"
 )
 
 // preflightCheckDeadline bounds every question the pre-flight asks git
@@ -333,6 +334,29 @@ func (b boundedGit) ResolveCommit(ctx context.Context, dir, ref string) (string,
 
 // BaseBehind is asked after the base is final, and only ever advises: see
 // resolveRequest's call, where a timeout is printed and the create goes on.
+// RemoteBase is machine.RemoteBase, bounded as a unit: it asks up to three
+// git questions and words each answer itself, so a bound any deeper would
+// turn a question git never answered into "origin has no such branch".
+func (b boundedGit) RemoteBase(ctx context.Context, dir, base, label string) (string, error) {
+	return boundedErr(ctx, b.deadline, "the base for "+label, func(ctx context.Context) (string, error) {
+		return machine.RemoteBase(ctx, b.git, dir, base, label)
+	})
+}
+
+// OriginURL is GitSource.OriginURL, bounded.
+func (b boundedGit) OriginURL(ctx context.Context, dir string) (string, error) {
+	return boundedErr(ctx, b.deadline, "origin's URL in "+dir, func(ctx context.Context) (string, error) {
+		return b.git.OriginURL(ctx, dir)
+	})
+}
+
+// OriginBranchExists is GitSource.OriginBranchExists, bounded.
+func (b boundedGit) OriginBranchExists(ctx context.Context, dir, name string) (bool, error) {
+	return boundedErr(ctx, b.deadline, "whether origin has "+name, func(ctx context.Context) (bool, error) {
+		return b.git.OriginBranchExists(ctx, dir, name)
+	})
+}
+
 func (b boundedGit) BaseBehind(ctx context.Context, dir, ref string) (string, int, error) {
 	type answer struct {
 		upstream string

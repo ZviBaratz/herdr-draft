@@ -12,7 +12,9 @@ import (
 
 	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
+	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
+	"github.com/ZviBaratz/herdr-draft/internal/machine"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
 
@@ -44,6 +46,9 @@ type report struct {
 	// usage is a dry run's account_usage (#215), nil for a real create and
 	// whenever there is nothing to report.
 	usage *accountUsage
+	// machine is the machine the session runs on, as resolved: --json's
+	// "machine" says it whichever machine it is.
+	machine machine.Choice
 }
 
 // write emits the result: one JSON object on stdout under --json, a human
@@ -101,7 +106,17 @@ func (r report) humanLine() string {
 	if r.input.UseWorktree {
 		parts = append(parts, "branch="+r.input.Branch)
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(append(parts, machinePart(r.input)...), " ")
+}
+
+// machinePart is the human lines' word on where a session is, for one on
+// another machine only, so a local create's line is what it always was.
+// Quoted, since a label is free text: `machine="dev (EC2)"`.
+func machinePart(in plan.Input) []string {
+	if !in.Machine.Remote() {
+		return nil
+	}
+	return []string{fmt.Sprintf("machine=%q", in.Machine.Label)}
 }
 
 // dryRunLine is the one line a --dry-run prints without --json: what the
@@ -129,7 +144,7 @@ func (r report) dryRunLine() string {
 	if in.MarkReady && plan.ReapApplies(in.Prompt) {
 		parts = append(parts, "mark_ready=true")
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(append(parts, machinePart(in)...), " ")
 }
 
 // failureLine says what failed and what became of what had already been
@@ -208,6 +223,14 @@ func (r report) writeUnsentPrompt(w io.Writer) {
 	fmt.Fprintf(w, "the prompt was not sent -- reproduced here so it is not lost:\n%s\n", r.result.PromptText)
 }
 
+// jsonMachine is --json's "machine": the selector as resolved, the saved
+// profile's id (absent for this machine) and its label.
+type jsonMachine struct {
+	Selector string `json:"selector"`
+	ID       string `json:"id,omitempty"`
+	Label    string `json:"label"`
+}
+
 // The three values of jsonReport.PromptStatus. Constants because two of
 // them are written in one place and read in another, and a typo in a
 // snake_case string literal is not a compile error.
@@ -241,9 +264,12 @@ type jsonReport struct {
 	// dryRunUsage and usageFor -- so absent means unknown, never room.
 	AccountUsage *accountUsage `json:"account_usage,omitempty"`
 	Placement    string        `json:"placement"`
-	Worktree     bool          `json:"worktree"`
-	Branch       string        `json:"branch,omitempty"`
-	Base         string        `json:"base,omitempty"`
+	// Machine is where the session runs (machine spec §10.1): always
+	// present, with an id only for another machine.
+	Machine  jsonMachine `json:"machine"`
+	Worktree bool        `json:"worktree"`
+	Branch   string      `json:"branch,omitempty"`
+	Base     string      `json:"base,omitempty"`
 
 	// WorkspaceID/TabID/PaneID name where the AGENT ended up
 	// (ExecResult.AgentAt) -- the ids a caller asks a create for, since
@@ -416,6 +442,7 @@ func (r report) writeJSON(w io.Writer) {
 		AgentKind:  r.input.AgentKind,
 		Account:    r.input.AccountPin,
 		Placement:  defaults.PlacementValue(r.input.Placement),
+		Machine:    jsonMachine{Selector: cmp.Or(r.machine.Selector, config.LocalMachine), ID: r.machine.Info.ID, Label: r.machine.Label()},
 		Worktree:   r.input.UseWorktree,
 		Provenance: r.provenance,
 		MarkReady:  r.input.MarkReady && plan.ReapApplies(r.input.Prompt),

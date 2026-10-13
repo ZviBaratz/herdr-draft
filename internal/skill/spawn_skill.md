@@ -213,13 +213,50 @@ without the other is what this flag is offering.
 `tab-in`. A script running in one space can therefore start a session in
 another without pretending to be a pane there.
 
+### Which machine
+
+A session can run on another herdr machine, such as a work server, rather
+than on this one. **Leave `--machine` off unless the task needs a
+particular machine.** The user's `config.toml` already maps their projects
+to machines (`[machine.paths]`), so a project that belongs on a server
+opens there, and everything else stays here. `--dry-run --json` shows
+which: its `machine` object names it, and `provenance.machine` says
+whether a rule chose it.
+
+Pass `--machine local` when the session needs **this** machine:
+
+- it drives the browser here (claude-in-chrome, or any browser tool);
+- it talks to a device plugged in here (adb, USB).
+
+`--machine` accepts `local` and the machines the user's configuration
+names, and nothing else: a saved machine they never configured is refused
+(exit 2), deliberately. Do not go looking for others.
+
+A session on another machine differs from a local one in four ways, so
+plan the handoff for them:
+
+- **It sees only what is pushed.** Its worktree is cut on that machine,
+  after a fetch there, from an `origin/` branch: `--base` is mapped to
+  `origin/<name>` when origin has the branch, and refused when it has
+  not, so push first. A lane's unpushed commits are not there.
+- **It opens in a new space there.** `tab-here`, `split-here`, `tab-in`
+  and `--workspace` are refused with another machine (exit 2).
+- **It uses that machine's own login.** There is no `--account` there
+  (section 5).
+- **Its pane is on that machine.** herdr's sidebar lists it under the
+  machine's name. A dialog it stops on, Claude's trust prompt for a new
+  worktree included, is answered there.
+
 ## 5. Agent, account and session options
 
 - `--agent KIND` picks which agent to start — `claude`, or whatever else
   the user has configured. Left off, their default applies. Leave it off
   unless they asked for another.
 - `--account NAME` pins a clauth account, and applies to `claude` only.
-  Left off, or given as `active`, whatever account is active is used.
+  Left off, or given as `active`, whatever account is active is used. A
+  session on another machine (section 4) uses that machine's own login:
+  `--account` is refused there (exit 2), the user's default account does
+  not apply, and the launch probe below is about this machine, so skip it.
 - `--account auto` asks the user's configured account picker to choose one
   for this project. It is a real call with real consequences: a picker
   that hands out accounts from a pool **spends one** when it runs. Do not
@@ -652,9 +689,9 @@ before you create, with the two choices above.
 | 0 | created | report where it is |
 | 1 | the plan started and failed | part of the session may exist — a space, or only some of a worktree: its branch, its checkout; look at it before retrying |
 | 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, a branch name git cannot use, and a pinned account whose credential clauth reports dead (`broken`) | fix the command and re-run |
-| 3 | herdr is unreachable, found before anything started | nothing was created; stop |
+| 3 | herdr is unreachable, found before anything started — or the machine the session was going to, whose own words the line quotes | nothing was created. For a machine, report the line: an expired login to it is the user's to renew, and `--machine local` starts the session here only if the user wants it here |
 | 4 | the plan started, and its first step failed before making anything | nothing exists and there is nothing to clean up; the error says why the step failed, so report it, or re-run once it is dealt with |
-| 5 | a question the command asked did not answer in time | nothing was created and nothing in the command would change it; the line names which question. A stalled mount answers a retry exactly as it answered the first time, so report it; something outside — Linear, or a credential helper — may answer the next time, so one retry is reasonable |
+| 5 | a question the command asked did not answer in time — including the probe of another machine | nothing was created and nothing in the command would change it; the line names which question. A stalled mount answers a retry exactly as it answered the first time, so report it; something outside — Linear, or a credential helper — may answer the next time, so one retry is reasonable |
 
 `--json` prints one object instead of a human line, and is the right
 choice whenever you are going to act on the result. Note that on exit 2,

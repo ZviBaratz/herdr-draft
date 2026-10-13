@@ -1039,6 +1039,25 @@ favorites = ["claude", "codex"]
 // the command.
 type formGit struct{ lane bool }
 
+// The ref questions a remote session asks of this clone (machine.RefReader),
+// answered as a fresh clone of the fixture repository would: origin's
+// default branch is main, origin has main, and every origin/<x> resolves to
+// its remote-tracking ref.
+func (formGit) FullRefName(_ context.Context, _ string, name string) (string, error) {
+	switch {
+	case strings.HasPrefix(name, "origin/"):
+		return "refs/remotes/" + name, nil
+	case name == "main":
+		return "refs/heads/main", nil
+	}
+	return "", fmt.Errorf("formGit: %q names no ref", name)
+}
+func (formGit) OriginHead(context.Context, string) (string, error) { return "origin/main", nil }
+func (formGit) OriginBranchExists(_ context.Context, _ string, name string) (bool, error) {
+	return name == "main", nil
+}
+func (formGit) OriginURL(context.Context, string) (string, error) { return "", nil }
+
 func (formGit) DirExists(string) bool { return true }
 func (formGit) IsGitRepo(string) bool { return true }
 func (g formGit) RepoRoot(_ context.Context, dir string) (string, error) {

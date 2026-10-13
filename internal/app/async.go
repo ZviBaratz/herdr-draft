@@ -2720,6 +2720,22 @@ func (gitxSource) BaseBehind(ctx context.Context, dir, ref string) (string, int,
 	return gitx.BaseBehind(ctx, dir, ref)
 }
 
+func (gitxSource) FullRefName(ctx context.Context, dir, name string) (string, error) {
+	return gitx.FullRefName(ctx, dir, name)
+}
+
+func (gitxSource) OriginHead(ctx context.Context, dir string) (string, error) {
+	return gitx.OriginHead(ctx, dir)
+}
+
+func (gitxSource) OriginBranchExists(ctx context.Context, dir, name string) (bool, error) {
+	return gitx.OriginBranchExists(ctx, dir, name)
+}
+
+func (gitxSource) OriginURL(ctx context.Context, dir string) (string, error) {
+	return gitx.OriginURL(ctx, dir)
+}
+
 func (gitxSource) ListSubdirs(dir string, limit int) []string {
 	return pathx.ListSubdirs(dir, limit)
 }

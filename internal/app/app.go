@@ -33,6 +33,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/machine"
 	"github.com/ZviBaratz/herdr-draft/internal/pathx"
 	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
@@ -172,6 +173,10 @@ type gitSource interface {
 	BranchExists(ctx context.Context, dir, name string) (bool, error)
 	CurrentBranch(ctx context.Context, dir string) (string, error)
 	FetchPrune(ctx context.Context, dir string) error
+	// RefReader is what a session on another machine asks of this clone:
+	// which base it can carry there, and whether the clone there is the
+	// same repository (machine spec §6.4, §7).
+	machine.RefReader
 }
 
 // Deps groups every I/O-capable collaborator Model needs, each behind a
