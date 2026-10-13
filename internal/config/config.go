@@ -347,6 +347,7 @@ type Config struct {
 	Timeouts TimeoutsConfig `toml:"timeouts"`
 	Worktree WorktreeConfig `toml:"worktree"`
 	Reaper   ReaperConfig   `toml:"reaper"`
+	Machine  MachineConfig  `toml:"machine"`
 
 	// Palette is the optional `[palette]` table: an escape hatch for
 	// overriding herdr theme colors when detection is wrong (spec §7,
@@ -513,10 +514,17 @@ func Load(configDir string) (Config, error) {
 		Agents struct {
 			Options any `toml:"options"`
 		} `toml:"agents"`
+		// Machine is here only to learn whether the table exists at all:
+		// an empty [machine] still opts in (machine spec §9.1), and the
+		// first decode cannot tell it from a file without one.
+		Machine any `toml:"machine"`
 	}
 	if _, err := toml.Decode(string(b), &opts); err != nil {
 		return Config{}, fmt.Errorf("load config: parse %s: %w", path, err)
 	}
+	cfg.Machine.Configured = opts.Machine != nil
+	cfg.Machine.Rules, cfg.Machine.Warnings = loadMachineRules(cfg.Machine.Paths)
+
 	switch raw := opts.Agents.Options.(type) {
 	case nil:
 	case map[string]any:
