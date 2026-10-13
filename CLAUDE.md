@@ -12,7 +12,7 @@ account — and drives herdr exclusively through its public CLI
 (`$HERDR_BIN_PATH`), never the raw socket API. The same binary also carries
 a headless `create` verb that produces the same session without the popup.
 
-Eleven documents in `docs/specs/`, and the citation convention distinguishes
+Twelve documents in `docs/specs/`, and the citation convention distinguishes
 them. A bare "spec §N" in a code comment means v1, the 2026-08-31 design;
 every other document that code cites by section carries a prefix:
 
@@ -27,6 +27,7 @@ every other document that code cites by section carries a prefix:
 | `agent-options spec §N` | `2026-09-18-agent-options-design.md` | reverses v1's §3 and §16 item 3 and v2's §16, and amends v3's §4 and §7.2, v2's §8, §11 and §13 and v1's §12; its §12 itemises |
 | `draw-first spec §N` | `2026-09-21-draw-first-design.md` | amends v1's §6, §8, §9, §10 and §13, v2's §6.1 and §13 and v3's §12; implemented 2026-09-22 (#293, #292); its §12 itemises |
 | `host-colours spec §N` | `2026-09-23-host-colours-design.md` | amends v3's §5.3a (the `terminal` exemption becomes conditional) and §5.4 (the focused row's fill returns); implemented 2026-09-23 (#347); its §13 itemises |
+| `machine spec §N` | `2026-10-13-machine-design.md` | amends v2's §10, §11 and §13, the placement spec's §14 and v3's §7.2, and adds the `v0.9.1` citation exception below; its §15 itemises |
 
 Two more carry no section prefix because nothing cites them by section, so
 name them by filename: `2026-09-07-herdr-membership-assessment.md` is the
@@ -443,7 +444,11 @@ Layering, outermost to innermost:
   to cite `/home/zvi/Projects/herdr/...`, a tree nobody else has — the
   claims were correct and unverifiable at the same time, which is the
   worst of both. A citation that only resolves on one laptop is not a
-  citation.
+  citation. **One scoped exception:** herdr's machine forwarding
+  (`--machine`, `machine list`, the remote bridge) does not exist at the
+  pin, so citations of it name `v0.9.1`, the first release that has it
+  (machine spec §11). `CONTRIBUTING.md` records the SHA beside the pin's;
+  everything else still cites the pin.
 - **`plan.Build` stays pure.** It performs no I/O and never touches a
   `herdrc.Runner`; anything Build needs to decide (is this a git repo, what
   is the invoking pane id) must already be resolved by the caller

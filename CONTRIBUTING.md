@@ -162,7 +162,7 @@ the original; `docs/specs/2026-09-02-herdr-draft-v2-design.md` supersedes its
 three, and each later spec amends the sentences its feature changes. Each
 one's own header itemises what it replaced.
 
-Eleven documents, nine of them cited by section:
+Twelve documents, ten of them cited by section:
 
 | citation | document (`docs/specs/`) |
 |---|---|
@@ -175,6 +175,7 @@ Eleven documents, nine of them cited by section:
 | `agent-options spec §N` | `2026-09-18-agent-options-design.md` |
 | `draw-first spec §N` | `2026-09-21-draw-first-design.md` |
 | `host-colours spec §N` | `2026-09-23-host-colours-design.md` |
+| `machine spec §N` | `2026-10-13-machine-design.md` |
 
 The other two are named by filename, because nothing cites them by
 section: `2026-09-07-herdr-membership-assessment.md`, and
@@ -183,8 +184,8 @@ spec's §2.4 and §8.1.
 
 Each supersedes only the sections it names; everything else stays
 authoritative, which is why plenty of live code cites v2 correctly. v3 §13,
-the placement spec's §12, and §12 of the reap, agent-options and draw-first
-specs each itemise what that document replaced. The draw-first spec
+the placement spec's §12, §12 of the reap, agent-options and draw-first
+specs, and the machine spec's §15 each itemise what that document replaced. The draw-first spec
 describes intended behaviour until it is implemented, so a citation of it
 names a plan, not the shipped code.
 
@@ -222,6 +223,15 @@ new one. A citation that resolves only on one machine is not a citation.
 `b1ff4582`. This paragraph is the only place the pin is written down —
 `CLAUDE.md` states the same rule and points here — so bumping the floor
 means editing this paragraph and nothing else about the convention.
+
+**One scoped exception: machine forwarding cites `v0.9.1`**
+(`065ef9d6a531c49fb8bee7e818ef837065b21ee9`, 135 commits ahead of the pin).
+`herdr --machine`, `herdr machine list` and the remote bridge behind them
+do not exist at `v0.9.0`, so a citation of them names the first release
+that has them. Everything else still cites the pin. The floor stays at
+0.9.0 because only that one optional feature needs more (machine spec §11).
+When the floor reaches 0.9.1, those citations become ordinary pin
+citations and this paragraph is deleted.
 
 ## Commits and pull requests
 
