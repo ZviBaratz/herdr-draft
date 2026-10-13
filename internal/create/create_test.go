@@ -384,6 +384,12 @@ func (r *fakeRunner) WorkspaceClose(_ context.Context, workspaceID string) error
 	return r.record("WorkspaceClose", workspaceID)
 }
 
+// On, MachineList and NotificationShow: this fake is one machine, and
+// saves none (machine spec §8.1).
+func (r *fakeRunner) On(string) herdrc.Runner                                   { return r }
+func (r *fakeRunner) MachineList(context.Context) ([]herdrc.MachineInfo, error) { return nil, nil }
+func (r *fakeRunner) NotificationShow(context.Context, string, string) error    { return nil }
+
 // fakeGit implements GitSource: an existing git repository whose root is
 // itself, unless a test says otherwise.
 type fakeGit struct {

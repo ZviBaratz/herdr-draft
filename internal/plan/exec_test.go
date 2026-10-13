@@ -376,6 +376,12 @@ func (m *mockRunner) WorkspaceClose(ctx context.Context, workspaceID string) err
 	return nil
 }
 
+// On, MachineList and NotificationShow: this fake is one machine, and
+// saves none (machine spec §8.1).
+func (m *mockRunner) On(string) herdrc.Runner                                   { return m }
+func (m *mockRunner) MachineList(context.Context) ([]herdrc.MachineInfo, error) { return nil, nil }
+func (m *mockRunner) NotificationShow(context.Context, string, string) error    { return nil }
+
 // withBusyRetryOverrides replaces busyRetryInterval/busyRetryNow for the
 // life of the calling test (restored via t.Cleanup), so Execute's busy
 // retry loop runs instantly instead of waiting out real sleeps. now == nil

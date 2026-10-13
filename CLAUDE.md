@@ -264,7 +264,12 @@ Layering, outermost to innermost:
   alone with nothing on stdout (`runOK`). Routing one through the other's
   parser is a real bug this codebase hit once already (`PaneRun` via
   `runJSON` failed every real invocation) — check which shape a new
-  subcommand uses before wiring it up.
+  subcommand uses before wiring it up. There is a third since herdr 0.9.1:
+  `machine list --json` prints a bare array, no envelope, so
+  `CLIRunner.MachineList` decodes it itself (machine spec §3.4). And a
+  machine-scoped runner's transport failures have no envelope at all —
+  herdr prints a Rust `Debug` of an `io::Error` — so they carry no code,
+  classify as nothing, and are never marked "nothing created".
 - **`herdr pane run` types, it does not exec — so `PaneRun` quotes.**
   `pane run` joins its argv with single spaces and sends the string as pane
   input plus Enter (`herdr:src/cli/pane.rs`), so the argv structure is gone
