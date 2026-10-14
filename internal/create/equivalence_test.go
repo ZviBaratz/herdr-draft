@@ -23,6 +23,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/machine"
 	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -633,6 +634,123 @@ favorites = ["claude"]
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
 		},
+
+		// Machine spec §5's rules, and §6's remote session, through both
+		// paths: the probe both sides share answers for dev's clone, so the
+		// plan carries dev's directory there, and every rule a remote session
+		// changes -- placement, base, account, a lane's commit -- has to be
+		// applied twice or this fails.
+		{
+			name: "a path rule sends the project to dev, cut from origin's default branch",
+			configTOML: `
+branch_prefix = "zvi/"
+[machine.paths]
+"/projects" = "dev"
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", BaseRef: "origin/main",
+				UseWorktree: true, Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+				Machine: devPlan,
+			},
+		},
+		{
+			name: "the longest rule wins, and keeps this project here",
+			configTOML: `
+branch_prefix = "zvi/"
+[machine.paths]
+"/projects" = "dev"
+"/projects/thing" = "local"
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+		},
+		{
+			name: "[machine] default sends what no rule matches",
+			configTOML: `
+branch_prefix = "zvi/"
+[machine]
+default = "dev"
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", BaseRef: "origin/main",
+				UseWorktree: true, Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+				Machine: devPlan,
+			},
+		},
+		{
+			name: "a lane follows its repository to dev, with no lane commit",
+			configTOML: `
+branch_prefix = "zvi/"
+[machine.paths]
+"/projects" = "dev"
+`,
+			lane: true,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", BaseRef: "origin/main",
+				UseWorktree: true, Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+				Machine: devPlan,
+			},
+		},
+		{
+			name: "a remembered tab-here opens a new space on dev",
+			configTOML: `
+branch_prefix = "zvi/"
+default_worktree = false
+[machine.paths]
+"/projects" = "dev"
+`,
+			lastUsed: `{"kind":"claude","placement":"tab-here","worktree":false}`,
+			args:     []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+				Machine: devPlan,
+			},
+		},
+		{
+			name: "a remembered local base becomes origin's copy on dev",
+			configTOML: `
+branch_prefix = "zvi/"
+[machine.paths]
+"/projects" = "dev"
+`,
+			projects: `{"version":1,"entries":{"` + projectDir +
+				`":{"kind":"claude","worktree":true,"base":"main","seen":"2026-09-01T00:00:00Z"}}}`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", BaseRef: "origin/main",
+				UseWorktree: true, Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+				Machine: devPlan,
+			},
+		},
+		{
+			name: "a configured default account does not follow the session to dev",
+			configTOML: `
+branch_prefix = "zvi/"
+[clauth]
+default = "acct-1"
+[machine.paths]
+"/projects" = "dev"
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", BaseRef: "origin/main",
+				UseWorktree: true, Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+				Machine: devPlan,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configDir, stateDir := t.TempDir(), t.TempDir()
@@ -704,6 +822,24 @@ favorites = ["claude"]
 	}
 }
 
+// equivalenceHome is the home both sides carry a project's path under for
+// another machine (machine spec §6.1): the scenarios' projects live in
+// /projects, so this is the directory that makes them carryable.
+const equivalenceHome = "/projects"
+
+// equivalenceMachines is `herdr machine list` for both sides: dev, saved.
+var equivalenceMachines = []herdrc.MachineInfo{savedDev}
+
+// devClonePlan is dev's clone of the scenarios' project as the probe both
+// sides share reports it, and devPlan the plan.Machine it makes.
+var devPlan = plan.Machine{ID: "af09", Label: "dev (EC2)", Target: "dev", Dir: "/home/ubuntu/thing"}
+
+func equivalenceProber() *fakeProber {
+	return &fakeProber{report: machine.Report{Clone: gitx.CloneProbe{
+		Home: "/home/ubuntu", Dir: devPlan.Dir, Exists: true, IsRepo: true,
+	}}}
+}
+
 // commandCase/commandPlanInput drive the real command path up to (not
 // including) plan.Build.
 type commandCase struct {
@@ -727,6 +863,14 @@ func commandPlanInput(t *testing.T, c commandCase) plan.Input {
 	resolved, err := commandResolve(t, c)
 	if err != nil {
 		t.Fatalf("resolveRequest: %v", err)
+	}
+	// run() probes another machine before it builds (machine spec §7),
+	// which is where the plan learns the project's directory there -- the
+	// command's counterpart of the probe the form's Init runs.
+	if resolved.machine.Remote() {
+		if code, ok := probeMachine(context.Background(), &resolved, commandDeps(c)); !ok {
+			t.Fatalf("probeMachine refused with exit %d", code)
+		}
 	}
 	// run() resolves an `auto` account after the rest of the pre-flight
 	// (#145), so the comparison has to take that step too -- the command's
@@ -752,21 +896,6 @@ func commandResolve(t *testing.T, c commandCase) (resolution, error) {
 	if err != nil {
 		t.Fatalf("parseArgs(%v): %v", c.args, err)
 	}
-	runner := newFakeRunner()
-	runner.workspaces = c.workspaces
-	git := newFakeGit()
-	git.commits = repoCommitsIn(c.projectDir)
-	if c.lane {
-		git.roots = map[string]string{laneDir: laneRoot}
-		git.primary = map[string]string{laneDir: laneRoot}
-		git.commits = map[string]string{laneDir + " HEAD": laneHead, laneDir + " main": laneMain}
-	}
-	// Assigned only when there is an issue: a nil *fakeLinear in the
-	// interface would read as Linear configured.
-	var issues IssueSource
-	if c.issue != nil {
-		issues = &fakeLinear{issues: []linear.Issue{*c.issue}}
-	}
 	return resolveRequest(context.Background(), req, Env{
 		ConfigDir:   c.configDir,
 		StateDir:    c.stateDir,
@@ -777,7 +906,34 @@ func commandResolve(t *testing.T, c commandCase) (resolution, error) {
 		// resolving from none -- and it did, silently, until the guard
 		// learned that absent is not the same as matching.
 		PluginID: pluginID,
-	}, Deps{
+	}, commandDeps(c))
+}
+
+// commandDeps is the command side's Deps for c: one place, because the
+// probe of another machine (probeMachine) runs on the same ones resolveRequest
+// did.
+func commandDeps(c commandCase) Deps {
+	runner := newFakeRunner()
+	runner.workspaces = c.workspaces
+	runner.machines = equivalenceMachines
+	git := newFakeGit()
+	git.commits = repoCommitsIn(c.projectDir)
+	if c.lane {
+		git.roots = map[string]string{laneDir: laneRoot}
+		git.primary = map[string]string{laneDir: laneRoot}
+		git.commits = map[string]string{laneDir + " HEAD": laneHead, laneDir + " main": laneMain}
+	}
+	// As formGit answers them: a fresh clone of the fixture repository.
+	git.originHead = "origin/main"
+	git.originBranches = map[string]bool{"main": true}
+	git.fullRefs = map[string]string{"main": "refs/heads/main"}
+	// Assigned only when there is an issue: a nil *fakeLinear in the
+	// interface would read as Linear configured.
+	var issues IssueSource
+	if c.issue != nil {
+		issues = &fakeLinear{issues: []linear.Issue{*c.issue}}
+	}
+	return Deps{
 		Runner:     runner,
 		Git:        git,
 		Linear:     issues,
@@ -787,7 +943,9 @@ func commandResolve(t *testing.T, c commandCase) (resolution, error) {
 		Stderr:     &strings.Builder{},
 		Workdir:    func() (string, error) { return c.projectDir, nil },
 		Picker:     c.picker,
-	})
+		Prober:     equivalenceProber(),
+		Home:       func() string { return equivalenceHome },
+	}
 }
 
 // formCase/formPlanInput build a real app.Model over the same tiers, let
@@ -829,7 +987,20 @@ type formCase struct {
 
 func formPlanInput(t *testing.T, c formCase) plan.Input {
 	t.Helper()
-	return withLinkedCommit(t, formModel(t, c)).PlanInput()
+	return withRemoteBase(t, withLinkedCommit(t, formModel(t, c))).PlanInput()
+}
+
+// withRemoteBase is withLinkedCommit's step for another machine: the base
+// mapped to one that machine can fetch (machine spec §6.4), which the submit
+// resolves after validation and the command inside resolveRequest. A no-op
+// for a session here, which is again worth running.
+func withRemoteBase(t *testing.T, m app.Model) app.Model {
+	t.Helper()
+	base, err := m.ResolveRemoteBase(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveRemoteBase: %v", err)
+	}
+	return m.WithRemoteBase(base)
 }
 
 // withLinkedCommit takes the first step a submit takes after validation:
@@ -866,8 +1037,11 @@ func formModel(t *testing.T, c formCase) app.Model {
 		t.Fatalf("ParseContext: %v", err)
 	}
 
+	runner := newFakeRunner()
+	runner.machines = equivalenceMachines
 	deps := app.Deps{
-		Runner:     newFakeRunner(),
+		Runner:     runner,
+		Prober:     equivalenceProber(),
 		Git:        &formGit{lane: c.lane},
 		Clock:      app.Clock{Sleep: func(time.Duration) {}},
 		RepoConfig: c.repoConfig,
@@ -891,6 +1065,7 @@ func formModel(t *testing.T, c formCase) app.Model {
 		Palette:      theme.Default(),
 		StateDir:     c.stateDir,
 		ClauthStatus: c.clauthStatus,
+		HomeDir:      equivalenceHome,
 	})
 
 	// A real terminal size first: several fields only lay out (and the
