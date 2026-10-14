@@ -38,7 +38,13 @@ func TestLoad_AnEmptyMachineTableIsConfigured(t *testing.T) {
 // against is canonical (pathx.CanonicalKey), so Load canonicalises the
 // keys once; the order is by directory, so nothing depends on a map's.
 func TestLoad_MachineRulesAreExpandedCanonicalAndOrdered(t *testing.T) {
-	home := t.TempDir()
+	// Resolved, because the rules are: macOS's temp directory is under
+	// /var, a symlink to /private/var, and canonicalising a rule follows
+	// it -- as it must, since the project key it is matched against does.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", home)
 	for _, d := range []string{"quantivly/browser-repo", "work"} {
 		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
