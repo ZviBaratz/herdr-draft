@@ -884,6 +884,12 @@ type reqVersions struct {
 	// nothing waits on it; it is here so a rebuilt form cannot be handed a
 	// note about a base the discarded form was showing.
 	baseBehind int
+	// machine is the machine probe's (machine spec §7) and machineList
+	// herdr's saved-machine list's: the probe because two can ask the same
+	// question at once after the row is cycled twice, and the list because
+	// a ⌃R⌃R rebuild issues its own while the discarded form's is out.
+	machine     int
+	machineList int
 }
 
 // superseded is what a ⌃R⌃R rebuild starts from: every counter one past
@@ -912,6 +918,8 @@ func (v reqVersions) superseded() reqVersions {
 		clauth:      v.clauth + 1,
 		accountWait: v.accountWait + 1,
 		baseBehind:  v.baseBehind + 1,
+		machine:     v.machine + 1,
+		machineList: v.machineList + 1,
 	}
 }
 
@@ -2193,6 +2201,16 @@ func (m Model) continueSubmit() (Model, tea.Cmd) {
 // tea.Cmd first, and re-running the validation list on the way back would
 // re-report verdicts the user has already seen.
 func (m Model) beginSubmit() (Model, tea.Cmd) {
+	// The machine's verdict can change while a round trip has the form
+	// frozen (a re-ask that was out answers). A machine that can no longer
+	// host the session is refused here, on its own row and in its own
+	// words, rather than by plan.Build's empty-directory floor on the title.
+	if where := m.machineRefusal(); where != "" {
+		if where == "worktree" {
+			return m, tea.Batch(m.form.FocusByID("worktree"), m.worktree.FocusBranch())
+		}
+		return m, m.form.FocusByID(where)
+	}
 	in := m.buildPlanInput()
 	ops, err := plan.Build(in)
 	if err != nil {
