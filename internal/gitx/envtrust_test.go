@@ -33,7 +33,9 @@ status)
   [ -f .envrc ] || { echo "No .envrc or .env found"; exit 0; }
   echo "direnv exec path /usr/bin/direnv"
   echo "Found RC path $PWD/.envrc"
-  if [ -f '` + db + `'/"$(key "$PWD")" ] && cmp -s '` + db + `'/"$(key "$PWD")" .envrc; then
+  if [ "` + yes + `" = 0 ] && [ -f '` + db + `'/deny"$(key "$PWD")" ]; then
+    echo "Found RC allowed 2"
+  elif [ -f '` + db + `'/"$(key "$PWD")" ] && cmp -s '` + db + `'/"$(key "$PWD")" .envrc; then
     echo "Found RC allowed ` + yes + `"
   else
     echo "Found RC allowed ` + no + `"
@@ -43,6 +45,9 @@ allow)
   d=${2:-$PWD}
   [ -f "$d/.envrc" ] || { echo "direnv: error .envrc file not found" >&2; exit 1; }
   cp "$d/.envrc" '` + db + `'/"$(key "$d")"
+  ;;
+deny)
+  touch '` + db + `'/deny"$(key "${2:-$PWD}")"
   ;;
 esac
 `
@@ -318,9 +323,15 @@ func TestAllowEnvrcReportsAnAllowThatDidNotTake(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	got, err := envrcOnly(Here.ExtendTrust(context.Background(), main, checkout))
+	got, err := Here.ExtendTrust(context.Background(), main, checkout)
 	if err == nil {
-		t.Fatalf("AllowEnvrc = %q, nil; want an error for an allow direnv does not report\n%s", got, direnvCalls(t, log))
+		t.Fatalf("ExtendTrust = %+v, nil; want an error for an allow direnv does not report\n%s", got, direnvCalls(t, log))
+	}
+	// The allow was attempted, so the pane's shell may well load the
+	// .envrc: the caller has to know that much even from a failure, or the
+	// agent gets a bare shell's wait for a shell loading an environment.
+	if got.Envrc != EnvrcAllowing {
+		t.Errorf("ExtendTrust's partial answer = %+v, want Envrc %q", got, EnvrcAllowing)
 	}
 }
 
@@ -420,6 +431,11 @@ if [ "$2" = --show ]; then
   shown=$PWD
   [ -z "$MISE_STUB_SHOW_RESOLVED" ] || shown=$(pwd -P)
   if [ -e '` + db + `'/"$(key "$PWD")" ]; then echo "$(disp "$shown"): trusted"; else echo "$(disp "$shown"): untrusted"; fi
+  exit 0
+fi
+if [ "$2" = --untrust ]; then
+  d=$3; [ -f "$d" ] && d=$(dirname "$d")
+  rm -f '` + db + `'/"$(key "$d")"
   exit 0
 fi
 [ "${MISE_STUB_TRUST_EXIT:-0}" = 0 ] || { echo "mise ERROR could not trust" >&2; exit "$MISE_STUB_TRUST_EXIT"; }
@@ -590,21 +606,28 @@ func TestExtendTrustIgnoresAMiseFileOnlyTheMainCloneHas(t *testing.T) {
 // Not finding it there would read as "no mise", allow the .envrc, and
 // reproduce the very prompt this exists to prevent.
 func TestExtendTrustFindsMiseInLocalBin(t *testing.T) {
-	fakeDirenv(t, "0")
-	withoutOnPath(t, "mise")
-	miseLog := fakeMise(t, filepath.Join(os.Getenv("HOME"), ".local", "bin"))
-	main, checkout := hubLike(t)
-	cmd := exec.Command(filepath.Join(os.Getenv("HOME"), ".local", "bin", "mise"), "trust", main)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("mise trust: %v\n%s", err, out)
-	}
+	// ~/.local/bin is mise's install script's; ~/.local/share/mise/bin and
+	// cargo's are its other installers'. Homebrew's /opt/homebrew/bin is on
+	// the list too, and is the one a test cannot make.
+	for _, dir := range []string{".local/bin", ".local/share/mise/bin", ".cargo/bin"} {
+		t.Run(dir, func(t *testing.T) {
+			fakeDirenv(t, "0")
+			withoutOnPath(t, "mise")
+			bin := filepath.Join(os.Getenv("HOME"), dir)
+			miseLog := fakeMise(t, bin)
+			main, checkout := hubLike(t)
+			if out, err := exec.Command(filepath.Join(bin, "mise"), "trust", main).CombinedOutput(); err != nil {
+				t.Fatalf("mise trust: %v\n%s", err, out)
+			}
 
-	got, err := Here.ExtendTrust(context.Background(), main, checkout)
-	if err != nil {
-		t.Fatalf("ExtendTrust: %v", err)
-	}
-	if want := (EnvTrust{Envrc: EnvrcAllowed, Mise: MiseTrusted}); got != want {
-		t.Errorf("ExtendTrust = %+v, want %+v\nmise calls:\n%s", got, want, direnvCalls(t, miseLog))
+			got, err := Here.ExtendTrust(context.Background(), main, checkout)
+			if err != nil {
+				t.Fatalf("ExtendTrust: %v", err)
+			}
+			if want := (EnvTrust{Envrc: EnvrcAllowed, Mise: MiseTrusted}); got != want {
+				t.Errorf("ExtendTrust = %+v, want %+v\nmise calls:\n%s", got, want, direnvCalls(t, miseLog))
+			}
+		})
 	}
 }
 
@@ -761,4 +784,99 @@ func TestExtendTrustKeepsTheMainClonesPathAsSpelled(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestExtendTrustHoldsTheEnvrcWhenMiseIsMissing: a mise config the script
+// cannot vouch for -- here because no mise is to be found -- holds the
+// .envrc, the same as one mise does not trust. Read as "no mise", it let an
+// .envrc whose `mise activate` finds a mise the script did not straight into
+// mise's prompt.
+func TestExtendTrustHoldsTheEnvrcWhenMiseIsMissing(t *testing.T) {
+	direnvLog := fakeDirenv(t, "0")
+	withoutOnPath(t, "mise")
+	main, checkout := hubLike(t)
+
+	got, err := Here.ExtendTrust(context.Background(), main, checkout)
+	if err != nil {
+		t.Fatalf("ExtendTrust: %v", err)
+	}
+	if want := (EnvTrust{Envrc: EnvrcHeld, Mise: MiseUnknown}); got != want {
+		t.Errorf("ExtendTrust = %+v, want %+v", got, want)
+	}
+	assertNotAllowedIn(t, direnvLog, checkout)
+}
+
+// TestExtendTrustComparesEveryMiseConfigName: mise reads more names than
+// .mise.toml -- the binary lists .rtx.toml, .config/mise/mise.toml and a
+// config.local.toml in each directory form -- and `mise trust` covers the
+// whole directory, so a branch that adds any of them differs.
+func TestExtendTrustComparesEveryMiseConfigName(t *testing.T) {
+	for _, name := range []string{".rtx.toml", ".config/mise/config.local.toml", "mise/config.local.toml",
+		".mise/config.local.toml", ".config/mise.local.toml", ".config/mise/mise.toml", "mise.staging.toml", ".tool-versions"} {
+		t.Run(name, func(t *testing.T) {
+			fakeDirenv(t, "0")
+			miseOnPath(t)
+			main, checkout := hubLike(t)
+			trustIn(t, main)
+			writeFile(t, filepath.Join(checkout, name), "[env]\nX = \"from the branch\"\n")
+
+			got, err := Here.ExtendTrust(context.Background(), main, checkout)
+			if err != nil {
+				t.Fatalf("ExtendTrust: %v", err)
+			}
+			if want := (EnvTrust{Envrc: EnvrcHeld, Mise: MiseDiffers}); got != want {
+				t.Errorf("ExtendTrust = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+// TestExtendTrustRevokesAStaleTrustAtAReusedPath: worktree paths are fixed
+// per branch name, and mise keys trust on the path, so a branch cut again
+// at a path an earlier session trusted would keep that trust for content
+// nobody compared. Whatever this run cannot vouch for is untrusted.
+func TestExtendTrustRevokesAStaleTrustAtAReusedPath(t *testing.T) {
+	fakeDirenv(t, "0")
+	miseLog := miseOnPath(t)
+	main, checkout := hubLike(t)
+	trustIn(t, main)
+	trustIn(t, checkout) // the earlier session's
+	writeFile(t, filepath.Join(checkout, ".mise.toml"), hubMise+"[hooks]\nenter = \"x\"\n")
+
+	got, err := Here.ExtendTrust(context.Background(), main, checkout)
+	if err != nil {
+		t.Fatalf("ExtendTrust: %v", err)
+	}
+	if got.Mise != MiseDiffers {
+		t.Errorf("Mise = %q, want %q", got.Mise, MiseDiffers)
+	}
+	cmd := exec.Command("mise", "trust", "--show")
+	cmd.Dir = checkout
+	out, _ := cmd.Output()
+	if strings.Contains(string(out), ": trusted") {
+		t.Errorf("the checkout is still trusted after a run that found it differs: %s\nmise calls:\n%s", out, direnvCalls(t, miseLog))
+	}
+}
+
+// TestExtendTrustRespectsAnExplicitDeny: direnv 2.33+ records a deny apart
+// from the absence of an allow (status 2), and an operator who denied a
+// path meant it.
+func TestExtendTrustRespectsAnExplicitDeny(t *testing.T) {
+	direnvLog := fakeDirenv(t, "0")
+	main, checkout := mainAndCheckout(t)
+	writeEnvrc(t, main, hubEnvrc)
+	writeEnvrc(t, checkout, hubEnvrc)
+	allowIn(t, main)
+	if out, err := exec.Command("direnv", "deny", checkout).CombinedOutput(); err != nil {
+		t.Fatalf("direnv deny: %v\n%s", err, out)
+	}
+
+	got, err := envrcOnly(Here.ExtendTrust(context.Background(), main, checkout))
+	if err != nil {
+		t.Fatalf("ExtendTrust: %v", err)
+	}
+	if got != EnvrcDenied {
+		t.Errorf("Envrc = %q, want %q", got, EnvrcDenied)
+	}
+	assertNotAllowedIn(t, direnvLog, checkout)
 }

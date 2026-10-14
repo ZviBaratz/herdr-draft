@@ -1507,6 +1507,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 	var agentPane string
 	haveAgentPane := false
 	total := len(ops)
+	// envSettled: settleEnv has run, so a later launch op does not wait on
+	// the same pane again.
+	envSettled := false
 
 	for i, op := range ops {
 		emitProgress(onProgress, i, total, op.Label, StepRunning, nil)
@@ -1795,7 +1798,18 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// -- herdrc has no way to report "I have started waiting"
 				// mid-call, and one extra `agent get` is a cheap price for
 				// both paths running the same three lines.
-				err = r.AwaitDetection(ctx, paneID, op.Timeout, 0)
+				// settleEnv waited out the environment load before the
+				// launch line was typed. A load it could not see -- one that
+				// began after it looked -- still holds the typed line until
+				// it finishes, so the detection allows for that too. Nothing
+				// is pressed here: ctrl+c now would flush the typed line, and
+				// a detection timeout cannot tell a slow environment from a
+				// slow agent.
+				timeout := op.Timeout
+				if result.EnvTrust.envLoaded() {
+					timeout += envLoadBusyBudget
+				}
+				err = r.AwaitDetection(ctx, paneID, timeout, 0)
 				if opts.TrustWait > 0 && isBlockedAgentError(err) {
 					err = waitThroughDialog(ctx, r, onProgress, i, total, op.Label, paneID, op.Timeout, opts.TrustWait)
 				}
@@ -1910,7 +1924,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 		// attempt above.
 		var unproven bool
 		// A shell loading an environment this run allowed is busy for as
-		// long as that takes, so every step after it waits longer for it.
+		// long as that takes. settleEnv below normally waits it out first;
+		// this is for the load it could not see, one that started after it
+		// looked or a pane whose foreground herdr could not report.
 		budget := busyRetryBudget
 		if result.EnvTrust.envLoaded() {
 			budget = envLoadBusyBudget
@@ -1922,29 +1938,26 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			}
 			return err
 		}
-		runErr := retryBusy(ctx, budget, run)
 		// The environment never fails a create (the operator's rule,
-		// 2026-10-14). An agent that cannot start because the shell is
-		// still loading the .envrc this run allowed gets the shell back --
-		// ctrl+c is direnv's own "give up" -- and starts without it, as it
-		// did before the allow existed.
+		// 2026-10-14): before the agent is launched in a shell loading the
+		// .envrc this run allowed, the load is waited for, and interrupted
+		// if it outlasts its budget (settleEnv). Once per run, on whichever
+		// op launches it -- Path A's start or a pinned account's typed line.
 		var stepNote string
-		if op.Kind == OpWorktreeCreate {
-			stepNote = trust.Note()
-		}
-		if op.Kind == OpAgentStart && op.Agent != nil && result.EnvTrust.envLoaded() {
-			pane := op.Agent.PaneID
-			if pane == "" && haveAgentPane {
-				pane = agentPane
+		if (op.Kind == OpAgentStart || op.Kind == OpClauthLaunch) && result.EnvTrust.envLoaded() && !envSettled {
+			envSettled = true
+			pane := agentPane
+			if op.Agent != nil && op.Agent.PaneID != "" {
+				pane = op.Agent.PaneID
 			}
-			for n := 0; n < maxEnvInterrupts && pane != "" && errors.Is(runErr, herdrc.ErrPaneBusy); n++ {
-				if r.PaneSendKeys(ctx, pane, "ctrl+c") != nil {
-					break
-				}
+			if pane != "" && settleEnv(ctx, r, pane) {
 				result.EnvTrust.Interrupted = true
 				stepNote = interruptedNote()
-				runErr = retryBusy(ctx, busyRetryBudget, run)
 			}
+		}
+		runErr := retryBusy(ctx, budget, run)
+		if op.Kind == OpWorktreeCreate {
+			stepNote = trust.Note()
 		}
 
 		if runErr != nil && isCosmeticKind(op.Kind) {

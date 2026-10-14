@@ -299,19 +299,21 @@ type jsonReport struct {
 	// files (plan.ExecResult.EnvTrust, `[worktree] inherit_trust`). Envrc:
 	// "allowed", the main clone's own bytes and already allowed there;
 	// "differs", left blocked for review; "not_allowed", identical but the
-	// main clone's is not allowed either; or "held", left blocked because
-	// the checkout's mise config is not trusted. Mise: "trusted",
-	// "differs" or "not_trusted", the same way. Each is absent when there
-	// was nothing to do -- no worktree, no such file, no direnv or mise, or
-	// the key off. TrustError is the step failing, with both absent. None
-	// is a reason the create failed: the exit code and ok are what they
-	// would have been without it.
+	// main clone's is not allowed either; "denied", an explicit direnv deny
+	// of the checkout, left alone; "held", left blocked because the
+	// checkout's mise config is not trusted; or "allowing", the allow begun
+	// when the step failed. Mise: "trusted", "differs" or "not_trusted",
+	// the same way, or "unknown", a mise config and no mise found. Each is
+	// absent when there was nothing to do -- no worktree, no such file, no
+	// direnv, or the key off. TrustError is the step failing, beside
+	// whatever it had found by then. None is a reason the create failed:
+	// the exit code and ok are what they would have been without it.
 	Envrc      string `json:"envrc,omitempty"`
 	Mise       string `json:"mise,omitempty"`
 	TrustError string `json:"trust_error,omitempty"`
 	// EnvLoadInterrupted is true when the .envrc allowed here was still
-	// loading once the agent's start had waited a minute for the shell, and
-	// was interrupted so the agent started anyway, without its environment.
+	// loading after a minute, and was interrupted before the agent was
+	// launched, so the agent started anyway, without its environment.
 	EnvLoadInterrupted bool `json:"env_load_interrupted,omitempty"`
 
 	// PromptSent is absent when there was no prompt at all, and also when
@@ -481,11 +483,12 @@ func (r report) writeJSON(w io.Writer) {
 		out.SpaceWorkspaceID, out.SpaceTabID, out.SpacePaneID = c.WorkspaceID, c.TabID, c.PaneID
 		out.CheckoutPath = c.CheckoutPath
 	}
+	// The verdicts are reported beside an error too: "allowing" is what a
+	// step that failed after starting the allow knows, and it matters.
 	if t := r.result.EnvTrust; t.Err != nil {
 		out.TrustError = t.Err.Error()
-	} else {
-		out.Envrc, out.Mise = string(t.Trust.Envrc), string(t.Trust.Mise)
 	}
+	out.Envrc, out.Mise = string(r.result.EnvTrust.Trust.Envrc), string(r.result.EnvTrust.Trust.Mise)
 	out.EnvLoadInterrupted = r.result.EnvTrust.Interrupted
 	if a := r.result.AgentAt; a != nil {
 		out.WorkspaceID, out.TabID, out.PaneID = a.WorkspaceID, a.TabID, a.PaneID

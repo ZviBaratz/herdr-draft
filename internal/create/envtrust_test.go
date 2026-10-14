@@ -128,8 +128,8 @@ func TestCreateSucceedsWhenTheAllowFails(t *testing.T) {
 		t.Fatalf("a failed direnv allow failed the create: exit = %d\nstderr: %s", code, h.stderr)
 	}
 	out := cleanReport(t, h)
-	if !out.OK || out.Envrc != "" || !strings.Contains(out.TrustError, "permission denied") {
-		t.Errorf("ok, envrc, trust_error = %v, %q, %q; want true, nothing and direnv's words", out.OK, out.Envrc, out.TrustError)
+	if !out.OK || out.Envrc != "allowing" || !strings.Contains(out.TrustError, "permission denied") {
+		t.Errorf("ok, envrc, trust_error = %v, %q, %q; want true, allowing and direnv's words", out.OK, out.Envrc, out.TrustError)
 	}
 }
 

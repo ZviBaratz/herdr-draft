@@ -252,6 +252,10 @@ func (r *submitFakeRunner) PaneRun(context.Context, string, []herdrc.EnvVar, []s
 	return nil
 }
 
+func (r *submitFakeRunner) PaneProcessInfo(context.Context, string) (herdrc.ProcessInfo, error) {
+	return herdrc.ProcessInfo{}, errors.New("process info is not modelled here")
+}
+
 func (r *submitFakeRunner) PaneSendKeys(context.Context, string, ...string) error {
 	if r.shouldFail("PaneSendKeys") {
 		return r.failErr

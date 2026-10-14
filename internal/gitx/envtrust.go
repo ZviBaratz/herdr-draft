@@ -38,6 +38,14 @@ const (
 	// EnvrcNotAllowed: the two are identical, but direnv does not allow the
 	// main clone's either, so there is no allow to extend.
 	EnvrcNotAllowed Envrc = "not_allowed"
+	// EnvrcAllowing: the allow was started and the step then failed, so the
+	// .envrc may well be allowed. Only ever returned beside an error -- and
+	// it is why ExtendTrust returns what it saw even then: a shell that may
+	// be loading an environment needs the longer wait (plan's envLoaded).
+	EnvrcAllowing Envrc = "allowing"
+	// EnvrcDenied: direnv records an explicit deny for the checkout (status
+	// 2, direnv 2.33+), which the operator made and this does not override.
+	EnvrcDenied Envrc = "denied"
 	// EnvrcHeld: the .envrc would have been allowed, but the checkout has a
 	// mise config mise does not trust (Mise says why), so it was left
 	// blocked. An allowed .envrc that runs `mise activate` over an
@@ -65,6 +73,12 @@ const (
 	// MiseNotTrusted: the files are the main clone's, but mise does not
 	// trust the main clone's either.
 	MiseNotTrusted Mise = "not_trusted"
+	// MiseUnknown: the checkout has a mise config and no mise was found to
+	// ask about it -- not on PATH, nor where its installers put it. Counted
+	// as untrusted, so it holds the .envrc: a mise the shell finds and this
+	// did not would otherwise meet the .envrc's `mise activate` with a
+	// prompt.
+	MiseUnknown Mise = "unknown"
 )
 
 // ExtendTrust extends the operator's own trust in the main clone's
@@ -97,29 +111,36 @@ const (
 // allow that lands after it prints ".envrc is blocked" anyway. A verdict is
 // said only once the tool itself reports it; an error is ssh failing, or a
 // trust or an allow that did not take.
+//
+// On an error it still returns what the script had said by then, because
+// "envrc allowing" -- printed just before the allow -- means the pane's
+// shell may load the .envrc whatever went wrong afterwards.
 func (h Host) ExtendTrust(ctx context.Context, source, checkout string) (EnvTrust, error) {
 	out, err := h.sh(ctx, extendTrustScript(source, checkout))
-	if err != nil {
-		return EnvTrust{}, fmt.Errorf("extending trust to %s: %w", checkout, err)
-	}
 	var tr EnvTrust
 	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
 		key, value, _ := strings.Cut(line, " ")
 		switch {
 		case key == "mise" && validMise(Mise(value)):
 			tr.Mise = Mise(value)
 		case key == "envrc" && validEnvrc(Envrc(value)):
 			tr.Envrc = Envrc(value)
-		default:
+		case err == nil:
 			return EnvTrust{}, fmt.Errorf("extending trust to %s: unexpected answer %q", checkout, out)
 		}
+	}
+	if err != nil {
+		return tr, fmt.Errorf("extending trust to %s: %w", checkout, err)
 	}
 	return tr, nil
 }
 
 func validMise(m Mise) bool {
 	switch m {
-	case MiseAbsent, MiseTrusted, MiseDiffers, MiseNotTrusted:
+	case MiseAbsent, MiseTrusted, MiseDiffers, MiseNotTrusted, MiseUnknown:
 		return true
 	}
 	return false
@@ -127,31 +148,43 @@ func validMise(m Mise) bool {
 
 func validEnvrc(e Envrc) bool {
 	switch e {
-	case EnvrcAbsent, EnvrcAllowed, EnvrcDiffers, EnvrcNotAllowed, EnvrcHeld:
+	case EnvrcAbsent, EnvrcAllowed, EnvrcAllowing, EnvrcDiffers, EnvrcNotAllowed, EnvrcDenied, EnvrcHeld:
 		return true
 	}
 	return false
 }
 
-// miseConfigFiles are the config files mise reads from a project directory,
-// relative to it: its documented names, including the local and per-env
-// variants (mise.local.toml, mise.<env>.toml) and the conf.d directories.
-// `mise trust` trusts the directory, so anything here the checkout has is
-// trusted with it, and each one has to be the main clone's.
+// miseConfigFiles are patterns, relative to a project directory, for the
+// files mise reads there: every config name mise 2026.6.14's binary lists
+// (mise.toml, .mise.toml, .rtx.toml, the mise/, .mise/ and .config/mise
+// forms, conf.d), each pattern wide enough to take their .local and
+// per-environment variants, and .tool-versions.
+//
+// It is a comparison, not the trust boundary. `mise trust` trusts the
+// checkout's whole directory, so a name missing here is trusted unread --
+// but no further than the main clone's own trust already goes: the same
+// file on that branch, checked out in the main clone, would be read under
+// it. Matching is the extra caution that keeps a branch's changed config
+// for review.
 var miseConfigFiles = []string{
-	"mise.toml", "mise.*.toml", ".mise.toml", ".mise.*.toml",
-	"mise/config.toml", ".mise/config.toml", ".config/mise.toml", ".config/mise/config.toml",
-	"mise/conf.d/*.toml", ".mise/conf.d/*.toml", ".config/mise/conf.d/*.toml",
+	"mise.toml", "mise.*.toml", ".mise.toml", ".mise.*.toml", ".rtx.toml", ".rtx.*.toml",
+	"mise/*.toml", "mise/conf.d/*.toml", ".mise/*.toml", ".mise/conf.d/*.toml",
+	".config/mise.toml", ".config/mise.*.toml", ".config/mise/*.toml", ".config/mise/conf.d/*.toml",
+	".tool-versions",
 }
 
 // extendTrustScript is ExtendTrust's script. POSIX sh, and nothing outside
 // it but git, cmp, direnv and mise, because it runs on whatever the remote
-// has. Its stdout is two lines, "mise <verdict>" and "envrc <verdict>".
+// has. Its stdout is "mise <verdict>", then "envrc <verdict>" -- with an
+// "envrc allowing" between them once the allow has begun, which is what a
+// caller reads from a script that failed after it.
 //
-// $HOME/.local/bin is appended to PATH, after everything already on it:
-// mise's installer puts it there, and a non-interactive ssh's PATH does not
-// include it (dev, 2026-10-14). Not finding it would read as "no mise" and
-// allow an .envrc into the prompt EnvrcHeld exists to avoid.
+// Where mise's installers put it is appended to PATH, after everything
+// already on it: ~/.local/bin (its install script; dev, where a
+// non-interactive ssh's PATH lacks it), ~/.local/share/mise/bin, cargo's
+// bin and Homebrew's. A checkout with a mise config and no mise found is
+// MiseUnknown, which holds the .envrc rather than allowing it into the
+// prompt EnvrcHeld exists to avoid.
 //
 // The main clone's root is found with --show-cdup and a cd, not with
 // --show-toplevel, because the latter resolves symlinks: direnv keys an
@@ -170,7 +203,7 @@ var miseConfigFiles = []string{
 func extendTrustScript(source, checkout string) string {
 	return strings.Join([]string{
 		"unset " + strings.Join(localRepoEnvVars, " "),
-		`PATH=$PATH:$HOME/.local/bin`,
+		`PATH=$PATH:$HOME/.local/bin:$HOME/.local/share/mise/bin:$HOME/.cargo/bin:/opt/homebrew/bin`,
 		`wt=` + shellQuote(checkout),
 		`src=` + shellQuote(source),
 		`top=$(cd -- "$src" 2>/dev/null && c=$(GIT_TERMINAL_PROMPT=0 git rev-parse --show-cdup 2>/dev/null) && cd -- "./$c" && pwd) || top=$src`,
@@ -179,38 +212,43 @@ func extendTrustScript(source, checkout string) string {
 		`tilde() { case $1 in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' "$1" ;; esac; }`,
 		`mtrusted() { d=$(tilde "$1"); p=$(tilde "$(cd -- "$1" && pwd -P)"); (cd -- "$1" && mise trust --show 2>/dev/null) | while IFS= read -r l; do { [ "$l" = "$d: trusted" ] || [ "$l" = "$p: trusted" ]; } && echo yes; done; }`,
 		`m=`,
-		`if command -v mise >/dev/null 2>&1; then`,
-		`  wl=$(mfiles "$wt")`,
-		`  if [ -n "$wl" ]; then`,
-		`    if [ -n "$(printf '%s\n' "$wl" | while IFS= read -r f; do cmp -s -- "$top/$f" "$wt/$f" || echo x; done)" ]; then m=differs`,
-		`    elif [ "$(mtrusted "$top")" != yes ]; then m=not_trusted`,
-		`    else`,
-		`      mise trust "$wt" >&2 || exit 3`,
-		`      [ "$(mtrusted "$wt")" = yes ] || { echo "mise does not report $wt trusted after trusting it" >&2; exit 3; }`,
-		`      m=trusted`,
-		`    fi`,
+		`wl=$(mfiles "$wt")`,
+		`if [ -n "$wl" ] && ! command -v mise >/dev/null 2>&1; then m=unknown`,
+		`elif [ -n "$wl" ]; then`,
+		`  if [ -n "$(printf '%s\n' "$wl" | while IFS= read -r f; do cmp -s -- "$top/$f" "$wt/$f" || echo x; done)" ]; then m=differs`,
+		`  elif [ "$(mtrusted "$top")" != yes ]; then m=not_trusted`,
+		`  else`,
+		`    mise trust "$wt" >&2 || exit 3`,
+		`    [ "$(mtrusted "$wt")" = yes ] || { echo "mise does not report $wt trusted after trusting it" >&2; exit 3; }`,
+		`    m=trusted`,
 		`  fi`,
+		// A path is reused when a branch name is: whatever trust an earlier
+		// session left on it covered content nobody compared this time.
+		`  if [ "$m" != trusted ] && [ "$(mtrusted "$wt")" = yes ]; then mise trust --untrust "$wt" >&2 || exit 3; fi`,
 		`fi`,
+		`echo "mise $m"`,
 		// direnv
-		`allowed() { (cd -- "$1" && direnv status 2>/dev/null) | while IFS= read -r l; do case "$l" in "Found RC allowed true"|"Found RC allowed 0") echo yes ;; esac; done; }`,
+		`allowed() { (cd -- "$1" && direnv status 2>/dev/null) | while IFS= read -r l; do case "$l" in "Found RC allowed true"|"Found RC allowed 0") echo yes ;; "Found RC allowed 2") echo denied ;; esac; done; }`,
 		`e=`,
 		`if command -v direnv >/dev/null 2>&1 && [ -f "$wt/.envrc" ]; then`,
 		`  if ! cmp -s -- "$top/.envrc" "$wt/.envrc"; then e=differs`,
 		`  elif [ "$(allowed "$top")" != yes ]; then e=not_allowed`,
-		`  elif [ "$m" = differs ] || [ "$m" = not_trusted ]; then e=held`,
+		`  elif [ "$(allowed "$wt")" = denied ]; then e=denied`,
+		`  elif [ "$m" = differs ] || [ "$m" = not_trusted ] || [ "$m" = unknown ]; then e=held`,
 		`  else`,
+		`    echo "envrc allowing"`,
 		`    direnv allow "$wt" >&2 || exit 3`,
 		`    [ "$(allowed "$wt")" = yes ] || { echo "direnv does not report $wt/.envrc allowed after allowing it" >&2; exit 3; }`,
 		`    e=allowed`,
 		`  fi`,
 		`fi`,
-		`echo "mise $m"`,
 		`echo "envrc $e"`,
 	}, "\n")
 }
 
 // sh runs script under /bin/sh on h's machine and returns its trimmed
-// stdout: h.ssh for another machine, and the same shell here.
+// stdout: h.ssh for another machine, and the same shell here. On a failure
+// the stdout so far comes back beside the error, as h.ssh's does.
 func (h Host) sh(ctx context.Context, script string) (string, error) {
 	if h.Remote() {
 		return h.ssh(ctx, script)
@@ -225,7 +263,7 @@ func (h Host) sh(ctx context.Context, script string) (string, error) {
 		err = nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		return strings.TrimSpace(stdout.String()), fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }
