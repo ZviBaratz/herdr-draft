@@ -11,7 +11,7 @@ herdr-draft version     # --version and -V work too
 ```
 
 ```
-herdr-draft 0.1.0
+herdr-draft 0.2.0
   plugin id  zvibaratz.draft
   skill      42e8d3ecbc4f
   commit     a33304d53459

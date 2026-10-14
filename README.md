@@ -63,7 +63,7 @@ Optional:
 ## Install
 
 ```bash
-herdr plugin install ZviBaratz/herdr-draft --ref v0.1.0
+herdr plugin install ZviBaratz/herdr-draft --ref v0.2.0
 ```
 
 herdr clones the repository, shows you what it is about to install and asks
