@@ -1744,6 +1744,12 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				if req.PaneID == "" && haveAgentPane {
 					req.PaneID = agentPane
 				}
+				// herdr types into a shell whose load has not started,
+				// then waits for the agent it typed; a load settleEnv could
+				// not see holds that line, so the wait allows for it.
+				if result.EnvTrust.envLoaded() {
+					req.Timeout = agentStartWait + envLoadBusyBudget
+				}
 				err = startAgentWithDedupe(ctx, r, req)
 				if opts.TrustWait > 0 && isBlockedAgentError(err) {
 					// Not a failure but a wait (#115). If it comes back

@@ -2029,3 +2029,27 @@ func TestCLIRunnerPaneProcessInfoRefusesEmptyPaneID(t *testing.T) {
 	}
 	assertNeverExecuted(t, argvLog)
 }
+
+// TestCLIRunnerAgentStartPassesItsTimeout: herdr's own wait for the agent it
+// typed defaults to 30 s (herdr:src/cli/agent.rs at v0.9.0); a request that
+// names a longer one -- a shell loading an environment holds the typed line
+// -- passes it as --timeout in milliseconds, and one that names none passes
+// nothing, as before the field existed.
+func TestCLIRunnerAgentStartPassesItsTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		timeout time.Duration
+		want    string
+	}{
+		{0, "agent start w --kind claude --pane p1"},
+		{90 * time.Second, "agent start w --kind claude --pane p1 --timeout 90000"},
+	} {
+		bin, argvLog := fakeHerdr(t, `{"id":"x","result":{"type":"ok"}}`)
+		r := &CLIRunner{Bin: bin}
+		if err := r.AgentStart(context.Background(), AgentStartReq{Name: "w", Kind: "claude", PaneID: "p1", Timeout: tc.timeout}); err != nil {
+			t.Fatalf("AgentStart: %v", err)
+		}
+		if got := readArgvLog(t, argvLog); got != tc.want {
+			t.Errorf("timeout %s: argv = %q, want %q", tc.timeout, got, tc.want)
+		}
+	}
+}

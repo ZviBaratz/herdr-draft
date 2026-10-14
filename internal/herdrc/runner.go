@@ -100,6 +100,11 @@ type AgentStartReq struct {
 	Kind      string
 	PaneID    string
 	ExtraArgs []string
+	// Timeout is how long herdr waits for the agent it typed to start,
+	// `--timeout` in milliseconds; zero passes nothing and leaves herdr's
+	// default, 30 s (herdr:src/cli/agent.rs at v0.9.0), which also bounds
+	// it to more than 3 s and at most 300 s.
+	Timeout time.Duration
 }
 
 // AgentPromptReq is the request shape for `herdr agent prompt --wait`
@@ -962,6 +967,9 @@ func (r *CLIRunner) AgentStart(ctx context.Context, req AgentStartReq) error {
 	}
 	if args, err = appendFlag(args, "--pane", req.PaneID); err != nil {
 		return err
+	}
+	if req.Timeout > 0 {
+		args = append(args, "--timeout", strconv.FormatInt(req.Timeout.Milliseconds(), 10))
 	}
 	if len(req.ExtraArgs) > 0 {
 		// ExtraArgs is a pass-through command line whose own flags are the

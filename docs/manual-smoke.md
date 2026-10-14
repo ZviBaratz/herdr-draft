@@ -1911,23 +1911,30 @@ absolute path (so the clone probe accepts the remote session), make a scratch
 repository whose committed `.envrc` runs `sleep 120`. Allow it in the main
 clone, and cut a worktree session from it with `--machine <the other>` and
 with `--machine local`. Expect the agent step to read `ok (the environment
-was still loading after 1m0s; interrupted it to start the agent)`, and
+was still loading after 1m0s; interrupted it)`, and
 `--json` to report `env_load_interrupted: true`. The pane shows direnv's
 "taking a while... Use CTRL-C to give up", then `^C direnv: error signal:
 killed`, then the agent. Claude may then stop on its own trust dialog for the
 new path, which is not the environment's doing.
 
-**Clean up** the trust you created as well as the session:
-`direnv deny <checkout>` and `mise trust --untrust <checkout>` before
-`worktree remove`. Then delete the branch.
+**Clean up** the trust you created as well as the session. Run `mise trust
+--untrust <checkout>`, then `worktree remove`, then `direnv prune`, which
+drops allows for files that no longer exist. Then delete the branch.
+
+**Do not use `direnv deny`.** On direnv 2.33 and later it records a deny
+that outlives the checkout, and a rerun with the same title then reads
+`envrc: denied`.
 
 **Passed on dev, 2026-10-14**, with hub. The first load took 2.0 s
 (virtualenv plus `quanticli doctor deps`), and a warm one 42 ms. Claude
 showed no trust prompt. The slow environment passed on both machines the
 same day (dev: direnv 2.25.2, laptop: 2.37.1). A first design that waited
-on herdr's `agent_pane_busy` passed on dev and failed on the laptop: there
-herdr typed the agent's command into the loading shell and timed out waiting
-for it. That is why the wait now reads the pane's processes.
+on herdr's `agent_pane_busy` passed on dev and failed on the laptop. herdr
+had checked the pane before the hook started, typed the agent's command, and
+then timed out while the load held it. That was a timing race, not a
+difference between the machines. It is why the wait now reads the pane's
+processes, and why `agent start` gets a longer `--timeout` when an
+environment was allowed.
 
 ## After the matrix
 

@@ -432,6 +432,9 @@ func TestExecuteNeverInterruptsAShellItLoadedNothingInto(t *testing.T) {
 	m := &mockRunner{
 		topo: createdTopo(path, "zvi/new"), onWorktreeCreate: herdrWorktreeAdd(t, repo, path),
 		failAt: "AgentStart", failErr: busyErr, failCount: 1000,
+		// A pane that reads as loading, so only the missing allow can be
+		// why nothing is pressed -- not a pane nobody could read.
+		processInfo: func() (herdrc.ProcessInfo, error) { return loadingPane(), nil },
 	}
 	result := executeWorktree(t, worktreeInput(repo, "zvi/new"), m) // inherit_trust off
 
@@ -521,7 +524,12 @@ func TestTrustNoteNamesWhatTheOperatorHasToDo(t *testing.T) {
 		{TrustOutcome{Trust: gitx.EnvTrust{Envrc: gitx.EnvrcAllowing}, Err: boom},
 			".envrc may be allowed, but the step failed: ssh: connection reset"},
 		{TrustOutcome{Err: boom}, "trust not extended: ssh: connection reset"},
-		{TrustOutcome{Trust: gitx.EnvTrust{Envrc: gitx.EnvrcDenied}}, ""},
+		// A deny outlives the checkout on direnv 2.33+, and branch-named
+		// paths are reused, so a silent one reads as the feature broken.
+		{TrustOutcome{Trust: gitx.EnvTrust{Envrc: gitx.EnvrcDenied}},
+			".envrc left blocked: direnv has a deny on record for this path (direnv allow lifts it)"},
+		{TrustOutcome{Trust: gitx.EnvTrust{Mise: gitx.MiseDiffers}},
+			"mise not trusted here: its config differs from the main clone's"},
 	} {
 		if got := tc.o.Note(); got != tc.want {
 			t.Errorf("%+v: Note() = %q, want %q", tc.o, got, tc.want)
@@ -570,6 +578,7 @@ func settleExecute(t *testing.T, pinned bool, panes func(call int, interrupts in
 	calls, interrupts := 0, 0
 	m.processInfo = func() (herdrc.ProcessInfo, error) { calls++; return panes(calls, interrupts), nil }
 	m.onSendKeys = func(string, []string) { interrupts++ }
+	m.paneBusy = func() bool { return !atPrompt(panes(calls, interrupts)) }
 	in := worktreeInput(repo, "zvi/new")
 	in.InheritTrust = true
 	if pinned {
@@ -640,7 +649,7 @@ func lastCallIndex(calls []string, prefix string) int {
 // TestExecuteStartsTheAgentWhenTheEnvironmentNeverFinishesLoading is the
 // operator's rule: the environment never fails a create. A load still
 // running after envLoadBusyBudget gets ctrl+c -- direnv gives up on it,
-// measured on both machines' direnv despite its hook's `trap ” SIGINT`
+// measured on both machines' direnv despite its hook's `trap -- ” SIGINT`
 // -- BEFORE anything is typed, and the agent starts without it.
 func TestExecuteStartsTheAgentWhenTheEnvironmentNeverFinishesLoading(t *testing.T) {
 	for _, needed := range []int{1, 2} {
@@ -666,7 +675,7 @@ func TestExecuteStartsTheAgentWhenTheEnvironmentNeverFinishesLoading(t *testing.
 			if !result.EnvTrust.Interrupted {
 				t.Error("EnvTrust.Interrupted = false")
 			}
-			if want := "the environment was still loading after 1m0s; interrupted it to start the agent"; step.State != StepDone || step.Note != want {
+			if want := "the environment was still loading after 1m0s; interrupted it"; step.State != StepDone || step.Note != want {
 				t.Errorf("agent step = %v %q, want done and %q", step.State, step.Note, want)
 			}
 		})
@@ -674,14 +683,50 @@ func TestExecuteStartsTheAgentWhenTheEnvironmentNeverFinishesLoading(t *testing.
 }
 
 // TestExecuteInterruptsAtMostTwice: a load two presses do not stop is not
-// pressed a third time; the agent is launched anyway, as before any of this.
+// pressed a third time. The agent's start is then tried as before any of
+// this, and herdr refuses a shell that is still loading, so the step fails
+// -- after its busy wait -- beside env_load_interrupted. direnv gives up on
+// the first press (measured on both machines), so this is the shape of an
+// .envrc that ignores it, not of a slow one.
 func TestExecuteInterruptsAtMostTwice(t *testing.T) {
-	result, m, _ := settleExecute(t, false, func(int, int) herdrc.ProcessInfo { return loadingPane() })
+	withBusyRetryOverrides(t, 0, fakeAdvancingClock(2*time.Second))
+	result, m, step := settleExecute(t, false, func(int, int) herdrc.ProcessInfo { return loadingPane() })
 	if n := countCallsWithPrefix(m.calls, "PaneSendKeys("); n != 2 || maxEnvInterrupts != 2 {
 		t.Errorf("%d presses with maxEnvInterrupts = %d, want exactly 2", n, maxEnvInterrupts)
 	}
-	if callIndex(m.calls, "AgentStart(") < 0 || result.FailedIndex != -1 {
-		t.Errorf("the agent was not launched after the presses ran out: FailedIndex %d, %v", result.FailedIndex, m.calls)
+	if result.FailedIndex == -1 || step.State != StepFailed || !errors.Is(step.Err, busyErr) {
+		t.Errorf("FailedIndex = %d, agent step %v %v: want the start refused as busy", result.FailedIndex, step.State, step.Err)
+	}
+	if !result.EnvTrust.Interrupted {
+		t.Error("EnvTrust.Interrupted = false")
+	}
+}
+
+// TestExecuteGivesAgentStartTheLongerWaitForALoadItCouldNotSee: herdr types
+// the agent's command into a shell whose load has not started yet, and then
+// waits for the agent it typed -- 30 s by default. A load that starts in that
+// window holds the typed line, so with an environment allowed the start
+// waits envLoadBusyBudget longer, as a pinned launch's detection does.
+func TestExecuteGivesAgentStartTheLongerWaitForALoadItCouldNotSee(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allowed=%v", allowed), func(t *testing.T) {
+			fakeDirenv(t)
+			repo := envrcRepo(t)
+			path := filepath.Join(t.TempDir(), "wt")
+			m := &mockRunner{topo: createdTopo(path, "zvi/new"), onWorktreeCreate: herdrWorktreeAdd(t, repo, path)}
+			in := worktreeInput(repo, "zvi/new")
+			in.InheritTrust = allowed
+			if result := executeWorktree(t, in, m); result.FailedIndex != -1 {
+				t.Fatalf("FailedIndex = %d", result.FailedIndex)
+			}
+			var want time.Duration
+			if allowed {
+				want = agentStartWait + envLoadBusyBudget
+			}
+			if len(m.agentStarts) != 1 || m.agentStarts[0].Timeout != want {
+				t.Errorf("agent start requests = %+v, want one with Timeout %s", m.agentStarts, want)
+			}
+		})
 	}
 }
 
@@ -695,6 +740,21 @@ func TestExecuteDoesNotWaitLongOnAShellThatLoadsNothing(t *testing.T) {
 	}
 	if n := countCallsWithPrefix(m.calls, "PaneProcessInfo("); n > 3 {
 		t.Errorf("%d reads of an idle pane at 2s each, want the grace and no more", n)
+	}
+}
+
+// TestLoadingEnvKnowsDirenvWithoutItsArgv: herdr's schema makes argv
+// optional, and a direnv whose argv it could not read is still the hook.
+func TestLoadingEnvKnowsDirenvWithoutItsArgv(t *testing.T) {
+	info := herdrc.ProcessInfo{ShellPID: paneShell, Foreground: []herdrc.Process{
+		{PID: paneShell, Name: "zsh"}, {PID: paneShell + 1, Name: "direnv"},
+	}}
+	if !loadingEnv(info) {
+		t.Error("loadingEnv = false for a direnv with no argv")
+	}
+	info.Foreground[1].Argv = []string{"direnv", "allow"}
+	if loadingEnv(info) {
+		t.Error("loadingEnv = true for a direnv that is not exporting")
 	}
 }
 
@@ -714,5 +774,22 @@ func TestExecuteInterruptsBeforeTypingAPinnedLaunch(t *testing.T) {
 	press, typed := callIndex(m.calls, "PaneSendKeys("), callIndex(m.calls, "PaneRun(")
 	if press < 0 || typed < 0 || typed < press {
 		t.Errorf("ctrl+c at call %d, launch typed at call %d: want the press first, %v", press, typed, m.calls)
+	}
+}
+
+// TestSettleEnvIsBoundedInRealTime: a PaneProcessInfo that never answers --
+// a stalled machine bridge -- does not hold the launch past
+// envSettleTimeout, whatever envNow says.
+func TestSettleEnvIsBoundedInRealTime(t *testing.T) {
+	orig := envSettleTimeout
+	envSettleTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { envSettleTimeout = orig })
+	m := &mockRunner{blockingProcessInfo: true}
+	done := make(chan bool, 1)
+	go func() { done <- settleEnv(context.Background(), m, "pane-1") }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("settleEnv still waiting on a process read that never answers")
 	}
 }

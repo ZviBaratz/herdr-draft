@@ -155,10 +155,11 @@ func validEnvrc(e Envrc) bool {
 }
 
 // miseConfigFiles are patterns, relative to a project directory, for the
-// files mise reads there: every config name mise 2026.6.14's binary lists
+// files mise reads there: the config names mise 2026.6.14's binary lists
 // (mise.toml, .mise.toml, .rtx.toml, the mise/, .mise/ and .config/mise
 // forms, conf.d), each pattern wide enough to take their .local and
-// per-environment variants, and .tool-versions.
+// per-environment variants; .tool-versions; and .miserc.toml, which can
+// choose which per-environment file is read.
 //
 // It is a comparison, not the trust boundary. `mise trust` trusts the
 // checkout's whole directory, so a name missing here is trusted unread --
@@ -170,7 +171,7 @@ var miseConfigFiles = []string{
 	"mise.toml", "mise.*.toml", ".mise.toml", ".mise.*.toml", ".rtx.toml", ".rtx.*.toml",
 	"mise/*.toml", "mise/conf.d/*.toml", ".mise/*.toml", ".mise/conf.d/*.toml",
 	".config/mise.toml", ".config/mise.*.toml", ".config/mise/*.toml", ".config/mise/conf.d/*.toml",
-	".tool-versions",
+	".tool-versions", ".miserc.toml", ".config/miserc.toml",
 }
 
 // extendTrustScript is ExtendTrust's script. POSIX sh, and nothing outside

@@ -42,6 +42,8 @@ for why a heading here may read `unreleased`.
     still loading after that, herdr-draft presses ctrl+c in the pane (at
     most twice) before anything is typed. The agent then starts without
     the environment, and `create --json` reports `env_load_interrupted`.
+    direnv gives up on the first press. A load that ignores both presses
+    still fails the start.
   - **On by default.** `[worktree] inherit_trust = false` turns it off. Only
     `config.toml` can set it.
 
