@@ -1113,6 +1113,10 @@ func (m *Model) refreshBaseStatus() {
 	// Said here, where the base is chosen, rather than left to the row's
 	// `← HEAD`, which on dev means origin's default branch.
 	if label := m.machineLabel(); label != "" {
+		if r := m.mach.baseRefusal; r.shows(m.worktree.Base(), label) {
+			m.worktree.SetBaseStatus(r.text, true)
+			return
+		}
 		what := "origin's copy of " + m.worktree.Base()
 		if m.worktree.Base() == "" {
 			what = "origin's default branch"
