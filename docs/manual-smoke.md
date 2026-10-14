@@ -1899,7 +1899,10 @@ config if the session is remote).
 - The worktree step reads `ok (.envrc allowed and mise trusted: same as the
   main clone's)`. `--json` has `"envrc": "allowed"` and `"mise": "trusted"`,
   and no `env_load_interrupted`.
-- The pane shows no `.envrc is blocked` and no mise prompt.
+- No mise prompt holds the pane. An `.envrc is blocked` line may appear
+  once: that is the first prompt beating the allow, which on dev is the
+  usual case, and the Enter herdr-draft presses then gives a prompt that
+  loads the environment. The agent's process is the check that matters.
 - The agent's process carries the environment:
   `tr '\0' '\n' < /proc/<claude pid>/environ | grep -E 'DIRENV_DIR|VIRTUAL_ENV'`.
 - Change the `.envrc` on a branch and cut a worktree from it: the line reads
@@ -1925,7 +1928,11 @@ drops allows for files that no longer exist. Then delete the branch.
 that outlives the checkout, and a rerun with the same title then reads
 `envrc: denied`.
 
-**Passed on dev, 2026-10-14**, with hub. The first load took 2.0 s
+**Passed on dev, 2026-10-14**, with hub. Of nine runs after the Enter was
+added, eight agents carried `VIRTUAL_ENV`. One did not, and its cause was
+not found; it ran while the laptop's ssh master to dev was being replaced.
+Probes that stopped at the agent step showed the first prompt losing the race
+every time, then the Enter's prompt loading the environment. The first load took 2.0 s
 (virtualenv plus `quanticli doctor deps`), and a warm one 42 ms. Claude
 showed no trust prompt. The slow environment passed on both machines the
 same day (dev: direnv 2.25.2, laptop: 2.37.1). A first design that waited

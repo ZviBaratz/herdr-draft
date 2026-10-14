@@ -346,14 +346,14 @@ form and no row offers it.
 **`inherit_trust`** (default: `true`). After a worktree is cut, extends your
 direnv allow and your mise trust from the main clone to the worktree. It
 applies only where the worktree holds the same bytes you approved. It runs on
-the machine the session runs on, as soon as herdr has made the worktree. That
-is usually before the new pane's first prompt, so the prompt loads the
-environment instead of printing `.envrc is blocked`.
+the machine the session runs on, as soon as herdr has made the worktree.
 
-It races that first prompt, though. A shell that starts faster than the allow
-lands prints `.envrc is blocked` once, even though `--json` reports `envrc:
-allowed`. The agent is launched at that same prompt, so it runs without the
-environment.
+That races the new pane's first prompt, and on dev it usually loses. The
+prompt prints `.envrc is blocked` once, and direnv doesn't look again until
+the next prompt. So before launching the agent, herdr-draft presses Enter
+once in the pane. Nothing has been typed there yet, so the Enter is an empty
+line: a fresh prompt, which loads the now-allowed environment. When the race
+is won, it costs one blank prompt line.
 
 - **mise.** Every file the worktree has that matches one of mise's config
   patterns must match the main clone's. The patterns are `mise.toml`,

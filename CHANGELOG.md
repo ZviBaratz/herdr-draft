@@ -33,9 +33,10 @@ for why a heading here may read `unreleased`.
     matches. An explicit `direnv deny` is left alone.
   - **One line says what happened**, beside the worktree step in the popup
     and in `create`'s progress. `create --json` reports `envrc`, `mise` and
-    `trust_error`. The allow races the new shell's first prompt and usually
-    wins. A shell that starts first prints `.envrc is blocked` once, so its
-    agent runs without the environment.
+    `trust_error`. The allow races the new shell's first prompt, and on dev
+    usually loses: that prompt prints `.envrc is blocked` once. So
+    herdr-draft presses Enter in the untouched pane before launching the
+    agent, and the fresh prompt loads the environment.
   - **A slow environment doesn't fail a create.** Before the agent is
     launched, herdr-draft waits up to a minute for the pane's direnv load to
     finish, reading the pane's foreground processes. If the environment is

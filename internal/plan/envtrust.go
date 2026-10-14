@@ -165,6 +165,9 @@ func atPrompt(info herdrc.ProcessInfo) bool {
 // failure that prompted this, 2026-10-14, was that timing, not a difference
 // between machines.
 //
+// It first presses Enter in the pane, so a first prompt that ran direnv's
+// hook before the allow landed gets a second one that loads it.
+//
 // It returns once a load has been seen and finished, or once the shell has
 // sat at its prompt for envIdleGrace with none seen. A load still running
 // after envLoadBusyBudget gets ctrl+c -- direnv gives up on it, measured on
@@ -177,6 +180,15 @@ func atPrompt(info herdrc.ProcessInfo) bool {
 func settleEnv(ctx context.Context, r herdrc.Runner, pane string) (interrupted bool) {
 	ctx, cancel := context.WithTimeout(ctx, envSettleTimeout)
 	defer cancel()
+	// One Enter first. The allow races the pane's first prompt, and a
+	// prompt whose hook ran before it recorded the .envrc as blocked and
+	// will not look again until the next prompt -- dev lost that race twice
+	// running on 2026-10-14, and its agents started with DIRENV_DIR set and
+	// no environment. Nothing has been typed into this new pane, so the
+	// Enter is an empty line: a fresh prompt, whose hook loads what is now
+	// allowed. Won the race, it costs one blank prompt line. Unanswered, it
+	// changes nothing below.
+	_ = r.PaneSendKeys(ctx, pane, "Enter")
 	start := envNow()
 	deadline := start.Add(envLoadBusyBudget)
 	// The whole wait is bounded too, whatever a branch below decides: every

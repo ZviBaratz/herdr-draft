@@ -441,7 +441,7 @@ func TestExecuteNeverInterruptsAShellItLoadedNothingInto(t *testing.T) {
 	if result.FailedIndex == -1 {
 		t.Fatal("a pane busy for good started an agent")
 	}
-	if n := countCallsWithPrefix(m.calls, "PaneSendKeys("); n != 0 {
+	if n := countCallsWithPrefix(m.calls, "PaneSendKeys(pane-1,ctrl+c)"); n != 0 {
 		t.Errorf("%d keys sent to a pane this run loaded nothing into: %v", n, m.calls)
 	}
 }
@@ -504,7 +504,7 @@ func TestExecuteGivesAPinnedLaunchTheLongerDetectionWait(t *testing.T) {
 					t.Errorf("%s, want a %s detection wait", c, want)
 				}
 			}
-			if n := countCallsWithPrefix(m.calls, "PaneSendKeys("); n != 0 {
+			if n := countCallsWithPrefix(m.calls, "PaneSendKeys(pane-1,ctrl+c)"); n != 0 {
 				t.Errorf("%d keys sent to a pane holding a typed launch line", n)
 			}
 		})
@@ -577,7 +577,11 @@ func settleExecute(t *testing.T, pinned bool, panes func(call int, interrupts in
 	m := &mockRunner{topo: createdTopo(path, "zvi/new"), onWorktreeCreate: herdrWorktreeAdd(t, repo, path)}
 	calls, interrupts := 0, 0
 	m.processInfo = func() (herdrc.ProcessInfo, error) { calls++; return panes(calls, interrupts), nil }
-	m.onSendKeys = func(string, []string) { interrupts++ }
+	m.onSendKeys = func(_ string, keys []string) {
+		if len(keys) == 1 && keys[0] == "ctrl+c" {
+			interrupts++
+		}
+	}
 	m.paneBusy = func() bool { return !atPrompt(panes(calls, interrupts)) }
 	in := worktreeInput(repo, "zvi/new")
 	in.InheritTrust = true
@@ -631,7 +635,7 @@ func TestExecuteWaitsForTheEnvironmentToLoadBeforeStartingTheAgent(t *testing.T)
 	if last, start := lastCallIndex(m.calls, "PaneProcessInfo("), callIndex(m.calls, "AgentStart("); start < last {
 		t.Errorf("the agent started (call %d) before the load was seen to finish (call %d): %v", start, last, m.calls)
 	}
-	if n := countCallsWithPrefix(m.calls, "PaneSendKeys("); n != 0 || result.EnvTrust.Interrupted || step.Note != "" {
+	if n := countCallsWithPrefix(m.calls, "PaneSendKeys(pane-1,ctrl+c)"); n != 0 || result.EnvTrust.Interrupted || step.Note != "" {
 		t.Errorf("a load that finished was interrupted: %d keys, note %q", n, step.Note)
 	}
 }
@@ -663,13 +667,10 @@ func TestExecuteStartsTheAgentWhenTheEnvironmentNeverFinishesLoading(t *testing.
 			if result.FailedIndex != -1 {
 				t.Fatalf("FailedIndex = %d: the environment failed the create (%v)", result.FailedIndex, step.Err)
 			}
-			if n := countCallsWithPrefix(m.calls, "PaneSendKeys("); n != needed {
+			if n := countCallsWithPrefix(m.calls, "PaneSendKeys(pane-1,ctrl+c)"); n != needed {
 				t.Errorf("%d presses, want %d", n, needed)
 			}
-			if c := m.calls[callIndex(m.calls, "PaneSendKeys(")]; c != "PaneSendKeys(pane-1,ctrl+c)" {
-				t.Errorf("sent %s, want ctrl+c to the agent's pane", c)
-			}
-			if callIndex(m.calls, "AgentStart(") < lastCallIndex(m.calls, "PaneSendKeys(") {
+			if callIndex(m.calls, "AgentStart(") < lastCallIndex(m.calls, "PaneSendKeys(pane-1,ctrl+c)") {
 				t.Errorf("the agent's command went out before the interrupt: %v", m.calls)
 			}
 			if !result.EnvTrust.Interrupted {
@@ -691,7 +692,7 @@ func TestExecuteStartsTheAgentWhenTheEnvironmentNeverFinishesLoading(t *testing.
 func TestExecuteInterruptsAtMostTwice(t *testing.T) {
 	withBusyRetryOverrides(t, 0, fakeAdvancingClock(2*time.Second))
 	result, m, step := settleExecute(t, false, func(int, int) herdrc.ProcessInfo { return loadingPane() })
-	if n := countCallsWithPrefix(m.calls, "PaneSendKeys("); n != 2 || maxEnvInterrupts != 2 {
+	if n := countCallsWithPrefix(m.calls, "PaneSendKeys(pane-1,ctrl+c)"); n != 2 || maxEnvInterrupts != 2 {
 		t.Errorf("%d presses with maxEnvInterrupts = %d, want exactly 2", n, maxEnvInterrupts)
 	}
 	if result.FailedIndex == -1 || step.State != StepFailed || !errors.Is(step.Err, busyErr) {
@@ -771,7 +772,7 @@ func TestExecuteInterruptsBeforeTypingAPinnedLaunch(t *testing.T) {
 	if result.FailedIndex != -1 {
 		t.Fatalf("FailedIndex = %d", result.FailedIndex)
 	}
-	press, typed := callIndex(m.calls, "PaneSendKeys("), callIndex(m.calls, "PaneRun(")
+	press, typed := callIndex(m.calls, "PaneSendKeys(pane-1,ctrl+c)"), callIndex(m.calls, "PaneRun(")
 	if press < 0 || typed < 0 || typed < press {
 		t.Errorf("ctrl+c at call %d, launch typed at call %d: want the press first, %v", press, typed, m.calls)
 	}
@@ -791,5 +792,34 @@ func TestSettleEnvIsBoundedInRealTime(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("settleEnv still waiting on a process read that never answers")
+	}
+}
+
+// TestExecutePressesEnterSoALostRaceStillLoads: the allow races the new
+// pane's first prompt, and a prompt that runs direnv's hook first records
+// the .envrc as blocked and does not look again until the next prompt -- dev
+// lost that race twice running on 2026-10-14, and its agents started with
+// DIRENV_DIR and no environment. One Enter in the untouched pane gives the
+// shell that next prompt, before the settle watches for the load it starts
+// and before anything is launched.
+func TestExecutePressesEnterSoALostRaceStillLoads(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pinned=%v", pinned), func(t *testing.T) {
+			result, m, _ := settleExecute(t, pinned, func(int, int) herdrc.ProcessInfo { return idlePane() })
+			if result.FailedIndex != -1 {
+				t.Fatalf("FailedIndex = %d", result.FailedIndex)
+			}
+			enter := callIndex(m.calls, "PaneSendKeys(pane-1,Enter)")
+			if enter < 0 || countCallsWithPrefix(m.calls, "PaneSendKeys(pane-1,Enter)") != 1 {
+				t.Fatalf("want exactly one Enter in the agent's pane: %v", m.calls)
+			}
+			launch := callIndex(m.calls, "AgentStart(")
+			if pinned {
+				launch = callIndex(m.calls, "PaneRun(")
+			}
+			if read := callIndex(m.calls, "PaneProcessInfo("); read < enter || launch < enter {
+				t.Errorf("Enter at call %d, first read at %d, launch at %d: want Enter first, %v", enter, read, launch, m.calls)
+			}
+		})
 	}
 }
