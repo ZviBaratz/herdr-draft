@@ -145,6 +145,11 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	for _, w := range cfg.Agents.OptionWarnings {
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
 	}
+	// And every [machine.paths] rule it dropped (machine spec §5.1): a rule
+	// that silently does not apply sends sessions to the wrong machine.
+	for _, w := range cfg.Machine.Warnings {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
+	}
 
 	projectDir, err := resolveProjectDir(ctx, req, deps)
 	if err != nil {
@@ -271,19 +276,25 @@ func resolveMachine(ctx context.Context, req request, cfg config.Config, t tiers
 	if req.set["machine"] {
 		sel, from = strings.TrimSpace(req.machine), provenanceFlag
 	}
-	if offered := cfg.Machine.Offered(); !slices.Contains(offered, sel) {
-		return machine.Choice{}, "", "", fmt.Errorf("--machine %q is not one config.toml's [machine] offers (%s)", sel, strings.Join(offered, ", "))
-	}
 	if sel == config.LocalMachine {
 		return machine.Choice{Selector: sel}, "", from, nil
 	}
+	// Any name for an offered machine: the selector config.toml wrote, or
+	// the label or id --json hands back (machine.SelectOffered).
+	offered := cfg.Machine.Offered()
 	saved, err := deps.Runner.MachineList(ctx)
 	if err != nil {
+		if !slices.Contains(offered, sel) {
+			return machine.Choice{}, "", "", fmt.Errorf("--machine %q is not one config.toml's [machine] offers (%s)", sel, strings.Join(offered, ", "))
+		}
 		return machine.Choice{}, "", "", fmt.Errorf("could not read herdr's saved machines, which another machine needs herdr 0.9.1 for: %w", err)
 	}
-	choice, err := machine.Select(saved, sel)
+	choice, err := machine.SelectOffered(saved, offered, sel)
 	if err != nil {
-		return machine.Choice{}, "", "", err
+		if req.set["machine"] {
+			return machine.Choice{}, "", "", fmt.Errorf("--machine: %w", err)
+		}
+		return machine.Choice{}, "", "", fmt.Errorf("config.toml's [machine]: %w", err)
 	}
 	rel, err := machine.Rel(pathx.CanonicalKey(deps.home()), t.projectKey)
 	if err != nil {

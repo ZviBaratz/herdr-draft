@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -71,9 +72,11 @@ type machineVerdict struct {
 	// compare it at submit without I/O.
 	origin string
 	// err is a refusal: unreachable, no saved machine, nowhere to carry
-	// the project. unknown is a probe that did not answer.
-	err     error
-	unknown bool
+	// the project. unknown is a probe that did not answer, and unanswered
+	// names what did not answer when that was not the machine itself.
+	err        error
+	unknown    bool
+	unanswered string
 }
 
 // machinesListedMsg is `herdr machine list`'s answer.
@@ -106,6 +109,9 @@ func (m *Model) newMachineRow() {
 	}
 	m.machine = form.NewMachineField(m.palette)
 	m.machine.SetChoices(m.machineChoices())
+	// The rules config.toml could not use, on the row they would have
+	// configured (machine spec §5.1).
+	m.machine.SetNotes(m.cfg.Machine.Warnings)
 	m.mach.key = filepath.Clean(pathx.ExpandTilde(m.dir.Value()))
 	m.applyMachineRule()
 }
@@ -198,7 +204,13 @@ func (m Model) handleMachinesListed(msg machinesListedMsg) (Model, tea.Cmd) {
 	}
 	m.machine.SetChoices(m.machineChoices())
 	m.syncDerivedInertness()
-	return m, m.maybeProbeMachine()
+	cmd := m.maybeProbeMachine()
+	// A verdict settled here, with no probe to wait for, still owes a held
+	// submit its answer.
+	if m.submitHeld && !m.machineCheckPending() {
+		return m.handleSubmit()
+	}
+	return m, cmd
 }
 
 // machineAsk is what a probe is asked about: the selector and the key.
@@ -228,6 +240,11 @@ func (m *Model) maybeProbeMachine() tea.Cmd {
 		m.mach.asked = "" // the list landing asks again
 		return nil
 	}
+	if errors.Is(m.mach.listErr, errCheckTimedOut) {
+		// Unknown, not a herdr too old for machines (#202).
+		m.landMachine(machineVerdict{unknown: true, unanswered: "herdr's list of saved machines"})
+		return nil
+	}
 	if m.mach.listErr != nil {
 		m.landMachine(machineVerdict{err: fmt.Errorf("could not read herdr's saved machines, which another machine needs herdr 0.9.1 for: %v", herdrc.Reason(m.mach.listErr))})
 		return nil
@@ -253,6 +270,10 @@ func (m *Model) maybeProbeMachine() tea.Cmd {
 				return machineVerdict{choice: choice, err: err}
 			}
 			report, err := prober.Probe(ctx, choice, rel)
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				// The deadline answered, not the machine: unknown (#202).
+				return machineVerdict{choice: choice, unknown: true}
+			}
 			if err != nil {
 				return machineVerdict{choice: choice, rel: rel, err: err}
 			}
@@ -290,11 +311,24 @@ func (m Model) handleMachineResult(msg machineResultMsg) (Model, tea.Cmd) {
 // landMachine records a verdict and shows it.
 func (m *Model) landMachine(v machineVerdict) {
 	m.mach.verdict, m.mach.landed = v, true
+	m.showMachineVerdict()
+}
+
+// showMachineVerdict puts the landed verdict on the row. Separate from
+// landMachine because one part of it is about the form rather than the
+// machine -- a worktree needs a repository there -- so syncDerivedInertness
+// re-shows it when the worktree toggles.
+func (m *Model) showMachineVerdict() {
+	if m.machine == nil || !m.remoteSelected() || !m.mach.landed {
+		return
+	}
+	v := m.mach.verdict
 	label := m.machineLabel()
 	switch {
 	case v.unknown:
+		what := cmp.Or(v.unanswered, label)
 		m.machine.SetStatus(form.MachineRefused, "no answer",
-			fmt.Sprintf("%s did not answer in %s: try again, or choose local", label, m.machineDeadline()))
+			fmt.Sprintf("%s did not answer in %s: try again, or choose local", what, m.machineDeadline()))
 	case v.err != nil:
 		word := "refused"
 		if errors.Is(v.err, machine.ErrUnreachable) {
@@ -354,12 +388,30 @@ func (m Model) machineRefusal() string {
 
 // planMachine is plan.Input's Machine: the landed verdict's profile and the
 // project's directory there, or the zero value for this machine.
+//
+// It fails closed: with another machine selected it is always remote, and
+// a verdict that is not a pass leaves Dir empty, which plan.Build refuses
+// -- so no answer, however it arrives, can turn a session meant for that
+// machine into one built here (decision 4).
 func (m Model) planMachine() plan.Machine {
-	if !m.remoteSelected() || !m.mach.landed || m.mach.verdict.err != nil || m.mach.verdict.unknown {
+	if !m.remoteSelected() {
 		return plan.Machine{}
 	}
 	v := m.mach.verdict
-	return plan.Machine{ID: v.choice.Info.ID, Label: v.choice.Label(), Target: v.choice.Info.Target, Dir: v.report.Clone.Dir}
+	out := plan.Machine{ID: v.choice.Info.ID, Label: v.choice.Label(), Target: v.choice.Info.Target}
+	if out.ID == "" {
+		c, err := machine.Select(m.mach.saved, m.machine.Value())
+		if err != nil || !c.Remote() {
+			// Nothing to name it by: an id no server has, so Build's
+			// remote refusal still fires on the empty directory.
+			return plan.Machine{ID: m.machine.Value(), Label: m.machine.Value()}
+		}
+		out = plan.Machine{ID: c.Info.ID, Label: c.Label(), Target: c.Info.Target}
+	}
+	if m.mach.landed && v.err == nil && !v.unknown {
+		out.Dir = v.report.Clone.Dir
+	}
+	return out
 }
 
 // needsRemoteBase reports whether a submit has to map its base for another

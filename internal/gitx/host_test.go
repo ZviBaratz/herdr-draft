@@ -98,9 +98,11 @@ func TestOverAsksTheRemoteClone(t *testing.T) {
 	}
 
 	argv := readArgv(t, logPath)
-	want := []string{"-o", "BatchMode=yes", "-T", "--", "devbox"}
-	if len(argv) < len(want)+1 || strings.Join(argv[:len(want)], " ") != strings.Join(want, " ") {
-		t.Fatalf("ssh argv = %q, want it to start %q", argv, want)
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{"-o BatchMode=yes", "-T -- devbox exec /bin/sh -c "} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("ssh argv = %q, want it to contain %q", argv, want)
+		}
 	}
 }
 
@@ -342,4 +344,48 @@ func TestProbeCloneReportsSSHFailing(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Token for dev is expired") {
 		t.Fatalf("ProbeClone over a failed ssh: %v; want ssh's words", err)
 	}
+}
+
+// TestOverBoundsTheConnection: an SSM session that stalls without EOF
+// would hang a multiplexed client for good, after the worktree exists.
+// herdr's own bridge sends keepalives for that reason; so does this.
+func TestOverBoundsTheConnection(t *testing.T) {
+	logPath := fakeSSH(t, "")
+	if _, err := Over("devbox").ResolveRef(context.Background(), mkRepo(t), "main"); err != nil {
+		t.Fatal(err)
+	}
+	argv := strings.Join(readArgv(t, logPath), " ")
+	for _, opt := range []string{"-o ConnectTimeout=", "-o ServerAliveInterval=", "-o ServerAliveCountMax="} {
+		if !strings.Contains(argv, opt) {
+			t.Errorf("ssh argv lacks %q: %s", opt, argv)
+		}
+	}
+}
+
+// TestOverRunsItsScriptUnderPOSIXSh: the far end hands the command to the
+// remote user's LOGIN shell, which may be fish or csh; the script is
+// POSIX, so it is run by /bin/sh whatever that shell is, the way herdr runs
+// its own remote scripts.
+func TestOverRunsItsScriptUnderPOSIXSh(t *testing.T) {
+	logPath := fakeSSH(t, "")
+	if _, err := Over("devbox").ProbeClone(context.Background(), "quantivly/hub"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Over("devbox").ResolveRef(context.Background(), mkRepo(t), "main"); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(readArgvRaw(t, logPath), "\n") {
+		if strings.Contains(line, "git") && !strings.HasPrefix(line, "exec /bin/sh -c ") {
+			t.Errorf("remote command not run under /bin/sh: %s", line)
+		}
+	}
+}
+
+func readArgvRaw(t *testing.T, logPath string) string {
+	t.Helper()
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

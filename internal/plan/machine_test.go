@@ -355,3 +355,26 @@ func TestExplainBlockedStartSaysWhereThePaneIs(t *testing.T) {
 		t.Errorf("first 60 runes = %q, want the instruction to name the machine", head)
 	}
 }
+
+// TestExecuteRetriesARemoteFetchOnce: sessions spawned together into one
+// clone fetch at once, and git refuses the second while the first holds a
+// ref lock. One retry turns that into a create rather than an exit 4.
+func TestExecuteRetriesARemoteFetchOnce(t *testing.T) {
+	_, remote := remoteClone(t)
+	counter := filepath.Join(t.TempDir(), "fetches")
+	fakeSSH(t, `case "$*" in *fetch*)
+  n=$(cat `+counter+` 2>/dev/null || echo 0); n=$((n+1)); echo $n > `+counter+`
+  if [ "$n" -eq 1 ]; then echo "error: cannot lock ref 'refs/remotes/origin/main'" >&2; exit 1; fi ;;
+esac`)
+	path := filepath.Join(t.TempDir(), "wt")
+	m := &mockRunner{topo: createdTopo(path, "zvi/new"), onWorktreeCreate: trackingWorktreeAdd(t, remote, path, "")}
+	in := remoteInput()
+	in.UseWorktree = true
+	in.Branch = "zvi/new"
+	in.Machine.Dir = remote
+
+	result, failed := executeRemote(t, in, m)
+	if result.FailedIndex != -1 {
+		t.Fatalf("a fetch that failed once on a ref lock failed the create: %v", failed)
+	}
+}

@@ -349,3 +349,33 @@ func TestMachineIsNeverRemembered(t *testing.T) {
 		}
 	}
 }
+
+// TestMachineAcceptsAnyNameForTheOfferedMachine: `create --json` hands back
+// the machine's label and id, and an agent that passes either back must
+// reach the same machine config.toml's `dev` names.
+func TestMachineAcceptsAnyNameForTheOfferedMachine(t *testing.T) {
+	for _, sel := range []string{"dev (EC2)", "af09"} {
+		h, _ := machineHarness(t)
+		if code := h.run("--title", "fix it", "--no-worktree", "--dry-run", "--json", "--machine", sel); code != ExitOK {
+			t.Fatalf("--machine %q: exit %d\nstderr: %s", sel, code, h.stderr)
+		}
+		if m, _ := dryRunJSON(t, h)["machine"].(map[string]any); m["id"] != "af09" {
+			t.Errorf("--machine %q: machine = %v", sel, m)
+		}
+	}
+}
+
+// TestMachineRuleItCannotUseIsSaidOnStderr: config.Load drops a rule it
+// cannot use with a warning, and the warning has to reach someone -- a
+// silently dropped `quantivly = "dev"` would send every work session to
+// this machine with nothing saying why (machine spec §5.1).
+func TestMachineRuleItCannotUseIsSaidOnStderr(t *testing.T) {
+	h, _ := machineHarness(t)
+	writeConfig(t, h.env.ConfigDir, "[machine.paths]\n\"quantivly\" = \"dev\"\n")
+	if code := h.run("--title", "fix it", "--no-worktree", "--dry-run"); code != ExitOK {
+		t.Fatalf("exit = %d\nstderr: %s", code, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), `ignoring [machine.paths] "quantivly": not an absolute path`) {
+		t.Errorf("stderr = %q, want the dropped rule named", h.stderr)
+	}
+}

@@ -1573,6 +1573,18 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				if op.Machine.Remote() {
 					fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
 					err := host.FetchPrune(fetchCtx, op.Worktree.Cwd)
+					// Once more, inside the same bound: sessions spawned
+					// together into one clone fetch at once, and git refuses
+					// the later fetch while the earlier holds a ref lock.
+					if err != nil && fetchCtx.Err() == nil {
+						// A moment for the other fetch to let go of the
+						// lock; the bound still applies to the wait.
+						select {
+						case <-time.After(fetchRetryPause):
+							err = host.FetchPrune(fetchCtx, op.Worktree.Cwd)
+						case <-fetchCtx.Done():
+						}
+					}
 					cancel()
 					if err != nil {
 						neverAsked = true

@@ -288,3 +288,62 @@ func TestCLIProberHonoursItsContext(t *testing.T) {
 		t.Fatal("a probe past its deadline succeeded")
 	}
 }
+
+// TestCLIProberReturnsOnTheFirstRefusal: herdr refusing forwarding is a
+// definitive answer, and a hanging ssh beside it must not turn it into "no
+// answer" (exit 5 instead of 3).
+func TestCLIProberReturnsOnTheFirstRefusal(t *testing.T) {
+	p := CLIProber{
+		Runner: &probeRunner{err: errors.New("remote Herdr does not support machine API forwarding")},
+		Clone: func(ctx context.Context, _, _ string) (gitx.CloneProbe, error) {
+			<-ctx.Done()
+			return gitx.CloneProbe{}, ctx.Err()
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := p.Probe(ctx, Choice{Info: dev}, "x")
+	if !errors.Is(err, ErrUnreachable) || time.Since(start) > time.Second {
+		t.Errorf("Probe = %v after %v; want herdr's refusal at once", err, time.Since(start))
+	}
+}
+
+// TestJudgeComparesTheRepositoryNotTheHost: an ssh host alias or an
+// insteadOf short form names the same repository by another host, so the
+// owner/repository pair decides -- and a token in either URL never reaches
+// the screen.
+func TestJudgeComparesTheRepositoryNotTheHost(t *testing.T) {
+	c := Choice{Info: dev}
+	clone := gitx.CloneProbe{Dir: "/home/ubuntu/quantivly/hub", Exists: true, IsRepo: true,
+		Origin: "https://ghp_secret@github.com/quantivly/hub.git"}
+	for _, laptop := range []string{"git@github-work:quantivly/hub.git", "ssh://git@github.com:22/quantivly/hub"} {
+		if _, err := Judge(Report{Clone: clone}, c, "quantivly/hub", true, laptop); err != nil {
+			t.Errorf("laptop origin %q refused: %v", laptop, err)
+		}
+	}
+	_, err := Judge(Report{Clone: clone}, c, "quantivly/hub", true, "git@github.com:someone/else.git")
+	if !errors.Is(err, ErrWrongRepo) {
+		t.Fatalf("a different repository: %v", err)
+	}
+	if strings.Contains(err.Error(), "ghp_secret") {
+		t.Errorf("the refusal shows a credential: %v", err)
+	}
+}
+
+// TestOfferedAcceptsAnyNameForAnOfferedMachine: config.toml may call it
+// `dev`, and `create --json` hands back its label and id; all three name
+// the one offered machine. A saved machine config.toml never names is
+// still refused.
+func TestOfferedAcceptsAnyNameForAnOfferedMachine(t *testing.T) {
+	saved := []herdrc.MachineInfo{dev, nanoclaw}
+	offered := []string{"local", "dev"}
+	for _, sel := range []string{"dev", "dev (EC2)", "af09", "local"} {
+		if _, err := SelectOffered(saved, offered, sel); err != nil {
+			t.Errorf("SelectOffered(%q) = %v", sel, err)
+		}
+	}
+	if _, err := SelectOffered(saved, offered, "nanoclaw"); err == nil || !strings.Contains(err.Error(), "not one config.toml's [machine] offers") {
+		t.Errorf("SelectOffered(nanoclaw) = %v; want it refused as not offered", err)
+	}
+}

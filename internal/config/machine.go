@@ -61,7 +61,7 @@ func (m MachineConfig) Offered() []string {
 			out = append(out, sel)
 		}
 	}
-	add(m.Default)
+	add(strings.TrimSpace(m.Default))
 	for _, r := range m.Rules {
 		add(r.Selector)
 	}

@@ -1018,3 +1018,22 @@ func TestSkillQuotesBracketedModelIDs(t *testing.T) {
 		}
 	}
 }
+
+// TestSkillAddressesARemoteSessionThroughItsMachine: a session on another
+// machine reports that machine's ids (machine spec §3.1: `w3` exists on
+// each server independently), so every follow-up the skill teaches --
+// reading the pane, resending a prompt -- has to go through `herdr
+// --machine <machine.id>`. Without it an agent reads, and resends into, a
+// pane of some unrelated session on THIS machine.
+func TestSkillAddressesARemoteSessionThroughItsMachine(t *testing.T) {
+	doc := renderedSkill()
+	for _, want := range []string{
+		"herdr --machine <machine.id> pane read",
+		"herdr --machine <machine.id> agent read",
+		"herdr --machine <machine.id> agent prompt",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the skill never shows %q", want)
+		}
+	}
+}

@@ -66,6 +66,9 @@ type MachineField struct {
 	offered []widgets.Chip
 
 	provenance string
+	// notes are config.toml's refused [machine.paths] entries, shown as
+	// warnings on this row's panel (machine spec §5.1).
+	notes []string
 
 	state            MachineState
 	rowNote, panelNo string
@@ -119,6 +122,9 @@ func (f *MachineField) Value() string {
 // SetProvenance is where the selection came from, e.g. "config.toml:
 // ~/quantivly → dev"; "" for none.
 func (f *MachineField) SetProvenance(source string) { f.provenance = source }
+
+// SetNotes is config.toml's refused [machine.paths] entries, one line each.
+func (f *MachineField) SetNotes(notes []string) { f.notes = notes }
 
 // SetStatus is the probe's verdict: rowNote is the word the row carries
 // after the label, panelNote the sentence the panel gives it.
@@ -211,6 +217,9 @@ func (f *MachineField) Panel(w, h int) string {
 	for _, l := range f.verdictLines(panelInner(w)) {
 		lines = append(lines, panelText(f.verdictStyle().Render(keepHead(l, panelInner(w))), w))
 	}
+	for _, n := range f.notes {
+		lines = append(lines, noteLine(n, w, f.palette))
+	}
 	if f.provenance != "" {
 		lines = append(lines, provenanceLine(f.provenance, w, f.palette))
 	}
@@ -220,7 +229,7 @@ func (f *MachineField) Panel(w, h int) string {
 // PanelRows is the chips and their explanation, the verdict line when one
 // is shown, and the provenance line when there is one.
 func (f *MachineField) PanelRows() int {
-	return 2 + len(f.verdictLines(machineVerdictWidth)) + provenanceRows(f.provenance)
+	return 2 + len(f.verdictLines(machineVerdictWidth)) + len(f.notes) + provenanceRows(f.provenance)
 }
 
 // verdictLines is the probe's sentence as panel lines, wrapped at limit or

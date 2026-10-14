@@ -219,7 +219,10 @@ A machine is **offered** if it is `local`, or if `config.toml` names it in
 `[machine] default` or anywhere in `[machine.paths]`. The popup's row offers
 exactly that set, and `create --machine` **accepts exactly that set**, since
 every `create` flag has a form control behind it (CLAUDE.md;
-`equivalence_test.go`). A saved machine the configuration never names, such
+`equivalence_test.go`). It accepts any of an offered machine's names --
+the selector `config.toml` wrote, or the label or profile id `--json` hands
+back -- so that an agent passing back what a dry run reported reaches the
+same machine (`machine.SelectOffered`). A saved machine the configuration never names, such
 as `nanoclaw`, cannot be reached by either front end. That is deliberate: a
 production host must not be one ← away from a work session.
 
@@ -354,8 +357,11 @@ connection alone takes 4–5 s (§3.4).
 - **No clone:** the directory is missing, or is not a repository when a
   worktree was asked for. The message is `~/quantivly/x is not on dev`.
 - **The wrong repository:** origin differs from the laptop clone's. Both
-  URLs are normalised before comparing (scheme, `user@`, `:`/`/` and
-  `.git`), because `dev` rewrites ssh remotes to https.
+  URLs are normalised (scheme, credentials, port, `:`/`/` and `.git`) and
+  compared by owner and repository alone, because one repository arrives
+  under several hosts -- `dev` rewrites ssh remotes to https, and an ssh host
+  alias names github.com otherwise. The refusal shows the normalised URLs,
+  so a token in either never reaches the screen.
 - **A duplicate branch:** the branch already exists in that snapshot.
   herdr would check out an existing local branch and ignore the base, so
   this is the remote half of the title check. The laptop's `origin/*`
@@ -404,8 +410,13 @@ space.
   `CommitsAhead`, `CommitsOnlyOn`, `DeleteBranch` and `FetchPrune`.
 - **No call site moves:** the package functions stay as wrappers over
   `Here`, so no caller outside `gitx` changes.
-- **The remote command:** `ssh -o BatchMode=yes -T <target> '<script>'`.
-  The script unsets git's repository environment variables and runs
+- **The remote command:** `ssh -o BatchMode=yes -o ConnectTimeout=15 -o
+  ServerAliveInterval=15 -o ServerAliveCountMax=4 -T -- <target> exec /bin/sh
+  -c '<script>'`. The bounds are herdr's own reason for its bridge: these calls
+  mostly have no deadline of their own, and an SSM link that stalls without
+  an EOF would hang a multiplexed client for good. `/bin/sh`, because OpenSSH
+  hands the command to the remote user's login shell, which may be fish or
+  csh. The script unsets git's repository environment variables and runs
   `GIT_TERMINAL_PROMPT=0 git -C <dir> <args>`, with every word
   shell-quoted. It does **not** set `GIT_SSH_COMMAND`: the remote's own
   `core.sshCommand` must win there, which is #130's lesson from the other
@@ -423,7 +434,10 @@ In order, on the remote, with nothing in herdr asked until the third step:
 
 1. `FetchPrune`, bounded at 30 s (`fetchPruneTimeout`'s size). **A failed
    fetch is fatal**: a base that might be a month stale is the failure this
-   step exists to prevent.
+   step exists to prevent. It is retried once, a second later and inside
+   the same bound, because sessions spawned together into one clone fetch
+   at once and git refuses the later fetch while the earlier holds a ref
+   lock.
 2. Resolve the base there (`commitAt`). It is fatal too.
 3. `herdr --machine <id> worktree create --cwd <dir>`, where `<dir>` is the
    absolute directory the clone probe reported. The server would expand
@@ -451,10 +465,12 @@ These name the machine:
   where the session's space is going; the steps after it are in that
   space;
 - `explainBlockedStart`;
-- the pane tail;
 - the trust-wait hint, which tells the reader to switch herdr to that
   machine to answer, because the dialog is on a screen the laptop is not
   showing.
+
+The pane tail a failed launch quotes is left as it is: it is the pane's own
+text, and the step label above it already says where the pane is.
 
 ## 9. The form
 
@@ -527,7 +543,7 @@ Left off, the path rules decide.
   tab-here|split-here|tab-in`, `--workspace`, and a base that §6.4
   refuses.
 - **`--json`:** gains `"machine": {"selector", "id", "label"}`, and the
-  provenance map gains `machine` (`flag`, `config.toml` or `builtin`).
+  provenance map gains `machine` (`flag`, `config.toml` or `built-in`).
 - **`--dry-run`:** runs both probes and reports what would be created and
   where.
 

@@ -52,3 +52,8 @@ func (m Machine) Git() gitx.Host {
 // not a [timeouts] key, for that one's reason -- a safety bound, not a
 // tuning knob.
 const remoteFetchTimeout = 30 * time.Second
+
+// fetchRetryPause is how long the remote fetch waits before its one retry:
+// long enough for a concurrent fetch in the same clone to release its ref
+// lock in the common case, short against remoteFetchTimeout.
+const fetchRetryPause = time.Second

@@ -437,3 +437,184 @@ func TestAssembledForm_MachineWorktreeBase(t *testing.T) {
 	}
 	assertAppFrame(t, "assembled-machine-worktree-101x30", m, framePopupW, framePopupH)
 }
+
+// TestMachineRowShowsTheRulesItDropped: the popup's half of §5.1's "never
+// silently".
+func TestMachineRowShowsTheRulesItDropped(t *testing.T) {
+	setup := testSetup{Config: config.Config{Machine: config.MachineConfig{
+		Configured: true, Warnings: []string{`ignoring [machine.paths] "quantivly": not an absolute path`},
+	}}}
+	m := newTestModel(t, setup)
+	if text := fieldText(m.machine, 100); !strings.Contains(text, `ignoring [machine.paths] "quantivly"`) {
+		t.Errorf("machine panel = %q", text)
+	}
+}
+
+// TestMachinePlanFailsClosed: with another machine selected, a verdict that
+// is a refusal or an unknown must never build a LOCAL plan -- plan.Build
+// refuses a remote plan with no directory, which is decision 4's floor.
+func TestMachinePlanFailsClosed(t *testing.T) {
+	m, _, _, _ := machineModel(t)
+	m = settle(t, m)
+	m.mach.verdict = machineVerdict{unknown: true}
+	in := m.buildPlanInput()
+	if !in.Machine.Remote() {
+		t.Fatalf("a remote selection with an unknown verdict built a local plan: %+v", in.Machine)
+	}
+	if _, err := plan.Build(in); err == nil {
+		t.Error("plan.Build accepted a remote plan with no directory")
+	}
+}
+
+// TestMachineProbeDeadlineIsUnknown: a probe the deadline cut off reads as
+// "no answer", not as a refusal in context's words (#202).
+func TestMachineProbeDeadlineIsUnknown(t *testing.T) {
+	m, _, prober, _ := machineModel(t)
+	prober.err = context.DeadlineExceeded
+	m = settle(t, m)
+	if !m.mach.verdict.unknown {
+		t.Errorf("verdict = %+v, want unknown", m.mach.verdict)
+	}
+	if text := fieldText(m.machine, 80); !strings.Contains(text, "no answer") || strings.Contains(text, "deadline") {
+		t.Errorf("machine row = %q", text)
+	}
+}
+
+// TestMachineListTimeoutIsUnknown: a machine list that did not answer is
+// not a herdr too old for machines.
+func TestMachineListTimeoutIsUnknown(t *testing.T) {
+	m, runner, _, _ := machineModel(t)
+	runner.listErr = errCheckTimedOut
+	m = settle(t, m)
+	if !m.mach.verdict.unknown {
+		t.Errorf("verdict = %+v, want unknown", m.mach.verdict)
+	}
+	if text := fieldText(m.machine, 80); strings.Contains(text, "0.9.1") {
+		t.Errorf("a timeout is blamed on herdr's version: %q", text)
+	}
+}
+
+// TestMachineSubmitResumesWhenTheListLands: a ⌃S pressed before herdr's
+// machine list answered is held, and the list landing -- even with a
+// verdict it settles synchronously -- resumes it rather than dropping it.
+func TestMachineSubmitResumesWhenTheListLands(t *testing.T) {
+	m, runner, _, _ := machineModel(t)
+	runner.listErr = errors.New("unknown command: machine")
+	m.title.SetTitle("fix it", false)
+	m.worktree.SetBranch("zvi/fix-it", false)
+	// Land everything but the machine list.
+	var list machinesListedMsg
+	for _, cmd := range m.initCmds {
+		if cmd == nil {
+			continue
+		}
+		if msg, ok := cmd().(machinesListedMsg); ok {
+			list = msg
+			continue
+		}
+	}
+	m = pumpAsync(t, m, initCmdsExcept[machinesListedMsg](m))
+	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On(), m.remoteSelected())})
+	next, _ := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if !m.submitHeld {
+		t.Fatal("a submit before the machine list was not held")
+	}
+	next, _ = m.Update(list)
+	m = next.(Model)
+	if m.submitHeld {
+		t.Error("the list landing left the submit held")
+	}
+	if got := m.form.FocusedID(); got != "machine" {
+		t.Errorf("focus = %q, want the machine row the refusal sends it to", got)
+	}
+}
+
+// initCmdsExcept is m's Init commands without the one answering T.
+func initCmdsExcept[T tea.Msg](m Model) []tea.Cmd {
+	var out []tea.Cmd
+	for _, cmd := range m.initCmds {
+		if cmd == nil {
+			continue
+		}
+		c := cmd
+		msg := c()
+		if _, skip := msg.(T); skip {
+			continue
+		}
+		out = append(out, func() tea.Msg { return msg })
+	}
+	return out
+}
+
+// TestMachineVerdictFollowsTheWorktree: "can't host it" for a worktree in
+// a plain directory stops being true when the worktree goes off.
+func TestMachineVerdictFollowsTheWorktree(t *testing.T) {
+	m, _, prober, _ := machineModel(t)
+	prober.report.Clone.IsRepo = false
+	m = settle(t, m)
+	if text := fieldText(m.machine, 80); !strings.Contains(text, "can't host it") {
+		t.Fatalf("machine row = %q, want can't host it", text)
+	}
+	m.worktree.SetOn(false)
+	m.reactToChanges()
+	if text := fieldText(m.machine, 80); strings.Contains(text, "can't host it") {
+		t.Errorf("machine row still refuses after the worktree went off: %q", text)
+	}
+}
+
+// TestMachineSkipsWhatOnlyThisMachineNeeds: on another machine, the
+// account picker's preview (no account applies there) and this clone's
+// base-behind note (the cut is made there, after a fetch) are not asked --
+// with every other precondition for both in place, which the local half
+// of the test proves: there, both are.
+func TestMachineSkipsWhatOnlyThisMachineNeeds(t *testing.T) {
+	m, _, _, _ := machineModel(t)
+	m = settle(t, m)
+	m.deps.Picker = &fakePicker{}
+	m.account = form.NewAccountField(theme.Default())
+	m.worktree.SetBaseItems(1, []string{"main"})
+	m.worktree.SetBase("main")
+	if m.worktree.Base() != "main" || !m.worktree.On() {
+		t.Fatalf("fixture: base %q, worktree %v", m.worktree.Base(), m.worktree.On())
+	}
+	if cmd := m.schedulePickerPreview(m.dir.Value()); cmd != nil {
+		t.Error("the account picker's preview was scheduled for a session on dev")
+	}
+	if cmd := m.scheduleBaseBehind(true); cmd != nil {
+		t.Error("this clone's base-behind note was scheduled for a session on dev")
+	}
+
+	_ = m.form.FocusByID("machine")
+	next, out := m.Update(key(tea.KeyLeft, 0))
+	m = next.(Model)
+	if m.remoteSelected() {
+		t.Fatal("fixture: ← did not select local")
+	}
+	if _, ok := findMsg[pickerDebounceMsg](t, out); !ok {
+		t.Error("going back to local did not ask the picker for this project again")
+	}
+	if cmd := m.scheduleBaseBehind(true); cmd == nil {
+		t.Error("a local session's base-behind note was not scheduled")
+	}
+}
+
+// TestAssembledForm_MachineNoClone: dev answered, and the project is not
+// there (machine spec §7).
+func TestAssembledForm_MachineNoClone(t *testing.T) {
+	report := devReport()
+	report.Clone.Exists, report.Clone.IsRepo = false, false
+	m := machineFrameModel(t, &fakeMachineProber{report: report})
+	m.form.FocusByID("machine")
+	m.reactToChanges()
+	assertAppFrame(t, "assembled-machine-no-clone-101x30", m, framePopupW, framePopupH)
+}
+
+// TestAssembledForm_MachineTimedOut: the probe did not answer -- unknown,
+// in its own words, never a refusal's (#202).
+func TestAssembledForm_MachineTimedOut(t *testing.T) {
+	m := machineFrameModel(t, &fakeMachineProber{err: context.DeadlineExceeded})
+	m.form.FocusByID("machine")
+	m.reactToChanges()
+	assertAppFrame(t, "assembled-machine-timed-out-101x30", m, framePopupW, framePopupH)
+}

@@ -734,6 +734,8 @@ pane itself **by pane**, not by agent:
 
 ```bash
 herdr pane read w12:p3 --source detection --format text
+# a session on another machine (--json has machine.id):
+herdr --machine <machine.id> pane read w12:p3 --source detection --format text
 ```
 
 The `herdr agent read` at the end of this section resolves its target
@@ -755,6 +757,14 @@ either differs from the confirmation, tell the user. Both are what this
 command passed after the agent's command: the pane's shell resolves that
 command, so a function standing in for it, or a `[clauth] launcher` for a
 pinned account, can still change what arrives.
+
+**On another machine, the ids are that machine's.** When `--json` carries
+`machine.id`, the session's workspace, tab and pane ids belong to that
+machine's herdr server, and the same ids on this machine name some other
+session's panes. Every herdr command about it therefore starts `herdr
+--machine <machine.id>`: reading its pane, reading its agent, and resending
+an unsent prompt with `herdr --machine <machine.id> agent prompt <pane_id>
+"<unsent_prompt>"`. Never send one of these ids to this machine's herdr.
 
 **The ids name the agent, not the space.** `workspace_id`, `tab_id` and
 `pane_id` are where the agent actually is, which is what you address next.
@@ -827,6 +837,8 @@ without reading the reason: one that holds a commit holds work.
 
 ```bash
 herdr agent read w12:p3 --source detection --format text
+# a session on another machine:
+herdr --machine <machine.id> agent read w12:p3 --source detection --format text
 ```
 
 A launch that reported success can still be sitting on a first-run trust

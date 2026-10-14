@@ -136,3 +136,11 @@ func TestRepoConfigRefusesAMachineTable(t *testing.T) {
 		t.Errorf("the repo config's notes do not refuse [machine] with its reason:\n%s", notes)
 	}
 }
+
+// TestMachineOfferedTrimsTheDefault: defaults.Machine trims `default`, so
+// the offered set must name the same machine, not " dev ".
+func TestMachineOfferedTrimsTheDefault(t *testing.T) {
+	if got := (MachineConfig{Configured: true, Default: " dev "}).Offered(); !reflect.DeepEqual(got, []string{"local", "dev"}) {
+		t.Errorf("Offered() = %q, want [local dev]", got)
+	}
+}

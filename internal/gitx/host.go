@@ -115,7 +115,7 @@ func (h Host) ssh(ctx context.Context, script string) (string, error) {
 	defer os.Remove(errFile.Name())
 	defer errFile.Close()
 
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-T", "--", h.target, script)
+	cmd := exec.CommandContext(ctx, "ssh", sshArgs(h.target, script)...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = errFile
@@ -135,6 +135,33 @@ func (h Host) ssh(ctx context.Context, script string) (string, error) {
 		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(stderr)))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// sshArgs is ssh's argv for running script on target.
+//
+// Batch mode and no tty: nothing may prompt (remoteGit's reason). A connect
+// timeout and keepalives, because these calls run while a session is being
+// made and cleaned, mostly with no deadline of their own, and an SSM link
+// that stalls without an EOF would otherwise hang a multiplexed client for
+// good -- herdr's own machine bridge sets keepalives for the same reason.
+// ssh takes the first value it is given for an option and reads the command
+// line first, so these override the user's ssh config for those three
+// options. They are bounds rather than preferences, and none is shorter than
+// a person would wait anyway.
+//
+// And the script runs under /bin/sh, not the remote user's login shell:
+// OpenSSH hands the command to that shell, which may be fish or csh, and the
+// scripts here are POSIX (`d="$HOME"/...`, `VAR=val exec`). herdr runs its
+// own remote scripts through /bin/sh for the same reason.
+func sshArgs(target, script string) []string {
+	return []string{
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=15",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=4",
+		"-T", "--", target,
+		"exec /bin/sh -c " + shellQuote(script),
+	}
 }
 
 // exitCode is the process exit code err carries, or -1 when it carries

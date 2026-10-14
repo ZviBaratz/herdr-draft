@@ -150,7 +150,7 @@ create rather than guess; the refusal lifts as soon as the check answers or
 you change the value. `create` gives the same checks thirty seconds and
 exits 5; see [Exit codes](create.md#exit-codes).
 
-### The `machine` row says `unreachable`, or `create` exits 3 naming `--machine local`
+### The `machine` row says `unreachable` or `refused`, or `create` exits 3 naming `--machine local`
 
 herdr-draft could not reach the machine the project is set to run on, and
 the panel (or the line on stderr) gives the reason in herdr's or ssh's own
@@ -163,9 +163,9 @@ words. The common ones:
 - **An ssh error,** such as an expired login to a cloud machine. Check that
   `ssh <target>` works from a terminal; herdr-draft runs ssh without
   prompts, so anything it would have asked you fails instead.
-- **`no saved herdr machine`.** `config.toml` names a machine herdr does not
-  have. `herdr machine list` shows the saved ones, by label, profile id and
-  ssh target.
+- **`no saved herdr machine`** (the row says `refused`; `create` exits 2, not
+  3). `config.toml` names a machine herdr does not have. `herdr machine list`
+  shows the saved ones, by label, profile id and ssh target.
 
 Nothing is created on this machine instead. To start this one session here,
 pick `local` on the row (`←`), or pass `--machine local`.

@@ -1015,7 +1015,8 @@ func (m *Model) scheduleBaseBehind(force bool) tea.Cmd {
 	dir := m.dir.Value()
 	base := m.worktree.Base()
 	on := m.worktree.On()
-	key := dir + "\x00" + base + "\x00" + strconv.FormatBool(on)
+	remote := m.machineLabel()
+	key := dir + "\x00" + base + "\x00" + strconv.FormatBool(on) + "\x00" + remote
 	if key == m.lastBehindKey && !force {
 		return nil
 	}
@@ -1025,7 +1026,9 @@ func (m *Model) scheduleBaseBehind(force bool) tea.Cmd {
 		m.showRepoConfig()
 	}
 	m.reqs.baseBehind++
-	if !on || base == "" || dir == "" {
+	// On another machine the cut is made there, from origin's copy after a
+	// fetch, so this clone's staleness says nothing (machine spec §6.4).
+	if !on || base == "" || dir == "" || remote != "" {
 		return nil
 	}
 	v := m.reqs.baseBehind
@@ -1582,7 +1585,9 @@ type pickerPreviewMsg struct {
 // Returns nil when no picker is configured -- the normal case -- so nothing is
 // scheduled at all rather than scheduled and discarded.
 func (m *Model) schedulePickerPreview(path string) tea.Cmd {
-	if m.deps.Picker == nil || m.account == nil {
+	// Not for a session on another machine, which uses its own login
+	// (machine spec §6.3): there is no account here to preview.
+	if m.deps.Picker == nil || m.account == nil || m.remoteSelected() {
 		return nil
 	}
 	m.reqs.picker++

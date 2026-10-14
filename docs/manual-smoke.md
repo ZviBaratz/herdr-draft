@@ -1870,9 +1870,12 @@ agrees to a session there).**
 5. Note whether Claude stopped on its trust prompt for the new worktree
    path. It is answered on that machine.
 6. Repeat with `←` on the machine row. The session must open here.
-7. Run `--on-failure clean` on a deliberately failing create (`--base
-   origin/no-such`). It must leave this machine's branch of the same name
-   alone.
+7. Make a create fail after its worktree exists, and clean it. Give the
+   scratch config `[timeouts] detection_ms = 1`, make a local branch here
+   with the name the create will use, then run `create --worktree
+   --on-failure clean`. It exits 1 at the detection step, removes the
+   worktree and branch on that machine, and leaves this machine's branch of
+   the same name alone.
 
 ## After the matrix
 

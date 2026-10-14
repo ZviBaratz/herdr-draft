@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/ZviBaratz/herdr-draft/internal/config"
@@ -103,6 +104,34 @@ func Select(saved []herdrc.MachineInfo, selector string) (Choice, error) {
 	return Choice{}, fmt.Errorf("no saved herdr machine %q (see `herdr machine list`)", sel)
 }
 
+// SelectOffered is Select restricted to the offered set (machine spec
+// §4.2): sel may be any name for a machine config.toml names -- the
+// selector config.toml wrote, or that machine's label or profile id, which
+// is what `create --json` hands back -- and a saved machine config.toml
+// never names is refused, whatever it is called.
+func SelectOffered(saved []herdrc.MachineInfo, offered []string, sel string) (Choice, error) {
+	c, err := Select(saved, sel)
+	if err != nil {
+		if !slices.Contains(offered, strings.TrimSpace(sel)) {
+			return Choice{}, notOffered(sel, offered)
+		}
+		return Choice{}, err
+	}
+	if !c.Remote() {
+		return c, nil
+	}
+	for _, o := range offered {
+		if oc, err := Select(saved, o); err == nil && oc.Info.ID == c.Info.ID {
+			return c, nil
+		}
+	}
+	return Choice{}, notOffered(sel, offered)
+}
+
+func notOffered(sel string, offered []string) error {
+	return fmt.Errorf("%q is not one config.toml's [machine] offers (%s)", strings.TrimSpace(sel), strings.Join(offered, ", "))
+}
+
 // Rel is the project key's path under home (machine spec §6.1): what a
 // project carries to another machine, where it is looked for under that
 // machine's own $HOME -- /home/zvi/quantivly/hub becomes
@@ -173,7 +202,8 @@ func RemoteBase(ctx context.Context, g RefReader, dir, base, label string) (stri
 }
 
 // NormalizeOrigin is an origin URL reduced to the repository it names,
-// host and path, lowercase: dev rewrites ssh remotes to https (machine spec
+// host and path, lowercase, with any credential and port dropped (so it is
+// safe to show): dev rewrites ssh remotes to https (machine spec
 // §7), so one repository arrives as git@github.com:o/r.git on one machine
 // and https://github.com/o/r on another.
 func NormalizeOrigin(url string) string {
@@ -187,7 +217,25 @@ func NormalizeOrigin(url string) string {
 		s = s[at+1:]
 	}
 	s = strings.TrimSuffix(strings.TrimSuffix(s, "/"), ".git")
+	// A port is the transport's, never the repository's: host:22/o/r.
+	if host, rest, ok := strings.Cut(s, "/"); ok {
+		if h, _, isPort := strings.Cut(host, ":"); isPort {
+			s = h + "/" + rest
+		}
+	}
 	return strings.ToLower(s)
+}
+
+// repoPath is a normalised origin's last two components, owner/repository:
+// what two origins must share to name one repository. The host is left out
+// on purpose, because one repository arrives under several: an ssh host
+// alias (`github-work`), an insteadOf short form, a port.
+func repoPath(normalized string) string {
+	parts := strings.Split(normalized, "/")
+	if len(parts) < 2 {
+		return normalized
+	}
+	return strings.Join(parts[len(parts)-2:], "/")
 }
 
 // The three verdicts a probe can return, for create's exit codes (machine
@@ -240,9 +288,9 @@ func Judge(r Report, c Choice, rel string, worktree bool, laptopOrigin string) (
 		return "", &verdictError{ErrNoClone, fmt.Sprintf("%s on %s is not a git repository", where, c.Label())}
 	}
 	if r.Clone.IsRepo && laptopOrigin != "" && r.Clone.Origin != "" &&
-		NormalizeOrigin(laptopOrigin) != NormalizeOrigin(r.Clone.Origin) {
+		repoPath(NormalizeOrigin(laptopOrigin)) != repoPath(NormalizeOrigin(r.Clone.Origin)) {
 		return "", &verdictError{ErrWrongRepo, fmt.Sprintf("%s on %s is %s, not %s",
-			where, c.Label(), r.Clone.Origin, laptopOrigin)}
+			where, c.Label(), NormalizeOrigin(r.Clone.Origin), NormalizeOrigin(laptopOrigin))}
 	}
 	return r.Clone.Dir, nil
 }
@@ -292,23 +340,30 @@ func (p CLIProber) Probe(ctx context.Context, c Choice, rel string) (Report, err
 		probe, err := clone(ctx, c.Info.Target, rel)
 		cc <- cloneAnswer{probe, err}
 	}()
+	// Either refusal is the answer the moment it arrives: herdr refusing
+	// forwarding is definitive, and an ssh still hanging beside it must not
+	// turn it into "no answer".
+	unreachable := func(err error) error {
+		return &verdictError{ErrUnreachable, c.Label() + " is unreachable: " + herdrc.Reason(err)}
+	}
 	var ws wsAnswer
 	var cl cloneAnswer
 	for got := 0; got < 2; got++ {
 		select {
 		case ws = <-wsc:
+			if ws.err != nil && ctx.Err() == nil {
+				return Report{}, unreachable(ws.err)
+			}
 		case cl = <-cc:
+			if cl.err != nil && ctx.Err() == nil {
+				return Report{}, unreachable(cl.err)
+			}
 		case <-ctx.Done():
 			return Report{}, ctx.Err()
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
-	}
-	for _, err := range []error{ws.err, cl.err} {
-		if err != nil {
-			return Report{}, &verdictError{ErrUnreachable, c.Label() + " is unreachable: " + herdrc.Reason(err)}
-		}
 	}
 	return Report{Workspaces: ws.ws, Clone: cl.probe}, nil
 }

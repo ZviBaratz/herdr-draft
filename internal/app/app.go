@@ -1013,13 +1013,14 @@ type Model struct {
 	// checkBudget, the one place either is read.
 	checkDeadline time.Duration
 
-	// submitHeld is a submit waiting for something. Three of the five are
-	// #202's, ahead of validation because validation reads their verdicts:
-	// the project row's check (#195), the base check (#194) and the
-	// title-duplicate check (#137). The handler that lands one --
-	// handleDirResult, handleBaseSettled or handleTitleResult -- re-enters
-	// handleSubmit, which re-checks all three and holds again if another is
-	// still out.
+	// submitHeld is a submit waiting for something. Four of the six are
+	// ahead of validation because validation reads their verdicts: #202's
+	// project row check (#195), base check (#194) and title-duplicate check
+	// (#137), and the probe of another machine (machine spec §9.4). The
+	// handler that lands one -- handleDirResult, handleBaseSettled,
+	// handleTitleResult, or handleMachineResult and handleMachinesListed --
+	// re-enters handleSubmit, which re-checks all four and holds again if
+	// another is still out.
 	//
 	// The other two are #293's account holds, which sit at the point where
 	// the account is READ rather than ahead of validation: the clauth hold
@@ -2963,10 +2964,16 @@ func (m *Model) reactToChanges() []tea.Cmd {
 		}
 	}
 
+	wasRemote := m.mach.shownFor != ""
 	m.syncDerivedInertness()
 	// A machine the user cycled to is probed (machine spec §7); a repeat
 	// of the last question is not.
 	cmds = append(cmds, m.maybeProbeMachine())
+	// Back to this machine from another: the account row applies again,
+	// and its picker preview was skipped while it did not.
+	if wasRemote && !m.remoteSelected() {
+		cmds = append(cmds, m.schedulePickerPreview(m.dir.Value()))
+	}
 	// After syncDerivedInertness, which can turn the worktree toggle inert
 	// and so off: the note is about the base a submit would use (#354).
 	cmds = append(cmds, m.scheduleBaseBehind(false))
@@ -3642,6 +3649,9 @@ func (m *Model) syncDerivedInertness() {
 		m.mach.shownFor = remote
 		m.refreshBaseStatus()
 	}
+	// The machine's verdict depends on the worktree too (a worktree needs a
+	// repository there), so it is re-shown with everything else derived.
+	m.showMachineVerdict()
 	if m.account != nil {
 		m.account.SetAgentIsClaude(m.agent.Value() == claudeKind)
 		m.account.SetRemote(remote)

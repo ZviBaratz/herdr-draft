@@ -146,3 +146,17 @@ func TestMachineField_ARefusalWrapsSoItsRemedyShows(t *testing.T) {
 		t.Errorf("the remedy was cut off:\n%s", panel)
 	}
 }
+
+// TestMachineField_ShowsWhatConfigToml_GotWrong: a rule config.toml could
+// not use is reported on this row's panel, the row it would have
+// configured, as [agents.options]' refusals are on the options row.
+func TestMachineField_ShowsWhatConfigTomlGotWrong(t *testing.T) {
+	f := NewMachineField(theme.Default())
+	f.SetNotes([]string{`ignoring [machine.paths] "quantivly": not an absolute path`})
+	if got := f.PanelRows(); got != 3 {
+		t.Errorf("PanelRows() = %d, want the chips, their explanation and the note", got)
+	}
+	if panel := ansi.Strip(f.Panel(100, f.PanelRows())); !strings.Contains(panel, `ignoring [machine.paths] "quantivly"`) {
+		t.Errorf("panel lacks the note:\n%s", panel)
+	}
+}
