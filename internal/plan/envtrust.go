@@ -17,16 +17,19 @@ type TrustOutcome struct {
 	Err   error
 	// Interrupted reports that the .envrc this run allowed was still
 	// loading after envLoadBusyBudget, and was interrupted before the agent
-	// was launched, so it started anyway -- without it (settleEnv).
+	// was launched (settleEnv). The agent then starts without it -- unless
+	// two presses did not stop the load, and the start fails on a busy pane.
 	Interrupted bool
 }
 
 // Note is the one line both front ends say about it -- create on the
 // worktree step's progress line, the popup in that step's row -- or ""
 // when there is nothing to say. Silent are: no .envrc or mise config, or
-// no direnv or mise, which is most repositories; a main clone that does
-// not allow or trust its own, alone, which is the state before this
-// existed; and a checkout the operator denied, which they know. Said are what was extended, and a file the branch changed or a
+// no direnv or mise, which is most repositories; and a main clone that
+// does not allow or trust its own, alone, which is the state before this
+// existed. A deny is said: direnv 2.33+ keeps it after the checkout is
+// gone, and worktree paths are reused per branch name, so a deny made to
+// tidy up an old session meets a new one at the same path. Said are what was extended, and a file the branch changed or a
 // mise config that kept the .envrc blocked, because the operator has
 // something to review or to trust.
 func (o TrustOutcome) Note() string {
@@ -52,8 +55,10 @@ func (o TrustOutcome) Note() string {
 		return ".envrc left blocked: differs from the main clone's"
 	case m == gitx.MiseTrusted:
 		return "mise trusted: same as the main clone's"
+	case e == gitx.EnvrcDenied:
+		return ".envrc left blocked: direnv has a deny on record for this path (direnv allow lifts it)"
 	case m == gitx.MiseDiffers:
-		return "mise config left untrusted: differs from the main clone's"
+		return "mise not trusted here: its config differs from the main clone's"
 	}
 	return ""
 }
@@ -89,7 +94,8 @@ func extendTrust(ctx context.Context, op Op, checkout string) TrustOutcome {
 // maxEnvInterrupts bounds how many times settleEnv presses ctrl+c in a
 // pane whose environment load outlasted envLoadBusyBudget. One is direnv's
 // own way out; a second covers an .envrc whose first command shrugs one off.
-// Past that, the agent is launched anyway, as it was before any of this.
+// Past that the start is tried as before any of this, and herdr refuses a
+// shell that is still loading, so the step fails after its busy wait.
 const maxEnvInterrupts = 2
 
 // envInterruptWait is how long settleEnv gives a pressed load to stop
@@ -112,15 +118,28 @@ var (
 )
 
 // loadingEnv reports a pane whose foreground is running direnv's hook:
-// `direnv export <shell>`, which is how the hook loads an .envrc.
+// `direnv export <shell>`, which is how the bash, zsh and fish hooks all
+// load an .envrc. A direnv whose argv herdr could not read -- its schema
+// makes argv optional -- counts as the hook too.
 func loadingEnv(info herdrc.ProcessInfo) bool {
 	for _, p := range info.Foreground {
-		if p.Name == "direnv" && len(p.Argv) >= 2 && p.Argv[1] == "export" {
+		if p.Name == "direnv" && (p.Argv == nil || len(p.Argv) >= 2 && p.Argv[1] == "export") {
 			return true
 		}
 	}
 	return false
 }
+
+// agentStartWait is herdr's own default wait for the agent `agent start`
+// typed (herdr:src/cli/agent.rs at v0.9.0). With an environment allowed,
+// Execute asks for envLoadBusyBudget more: herdr types into a shell whose
+// load has not started yet, and a load that then starts holds the line.
+const agentStartWait = 30 * time.Second
+
+// envSettleTimeout bounds settleEnv in real time, whatever envNow says and
+// however long one PaneProcessInfo takes: every press its wait, the grace,
+// and slack for a few slow reads over a machine bridge.
+var envSettleTimeout = envLoadBusyBudget + maxEnvInterrupts*envInterruptWait + envIdleGrace + 10*time.Second
 
 // atPrompt reports a pane whose foreground is the shell alone. herdr's
 // shell_pid is optional, so without it one process stands for the shell.
@@ -138,9 +157,16 @@ func atPrompt(info herdrc.ProcessInfo) bool {
 
 // settleEnv waits, before an agent is launched in pane, for the load of the
 // .envrc this run allowed, reading the pane's foreground (herdr pane
-// process-info) rather than inferring it from how a launch fails: herdr's
-// `agent start` refuses a busy shell on dev and types into it on the laptop,
-// which then times out waiting for an agent queued behind the load.
+// process-info) rather than inferring it from how a launch fails. herdr's
+// `agent start` refuses a pane whose foreground is not the shell alone, and
+// types into one whose load has not started yet -- after which the load
+// holds the typed line and herdr's own wait for the agent times out
+// (herdr:src/app/agents.rs at v0.9.0, available_shell_name). The laptop
+// failure that prompted this, 2026-10-14, was that timing, not a difference
+// between machines.
+//
+// It first presses Enter in the pane, so a first prompt that ran direnv's
+// hook before the allow landed gets a second one that loads it.
 //
 // It returns once a load has been seen and finished, or once the shell has
 // sat at its prompt for envIdleGrace with none seen. A load still running
@@ -152,6 +178,17 @@ func atPrompt(info herdrc.ProcessInfo) bool {
 // It never fails anything. A pane whose foreground cannot be read is
 // launched into at once, as before this existed.
 func settleEnv(ctx context.Context, r herdrc.Runner, pane string) (interrupted bool) {
+	ctx, cancel := context.WithTimeout(ctx, envSettleTimeout)
+	defer cancel()
+	// One Enter first. The allow races the pane's first prompt, and a
+	// prompt whose hook ran before it recorded the .envrc as blocked and
+	// will not look again until the next prompt -- dev lost that race twice
+	// running on 2026-10-14, and its agents started with DIRENV_DIR set and
+	// no environment. Nothing has been typed into this new pane, so the
+	// Enter is an empty line: a fresh prompt, whose hook loads what is now
+	// allowed. Won the race, it costs one blank prompt line. Unanswered, it
+	// changes nothing below.
+	_ = r.PaneSendKeys(ctx, pane, "Enter")
 	start := envNow()
 	deadline := start.Add(envLoadBusyBudget)
 	// The whole wait is bounded too, whatever a branch below decides: every
@@ -205,8 +242,9 @@ func settleEnv(ctx context.Context, r herdrc.Runner, pane string) (interrupted b
 	return interrupted
 }
 
-// interruptedNote is the agent step's line when it had to interrupt the
-// environment load to start.
+// interruptedNote is the agent step's line when it interrupted the
+// environment load before the start -- said whether or not the start then
+// succeeded, since a load two presses could not stop still fails it.
 func interruptedNote() string {
-	return fmt.Sprintf("the environment was still loading after %s; interrupted it to start the agent", envLoadBusyBudget)
+	return fmt.Sprintf("the environment was still loading after %s; interrupted it", envLoadBusyBudget)
 }

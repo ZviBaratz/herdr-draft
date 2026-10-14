@@ -155,7 +155,15 @@ type mockRunner struct {
 	// processInfo answers PaneProcessInfo; nil answers that herdr could
 	// not say, which is how every test that does not model a pane's
 	// foreground runs.
-	processInfo      func() (herdrc.ProcessInfo, error)
+	processInfo func() (herdrc.ProcessInfo, error)
+	// blockingProcessInfo makes PaneProcessInfo answer only when its
+	// context ends, as CLIRunner's call does over a stalled machine bridge.
+	blockingProcessInfo bool
+	// paneBusy, when set, makes AgentStart refuse while it reports true,
+	// as herdr does a pane whose foreground is not the shell alone.
+	paneBusy func() bool
+	// agentStarts is every AgentStart request, in order.
+	agentStarts      []herdrc.AgentStartReq
 	onWorktreeRemove func(workspaceID string)
 
 	// focusAsked is what every topology request asked herdr for, in call
@@ -242,8 +250,14 @@ func (m *mockRunner) PaneSplit(ctx context.Context, req herdrc.PaneSplitReq) (he
 
 func (m *mockRunner) AgentStart(ctx context.Context, req herdrc.AgentStartReq) error {
 	m.record("AgentStart", req.Name, req.PaneID)
+	m.agentStarts = append(m.agentStarts, req)
 	if m.shouldFail("AgentStart") {
 		return m.failErr
+	}
+	// herdr refuses a pane whose foreground is not the shell alone
+	// (herdr:src/app/agents.rs at v0.9.0, available_shell_name).
+	if m.paneBusy != nil && m.paneBusy() {
+		return busyErr
 	}
 	return nil
 }
@@ -350,6 +364,10 @@ func (m *mockRunner) PaneRun(ctx context.Context, paneID string, env []herdrc.En
 
 func (m *mockRunner) PaneProcessInfo(ctx context.Context, paneID string) (herdrc.ProcessInfo, error) {
 	m.record("PaneProcessInfo", paneID)
+	if m.blockingProcessInfo {
+		<-ctx.Done()
+		return herdrc.ProcessInfo{}, ctx.Err()
+	}
 	if m.processInfo == nil {
 		return herdrc.ProcessInfo{}, errors.New("process info is not modelled here")
 	}

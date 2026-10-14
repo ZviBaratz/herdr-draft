@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeDirenv puts a `direnv` on PATH that keeps an allow database the way
@@ -45,9 +46,12 @@ allow)
   d=${2:-$PWD}
   [ -f "$d/.envrc" ] || { echo "direnv: error .envrc file not found" >&2; exit 1; }
   cp "$d/.envrc" '` + db + `'/"$(key "$d")"
+  rm -f '` + db + `'/deny"$(key "$d")"
   ;;
 deny)
-  touch '` + db + `'/deny"$(key "${2:-$PWD}")"
+  # 2.33+ records a deny; 2.25 only removes the allow.
+  rm -f '` + db + `'/"$(key "${2:-$PWD}")"
+  if [ "` + yes + `" = 0 ]; then touch '` + db + `'/deny"$(key "${2:-$PWD}")"; fi
   ;;
 esac
 `
@@ -812,7 +816,8 @@ func TestExtendTrustHoldsTheEnvrcWhenMiseIsMissing(t *testing.T) {
 // whole directory, so a branch that adds any of them differs.
 func TestExtendTrustComparesEveryMiseConfigName(t *testing.T) {
 	for _, name := range []string{".rtx.toml", ".config/mise/config.local.toml", "mise/config.local.toml",
-		".mise/config.local.toml", ".config/mise.local.toml", ".config/mise/mise.toml", "mise.staging.toml", ".tool-versions"} {
+		".mise/config.local.toml", ".config/mise.local.toml", ".config/mise/mise.toml", "mise.staging.toml", ".tool-versions",
+		".miserc.toml", ".config/miserc.toml"} {
 		t.Run(name, func(t *testing.T) {
 			fakeDirenv(t, "0")
 			miseOnPath(t)
@@ -879,4 +884,61 @@ func TestExtendTrustRespectsAnExplicitDeny(t *testing.T) {
 		t.Errorf("Envrc = %q, want %q", got, EnvrcDenied)
 	}
 	assertNotAllowedIn(t, direnvLog, checkout)
+}
+
+// TestExtendTrustReturnsWhatTheSSHSaidBeforeItWasKilled: the trust step's
+// own timeout can kill a remote ssh after the allow has begun, and the
+// "envrc allowing" already on stdout is what tells the caller the pane may
+// load an environment. Both shapes the first review measured: an ssh that
+// dies with its child, and one whose child -- ControlMaster's shape --
+// holds stdout until waitDelay lets go of it.
+func TestExtendTrustReturnsWhatTheSSHSaidBeforeItWasKilled(t *testing.T) {
+	for name, hold := range map[string]string{
+		"dies with its child":  `exec sleep 30`,
+		"a child holds stdout": `sleep 30 & wait`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fakeSSH(t, `printf 'mise \nenvrc allowing\n'; `+hold)
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+
+			got, err := Over("devbox").ExtendTrust(ctx, "/srv/hub", "/srv/wt")
+			if err == nil {
+				t.Fatalf("ExtendTrust = %+v, nil; want the kill reported", got)
+			}
+			if got.Envrc != EnvrcAllowing {
+				t.Errorf("ExtendTrust's partial answer = %+v, want Envrc %q", got, EnvrcAllowing)
+			}
+		})
+	}
+}
+
+// TestFakeDirenvDenyIsTheRealOnesShape pins the stub against what direnv
+// itself does (measured on 2.37.1 by the second review, 2026-10-14): an
+// allow lifts a deny, and on 2.25 a deny only removes the allow.
+func TestFakeDirenvDenyIsTheRealOnesShape(t *testing.T) {
+	for format, wantAfterDeny := range map[string]string{"0": "Found RC allowed 2", "true": "Found RC allowed false"} {
+		t.Run(format, func(t *testing.T) {
+			fakeDirenv(t, format)
+			dir := t.TempDir()
+			writeEnvrc(t, dir, hubEnvrc)
+			status := func() string {
+				cmd := exec.Command("direnv", "status")
+				cmd.Dir = dir
+				out, _ := cmd.Output()
+				return string(out)
+			}
+			allowIn(t, dir)
+			if out, err := exec.Command("direnv", "deny", dir).CombinedOutput(); err != nil {
+				t.Fatalf("deny: %v\n%s", err, out)
+			}
+			if got := status(); !strings.Contains(got, wantAfterDeny) {
+				t.Errorf("after deny: %q, want %q", got, wantAfterDeny)
+			}
+			allowIn(t, dir)
+			if got := status(); strings.Contains(got, "allowed 2") || strings.Contains(got, "allowed false") {
+				t.Errorf("after allowing again: %q, want allowed", got)
+			}
+		})
+	}
 }

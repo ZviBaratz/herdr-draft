@@ -313,7 +313,8 @@ type jsonReport struct {
 	TrustError string `json:"trust_error,omitempty"`
 	// EnvLoadInterrupted is true when the .envrc allowed here was still
 	// loading after a minute, and was interrupted before the agent was
-	// launched, so the agent started anyway, without its environment.
+	// launched. ok says whether the agent then started -- without its
+	// environment -- or a load two presses could not stop failed the start.
 	EnvLoadInterrupted bool `json:"env_load_interrupted,omitempty"`
 
 	// PromptSent is absent when there was no prompt at all, and also when
