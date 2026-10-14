@@ -60,6 +60,7 @@ trust_wait_ms = 300000             # wait for you to answer a dialog (popup only
 
 [worktree]
 trust_repository = false           # waive git's ownership check per request
+inherit_trust = true               # extend direnv allow / mise trust to new worktrees
 
 [reaper]
 mark_ready = false                 # start every prompt on "reap"
@@ -341,6 +342,40 @@ permanent, machine-wide `git config --global --add safe.directory <path>`.
 Only `config.toml` can set this. A repository cannot vouch for itself, and
 neither memory file records it, because they record what you chose in the
 form and no row offers it.
+
+**`inherit_trust`** (default: `true`). After a worktree is cut, extends your
+direnv allow and your mise trust from the main clone to the worktree. It
+applies only to files that are byte-identical to the ones you approved. It
+runs on the machine the session runs on, before the agent starts, so the
+pane's first prompt loads the environment rather than printing `.envrc is
+blocked`.
+
+- **mise.** Every mise config file the worktree has (`mise.toml`,
+  `.mise.toml`, their `.local` and per-environment variants, and the
+  `.mise/`, `mise/` and `.config/mise` forms) must match the main clone's,
+  and `mise trust --show` must already report the main clone trusted. Then
+  the worktree is trusted.
+- **direnv.** The worktree's `.envrc` must match the main clone's, and
+  `direnv status` there must already report it allowed. It is also held
+  back when the worktree's mise config could not be trusted, because an
+  `.envrc` that runs `mise activate` would stop the pane on mise's prompt.
+  Then the worktree's `.envrc` is allowed.
+
+Nothing is trusted that you have not trusted already. direnv keys an allow on
+a file's path and content, and mise keys trust on a directory, so the only
+new thing is the path. A branch that changes either file keeps it blocked,
+for you to review. The worktree step says what happened in one line. If the
+main clone's own file is not allowed or trusted, nothing is said, which is
+the behaviour from before this existed. `direnv allow` or `mise trust` in
+the main clone, once per machine, is what turns it on for a repository.
+
+The environment never fails a create. The agent's start waits up to a
+minute for a shell that is loading the environment. If the environment is
+still loading after that, herdr-draft interrupts it with ctrl+c and the
+agent starts without it, as it would have before.
+
+Set it to `false` to approve every worktree's environment by hand. Only
+`config.toml` can set it.
 
 ## `[reaper]`
 

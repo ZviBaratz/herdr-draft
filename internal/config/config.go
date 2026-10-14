@@ -267,6 +267,24 @@ type WorktreeConfig struct {
 	//
 	// A repository can never set this. See repo.go's repoDeniedKeys.
 	TrustRepository *bool `toml:"trust_repository"`
+
+	// InheritTrust extends the main clone's direnv allow and mise trust to
+	// a new worktree, for the files that are byte-identical to the main
+	// clone's (gitx.Host.ExtendTrust). Read through InheritsTrust: absent
+	// means ON, because it extends no trust to anything new -- only a path,
+	// for content the operator already allowed or trusted. Off is for an
+	// operator who wants every checkout's environment approved by hand.
+	//
+	// Not a defaults.Resolve field: like [timeouts], nothing above
+	// config.toml can supply it, so both front ends read it from here. A
+	// repository can never set it either way (repoDeniedKeys' "worktree").
+	InheritTrust *bool `toml:"inherit_trust"`
+}
+
+// InheritsTrust is InheritTrust with its default applied: on unless the file
+// says false.
+func (w WorktreeConfig) InheritsTrust() bool {
+	return w.InheritTrust == nil || *w.InheritTrust
 }
 
 // ReaperConfig is the optional `[reaper]` table (reap spec §6.2): whether a

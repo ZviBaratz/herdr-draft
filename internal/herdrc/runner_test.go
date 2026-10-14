@@ -1958,3 +1958,32 @@ func TestCLIRunnerPaneRunRefusesAnUnusableEnvName(t *testing.T) {
 		t.Fatalf("a refused env name must type nothing, got %q", readArgvLog(t, argvLog))
 	}
 }
+
+// TestCLIRunnerPaneSendKeys pins the argv -- the pane POSITIONAL, then one
+// argument per key -- and the success shape: `pane send-keys` goes through
+// herdr's send_ok_request, exactly as `pane run` does
+// (herdr:src/cli/pane.rs at v0.9.0, pane_send_keys), so success is the exit
+// code and nothing on stdout.
+func TestCLIRunnerPaneSendKeys(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, "")
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.PaneSendKeys(context.Background(), "p3", "ctrl+c"); err != nil {
+		t.Fatalf("PaneSendKeys: %v", err)
+	}
+	if got, want := readArgvLog(t, argvLog), "pane send-keys p3 ctrl+c"; got != want {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+}
+
+// TestCLIRunnerPaneSendKeysRefusesEmptyPaneID: keys sent to whatever pane
+// herdr would pick by default land in somebody's work.
+func TestCLIRunnerPaneSendKeysRefusesEmptyPaneID(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, "")
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.PaneSendKeys(context.Background(), "", "ctrl+c"); !errors.Is(err, errRefused) {
+		t.Fatalf("PaneSendKeys(\"\") = %v, want a refusal", err)
+	}
+	assertNeverExecuted(t, argvLog)
+}

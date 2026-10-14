@@ -1877,6 +1877,43 @@ agrees to a session there).**
    worktree and branch on that machine, and leaves this machine's branch of
    the same name alone.
 
+### Cell 17 — a new worktree inherits the main clone's environment trust
+
+**Why this cell exists.** The tests use stub `direnv` and `mise` binaries.
+Two things only a real pane can show: whether the allow lands before the new
+shell's first prompt, and whether the environment then loads without a
+prompt that holds the shell. The first version of this feature passed every
+test and then failed its first live run on dev: hub's `.envrc` runs
+`mise activate`, mise trusts by path, and the new worktree's prompt kept
+`agent start` waiting until it failed.
+
+**Setup:** a repository whose committed `.envrc` (and `.mise.toml`, if it
+has one) you have allowed and trusted in the main clone, on the machine the
+session will run on: `direnv allow` and `mise trust` there.
+
+**Run** a headless worktree `create` with no prompt (Cell 16's scratch
+config if the session is remote).
+
+**Expected:**
+
+- The worktree step reads `ok (.envrc allowed and mise trusted: same as the
+  main clone's)`. `--json` has `"envrc": "allowed"` and `"mise": "trusted"`,
+  and no `env_load_interrupted`.
+- The pane shows no `.envrc is blocked` and no mise prompt.
+- The agent's process carries the environment:
+  `tr '\0' '\n' < /proc/<claude pid>/environ | grep -E 'DIRENV_DIR|VIRTUAL_ENV'`.
+- Change the `.envrc` on a branch and cut a worktree from it: the line reads
+  `.envrc left blocked: differs from the main clone's`, and the pane prints
+  direnv's own blocked message.
+
+**Clean up** the trust you created as well as the session:
+`direnv deny <checkout>` and `mise trust --untrust <checkout>` before
+`worktree remove`. Then delete the branch.
+
+**Passed on dev, 2026-10-14**, with hub. The first load took 2.0 s
+(virtualenv plus `quanticli doctor deps`), and a warm one 42 ms. Claude
+showed no trust prompt.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:

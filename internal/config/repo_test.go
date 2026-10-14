@@ -432,6 +432,13 @@ func TestLoadRepoConfig_ForbidsWorktreeTrustRepository(t *testing.T) {
 	assertForbidden(t, "[worktree]\ntrust_repository = true\n", "worktree")
 }
 
+// TestLoadRepoConfig_ForbidsWorktreeInheritTrust: whether a new checkout's
+// .envrc and mise config may be trusted is the operator's call about their
+// own tools, in either direction, and the [worktree] table refuses it whole.
+func TestLoadRepoConfig_ForbidsWorktreeInheritTrust(t *testing.T) {
+	assertForbidden(t, "[worktree]\ninherit_trust = false\n", "worktree")
+}
+
 // TestLoadRepoConfig_ForbidsReaper is reap spec §6.3: a file that arrives
 // with `git clone` must not decide what an agent is told, nor close panes
 // on every machine that clones it -- linear.prompt_template's argument. The

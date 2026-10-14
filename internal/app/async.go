@@ -2135,6 +2135,20 @@ func (m Model) handleSubmitProgress(msg submitProgressMsg) (Model, tea.Cmd) {
 				step.Detail = "not named: " + step.Detail
 			}
 		}
+		if note := msg.progress.Note; note != "" {
+			// Beside the row's own words rather than in place of them, and
+			// without holding a successful popup open: the pane shows
+			// direnv's own word on it as the agent starts. First on a
+			// finished row, where the branch is what the user just typed
+			// and a narrow popup would clip whatever comes second; after a
+			// caveat, which is the warning the popup holds open for and
+			// repeats in full below the rows.
+			if step.State == plan.StepDone {
+				step.Detail = note + " · " + step.Detail
+			} else {
+				step.Detail += " · " + note
+			}
+		}
 		m.submitSteps[i] = step
 	}
 	if m.submitView != nil {

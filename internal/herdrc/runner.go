@@ -158,6 +158,11 @@ type Runner interface {
 	// non-empty, is emitted ahead of argv as shell assignments -- see
 	// EnvVar for why it cannot simply be more argv.
 	PaneRun(ctx context.Context, paneID string, env []EnvVar, argv []string) error
+	// PaneSendKeys presses keys in a pane, named as herdr spells them
+	// (`ctrl+c`, `esc`). plan uses it for one thing: interrupting an
+	// environment load that has held a new pane's shell past its budget,
+	// so the agent can start in it anyway.
+	PaneSendKeys(ctx context.Context, paneID string, keys ...string) error
 	// PaneClose runs `herdr pane close <pane_id>`. Clean calls it for a
 	// `split here` space without a worktree, and -- placement spec §5.4 --
 	// for an agent pane that differs from the space's own, before removing
@@ -1419,6 +1424,18 @@ func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, env []EnvVar, ar
 		args = append(args, shellQuote(a))
 	}
 	return r.runOK(ctx, args...)
+}
+
+// PaneSendKeys runs `herdr pane send-keys <pane_id> <key>...`. runOK, not
+// runJSON: it goes through herdr's send_ok_request, as `pane run` does
+// (herdr:src/cli/pane.rs at v0.9.0, pane_send_keys), so success is the exit
+// code alone. An empty pane id is refused rather than left to herdr's
+// default, for PaneClose's reason.
+func (r *CLIRunner) PaneSendKeys(ctx context.Context, paneID string, keys ...string) error {
+	if paneID == "" {
+		return fmt.Errorf("%w pane send-keys: no pane id to send to", errRefused)
+	}
+	return r.runOK(ctx, append([]string{"pane", "send-keys", paneID}, keys...)...)
 }
 
 // envNameOK reports whether name is a portable shell variable name --

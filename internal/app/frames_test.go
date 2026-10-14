@@ -1341,6 +1341,53 @@ func TestAssembledSubmit_WrongBranchFrame(t *testing.T) {
 		m, framePopupW, framePopupH)
 }
 
+// TestAssembledSubmit_EnvrcNoteFrame is the one line the worktree row adds
+// about the new checkout's .envrc, caught while the agent is still starting
+// -- the moment a user reads it, since a successful popup closes without
+// waiting for it. The case shown is the one that asks something of them:
+// a checkout whose .envrc is not the main clone's, left blocked.
+//
+// The words come out of the real pipeline, so it needs a direnv on PATH:
+// any will do, since the script stops at the comparison -- /repo is no
+// repository here, and has no .envrc to be the same as.
+func TestAssembledSubmit_EnvrcNoteFrame(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "direnv"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	checkout := t.TempDir()
+	if err := os.WriteFile(filepath.Join(checkout, ".envrc"), []byte("export CHANGED=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{
+		WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1",
+		CheckoutPath: checkout, Branch: "zvi/fix-login-redirect-loop",
+	}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
+	m.title.SetTitle("Fix login redirect loop", false)
+	m.worktree.SetGitTarget(true)
+	m.worktree.SetOn(true)
+	m.worktree.SetBranch("zvi/fix-login-redirect-loop", false)
+
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	worktreeRow := stepRowIndex(t, m.submitSteps, "worktree")
+	m, resume := drainSubmitProgressUntil(t, m, cmd, func(p plan.Progress) bool {
+		return p.Index == worktreeRow && p.State == plan.StepDone
+	})
+
+	assertAppSubmitFrame(t, "submit-envrc-note-80x24", m, 80, 24)
+	assertAppSubmitFrame(t, fmt.Sprintf("submit-envrc-note-%dx%d", framePopupW, framePopupH),
+		m, framePopupW, framePopupH)
+
+	m, _, done := drainSubmitProgress(t, m, resume)
+	if done.result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: a blocked .envrc fails nothing: %+v", done.result.FailedIndex, done.result)
+	}
+}
+
 // TestAssembledSubmit_WaitingOnTheDialogFrame is the screen #115 adds, and
 // it is the one screen in the pipeline that a user can sit and look at for
 // minutes: the launch found Claude Code on its first-run trust prompt, so

@@ -163,6 +163,11 @@ type Input struct {
 	Ctx                             herdrc.Context
 	DetectionTimeout, PromptTimeout time.Duration
 	TrustRepository                 bool
+	// InheritTrust is `[worktree] inherit_trust`: after the worktree is
+	// cut, extend the main clone's direnv allow and mise trust to the
+	// checkout's files that are the same bytes (gitx.Host.ExtendTrust). On
+	// unless config.toml turns it off; nothing above config.toml can set it.
+	InheritTrust bool
 
 	// Machine is the herdr machine the session runs on, the zero value for
 	// this one (machine spec §8.1). A remote session's space is always a
@@ -299,6 +304,14 @@ type Op struct {
 	// Execute scopes herdr and git to it (machine spec §8.1).
 	Machine Machine
 
+	// InheritTrust is OpWorktreeCreate's: extend the main clone's direnv
+	// allow and mise trust to the new checkout (Input.InheritTrust). It
+	// is part of that op, not an op of its own, because it races the new
+	// pane's first prompt and so runs the moment herdr answers -- and
+	// because a step row for it would sit in every worktree plan, most of
+	// whose repositories have no .envrc at all.
+	InheritTrust bool
+
 	// AgentKind is OpAwaitDetection's other field: the kind being waited
 	// for, carried for MESSAGES only and never for behaviour. Path B is
 	// claude-only today (launchOps gates on it), so exec.go could have
@@ -428,6 +441,7 @@ func topologyOp(in Input) []Op {
 				Focus:           true,
 				TrustRepository: in.TrustRepository,
 			},
+			InheritTrust: in.InheritTrust,
 		}}
 	}
 

@@ -104,6 +104,10 @@ func TestFormAndCommandProduceTheSamePlan(t *testing.T) {
 		// well -- this is what keeps each scenario about a real tier
 		// arrangement.
 		want plan.Input
+		// trustOff is a scenario whose config.toml turns `[worktree]
+		// inherit_trust` off. Every other one expects it on, the default,
+		// which is filled into want below rather than into every literal.
+		trustOff bool
 	}{
 		{
 			name: "worktree from the repository's committed default",
@@ -230,6 +234,27 @@ trust_repository = true
 				TrustRepository:  true,
 				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
 			},
+		},
+		{
+			// `[worktree] inherit_trust` is trust_repository's shape the
+			// other way round: on by default, no flag and no row, so both
+			// paths read config.toml and only an explicit false turns it
+			// off.
+			name: "inherit_trust comes off config.toml for both paths",
+			configTOML: `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+[worktree]
+inherit_trust = false
+`,
+			args: []string{"--title", title},
+			want: plan.Input{
+				Branch: "zvi/fix-login-redirect-loop", UseWorktree: true,
+				Placement: plan.PlacementNewSpace, AgentKind: "claude",
+				DetectionTimeout: 30 * time.Second, PromptTimeout: 120 * time.Second,
+			},
+			trustOff: true,
 		},
 		{
 			// [reaper] mark_ready has a form control (the prompt panel's
@@ -814,6 +839,7 @@ default = "acct-1"
 			if want.Launcher == nil {
 				want.Launcher = config.DefaultClauthLauncher()
 			}
+			want.InheritTrust = !tc.trustOff
 			if !reflect.DeepEqual(fromCommand, want) {
 				t.Fatalf("the tiers did not resolve as the scenario describes.\ngot:  %s\nwant: %s",
 					showInput(fromCommand), showInput(want))

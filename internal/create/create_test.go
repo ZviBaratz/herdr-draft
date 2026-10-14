@@ -364,6 +364,10 @@ func (r *fakeRunner) PaneRun(_ context.Context, paneID string, env []herdrc.EnvV
 	return r.record("PaneRun", append(rec, argv...)...)
 }
 
+func (r *fakeRunner) PaneSendKeys(_ context.Context, paneID string, keys ...string) error {
+	return r.record("PaneSendKeys", append([]string{paneID}, keys...)...)
+}
+
 func (r *fakeRunner) PaneClose(_ context.Context, paneID string) error {
 	return r.record("PaneClose", paneID)
 }
