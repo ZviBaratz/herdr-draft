@@ -663,7 +663,11 @@ func (c *clauthOnce) get(ctx context.Context) (clauth.Status, error) {
 // say so, would read as an account nobody could see into for no reason.
 func dryRunUsage(ctx context.Context, resolved resolution, deps Deps, cl *clauthOnce) *accountUsage {
 	in := resolved.input
-	if deps.Clauth == nil || in.AgentKind != claudeKind || !clauthEnabled(resolved) {
+	// Not for a session on another machine: it bills that machine's own
+	// login (machine spec §6.3), and this machine's clauth windows would be
+	// a number about the wrong account -- one the spawn skill tells agents
+	// to choose models by. Absent means unknown, as it always has here.
+	if deps.Clauth == nil || in.AgentKind != claudeKind || !clauthEnabled(resolved) || in.Machine.Remote() {
 		return nil
 	}
 	status, err := cl.get(ctx)

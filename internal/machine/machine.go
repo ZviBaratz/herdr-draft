@@ -177,7 +177,7 @@ func RemoteBase(ctx context.Context, g RefReader, dir, base, label string) (stri
 			return "", err
 		}
 		if head == "" {
-			return "", fmt.Errorf("this clone does not know origin's default branch, so a base for %s has to be named (an origin/ branch)", label)
+			return "", fmt.Errorf("this clone does not know origin's default branch, so a base for %s has to be named (an origin/ branch), or set with `git remote set-head origin --auto`", label)
 		}
 		return head, nil
 	}

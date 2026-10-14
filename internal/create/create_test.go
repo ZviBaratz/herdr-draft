@@ -386,10 +386,9 @@ func (r *fakeRunner) WorkspaceClose(_ context.Context, workspaceID string) error
 	return r.record("WorkspaceClose", workspaceID)
 }
 
-// On, MachineList and NotificationShow: this fake is one machine, and
-// saves none (machine spec §8.1).
 // On records the machine a plan scoped this fake to: everything after it
-// went there.
+// went there. MachineList answers r.machines, and NotificationShow posts
+// nothing (machine spec §8.1).
 func (r *fakeRunner) On(id string) herdrc.Runner {
 	_ = r.record("On", id)
 	return r

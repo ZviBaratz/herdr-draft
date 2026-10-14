@@ -1037,3 +1037,21 @@ func TestSkillAddressesARemoteSessionThroughItsMachine(t *testing.T) {
 		}
 	}
 }
+
+// TestSkillSaysWhatAnUnsetBaseIsOnAnotherMachine: the skill promises that
+// an unset --base, or HEAD, is "your current commit". On another machine it
+// is origin's default branch instead (machine.RemoteBase, machine spec
+// §6.4), so an agent continuing from its own pushed branch has to name it
+// -- and the skill has to say so, or the promise sends it the wrong way
+// (independent review #4).
+func TestSkillSaysWhatAnUnsetBaseIsOnAnotherMachine(t *testing.T) {
+	doc := strings.Join(strings.Fields(renderedSkill()), " ")
+	for _, want := range []string{
+		"an unset `--base`, or `HEAD`, is origin's default branch there, not your current commit",
+		"`--base origin/<your-branch>`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the skill never says %q", want)
+		}
+	}
+}

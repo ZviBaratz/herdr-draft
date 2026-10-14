@@ -349,8 +349,10 @@ connection alone takes 4–5 s (§3.4).
    `Custom { … }` debug form. The unwrapping is for display only and never
    classifies anything (#144).
 2. **The clone:** one `ssh -o BatchMode=yes -T <target>` that answers the
-   remote `$HOME`, whether `"$HOME"/'<rel>'` exists, whether it is a git
-   repository, origin's URL, and the clone's local branch names.
+   remote `$HOME`, whether `"$HOME"/'<rel>'` exists, whether it is the top
+   of a git work tree (a plain directory inside some enclosing repository,
+   such as a home kept as a dotfiles repo, is not), origin's URL, and the
+   clone's local branch names.
 
 **Three refusals** come out of the clone probe:
 
@@ -513,7 +515,12 @@ and account rows' inert state from it.
 
 A probe still out joins `handleSubmit`'s hold. A refusal, or a timeout,
 refuses the submit and focuses the machine row, where `local` is the first
-chip.
+chip. A fresh ⌃S after "unreachable", "no answer" or a failed machine list
+asks again and holds for the answer, since a renewed login or a server back
+up changes it; a refusal the machine gave (no clone, the wrong repository)
+is not asked again. The project check moving the row between machines
+re-runs the title check and, back on this machine, the account picker's
+preview.
 
 ### 9.5 Success
 
@@ -545,7 +552,9 @@ Left off, the path rules decide.
 - **`--json`:** gains `"machine": {"selector", "id", "label"}`, and the
   provenance map gains `machine` (`flag`, `config.toml` or `built-in`).
 - **`--dry-run`:** runs both probes and reports what would be created and
-  where.
+  where. It reports no `account_usage` for another machine: that machine
+  bills its own login, and this machine's clauth windows would describe
+  the wrong account.
 
 ### 10.2 The skill
 

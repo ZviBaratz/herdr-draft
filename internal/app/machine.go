@@ -287,6 +287,27 @@ func (m *Model) maybeProbeMachine() tea.Cmd {
 	}
 }
 
+// reaskMachine asks again about a machine whose last answer may have
+// changed since: one that could not be reached (a login renewed since), one
+// that did not answer, or herdr's machine list failing. A refusal the
+// machine gave -- no clone, the wrong repository -- is not asked again: a
+// second ⌃S does not change it. Called on a fresh ⌃S only.
+func (m *Model) reaskMachine() tea.Cmd {
+	if !m.remoteSelected() || !m.mach.landed {
+		return nil
+	}
+	if m.mach.listErr != nil {
+		m.mach.listed, m.mach.listErr, m.mach.asked = false, nil, ""
+		m.maybeProbeMachine() // waits for the list, and says so
+		return m.machineListCmd()
+	}
+	if v := m.mach.verdict; v.unknown || errors.Is(v.err, machine.ErrUnreachable) {
+		m.mach.asked = ""
+		return m.maybeProbeMachine()
+	}
+	return nil
+}
+
 // machineDeadline is machineCheckDeadline, or a test's own checkDeadline.
 func (m Model) machineDeadline() time.Duration {
 	if m.checkDeadline > 0 {
@@ -328,7 +349,7 @@ func (m *Model) showMachineVerdict() {
 	case v.unknown:
 		what := cmp.Or(v.unanswered, label)
 		m.machine.SetStatus(form.MachineRefused, "no answer",
-			fmt.Sprintf("%s did not answer in %s: try again, or choose local", what, m.machineDeadline()))
+			fmt.Sprintf("%s did not answer in %s: ⌃S asks again, or choose local", what, m.machineDeadline()))
 	case v.err != nil:
 		word := "refused"
 		if errors.Is(v.err, machine.ErrUnreachable) {

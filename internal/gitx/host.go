@@ -209,7 +209,11 @@ func (h Host) ProbeClone(ctx context.Context, rel string) (CloneProbe, error) {
 		`printf 'dir\t%s\n' "$d"`,
 		`cd -- "$d" 2>/dev/null || exit 0`,
 		`printf 'exists\n'`,
-		`[ "$(GIT_TERMINAL_PROMPT=0 git rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || exit 0`,
+		// The directory itself must be the top of a work tree: a plain
+		// directory inside some enclosing repository -- a home directory
+		// kept as a dotfiles repo -- is not the project's clone, and a
+		// worktree cut there would belong to the wrong repository.
+		`[ "$(GIT_TERMINAL_PROMPT=0 git rev-parse --show-toplevel 2>/dev/null)" = "$(pwd -P)" ] || exit 0`,
 		`printf 'repo\n'`,
 		`printf 'origin\t%s\n' "$(git config --get remote.origin.url)"`,
 		`git for-each-ref --format='branch%09%(refname:short)' refs/heads`,

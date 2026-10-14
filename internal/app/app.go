@@ -2053,7 +2053,12 @@ func (m Model) startSubmitRequest() (Model, tea.Cmd) {
 	m.accountWaitExpired = false
 	m.accountHeld = accountHoldNone
 	m.accountFromConfig = configAccount{}
-	return m.handleSubmit()
+	// Before handleSubmit, so the submit holds for the answer: a ⌃S after
+	// "unreachable" or "no answer" asks the machine again (machine spec
+	// §9.4), which is what the row's "try again" promises.
+	again := m.reaskMachine()
+	next, cmd := m.handleSubmit()
+	return next, tea.Batch(again, cmd)
 }
 
 func (m Model) handleSubmit() (Model, tea.Cmd) {

@@ -252,7 +252,7 @@ presence.
 | `agent_options` | the session options you chose, such as `{"effort": "high"}` |
 | `launch_options` | what the agent's command line carries for each option, including values `[agents.extra_args]` passes |
 | `agent_args` | the whole argument list passed after the agent's command |
-| `account_usage` | dry run only: the billed account's `profile` and its usage `windows` (`label`, `utilization_pct`, `resets_at`) |
+| `account_usage` | dry run only: the billed account's `profile` and its usage `windows` (`label`, `utilization_pct`, `resets_at`); absent for a session on another machine, which bills its own login |
 | `on_failure`, `cleaned`, `clean_refused` | what happened to a failed session, and why a clean was refused |
 | `deleted_branch`, `deleted_branch_tip` | a branch the clean deleted, and the commit it pointed at |
 | `kept_branch`, `kept_branch_reason` | a branch the clean left in place, and why |

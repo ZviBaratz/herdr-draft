@@ -182,7 +182,8 @@ For another machine, the panel shows herdr-draft checking that the machine
 can be reached and that the project is there, then `ready`, or the reason it
 is not in herdr's or ssh's own words. `⌃S` waits for that check, and refuses
 a machine that failed it, with this row focused so that `local` is one key
-away. On another machine the session opens in a new space there, a worktree
+away. After `unreachable` or `no answer`, the next `⌃S` asks the machine
+again, so renewing a login is all a retry needs. On another machine the session opens in a new space there, a worktree
 is cut from origin's copy of the base after a fetch there, and the account
 row does not apply: that machine uses its own login. See
 [Sessions on another machine](configuration.md#sessions-on-another-machine).

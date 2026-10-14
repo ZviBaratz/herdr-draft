@@ -347,3 +347,13 @@ func TestOfferedAcceptsAnyNameForAnOfferedMachine(t *testing.T) {
 		t.Errorf("SelectOffered(nanoclaw) = %v; want it refused as not offered", err)
 	}
 }
+
+// TestRemoteBaseNamesTheRemedyForAMissingOriginHead: a clone made with
+// `remote add` and `fetch` has no origin/HEAD, which refuses every remote
+// worktree left at HEAD -- the refusal names the one command that fixes it.
+func TestRemoteBaseNamesTheRemedyForAMissingOriginHead(t *testing.T) {
+	_, err := RemoteBase(context.Background(), refs{}, "/repo", "", "dev (EC2)")
+	if err == nil || !strings.Contains(err.Error(), "git remote set-head origin --auto") {
+		t.Errorf("RemoteBase with no origin/HEAD = %v; want the remedy named", err)
+	}
+}

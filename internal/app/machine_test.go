@@ -184,8 +184,7 @@ func TestMachineUnreachableRefusesTheSubmit(t *testing.T) {
 	m.title.SetTitle("fix it", false)
 	m.worktree.SetBranch("zvi/fix-it", false)
 	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On(), m.remoteSelected())})
-	next, _ := m.Update(form.SubmitMsg{})
-	m = next.(Model)
+	m = submitAndLandTheReask(t, m)
 	if m.submitView != nil {
 		t.Fatal("a submit to an unreachable machine started")
 	}
@@ -407,8 +406,7 @@ func TestAssembledForm_MachineUnreachable(t *testing.T) {
 		},
 	})
 	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On(), m.remoteSelected())})
-	next, _ := m.Update(form.SubmitMsg{})
-	m = next.(Model)
+	m = submitAndLandTheReask(t, m)
 	if m.form.FocusedID() != "machine" {
 		t.Fatalf("focus = %q, want the machine row the refusal sends it to", m.form.FocusedID())
 	}
@@ -617,4 +615,117 @@ func TestAssembledForm_MachineTimedOut(t *testing.T) {
 	m.form.FocusByID("machine")
 	m.reactToChanges()
 	assertAppFrame(t, "assembled-machine-timed-out-101x30", m, framePopupW, framePopupH)
+}
+
+// localProjectResult is the dir check landing on a project no rule sends
+// anywhere: the row's key moves to /home/zvi/Projects/toy, so the rules
+// re-resolve to local.
+func localProjectResult(m Model) dirResultMsg {
+	return dirResultMsg{
+		req:       request{version: m.reqs.dir, key: m.dir.Value()},
+		dirExists: true, isGitRepo: true,
+		memoryKey: "/home/zvi/Projects/toy",
+	}
+}
+
+// TestMachineProjectCheckMovingToLocalAsksThePickerAgain: the account
+// picker's preview is skipped while dev is selected, and the dir check is
+// what moves the row to local when the project changes -- so it must ask
+// for the preview again, or a submit resting on `auto` holds for a probe
+// nothing will ever answer (independent review #1a).
+func TestMachineProjectCheckMovingToLocalAsksThePickerAgain(t *testing.T) {
+	m, _, _, _ := machineModel(t)
+	m = settle(t, m)
+	m.deps.Picker = &fakePicker{}
+	m.account = form.NewAccountField(theme.Default())
+	if !m.remoteSelected() {
+		t.Fatal("fixture: dev is not selected")
+	}
+	next, cmd := m.handleDirResult(localProjectResult(m))
+	if next.remoteSelected() {
+		t.Fatal("fixture: the project check did not move the row to local")
+	}
+	if _, ok := findMsg[pickerDebounceMsg](t, cmd); !ok {
+		t.Error("the move to local scheduled no picker preview")
+	}
+}
+
+// TestMachineProjectCheckMovingToLocalReChecksTheTitle: the title check in
+// flight was asked about dev (origin's branches, no local labels); once the
+// project check moves the row to local, it has to be asked again about this
+// machine, or a laptop branch of the same name slips through (independent
+// review #1b).
+func TestMachineProjectCheckMovingToLocalReChecksTheTitle(t *testing.T) {
+	m, _, _, _ := machineModel(t)
+	m = settle(t, m)
+	_, cmd := m.handleDirResult(localProjectResult(m))
+	debounce, ok := findMsg[titleDebounceMsg](t, cmd)
+	if !ok {
+		t.Fatal("the move to local scheduled no title check")
+	}
+	if debounce.remote {
+		t.Error("the title check scheduled after the move to local still asks about dev")
+	}
+}
+
+// TestMachineSubmitAsksAgainAfterAnUnreachableVerdict: "try again" has to
+// mean it -- a ⌃S after an unreachable or unanswered verdict asks the
+// machine again, rather than refusing on the old answer until the row is
+// cycled (independent review #2).
+func TestMachineSubmitAsksAgainAfterAnUnreachableVerdict(t *testing.T) {
+	m, _, prober, _ := machineModel(t)
+	prober.err = errors.Join(machine.ErrUnreachable, errors.New("dev (EC2) is unreachable: Token for dev is expired"))
+	m = settle(t, m)
+	m.title.SetTitle("fix it", false)
+	m.worktree.SetBranch("zvi/fix-it", false)
+	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On(), m.remoteSelected())})
+
+	prober.err = nil // the login was renewed
+	next, out := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if !m.submitHeld || !m.machineCheckPending() {
+		t.Fatalf("a ⌃S after an unreachable verdict did not ask again (held=%v pending=%v)", m.submitHeld, m.machineCheckPending())
+	}
+	result, ok := findMsg[machineResultMsg](t, out)
+	if !ok {
+		t.Fatal("no probe was sent")
+	}
+	next, _ = m.Update(result)
+	m = next.(Model)
+	if m.mach.verdict.err != nil || len(prober.asked) != 2 {
+		t.Errorf("verdict = %+v after %d probes; want ready after the second", m.mach.verdict, len(prober.asked))
+	}
+}
+
+// TestMachineSubmitReadsTheListAgainAfterItFailed: a machine list that
+// failed is read again on the next ⌃S, not held against the machine for
+// the life of the popup.
+func TestMachineSubmitReadsTheListAgainAfterItFailed(t *testing.T) {
+	m, runner, _, _ := machineModel(t)
+	runner.listErr = errCheckTimedOut
+	m = settle(t, m)
+	runner.listErr = nil
+	m.title.SetTitle("fix it", false)
+	m.worktree.SetBranch("zvi/fix-it", false)
+	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On(), m.remoteSelected())})
+	next, out := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	if _, ok := findMsg[machinesListedMsg](t, out); !ok {
+		t.Error("a ⌃S after a failed machine list did not read it again")
+	}
+}
+
+// submitAndLandTheReask presses ⌃S on a machine that was unreachable, which
+// asks it again (reaskMachine), and lands that second answer -- the same
+// as the first here -- so the refusal is the one the user would see.
+func submitAndLandTheReask(t *testing.T, m Model) Model {
+	t.Helper()
+	next, out := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	result, ok := findMsg[machineResultMsg](t, out)
+	if !ok {
+		t.Fatal("the ⌃S did not ask the machine again")
+	}
+	next, _ = m.Update(result)
+	return next.(Model)
 }

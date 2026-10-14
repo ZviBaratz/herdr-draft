@@ -477,10 +477,13 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	// different branch_prefix, or turns linear_branch_name off, produces a
 	// different branch for the same title (see applyProjectDefaults).
 	branchBefore := m.worktree.Branch()
+	// And the machine: the project's rules can move it (machine spec §5),
+	// and a check asked about one machine says nothing about the other.
+	remoteBefore := m.remoteSelected()
 	settle := m.applyProjectDefaults(msg.req.key, msg.memoryKey, msg.isGitRepo, msg.repoConfig)
 
 	var cmd tea.Cmd
-	if m.worktree.On() != worktreeOnBefore || m.worktree.Branch() != branchBefore {
+	if m.worktree.On() != worktreeOnBefore || m.worktree.Branch() != branchBefore || m.remoteSelected() != remoteBefore {
 		// A default just flipped the toggle or rewrote the branch --
 		// runTitleCheck's own branch-exists half depends on both (it is
 		// skipped entirely while worktree is off), so re-run the
@@ -496,6 +499,13 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		m.title.SetVerdict(m.title.Value(), m.titleNote(), form.VerdictNote)
 	}
 	cmd = tea.Batch(cmd, settle)
+	// Back on this machine, the account row applies again, and the picker
+	// preview it skipped while another machine was selected is owed -- a
+	// submit resting on `auto` holds for it (reactToChanges does the same
+	// for a row the user cycled).
+	if remoteBefore && !m.remoteSelected() {
+		cmd = tea.Batch(cmd, m.schedulePickerPreview(msg.req.key))
+	}
 	if m.submitHeld {
 		// The submit this check was holding goes on from the top, so the
 		// validation it waited for runs on these answers (#195) -- or holds

@@ -379,3 +379,28 @@ func TestMachineRuleItCannotUseIsSaidOnStderr(t *testing.T) {
 		t.Errorf("stderr = %q, want the dropped rule named", h.stderr)
 	}
 }
+
+// TestMachineDryRunReportsNoLaptopAccountUsage: account_usage is how full
+// the account the session would bill is, and a session on another machine
+// bills that machine's own login -- so the laptop's clauth windows would be
+// a number about the wrong account, which the spawn skill tells agents to
+// act on (independent review #3).
+func TestMachineDryRunReportsNoLaptopAccountUsage(t *testing.T) {
+	h, _ := machineHarness(t)
+	h.deps.Clauth = &fakeClauth{status: usageStatus()}
+	if code := h.run("--title", "fix it", "--no-worktree", "--dry-run", "--json"); code != ExitOK {
+		t.Fatalf("exit = %d\nstderr: %s", code, h.stderr)
+	}
+	if got := dryRunJSON(t, h); got["account_usage"] != nil {
+		t.Errorf("account_usage = %v for a session on dev", got["account_usage"])
+	}
+	// The control: the same dry run kept here reports the laptop's.
+	h, _ = machineHarness(t)
+	h.deps.Clauth = &fakeClauth{status: usageStatus()}
+	if code := h.run("--title", "fix it", "--no-worktree", "--dry-run", "--json", "--machine", "local"); code != ExitOK {
+		t.Fatalf("exit = %d\nstderr: %s", code, h.stderr)
+	}
+	if got := dryRunJSON(t, h); got["account_usage"] == nil {
+		t.Error("the local control reports no account_usage, so the test proves nothing")
+	}
+}

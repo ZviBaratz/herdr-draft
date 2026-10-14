@@ -131,8 +131,9 @@ you are doing right now.
   whitespace at either end, is refused with exit 2 and nothing created. So
   is an empty `--branch`: leave the flag off instead.
 - `--base REF` is what the branch is cut from. Left off it resolves like
-  every other unset value — usually `HEAD`, which is *your current commit*,
-  though a repository's own `.herdr-draft.toml` can set a different
+  every other unset value — usually `HEAD`, which is *your current commit*
+  on this machine (on another one it is origin's default branch: see
+  section 4), though a repository's own `.herdr-draft.toml` can set a different
   default. Decide it rather than leave it: if you are on a feature branch
   and the new work should start from main, say so with `--base`, and
   section 7 shows the base either way. **A bare branch name is the local branch**, wherever
@@ -142,7 +143,7 @@ you are doing right now.
   A local base that is behind the branch it tracks, as of the last
   fetch, gets a `herdr-draft create:` line on stderr saying how far behind,
   and is used anyway. `--base HEAD` is your current commit whatever a
-  default says. With a worktree, a `--base` that names no commit is
+  default says, on this machine. With a worktree, a `--base` that names no commit is
   refused with exit 2 and nothing created. A remembered or configured one
   that names no commit is dropped for `HEAD`, with a `herdr-draft create:`
   line on stderr saying so. A branch cut from a remote's (`origin/main`)
@@ -153,7 +154,7 @@ you are doing right now.
   directory. That is right inside another session's worktree too. herdr
   requires the new worktree to be created from the repository's primary
   checkout, but its base is still resolved in yours, so `HEAD` is still
-  your current commit.
+  your current commit (for a session on this machine).
 
 **Uncommitted work does not travel.** A worktree is cut from a commit, so
 anything you have edited and not committed is invisible to the new agent.
@@ -238,7 +239,10 @@ plan the handoff for them:
 - **It sees only what is pushed.** Its worktree is cut on that machine,
   after a fetch there, from an `origin/` branch: `--base` is mapped to
   `origin/<name>` when origin has the branch, and refused when it has
-  not, so push first. A lane's unpushed commits are not there.
+  not, so push first. A lane's unpushed commits are not there. And an
+  unset `--base`, or `HEAD`, is origin's default branch there, not your
+  current commit: to continue from your own work, push your branch and
+  pass `--base origin/<your-branch>`.
 - **It opens in a new space there.** `tab-here`, `split-here`, `tab-in`
   and `--workspace` are refused with another machine (exit 2).
 - **It uses that machine's own login.** There is no `--account` there

@@ -389,3 +389,23 @@ func readArgvRaw(t *testing.T, logPath string) string {
 	}
 	return string(b)
 }
+
+// TestProbeCloneDoesNotCountAnEnclosingRepository: a plain directory that
+// merely sits inside some other repository -- a home directory kept as a
+// dotfiles repo, say -- is not the project's clone, and a worktree cut
+// there would be a worktree of the wrong repository.
+func TestProbeCloneDoesNotCountAnEnclosingRepository(t *testing.T) {
+	home, _ := remoteHome(t)
+	gitRun(t, home, "init", "-q", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(home, "quantivly", "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeSSH(t, "")
+	got, err := Over("devbox").ProbeClone(context.Background(), "quantivly/notes")
+	if err != nil || !got.Exists || got.IsRepo {
+		t.Errorf("a plain directory inside the home repository: %+v, %v; want Exists=true IsRepo=false", got, err)
+	}
+	if hub, err := Over("devbox").ProbeClone(context.Background(), "quantivly/hub"); err != nil || !hub.IsRepo {
+		t.Errorf("the clone itself, inside the same home repository: %+v, %v; want IsRepo=true", hub, err)
+	}
+}
