@@ -729,3 +729,200 @@ func submitAndLandTheReask(t *testing.T, m Model) Model {
 	next, _ = m.Update(result)
 	return next.(Model)
 }
+
+// --- the adversarial review's findings (each reproduced there first) -------
+
+// cycleAwayAndBack moves the machine row dev -> local -> dev and returns the
+// probe the return scheduled, unrun, landing the title checks each cycle
+// schedules so a later submit is held for the probe alone.
+func cycleAwayAndBack(t *testing.T, m Model) (Model, tea.Cmd) {
+	t.Helper()
+	_ = m.form.FocusByID("machine")
+	next, out := m.Update(key(tea.KeyLeft, 0))
+	m = landMachineTitleCheck(t, next.(Model), out)
+	if m.remoteSelected() {
+		t.Fatal("fixture: <- did not select local")
+	}
+	next, out = m.Update(key(tea.KeyRight, 0))
+	m = landMachineTitleCheck(t, next.(Model), out)
+	if m.machine.Value() != "dev" || !m.machineCheckPending() {
+		t.Fatalf("fixture: machine = %q, pending = %v", m.machine.Value(), m.machineCheckPending())
+	}
+	return m, out
+}
+
+// TestMachineSupersededProbeAnswerIsDropped: two probes asking the same
+// question (dev, this project) can be out at once after the row is cycled
+// twice; the older one's answer must not land as the verdict while the
+// newer is still out.
+func TestMachineSupersededProbeAnswerIsDropped(t *testing.T) {
+	m, _, prober, _ := machineModel(t)
+	m = settle(t, m)
+	m.title.SetTitle("fix it", false)
+	m.worktree.SetBranch("zvi/fix-it", false)
+	m, probe1 := cycleAwayAndBack(t, m)
+	m, probe2 := cycleAwayAndBack(t, m)
+
+	prober.err = errors.Join(machine.ErrUnreachable, errors.New("dev (EC2) is unreachable: connection reset"))
+	r1, ok := findMsg[machineResultMsg](t, probe1)
+	if !ok {
+		t.Fatal("probe #1 produced no result")
+	}
+	prober.err = nil
+	r2, ok := findMsg[machineResultMsg](t, probe2)
+	if !ok {
+		t.Fatal("probe #2 produced no result")
+	}
+	next, _ := m.Update(r1)
+	m = next.(Model)
+	if m.mach.landed {
+		t.Errorf("a superseded probe's answer landed as the verdict (%v) while the newer one is out", m.mach.verdict.err)
+	}
+	next, _ = m.Update(r2)
+	m = next.(Model)
+	if !m.mach.landed || m.mach.verdict.err != nil {
+		t.Errorf("the current probe's answer did not land: landed=%v err=%v", m.mach.landed, m.mach.verdict.err)
+	}
+}
+
+// TestMachineRefusalDuringTheRoundTripLandsOnTheMachineRow: a machine
+// verdict that turns to a refusal while the remote base is being resolved
+// stops the submit on the machine row, in the probe's words -- not as
+// plan.Build's internal refusal on the title row.
+func TestMachineRefusalDuringTheRoundTripLandsOnTheMachineRow(t *testing.T) {
+	m, _, prober, _ := machineModel(t)
+	m = settle(t, m)
+	m.title.SetTitle("fix it", false)
+	m.worktree.SetBranch("zvi/fix-it", false)
+	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On(), m.remoteSelected())})
+	next, out := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	base, ok := findMsg[remoteBaseMsg](t, out)
+	if !ok || !m.submitResolving {
+		t.Fatalf("fixture: no remote-base round trip (resolving=%v)", m.submitResolving)
+	}
+	// The verdict changes under the frozen form: a current answer, as a
+	// re-ask that was out would give.
+	prober.err = errors.Join(machine.ErrUnreachable, errors.New("dev (EC2) is unreachable: connection reset"))
+	m.landMachine(machineVerdict{choice: m.mach.verdict.choice, err: prober.err})
+	next, _ = m.Update(base)
+	m = next.(Model)
+	if m.submitting {
+		t.Fatal("a plan was built after the machine was reported unreachable")
+	}
+	if got := m.form.FocusedID(); got != "machine" {
+		t.Errorf("focus = %q; want the machine row", got)
+	}
+	if text := fieldText(m.title, 100); strings.Contains(text, "could not build plan") {
+		t.Errorf("the title row carries plan.Build's refusal: %q", strings.Join(strings.Fields(text), " "))
+	}
+}
+
+// TestMachineListTimeoutNamesTheListsOwnDeadline: the list is bounded by
+// the ordinary check budget, so its "did not answer" names that, not the
+// probe's 30s.
+func TestMachineListTimeoutNamesTheListsOwnDeadline(t *testing.T) {
+	m, runner, _, _ := machineModel(t)
+	runner.listErr = errCheckTimedOut
+	m = settle(t, m)
+	_, listDeadline := m.checkBudget()
+	text := strings.Join(strings.Fields(fieldText(m.machine, 100)), " ")
+	if !strings.Contains(text, "did not answer in "+listDeadline.String()) {
+		t.Errorf("the list gave up after %s, but the row says: %q", listDeadline, text)
+	}
+}
+
+// refusedRemoteBase drives a popup on dev to the remote-base refusal: the
+// base is a laptop-only branch origin lacks.
+func refusedRemoteBase(t *testing.T) Model {
+	t.Helper()
+	m, _, _, git := machineModel(t)
+	m = settle(t, m)
+	git.fullRefs = map[string]string{"foo": "refs/heads/foo"}
+	m.title.SetTitle("fix it", false)
+	m.worktree.SetBranch("zvi/fix-it", false)
+	m.worktree.SetBaseItems(1, []string{"main", "foo"})
+	m.worktree.SetBase("foo")
+	m.reactToChanges()
+	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On(), m.remoteSelected())})
+	next, out := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	base, ok := findMsg[remoteBaseMsg](t, out)
+	if !ok {
+		t.Fatalf("fixture: no remote base round trip (held=%v)", m.submitHeld)
+	}
+	next, _ = m.Update(base)
+	m = next.(Model)
+	if m.submitting || m.form.FocusedID() != "worktree" {
+		t.Fatalf("fixture: submitting=%v focus=%q", m.submitting, m.form.FocusedID())
+	}
+	if text := fieldText(m.worktree, 120); !strings.Contains(text, "origin has no foo") {
+		t.Fatalf("fixture: worktree panel = %q", strings.Join(strings.Fields(text), " "))
+	}
+	return m
+}
+
+// TestMachineRemoteBaseRefusalSurvivesTheRelist: the fetch's re-list
+// rewrites the base status line; the refusal has to be part of what it
+// composes, not wiped and replaced with a promise origin cannot keep.
+func TestMachineRemoteBaseRefusalSurvivesTheRelist(t *testing.T) {
+	m := refusedRemoteBase(t)
+	relist := baseResultMsg{req: request{version: m.reqs.base, key: m.dir.Value()}, refs: []string{"main", "foo"}, head: "main"}
+	next, _ := m.Update(relist)
+	m = next.(Model)
+	text := strings.Join(strings.Fields(fieldText(m.worktree, 120)), " ")
+	if !strings.Contains(text, "origin has no foo") {
+		t.Errorf("the refusal is gone from the worktree panel: %q", text)
+	}
+	if strings.Contains(text, "cut from origin's copy of foo") {
+		t.Errorf("the panel promises a cut origin cannot supply: %q", text)
+	}
+	// And it goes with the base it was about.
+	m.worktree.SetBase("main")
+	m.reactToChanges()
+	if text := strings.Join(strings.Fields(fieldText(m.worktree, 120)), " "); strings.Contains(text, "origin has no foo") {
+		t.Errorf("the refusal outlived its base: %q", text)
+	}
+}
+
+// TestMachineSecondListLandingRefreshesTheVerdict: a list that succeeds
+// after one that failed asks the machine, rather than leaving the failed
+// list's refusal standing.
+func TestMachineSecondListLandingRefreshesTheVerdict(t *testing.T) {
+	m, runner, _, _ := machineModel(t)
+	m = pumpAsync(t, m, initCmdsExcept[machinesListedMsg](m))
+	failed := machinesListedMsg{version: m.reqs.machineList, err: errors.New("herdr machine list --json: signal: killed")}
+	next, _ := m.Update(failed)
+	m = next.(Model)
+	if m.mach.verdict.err == nil {
+		t.Fatal("fixture: the failed list landed no refusal")
+	}
+	next, out := m.Update(machinesListedMsg{version: m.reqs.machineList, saved: runner.saved})
+	m = next.(Model)
+	if _, ok := findMsg[machineResultMsg](t, out); !ok {
+		t.Error("the list succeeding scheduled no probe")
+	}
+}
+
+// TestMachineDiscardedFormsListAnswerIsDropped: ⌃R⌃R's rebuilt form must
+// not take the discarded form's list answer as its own.
+func TestMachineDiscardedFormsListAnswerIsDropped(t *testing.T) {
+	m, runner, _, _ := machineModel(t)
+	var oldList tea.Cmd
+	for _, cmd := range m.initCmds {
+		if _, ok := cmd().(machinesListedMsg); ok {
+			oldList = cmd
+		}
+	}
+	runner.listErr = errors.New("herdr machine list --json: signal: killed")
+	stale := oldList().(machinesListedMsg)
+	runner.listErr = nil
+	next, _ := m.Update(form.ClearRequestedMsg{})
+	fresh := next.(Model)
+	fresh = pumpAsync(t, fresh, initCmdsExcept[machinesListedMsg](fresh))
+	next, _ = fresh.Update(stale)
+	fresh = next.(Model)
+	if fresh.mach.verdict.err != nil {
+		t.Errorf("the rebuilt form took the discarded form's list failure: %v", fresh.mach.verdict.err)
+	}
+}

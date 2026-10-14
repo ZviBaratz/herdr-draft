@@ -61,6 +61,22 @@ type machineState struct {
 	// shownFor is the machine label the base row's note was last written
 	// for, so a change of machine rewrites it (refreshBaseStatus).
 	shownFor string
+	// baseRefusal is why the last submit could not map the base for the
+	// machine (handleRemoteBase), kept so refreshBaseStatus composes it
+	// rather than a re-list wiping it -- and only while the base and the
+	// machine are still the ones it was about.
+	baseRefusal remoteBaseRefusal
+}
+
+// remoteBaseRefusal is one refusal of a base for a machine, and what it was
+// about.
+type remoteBaseRefusal struct {
+	ref, label, text string
+}
+
+// shows reports whether r is about the base and machine the form now holds.
+func (r remoteBaseRefusal) shows(base, label string) bool {
+	return r.text != "" && label != "" && r.ref == base && r.label == label
 }
 
 // machineVerdict is one probe's answer.
@@ -77,17 +93,23 @@ type machineVerdict struct {
 	err        error
 	unknown    bool
 	unanswered string
+	// waited is how long the unanswered question was given, when that was
+	// not the probe's own machineCheckDeadline (the list's is the ordinary
+	// check budget).
+	waited time.Duration
 }
 
 // machinesListedMsg is `herdr machine list`'s answer.
 type machinesListedMsg struct {
-	saved []herdrc.MachineInfo
-	err   error
+	version int
+	saved   []herdrc.MachineInfo
+	err     error
 }
 
 // machineResultMsg is a probe's answer, for the selector-and-key it was
 // asked about.
 type machineResultMsg struct {
+	version int
 	asked   string
 	verdict machineVerdict
 }
@@ -180,16 +202,27 @@ func (m Model) machineLabel() string {
 // machineListCmd reads the saved machines, once, from Init. Local and
 // fast, and bounded anyway: a herdr that does not answer must not hold a
 // submit for good.
-func (m Model) machineListCmd() tea.Cmd {
+//
+// Versioned (reqs.machineList), because a ⌃R⌃R rebuild issues its own while
+// the discarded form's may still be out, and the old answer must not land
+// on the new form.
+func (m *Model) machineListCmd() tea.Cmd {
+	m.reqs.machineList++
+	v := m.reqs.machineList
 	runner := m.deps.Runner
 	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
 		msg, ok := awaitCheck(lt, deadline, func(ctx context.Context) machinesListedMsg {
 			saved, err := runner.MachineList(ctx)
-			return machinesListedMsg{saved: saved, err: err}
+			if err != nil && ctx.Err() != nil {
+				// Killed by the deadline, whatever its exit says: unknown,
+				// not a herdr too old for machines (#202).
+				err = errCheckTimedOut
+			}
+			return machinesListedMsg{version: v, saved: saved, err: err}
 		})
 		if !ok {
-			return machinesListedMsg{err: errCheckTimedOut}
+			return machinesListedMsg{version: v, err: errCheckTimedOut}
 		}
 		return msg
 	}
@@ -198,10 +231,17 @@ func (m Model) machineListCmd() tea.Cmd {
 // handleMachinesListed labels the chips and, if another machine is
 // selected, probes it.
 func (m Model) handleMachinesListed(msg machinesListedMsg) (Model, tea.Cmd) {
+	if msg.version != m.reqs.machineList {
+		return m, nil // a superseded list: a ⌃R⌃R's discarded form's
+	}
 	m.mach.saved, m.mach.listErr, m.mach.listed = msg.saved, msg.err, true
 	if m.machine == nil {
 		return m, nil
 	}
+	// A fresh list is a fresh answer to "which machine is this", so the
+	// machine is asked again even when the question's text is unchanged --
+	// a verdict the previous list settled (it failed) must not stand.
+	m.mach.asked = ""
 	m.machine.SetChoices(m.machineChoices())
 	m.syncDerivedInertness()
 	cmd := m.maybeProbeMachine()
@@ -230,6 +270,11 @@ func (m *Model) maybeProbeMachine() tea.Cmd {
 		return nil
 	}
 	m.mach.asked, m.mach.landed, m.mach.verdict = ask, false, machineVerdict{}
+	// Every new question retires every answer still out, including one to
+	// the same question asked before -- the row cycled away and back twice
+	// -- which its text alone cannot tell apart.
+	m.reqs.machine++
+	version := m.reqs.machine
 	if !m.remoteSelected() {
 		m.mach.landed = true
 		m.machine.SetStatus(form.MachineIdle, "", "")
@@ -242,7 +287,8 @@ func (m *Model) maybeProbeMachine() tea.Cmd {
 	}
 	if errors.Is(m.mach.listErr, errCheckTimedOut) {
 		// Unknown, not a herdr too old for machines (#202).
-		m.landMachine(machineVerdict{unknown: true, unanswered: "herdr's list of saved machines"})
+		_, waited := m.checkBudget()
+		m.landMachine(machineVerdict{unknown: true, unanswered: "herdr's list of saved machines", waited: waited})
 		return nil
 	}
 	if m.mach.listErr != nil {
@@ -281,9 +327,9 @@ func (m *Model) maybeProbeMachine() tea.Cmd {
 			return machineVerdict{choice: choice, rel: rel, report: report, origin: origin}
 		})
 		if !ok {
-			return machineResultMsg{asked: ask, verdict: machineVerdict{choice: choice, unknown: true}}
+			return machineResultMsg{version: version, asked: ask, verdict: machineVerdict{choice: choice, unknown: true}}
 		}
-		return machineResultMsg{asked: ask, verdict: v}
+		return machineResultMsg{version: version, asked: ask, verdict: v}
 	}
 }
 
@@ -319,7 +365,7 @@ func (m Model) machineDeadline() time.Duration {
 // handleMachineResult lands a probe's answer, if it is still about what the
 // row holds, and resumes a submit it was holding.
 func (m Model) handleMachineResult(msg machineResultMsg) (Model, tea.Cmd) {
-	if m.machine == nil || msg.asked != m.mach.asked {
+	if m.machine == nil || msg.version != m.reqs.machine || msg.asked != m.mach.asked {
 		return m, nil
 	}
 	m.landMachine(msg.verdict)
@@ -349,7 +395,7 @@ func (m *Model) showMachineVerdict() {
 	case v.unknown:
 		what := cmp.Or(v.unanswered, label)
 		m.machine.SetStatus(form.MachineRefused, "no answer",
-			fmt.Sprintf("%s did not answer in %s: ⌃S asks again, or choose local", what, m.machineDeadline()))
+			fmt.Sprintf("%s did not answer in %s: ⌃S asks again, or choose local", what, cmp.Or(v.waited, m.machineDeadline())))
 	case v.err != nil:
 		word := "refused"
 		if errors.Is(v.err, machine.ErrUnreachable) {
@@ -446,10 +492,22 @@ func (m Model) needsRemoteBase() bool {
 // ResolveLinkedCommit's reason: internal/create's equivalence test drives
 // the form to a comparable plan.Input through it and WithRemoteBase.
 func (m Model) ResolveRemoteBase(ctx context.Context) (string, error) {
-	if !m.needsRemoteBase() {
+	dir, base, label, ask := m.remoteBaseReq()
+	if !ask {
 		return "", nil
 	}
-	return machine.RemoteBase(ctx, m.deps.Git, pathx.ExpandTilde(m.dir.Value()), m.worktree.Base(), m.machineLabel())
+	return machine.RemoteBase(ctx, m.deps.Git, dir, base, label)
+}
+
+// remoteBaseReq is the question ResolveRemoteBase asks, read off the form,
+// with ask false when there is none -- split out, as linkedCommitReq is, so
+// remoteBaseCmd reads the form on the update loop and not from the
+// answer's goroutine, which can outlive the answer.
+func (m Model) remoteBaseReq() (dir, base, label string, ask bool) {
+	if !m.needsRemoteBase() {
+		return "", "", "", false
+	}
+	return pathx.ExpandTilde(m.dir.Value()), m.worktree.Base(), m.machineLabel(), true
 }
 
 // WithRemoteBase is m with the remote base resolved.
@@ -461,11 +519,18 @@ func (m Model) WithRemoteBase(base string) Model {
 // remoteBaseCmd runs ResolveRemoteBase off-model, bounded like the lane's
 // commit: laptop-side git, on the app's context.
 func (m Model) remoteBaseCmd() tea.Cmd {
-	src := m
+	git := m.deps.Git
+	dir, ref, label, ask := m.remoteBaseReq()
 	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
+		if !ask {
+			return remoteBaseMsg{}
+		}
 		msg, ok := awaitCheck(lt, deadline, func(ctx context.Context) remoteBaseMsg {
-			base, err := src.ResolveRemoteBase(ctx)
+			base, err := machine.RemoteBase(ctx, git, dir, ref, label)
+			if err != nil && ctx.Err() != nil {
+				err = errCheckTimedOut // killed by the deadline: unknown (#202)
+			}
 			return remoteBaseMsg{base: base, err: err}
 		})
 		if !ok {
@@ -484,9 +549,14 @@ func (m Model) handleRemoteBase(msg remoteBaseMsg) (Model, tea.Cmd) {
 		if errors.Is(msg.err, errCheckTimedOut) {
 			reason = "couldn't check the base for " + m.machineLabel()
 		}
-		m.worktree.SetBaseStatus(reason, true)
+		// Recorded rather than written onto the line, so the base list
+		// re-landing (the open-time fetch) recomposes it instead of
+		// wiping it.
+		m.mach.baseRefusal = remoteBaseRefusal{ref: m.worktree.Base(), label: m.machineLabel(), text: reason}
+		m.refreshBaseStatus()
 		return m, m.form.FocusByID("worktree")
 	}
+	m.mach.baseRefusal = remoteBaseRefusal{}
 	return m.WithRemoteBase(msg.base).continueSubmit()
 }
 
