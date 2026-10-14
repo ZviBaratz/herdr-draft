@@ -234,6 +234,7 @@ func resolveDirCheck(t *testing.T, m Model) Model {
 // of them and `⌃S create` in the other seven. createButtonMarker
 // answers for it; the map is the nine stack rows.
 var sectionMarkers = map[string]string{
+	"machine":   "machine",
 	"issue":     "issue",
 	"dir":       "project",
 	"title":     "title",

@@ -203,6 +203,9 @@ type Deps struct {
 	// a submit resting on `auto` waits for it (§7.1). See Bootstrap.
 	Picker pickerSource
 	Git    gitSource
+	// Prober runs a remote machine's two probes (machine spec §7), or nil
+	// for machine.CLIProber over Runner and ssh. Every test hands in a fake.
+	Prober machine.Prober
 	Clock  Clock
 	// Lifetime bounds the off-model work this Model starts against the
 	// PROCESS's own life: the account picks and the lane's base run on its
@@ -1302,6 +1305,14 @@ type Model struct {
 	appliedPlacement  plan.Placement
 	appliedAgentKind  string
 	appliedBaseRef    string
+	// appliedMachine is the machine row's own snapshot (CLAUDE.md: a
+	// touched flag needs its own), compared by noteUserEdits.
+	appliedMachine string
+
+	// machine is the machine row, nil unless config.toml has a [machine]
+	// table (machine spec §9.1); mach is what the app knows beyond it.
+	machine *form.MachineField
+	mach    machineState
 
 	// dirInvalid/titleDupBlocked mirror the last dir-validity/title-dup
 	// verdict each already pushed into DirField/TitleField (handleDirResult/
@@ -1669,6 +1680,9 @@ func New(s Setup) Model {
 	// spec §4). internal/form performs no I/O, so it has to be told where
 	// home is; an undeterminable home ("") simply disables collapsing.
 	m.dir.SetHomeDir(s.HomeDir)
+	// After the project row has its opening value: the rules resolve
+	// against it (machine spec §9.2).
+	m.newMachineRow()
 
 	// v2 spec §6's row order, declared HERE and nowhere else: issue,
 	// title, prompt, project, worktree, placement, agent, options,
@@ -1681,7 +1695,13 @@ func New(s Setup) Model {
 	if m.issue != nil {
 		sections = append(sections, m.issue)
 	}
-	sections = append(sections, m.title, m.prompt, m.dir, m.worktree, m.placement, m.agent, m.options)
+	sections = append(sections, m.title, m.prompt, m.dir)
+	// The machine row sits under the project it is chosen for (machine
+	// spec §9.1), and only when config.toml opted in.
+	if m.machine != nil {
+		sections = append(sections, m.machine)
+	}
+	sections = append(sections, m.worktree, m.placement, m.agent, m.options)
 	if m.account != nil {
 		sections = append(sections, m.account)
 	}
@@ -1712,6 +1732,9 @@ func New(s Setup) Model {
 	// tests iterate and INVOKE -- a nil in it is a panic, not a no-op, even
 	// though tea.Batch itself would drop one.
 	m.initCmds = []tea.Cmd{m.scheduleDirCheck(m.lastDir), m.scheduleBaseCheck(m.lastDir)}
+	if m.machine != nil {
+		m.initCmds = append(m.initCmds, m.machineListCmd())
+	}
 	if preview := m.schedulePickerPreview(m.lastDir); preview != nil {
 		m.initCmds = append(m.initCmds, preview)
 	}
@@ -1852,6 +1875,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePickerCommit(msg)
 	case linkedCommitMsg:
 		return m.handleLinkedCommit(msg)
+	case machinesListedMsg:
+		return m.handleMachinesListed(msg)
+	case machineResultMsg:
+		return m.handleMachineResult(msg)
+	case remoteBaseMsg:
+		return m.handleRemoteBase(msg)
 	case baseSettledMsg:
 		return m.handleBaseSettled(msg)
 	case baseBehindMsg:
@@ -2027,7 +2056,7 @@ func (m Model) startSubmitRequest() (Model, tea.Cmd) {
 }
 
 func (m Model) handleSubmit() (Model, tea.Cmd) {
-	if m.dirCheckPending() || m.baseSettlePending() || m.titleCheckPending() {
+	if m.dirCheckPending() || m.baseSettlePending() || m.titleCheckPending() || m.machineCheckPending() {
 		m.submitHeld = true
 		return m, nil
 	}
@@ -2041,6 +2070,12 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 	if m.needsLinkedCommit() {
 		m.submitResolving = true
 		return m, m.linkedCommitCmd()
+	}
+	// A remote worktree's base, mapped to one that machine can fetch
+	// (machine spec §6.4), by the same round trip.
+	if m.needsRemoteBase() {
+		m.submitResolving = true
+		return m, m.remoteBaseCmd()
 	}
 	return m.continueSubmit()
 }
@@ -2114,7 +2149,7 @@ func (m Model) continueSubmit() (Model, tea.Cmd) {
 	// commit pick's own round trip does (submitResolving, #136) -- an edit
 	// made during the wait would otherwise reach a plan validation never
 	// saw. And like the clauth hold it applies only to claude.
-	if m.agent.Value() == claudeKind && m.account != nil && m.pickerProbePending && m.accountIsAuto() {
+	if m.agent.Value() == claudeKind && m.account != nil && !m.remoteSelected() && m.pickerProbePending && m.accountIsAuto() {
 		if !m.accountWaitExpired {
 			m.submitResolving = true
 			// A STATEMENT, not an operand of the return. holdForAccount
@@ -2138,7 +2173,7 @@ func (m Model) continueSubmit() (Model, tea.Cmd) {
 	// before anything is created: the pick writes a ledger entry, and spending
 	// one on a submit that a duplicate title was about to refuse would hand
 	// out an account to a session that never exists.
-	if m.deps.Picker != nil && m.account != nil && m.accountIsAuto() && m.autoPick.Profile == "" {
+	if m.deps.Picker != nil && m.account != nil && !m.remoteSelected() && m.accountIsAuto() && m.autoPick.Profile == "" {
 		m.account.SetPickerPreview(form.AccountPickerPreview{Pending: true})
 		m.submitResolving = true
 		return m, m.pickerCommitCmd()
@@ -2241,6 +2276,15 @@ func (m *Model) checkSubmitValidation() (tea.Cmd, bool) {
 		// opens already says which of the two it is (#202).
 		return m.form.FocusByID("title"), true
 	}
+	// Another machine that cannot host the session, or a name it already
+	// has (machine spec §7): refused on the row that says why, which for
+	// the machine itself is the one where local is a keystroke away.
+	if where := m.machineRefusal(); where != "" {
+		if where == "worktree" {
+			return tea.Batch(m.form.FocusByID("worktree"), m.worktree.FocusBranch()), true
+		}
+		return m.form.FocusByID(where), true
+	}
 	// THE CLAUTH HOLD (draw-first spec §7.1), immediately before the check
 	// it exists for and after every validation that does not need an
 	// account: a required title, a duplicate, or a branch git cannot use is
@@ -2249,7 +2293,7 @@ func (m *Model) checkSubmitValidation() (tea.Cmd, bool) {
 	//
 	// Only for claude, the one kind an account is pinned or picked for
 	// (accountPin, ResolveAccount). A codex submit never waits on clauth.
-	if m.agent.Value() == claudeKind && m.account != nil && m.clauthLoading {
+	if m.agent.Value() == claudeKind && m.account != nil && !m.remoteSelected() && m.clauthLoading {
 		if !m.accountWaitExpired {
 			return m.holdForAccount(accountHoldClauth), true
 		}
@@ -2465,7 +2509,8 @@ func titleSessions(workspaces []herdrc.WorkspaceInfo, invokingID string) []form.
 // to resolve at submit, and WithAccount is what fulfils it. With no answer
 // recorded, this is the field's own pin exactly as before.
 func (m Model) accountPin() string {
-	if m.account == nil || m.agent.Value() != claudeKind {
+	// Another machine uses its own login (machine spec §6.3).
+	if m.account == nil || m.agent.Value() != claudeKind || m.remoteSelected() {
 		return ""
 	}
 	if m.autoPick.Profile != "" {
@@ -2528,7 +2573,8 @@ type linkedProject struct{ dir, root string }
 // check landed -- rather than send this project's worktree to another
 // repository.
 func (m Model) linkedCheckout(useWorktree bool) plan.LinkedCheckout {
-	if !useWorktree || m.linked.root == "" || m.linked.dir != m.dir.Value() {
+	// A lane's commit is on this machine only (machine spec §6.1).
+	if !useWorktree || m.linked.root == "" || m.linked.dir != m.dir.Value() || m.remoteSelected() {
 		return plan.LinkedCheckout{}
 	}
 	return plan.LinkedCheckout{RepoRoot: m.linked.root, Commit: m.linkedCommit}
@@ -2648,6 +2694,12 @@ func (m Model) PlanInput() plan.Input { return m.buildPlanInput() }
 // blocking condition.
 func (m Model) buildPlanInput() plan.Input {
 	useWorktree := m.worktree.Enabled() && m.worktree.On()
+	// On another machine the base is the one mapped for it at submit
+	// (machine spec §6.4); here, the row's.
+	base := m.worktree.Base()
+	if m.needsRemoteBase() {
+		base = m.mach.remoteBase
+	}
 	return plan.Input{
 		// Expanded here, at the boundary where the project directory stops
 		// being text the user typed and becomes an argument for herdr's CLI
@@ -2658,13 +2710,13 @@ func (m Model) buildPlanInput() plan.Input {
 		ProjectDir:  pathx.ExpandTilde(m.dir.Value()),
 		Title:       m.title.Value(),
 		Branch:      m.worktree.Branch(),
-		BaseRef:     m.worktree.Base(),
+		BaseRef:     base,
 		UseWorktree: useWorktree,
 		IsGitRepo:   m.worktree.Enabled(), // WorktreeField.Enabled() IS "is the target a git repo" (its own doc comment).
 		// The chip keeps whatever was chosen or remembered, so turning the
 		// worktree off shows it again; with a worktree it does not apply
 		// (placement spec §14).
-		Placement:        plan.EffectivePlacement(useWorktree, false, m.placement.Value()),
+		Placement:        plan.EffectivePlacement(useWorktree, m.remoteSelected(), m.placement.Value()),
 		Space:            m.resolved.Space,
 		AgentKind:        m.agent.Value(),
 		ExtraArgs:        m.cfg.Agents.ExtraArgs[m.agent.Value()],
@@ -2690,6 +2742,7 @@ func (m Model) buildPlanInput() plan.Input {
 		// repository or remembered choice may supply it (see
 		// defaults.Resolved.TrustRepository).
 		TrustRepository: m.resolved.TrustRepository,
+		Machine:         m.planMachine(),
 	}
 }
 
@@ -2885,7 +2938,7 @@ func (m *Model) reactToChanges() []tea.Cmd {
 
 	branchVal := m.worktree.Branch()
 	worktreeOn := m.worktree.On()
-	dupKey := titleVal + "\x00" + branchVal + "\x00" + dirVal
+	dupKey := titleVal + "\x00" + branchVal + "\x00" + dirVal + "\x00" + m.machineLabel()
 	if dupKey != m.lastDupKey || worktreeOn != m.lastWorktreeOn {
 		m.lastDupKey = dupKey
 		// The resting note goes on NOW, not when the check lands, so the
@@ -2896,7 +2949,7 @@ func (m *Model) reactToChanges() []tea.Cmd {
 		// already on screen was computed for a title/branch/dir triple
 		// that no longer holds and is about to be recomputed.
 		m.title.SetVerdict(titleVal, m.titleNote(), form.VerdictNote)
-		cmds = append(cmds, m.scheduleTitleCheck(titleVal, branchVal, dirVal, worktreeOn))
+		cmds = append(cmds, m.scheduleTitleCheck(titleVal, branchVal, dirVal, worktreeOn, m.remoteSelected()))
 	}
 
 	if focusedID := m.form.FocusedID(); focusedID != m.lastFocusedID {
@@ -2911,6 +2964,9 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	}
 
 	m.syncDerivedInertness()
+	// A machine the user cycled to is probed (machine spec §7); a repeat
+	// of the last question is not.
+	cmds = append(cmds, m.maybeProbeMachine())
 	// After syncDerivedInertness, which can turn the worktree toggle inert
 	// and so off: the note is about the base a submit would use (#354).
 	cmds = append(cmds, m.scheduleBaseBehind(false))
@@ -2965,6 +3021,13 @@ func (m *Model) noteUserEdits() {
 	}
 	if k := m.agent.Value(); k != m.appliedAgentKind {
 		m.agentTouched = true
+	}
+	// The machine row: a cycle by the user is a decision the rules never
+	// override again this form-open (machine spec §9.3). Its provenance
+	// goes with it.
+	if m.machine != nil && m.machine.Value() != m.appliedMachine && !m.mach.touched {
+		m.mach.touched = true
+		m.machine.SetProvenance("")
 	}
 	// The base needs one extra guard the other three do not: its value
 	// also changes when the CANDIDATE LIST changes underneath it (an async
@@ -3055,6 +3118,9 @@ func (m *Model) snapshotAppliedDefaults() {
 	m.appliedPlacement = m.placement.Value()
 	m.appliedAgentKind = m.agent.Value()
 	m.appliedBaseRef = m.worktree.RequestedBase()
+	if m.machine != nil {
+		m.appliedMachine = m.machine.Value()
+	}
 }
 
 // applyProjectDefaults re-resolves v2 spec §10's layered defaults for the
@@ -3182,6 +3248,12 @@ func (m *Model) applyProjectDefaults(dir, key string, isGitRepo bool, repo confi
 		m.worktree.SetBranch(m.branchSuggestion(), true)
 	}
 
+	// The machine rules re-resolve against the canonical key, which is
+	// what lets a lane follow its repository (machine spec §9.2).
+	if m.machine != nil {
+		m.mach.key = key
+		m.applyMachineRule()
+	}
 	// Again, because the agent kind above drives AccountField's own inert
 	// condition (spec §6 field 7, "inert while the kind is not claude").
 	m.syncDerivedInertness()
@@ -3189,7 +3261,7 @@ func (m *Model) applyProjectDefaults(dir, key string, isGitRepo bool, repo confi
 	// above and the values the calls above just applied.
 	m.showRepoConfig()
 	m.snapshotAppliedDefaults()
-	return settle
+	return tea.Batch(settle, m.maybeProbeMachine())
 }
 
 // clearedMemory reports whether a dir check's answer about dir, which
@@ -3561,8 +3633,18 @@ func (m *Model) supplyDirCandidates(candidates []string) {
 func (m *Model) syncDerivedInertness() {
 	m.placement.SetWorktreeOn(m.worktree.Enabled() && m.worktree.On())
 	m.lastWorktreeOn = m.worktree.On()
+	// On another machine placement and account do not apply (machine spec
+	// §6.2, §6.3).
+	remote := m.machineLabel()
+	m.placement.SetRemote(remote)
+	// The base row's note follows the machine as it follows the base.
+	if remote != m.mach.shownFor {
+		m.mach.shownFor = remote
+		m.refreshBaseStatus()
+	}
 	if m.account != nil {
 		m.account.SetAgentIsClaude(m.agent.Value() == claudeKind)
+		m.account.SetRemote(remote)
 	}
 	// The options row follows the agent row (agent-options spec §7): a
 	// kind it has not shown yet is built from the declaration and seeded

@@ -257,7 +257,7 @@ func TestBranchVerdict_NoneInTheOpeningState(t *testing.T) {
 	// The worktree turning on schedules a title check, which lands 150 ms
 	// after the form opens -- with no title and no branch. settle drops title
 	// checks, so this lands that one.
-	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On())})
+	m = landTitle(t, m, []tea.Cmd{m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), m.dir.Value(), m.worktree.On(), false)})
 	if panel := branchPanel(m); strings.Contains(panel, "branch name required") || strings.Contains(panel, "invalid branch name") {
 		t.Errorf("the opening state reads as a refusal:\n%s", panel)
 	}

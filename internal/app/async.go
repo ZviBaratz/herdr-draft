@@ -489,7 +489,7 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		// own syncDerivedInertness already resynced lastWorktreeOn to the
 		// NEW value, and this handler never runs reactToChanges, so its
 		// diff would otherwise never see either transition.
-		cmd = m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), msg.req.key, m.worktree.On())
+		cmd = m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), msg.req.key, m.worktree.On(), m.remoteSelected())
 		// ...and the title panel's resting note follows both for the same
 		// reason: it names the branch, and is true only while a worktree
 		// is going to be created (see Model.titleNote).
@@ -1095,6 +1095,18 @@ func (m *Model) refreshBaseStatus() {
 		m.worktree.SetBaseStatus("couldn't check "+m.uncheckedBaseRef+": pick a base", true)
 		return
 	}
+	// On another machine the base is not this clone's at all: the cut is
+	// made there, from origin's copy, after a fetch (machine spec §6.4).
+	// Said here, where the base is chosen, rather than left to the row's
+	// `← HEAD`, which on dev means origin's default branch.
+	if label := m.machineLabel(); label != "" {
+		what := "origin's copy of " + m.worktree.Base()
+		if m.worktree.Base() == "" {
+			what = "origin's default branch"
+		}
+		m.worktree.SetBaseStatus("on "+label+": cut from "+what+", after a fetch there", false)
+		return
+	}
 	m.worktree.SetBaseStatus(m.baseListNote, false)
 }
 
@@ -1109,6 +1121,9 @@ type titleDebounceMsg struct {
 	branch     string
 	dir        string
 	worktreeOn bool
+	// remote is whether the session goes to another machine, which changes
+	// which branches and labels are in the way (machine spec §7).
+	remote bool
 }
 
 type titleResultMsg struct {
@@ -1132,7 +1147,7 @@ type titleResultMsg struct {
 // scheduling time (not re-read live when the check finally runs) -- the
 // same "capture the relevant state at call time" discipline Atrium's own
 // runBranchSearch uses for m.newSessionPath.
-func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn bool) tea.Cmd {
+func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn, remote bool) tea.Cmd {
 	m.reqs.title++
 	v := m.reqs.title
 	clock := m.deps.Clock
@@ -1143,6 +1158,7 @@ func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn bool) t
 			branch:     branch,
 			dir:        dir,
 			worktreeOn: worktreeOn,
+			remote:     remote,
 		}
 	}
 }
@@ -1173,10 +1189,15 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 	git := m.deps.Git
 	workspaces := m.workspaces
 	req := msg.req
-	branch, dir, worktreeOn := msg.branch, msg.dir, msg.worktreeOn
+	branch, dir, worktreeOn, remote := msg.branch, msg.dir, msg.worktreeOn, msg.remote
 	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
-		labelTaken := workspaceLabelTaken(workspaces, req.key)
+		// On another machine the labels and the branches that matter are
+		// that machine's and origin's (machine spec §7): this machine's
+		// workspaces and local branches are not in the way there. The
+		// remote half -- its clone's branches and its workspace labels --
+		// is the probe's, read at submit (machineRefusal).
+		labelTaken := !remote && workspaceLabelTaken(workspaces, req.key)
 
 		var invalid error
 		if branch != "" {
@@ -1191,6 +1212,10 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 			return res
 		}
 		exists, ok := awaitCheck(lt, deadline, func(ctx context.Context) bool {
+			if remote {
+				found, err := git.OriginBranchExists(ctx, pathx.ExpandTilde(dir), branch)
+				return err == nil && found
+			}
 			found, err := git.BranchExists(ctx, pathx.ExpandTilde(dir), branch)
 			return err == nil && found
 		})
@@ -2143,6 +2168,11 @@ func submitWaitingHint(in plan.Input) string {
 	if in.Prompt == "" {
 		return ""
 	}
+	if in.Machine.Remote() {
+		// The dialog is on a screen this machine is not showing (machine
+		// spec §8.5).
+		return "answer the dialog on " + in.Machine.Label + " — your prompt goes out as soon as you do"
+	}
 	return "answer the dialog in the pane — your prompt goes out as soon as you do"
 }
 
@@ -2412,14 +2442,24 @@ func (m Model) persistStateCmd() tea.Cmd {
 
 	projectKey := m.projectKey
 	previous, _ := m.projects.Get(projectKey)
+	// A remote session's base is the origin ref it was mapped to for that
+	// machine; what is remembered is the row's (machine spec §6.5).
+	base := m.submitInput.BaseRef
+	if m.submitInput.Machine.Remote() {
+		base = m.worktree.Base()
+	}
 	projects := m.projects.Touched(projectKey, config.ProjectDefaults{
 		Kind:      m.submitInput.AgentKind,
 		Worktree:  &useWorktree,
 		Placement: defaults.RememberedPlacement(m.submitInput, previous.Placement),
-		Base:      m.submitInput.BaseRef,
+		Base:      base,
 	}, time.Now())
+	notify := notifyRemoteCmd(m.deps.Runner, m.submitInput)
 
 	return func() tea.Msg {
+		// Before the state write's own message ends the submit: the toast
+		// that says where a remote session went (machine spec §9.5).
+		notify()
 		// No stateDir guard here any more: both savers refuse an empty
 		// directory themselves. Three call sites with two of them
 		// remembering to check is exactly how linear.SaveCache came to

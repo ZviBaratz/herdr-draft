@@ -37,6 +37,18 @@ const (
 // labelColWidth, which "placement" sets.
 const machineRowLabel = "machine"
 
+// machineVerdictWidth and machineVerdictMaxLines shape the probe's sentence
+// on the panel. It is wrapped, because its remedy comes last ("...; update
+// Herdr on this machine", machine spec §3.4) and a cut line would drop
+// exactly that. It is wrapped at a NOMINAL width, not the panel's, because
+// PanelRows has no width to ask about and must still book exactly the lines
+// Panel draws (field_rows_test.go); a panel narrower than this wraps to the
+// same count and cuts the last line instead.
+const (
+	machineVerdictWidth    = 72
+	machineVerdictMaxLines = 3
+)
+
 // machineLocalSelector is config.LocalMachine's spelling, which this
 // package cannot import: the chip the field starts on, and the one whose
 // row never carries a probe's verdict.
@@ -196,8 +208,8 @@ func (f *MachineField) Panel(w, h int) string {
 		panelChipRow(v),
 		panelText(dimHint(f.palette).Render(f.chips.Selected().FocusHint), w),
 	}
-	if f.remoteVerdict() && f.panelNo != "" {
-		lines = append(lines, panelText(f.verdictStyle().Render(keepHead(DisplayText(f.panelNo), panelInner(w))), w))
+	for _, l := range f.verdictLines(panelInner(w)) {
+		lines = append(lines, panelText(f.verdictStyle().Render(keepHead(l, panelInner(w))), w))
 	}
 	if f.provenance != "" {
 		lines = append(lines, provenanceLine(f.provenance, w, f.palette))
@@ -208,9 +220,24 @@ func (f *MachineField) Panel(w, h int) string {
 // PanelRows is the chips and their explanation, the verdict line when one
 // is shown, and the provenance line when there is one.
 func (f *MachineField) PanelRows() int {
-	rows := 2 + provenanceRows(f.provenance)
-	if f.remoteVerdict() && f.panelNo != "" {
-		rows++
+	return 2 + len(f.verdictLines(machineVerdictWidth)) + provenanceRows(f.provenance)
+}
+
+// verdictLines is the probe's sentence as panel lines, wrapped at limit or
+// machineVerdictWidth, whichever is narrower, and never more lines than it
+// takes at machineVerdictWidth -- the count PanelRows books.
+func (f *MachineField) verdictLines(limit int) []string {
+	if !f.remoteVerdict() || f.panelNo == "" {
+		return nil
 	}
-	return rows
+	text := DisplayText(f.panelNo)
+	booked := min(len(wrapAtSpaces(text, machineVerdictWidth)), machineVerdictMaxLines)
+	lines := wrapAtSpaces(text, min(limit, machineVerdictWidth))
+	if len(lines) > booked {
+		// The cut lands on the last booked line, which then ends in the
+		// ellipsis keepHead draws for a line that does not fit.
+		lines[booked-1] = strings.Join(lines[booked-1:], " ")
+		lines = lines[:booked]
+	}
+	return lines
 }

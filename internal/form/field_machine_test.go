@@ -131,3 +131,18 @@ func TestAccountField_InertOnAnotherMachine(t *testing.T) {
 		t.Error("a remote account row asks for a clauth retry")
 	}
 }
+
+// TestMachineField_ARefusalWrapsSoItsRemedyShows: herdr's refusal of a
+// too-old server ends with what to do about it (machine spec §3.4), so the
+// panel wraps it rather than cutting the remedy off.
+func TestMachineField_ARefusalWrapsSoItsRemedyShows(t *testing.T) {
+	f := NewMachineField(theme.Default())
+	f.SetChoices(machineChoices())
+	f.SetValue("dev")
+	f.SetStatus(MachineRefused, "unreachable",
+		"dev (EC2) is unreachable: machine 'dev (EC2)': remote Herdr does not support machine API forwarding; update Herdr on this machine")
+	panel := ansi.Strip(f.Panel(101, f.PanelRows()))
+	if !strings.Contains(panel, "update Herdr on this machine") {
+		t.Errorf("the remedy was cut off:\n%s", panel)
+	}
+}
