@@ -1910,6 +1910,46 @@ agrees to a session there).**
 
 ## Recorded runs
 
+### Cell 16 Route B, headless, against `dev (EC2)` on herdr 0.9.1 — 2026-10-14
+
+dev had just been brought to herdr 0.9.1 by dev-sync, with its server
+restarted. Before the run it held one shell pane, no agents and one worktree
+of hub. `herdr --machine <dev-id> status server` answered `running`, 0.9.1,
+compatible. The run used this worktree's build, with a scratch copy of the
+live `config.toml` plus `[machine.paths] "~/quantivly" = "dev"`, from
+`~/quantivly/hub`, with no prompt.
+
+- **`--dry-run --json`:** exit 0 in 3.3s, `machine` `dev (EC2)`, a new
+  space, base `origin/main`, no account.
+- **`create --title "b2 smoke dev" --json`:** exit 1 in 26s.
+  - `creating worktree on dev (EC2) ... ok` and `naming tab ... ok`. The
+    worktree was at `/home/ubuntu/.herdr/worktrees/hub/zvi-b2-smoke-dev`
+    on branch `zvi/b2-smoke-dev`, in workspace `w4`.
+  - `starting agent ... failed: claude started; answer the dialog on dev
+    (EC2), then keep this session -- it is showing "Quick safety check"`,
+    with herdr's `agent_not_ready`.
+  - The pane, read with `herdr --machine <id> pane read`, showed `claude
+    --model 'opus[1m]' --effort xhigh` typed and Claude's trust prompt, with
+    "No, exit" preselected. No prompt was sent into it.
+  - **The trust prompt is not new with dev.** Every new worktree path hits
+    it the first time, on either machine (`trust_wait_ms`, #115). On dev,
+    answering it means switching herdr to dev.
+- **Checked on dev over ssh:**
+  - the worktree's HEAD was `0cae494`, GitHub's `main` at that moment;
+  - `FETCH_HEAD` was stamped by this run's fetch;
+  - the branch had no upstream, so #221's untrack ran there.
+- **herdr also opened `w3 hub`,** the repository's parent space, as a first
+  `worktree create` in a repository does. That was cleaned up by hand:
+  `worktree remove --workspace w4`, then `workspace close w3`, then the
+  branch (no commits of its own) with `git branch -D` on dev. dev was left
+  as it was found, with no Claude process.
+- **Seen on the pane, for dev's own setup rather than herdr-draft:** direnv
+  blocks hub's `.envrc` in each new worktree, and a banner says
+  `dev-sync.timer` will not fire.
+
+The popup's own run (alt+n) waits for this branch to be released and
+installed.
+
 ### Cell 16 Route A against `dev (EC2)` on herdr 0.9.0 — 2026-10-14
 
 This machine runs herdr 0.9.1, and `dev (EC2)` (saved, target `dev`) still
