@@ -102,7 +102,8 @@ export.
 | `--model NAME` | an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full model id such as `claude-opus-5[1m]` |
 | `--effort LEVEL` | `low`, `medium`, `high`, `xhigh` or `max` |
 | `--permission-mode MODE` | `manual`, `plan`, `acceptEdits` or `auto` |
-| `--account NAME` | clauth account to pin (claude only); `auto` asks your [account picker](account-picker.md) |
+| `--account NAME` | clauth account to pin (claude only); `auto` asks your [account picker](account-picker.md). Not on another machine |
+| `--machine NAME` | the herdr machine the session runs on: `local`, or one `config.toml`'s [`[machine]`](configuration.md#machine) names. Unset, `[machine.paths]` decides |
 | `--issue ID` | seed the title, branch and prompt from a Linear issue |
 | `--json` | print one JSON object instead of a line |
 | `--dry-run` | check everything a create would, report what it would make, and stop |
@@ -183,6 +184,35 @@ every pane's shell. `new-space` needs none of them, and neither does
 project, or the one `--workspace` gives. A missing variable is named in the
 error.
 
+### Machine
+
+`--machine` picks the herdr machine the session runs on. Left off, the
+project's directory decides through `config.toml`'s `[machine.paths]`, then
+`[machine] default`, then `local`. Only `local` and the machines that table
+names are accepted. A saved machine it never mentions is refused (exit 2),
+as the form's row would never offer it.
+
+Pass `--machine local` for a session that has to run here: one that drives
+this machine's browser, or talks to a device plugged into it.
+
+On another machine, before anything is created, `create` asks herdr to reach
+it and asks it over ssh whether the project is there, at the same path under
+its home. An unreachable machine is exit 3, and the line quotes the reason
+and names `--machine local`. A probe that does not answer within thirty
+seconds is exit 5, and a machine without the project, or with a different
+repository at that path, is exit 2. Nothing falls back to this machine. The
+session then:
+
+- opens in a new space there, so `--placement` other than `new-space`, and
+  `--workspace`, are refused (exit 2);
+- is cut, with a worktree, from origin's copy of the base after a fetch on
+  that machine, so `HEAD` means origin's default branch, a local branch
+  means origin's branch of that name, and anything origin lacks is refused;
+- uses that machine's own login, so `--account` is refused and
+  `[clauth] default` does not apply.
+
+See [Sessions on another machine](configuration.md#sessions-on-another-machine).
+
 ## Output
 
 Progress goes to **stderr**, one line per step. The result goes to
@@ -211,6 +241,7 @@ presence.
 | `error`, `failed_step` | what failed, and at which step |
 | `title`, `project_dir`, `agent_kind`, `placement`, `worktree`, `branch`, `base` | what the session is |
 | `account` | the pinned clauth profile, when one is pinned |
+| `machine` | where the session runs: `selector` (`local`, or the name used), and for another machine its profile `id` and `label` |
 | `workspace_id`, `tab_id`, `pane_id` | where the agent is |
 | `space_workspace_id`, `space_tab_id`, `space_pane_id` | the space the run created, which `--on-failure clean` acts on |
 | `checkout_path` | the worktree's directory |
@@ -255,7 +286,7 @@ for those exits, so check the exit code first.
 | 0 | created; with `--dry-run`, would create |
 | 1 | the plan started and failed, and part of the session may exist (`--on-failure` applied) |
 | 2 | bad usage, or a request that cannot be resolved; nothing was created |
-| 3 | herdr is unreachable, found before anything was created |
+| 3 | herdr, or the machine `--machine` resolved to, is unreachable, found before anything was created |
 | 4 | the plan's first step failed before making anything: nothing exists |
 | 5 | a check did not answer in time; nothing was created |
 

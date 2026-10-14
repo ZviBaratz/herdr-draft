@@ -150,6 +150,32 @@ create rather than guess; the refusal lifts as soon as the check answers or
 you change the value. `create` gives the same checks thirty seconds and
 exits 5; see [Exit codes](create.md#exit-codes).
 
+### The `machine` row says `unreachable`, or `create` exits 3 naming `--machine local`
+
+herdr-draft could not reach the machine the project is set to run on, and
+the panel (or the line on stderr) gives the reason in herdr's or ssh's own
+words. The common ones:
+
+- **`remote Herdr does not support machine API forwarding; update Herdr on
+  this machine`.** The other machine runs a herdr older than 0.9.1. Update
+  herdr there and restart its server. Restarting stops that server's panes,
+  so pick the moment.
+- **An ssh error,** such as an expired login to a cloud machine. Check that
+  `ssh <target>` works from a terminal; herdr-draft runs ssh without
+  prompts, so anything it would have asked you fails instead.
+- **`no saved herdr machine`.** `config.toml` names a machine herdr does not
+  have. `herdr machine list` shows the saved ones, by label, profile id and
+  ssh target.
+
+Nothing is created on this machine instead. To start this one session here,
+pick `local` on the row (`←`), or pass `--machine local`.
+
+### The `machine` row says `can't host it`
+
+The machine answered, but the project is not there, or a different
+repository is. It is looked for at the same path under that machine's home
+directory, so clone it there (`~/work/api` here is `~/work/api` there).
+
 ### Worktree creation fails with git's "dubious ownership"
 
 git refuses to work in a repository owned by another user. Set

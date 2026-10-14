@@ -13,6 +13,33 @@ for why a heading here may read `unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **A session can start on another herdr machine** (machine spec).
+  `config.toml`'s new `[machine]` table maps project directories to herdr
+  machines you have saved (`[machine.paths] "~/work" = "dev"`, longest
+  match wins, plus a `default`). A project then opens on its machine from
+  the popup, `create` and the spawn skill, with no step of its own. The
+  popup grows a `machine` row offering `local` and the machines the table
+  names. `create` gains `--machine`, which accepts the same names.
+  `--machine local`, or `←` on the row, keeps one session here: one that
+  drives this machine's browser or a USB device. The choice is never
+  remembered.
+  - **Checked first, never a fallback.** Before anything is created,
+    herdr-draft asks herdr to reach the machine and asks the machine over
+    ssh whether the project is there, at the same path under its home. A
+    machine it cannot reach is refused with the reason: the row says so and
+    `⌃S` refuses, and `create` exits 3 naming `--machine local`. Nothing
+    falls back to this machine.
+  - **What changes on another machine.** The session opens in a new space
+    there. A worktree is cut from origin's copy of the base after a fetch on
+    that machine, so only pushed work is there. The account row and
+    `--account` do not apply: that machine uses its own login. The popup
+    posts a notification here saying where the session went.
+  - **What it needs.** herdr 0.9.1 or later on both machines; the plugin
+    itself still installs on 0.9.0. `.herdr-draft.toml` cannot set
+    `[machine]`: a repository does not choose which host runs your code.
+
 ### Changed
 
 - **The popup's base list offers `origin/<name>` under a local `<name>`

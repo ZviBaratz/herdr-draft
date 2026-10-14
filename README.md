@@ -55,6 +55,9 @@ Optional:
   or more profiles, for the `account` row.
 - **pane-reaper**, a separate herdr plugin, to close a session's pane when
   its agent finishes (see [`[reaper]`](docs/configuration.md#reaper)).
+- **herdr 0.9.1 or later on both machines**, a saved herdr machine and ssh
+  to it, to start sessions on another machine (see
+  [`[machine]`](docs/configuration.md#machine)).
 - **[jq](https://jqlang.org/)**, for the one-line lookups in these docs.
 
 ## Install

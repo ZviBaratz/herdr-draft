@@ -42,9 +42,11 @@ screen.
 
 ## The rows
 
-There are up to nine rows. Two appear only with their integration: `issue`
-needs Linear, and `account` needs clauth with at least two profiles. Without
-either, the form has seven rows, and that is the shape most people see.
+There are up to ten rows. Three appear only when they apply: `issue` needs
+Linear, `account` needs clauth with at least two profiles, and `machine`
+needs a [`[machine]`](configuration.md#machine) table in `config.toml`.
+Without any of them the form has seven rows, and that is the shape most
+people see.
 
 | Row | Reads | When it cannot be set |
 |---|---|---|
@@ -52,11 +54,12 @@ either, the form has seven rows, and that is the shape most people see.
 | `title` | what you typed, or a dim `untitled` | — |
 | `prompt` | the first line, a dim ` +N more`, and ` · reap when done` when the prompt will end with pane-reaper's instruction | — |
 | `project` | the path, with `~` for your home directory | `invalid`, `not a repository`, `check timed out` |
+| `machine` | `local`, or a saved machine's label, with `· checking…`, `· unreachable` or `· no answer` while it is not ready | — |
 | `worktree` | `on · <branch> ← <base>`, `on · from <base>` before there is a title, or `off` | `not a git repository` |
-| `placement` | `new space`, `tab here`, `split here` or `tab in <space>` | `the worktree's own space`, whenever the worktree is on |
+| `placement` | `new space`, `tab here`, `split here` or `tab in <space>` | `the worktree's own space`, whenever the worktree is on; `a new space on <machine>` on another machine |
 | `agent` | `claude`, or another agent kind | — |
 | `options` | `opus · effort xhigh · plan mode`, or `claude's own settings` | `none for <kind>`, for an agent with no options |
-| `account` | `active · max · 5h 12% · 7d 40%`, or the pinned profile | `account pinning only applies to claude` |
+| `account` | `active · max · 5h 12% · 7d 40%`, or the pinned profile | `account pinning only applies to claude`; `<machine>'s own login` on another machine |
 
 ### While something is still loading
 
@@ -166,6 +169,24 @@ contacts the repository's default remote (the current branch's upstream, or
 questions turned off and gives up after 30 seconds, so a remote that wants a
 password fails quietly instead of prompting over the form.
 
+### machine
+
+Which herdr machine the session runs on: `local`, or one of the machines
+your [`[machine]`](configuration.md#machine) table names. The project's
+directory picks it through `[machine.paths]`, and the panel says which rule
+did (`from config.toml: ~/work → dev`). `←→` changes it for this session
+only. Nothing remembers it, so the next session in the project starts from
+the rule again.
+
+For another machine, the panel shows herdr-draft checking that the machine
+can be reached and that the project is there, then `ready`, or the reason it
+is not in herdr's or ssh's own words. `⌃S` waits for that check, and refuses
+a machine that failed it, with this row focused so that `local` is one key
+away. On another machine the session opens in a new space there, a worktree
+is cut from origin's copy of the base after a fetch there, and the account
+row does not apply: that machine uses its own login. See
+[Sessions on another machine](configuration.md#sessions-on-another-machine).
+
 ### worktree
 
 Whether the session gets its own git worktree, and on which branch. The
@@ -204,7 +225,8 @@ Where a session **without** a worktree goes:
   collects its sessions as tabs.
 
 With the worktree on, the row reads `the worktree's own space` and cannot be
-changed. It keeps your choice for when you turn the worktree off.
+changed. It keeps your choice for when you turn the worktree off. The same
+happens on another machine, where the row reads `a new space on <machine>`.
 
 ### agent
 
