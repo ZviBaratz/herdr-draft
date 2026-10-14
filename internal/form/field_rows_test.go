@@ -85,7 +85,16 @@ func rowFields(palette theme.Palette) []Section {
 	account.SetAgentIsClaude(true)
 	account.SetProfiles(sampleStatus(), sampleNow())
 
-	return []Section{issue, title, prompt, dir, placement, agent, options, account}
+	// The machine row in its busiest state: another machine chosen, its
+	// probe refused in its own (long) words, and a provenance line.
+	machine := NewMachineField(palette)
+	machine.SetChoices([]MachineChoice{{Selector: "local", Label: "local"}, {Selector: "dev", Label: "dev (EC2)"}})
+	machine.SetValue("dev")
+	machine.SetProvenance("config.toml: ~/quantivly → dev")
+	machine.SetStatus(MachineRefused, "unreachable",
+		"dev (EC2) is unreachable: machine 'dev (EC2)': remote Herdr does not support machine API forwarding; update Herdr on this machine")
+
+	return []Section{issue, title, prompt, dir, machine, placement, agent, options, account}
 }
 
 // repoConfigFields is rowFields' companion for v2 spec §11's own state:
@@ -189,15 +198,16 @@ func assertRowsIdenticalAtEveryHeight(t *testing.T, palette theme.Palette, field
 	t.Helper()
 
 	const w = 80
-	// h = 12 affords all eight rows with no header and no rules; h = 60
-	// affords the full chrome AND v3 spec §7's top margin. Both show the
-	// whole stack, so no scrolling (stackWindow) can explain a difference.
+	// h = 13 affords all nine rows -- the machine row is the ninth here
+	// (machine spec §9.1) -- with no header and no rules; h = 60 affords the full
+	// chrome AND v3 spec §7's top margin. Both show the whole stack, so no
+	// scrolling (stackWindow) can explain a difference.
 	//
 	// The two stack offsets are DERIVED from the frames rather than
 	// written down, because they are precisely what differs between the
 	// two heights -- and this test's whole job is that the row BYTES do
 	// not.
-	const short, tall = 12, 60
+	const short, tall = 13, 60
 	shortFrame, tallFrame := layoutFrame(short, len(fields)), layoutFrame(tall, len(fields))
 	if shortFrame.Header || shortFrame.Rule1 || !tallFrame.Header || !tallFrame.Rule1 {
 		t.Fatalf("this test needs h=%d to drop the chrome and h=%d to keep it; got %+v and %+v",
@@ -504,6 +514,32 @@ func panelRowsCases(p theme.Palette) []panelRowsCase {
 			f.SetProvenance(".herdr-draft.toml") // not shown: the inert panel shows no value to attribute
 			return f
 		}, 2},
+		// On another machine the row is inert as under a worktree (machine
+		// spec §6.2): the same two lines, and no provenance.
+		{"placement/remote-with-provenance", func() Section {
+			f := NewPlacementField(p)
+			f.SetRemote("dev (EC2)")
+			f.SetProvenance(".herdr-draft.toml")
+			return f
+		}, 2},
+
+		// machine: the chips and their explanation, the probe's sentence
+		// for another machine, and the provenance line when a rule chose
+		// it (machine spec §9.1).
+		{"machine/local", func() Section { return NewMachineField(p) }, 2},
+		{"machine/local-ignores-a-verdict", func() Section {
+			f := NewMachineField(p)
+			f.SetStatus(MachineRefused, "unreachable", "should not show") // local has no probe
+			return f
+		}, 2},
+		{"machine/remote-checking-with-provenance", func() Section {
+			f := NewMachineField(p)
+			f.SetChoices([]MachineChoice{{Selector: "local", Label: "local"}, {Selector: "dev", Label: "dev (EC2)"}})
+			f.SetValue("dev")
+			f.SetStatus(MachineChecking, "checking…", "checking dev (EC2)…")
+			f.SetProvenance("config.toml: ~/quantivly → dev")
+			return f
+		}, 2 + 1 + 1},
 
 		// agent: the favorites chip row plus one line per known kind,
 		// capped at agentPanelMaxRows. With no kinds at all it still
@@ -801,6 +837,7 @@ func TestFieldLabel_IsBarePlainLowercase(t *testing.T) {
 		"prompt":    "prompt",
 		"dir":       "project", // the row is "project"; the ID stays "dir"
 		"placement": "placement",
+		"machine":   "machine",
 		"agent":     "agent",
 		"options":   "options",
 		"account":   "account",

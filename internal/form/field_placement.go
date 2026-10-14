@@ -81,6 +81,10 @@ type PlacementField struct {
 	focused    bool
 	palette    theme.Palette
 	worktreeOn bool
+	// remote is the label of the machine the session runs on, "" for this
+	// one. A session there opens in a new space there whatever is chosen
+	// (machine spec §6.2), so the row is inert, as under a worktree.
+	remote string
 
 	// offered is the chip list currently loaded into chips: placementChips
 	// alone, or placementChips plus tabInChip while SetSpace has named an
@@ -134,7 +138,35 @@ func (f *PlacementField) ID() string { return "placement" }
 // space whatever is chosen here (placement spec §14,
 // plan.EffectivePlacement). The row stays drawn, present-but-inert, and
 // says so.
-func (f *PlacementField) Enabled() bool { return !f.worktreeOn }
+func (f *PlacementField) Enabled() bool { return !f.inert() }
+
+// inert reports whether no placement applies: under a worktree (placement
+// spec §14), or on another machine (machine spec §6.2).
+func (f *PlacementField) inert() bool { return f.worktreeOn || f.remote != "" }
+
+// SetRemote records the machine the session runs on by its label, "" for
+// this one. Like SetWorktreeOn it leaves the selection alone, so going back
+// to local finds the placement that was chosen.
+func (f *PlacementField) SetRemote(label string) { f.remote = label }
+
+// inertHint is the row while inert: where the session goes instead.
+func (f *PlacementField) inertHint() string {
+	switch {
+	case f.worktreeOn && f.remote != "":
+		return placementInertHint + " on " + f.remote
+	case f.remote != "":
+		return "a new space on " + f.remote
+	}
+	return placementInertHint
+}
+
+// inertPanelHint is the panel while inert: what gives the choice back.
+func (f *PlacementField) inertPanelHint() string {
+	if f.remote != "" {
+		return "choose local on the machine row to place it here"
+	}
+	return placementInertPanelHint
+}
 
 // Focus gives the field input focus. ChipRow has no Focus/Blur of its own
 // (widgets/chiprow.go's own package doc) -- focused is tracked only for
@@ -158,7 +190,7 @@ func (f *PlacementField) Blur() { f.focused = false }
 // a click (form.go's FocusByID ignores Enabled), and a keypress there must
 // not quietly move a choice that does not apply.
 func (f *PlacementField) Update(msg tea.Msg) tea.Cmd {
-	if f.worktreeOn {
+	if f.inert() {
 		return nil
 	}
 	if click, ok := msg.(tea.MouseClickMsg); ok {
@@ -274,8 +306,8 @@ func (f *PlacementField) Row(w int) string {
 	if w < 1 {
 		w = 1
 	}
-	if f.worktreeOn {
-		return fitLine(dimHint(f.palette).Render(keepHead(placementInertHint, w)), w)
+	if f.inert() {
+		return fitLine(dimHint(f.palette).Render(keepHead(f.inertHint(), w)), w)
 	}
 	return fitLine(lipgloss.NewStyle().Foreground(f.palette.Text).Render(keepHead(f.chips.Selected().Label, w)), w)
 }
@@ -286,10 +318,10 @@ func (f *PlacementField) Row(w int) string {
 // would be, since there is no choice to explain (placement spec §14).
 func (f *PlacementField) Panel(w, h int) string {
 	var lines []string
-	if f.worktreeOn {
+	if f.inert() {
 		// Composed like any other panel text: only a LIVE chip row pays for
 		// one of the gutter's two cells itself (panelChipRow).
-		lines = []string{panelText(dimHint(f.palette).Render(placementInertPanelHint), w), ""}
+		lines = []string{panelText(dimHint(f.palette).Render(f.inertPanelHint()), w), ""}
 	} else {
 		v := f.chips.MarkedView(panelChipWidth(w), "chip:"+f.ID()+":")
 		// MarkedView appends the selected chip's FocusHint as a second
@@ -320,7 +352,7 @@ func (f *PlacementField) Panel(w, h int) string {
 // -- so attributing one there would claim a choice nothing is honouring,
 // and `create --json` attributes the same state to "worktree".
 func (f *PlacementField) showsProvenance() bool {
-	return f.provenance != "" && !f.worktreeOn
+	return f.provenance != "" && !f.inert()
 }
 
 // PanelRows is two -- the chips and their explanation, or under a worktree
@@ -340,7 +372,7 @@ func (f *PlacementField) PanelRows() int {
 // resting state, not an edge case. Same sentence as field_worktree.go's
 // non-git rung.
 func (f *PlacementField) FooterRungs() []string {
-	if f.worktreeOn {
+	if f.inert() {
 		return []string{"nothing to set here"}
 	}
 	return nil

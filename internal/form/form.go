@@ -287,11 +287,15 @@ var zoneKindByID = map[string]ZoneKind{
 	"title":     ZoneTitle,
 	"worktree":  ZoneWorktree,
 	"placement": ZonePlacement,
-	"agent":     ZoneAgent,
-	"options":   ZoneOptions,
-	"account":   ZoneAccount,
-	"prompt":    ZonePrompt,
-	"create":    ZoneCreate,
+	// The machine row is a plain chip row with placement's grammar --
+	// ←→ choose -- so it shares placement's zone rather than adding a kind
+	// footer.go and MapKey would answer identically for.
+	"machine": ZonePlacement,
+	"agent":   ZoneAgent,
+	"options": ZoneOptions,
+	"account": ZoneAccount,
+	"prompt":  ZonePrompt,
+	"create":  ZoneCreate,
 }
 
 // zoneFor builds the FocusZone MapKey needs for the currently focused
