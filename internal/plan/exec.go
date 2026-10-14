@@ -130,6 +130,12 @@ type Progress struct {
 	Kind  OpKind
 	State StepState
 	Err   error
+	// Note is one line a finished step adds about something it did beside
+	// its job, "" for none: the worktree step's word on the new checkout's
+	// .envrc and mise config (TrustOutcome.Note), and the agent step's when
+	// it interrupted an environment load to start. It rides on StepDone and
+	// StepFailedNonFatal, never decides either, and is never an error.
+	Note string
 }
 
 // ExecResult is Execute's outcome. Created is the SPACE -- the step-1
@@ -286,6 +292,14 @@ type ExecResult struct {
 	// this reports what is known and leaves the pane to the human.
 	PromptUnconfirmed bool
 
+	// EnvTrust is what became of the new worktree's .envrc and mise
+	// config: allowed and trusted, left blocked, or the step failing. The
+	// zero value says nothing happened worth saying -- no worktree, no such
+	// files, no direnv or mise, or `[worktree] inherit_trust` off. It never
+	// fails a plan: an unloaded environment is exactly the state before
+	// this field existed, and the pane says so in the tools' own words.
+	EnvTrust TrustOutcome
+
 	// promptUnconfirmedCause discriminates WHICH of PromptUnconfirmed's
 	// evidence shapes set it. Set on the same line, from the same error,
 	// and meaningless on its own -- the flag above is the posture, this is
@@ -358,6 +372,16 @@ const (
 var (
 	busyRetryInterval = 500 * time.Millisecond
 	busyRetryBudget   = 5 * time.Second
+	// envLoadBusyBudget is busyRetryBudget once the new pane's shell is
+	// loading an environment this run allowed (TrustOutcome.envLoaded):
+	// direnv runs the .envrc in the shell's first prompt, and the shell is
+	// not an available one until it finishes. Measured on dev, 2026-10-14,
+	// hub's first load in a fresh checkout -- a virtualenv and a dependency
+	// check -- takes 2.0 s, inside the five; but an .envrc is the
+	// repository's own code, and five seconds is a shell's budget, not a
+	// project's. A minute, and past it the load is interrupted rather than
+	// the create failed (maxEnvInterrupts).
+	envLoadBusyBudget = 60 * time.Second
 	busyRetryNow      = time.Now
 )
 
@@ -427,11 +451,11 @@ func startAgentWithDedupe(ctx context.Context, r herdrc.Runner, req herdrc.Agent
 }
 
 // retryBusy runs op once and, while it keeps failing with an
-// agent_pane_busy error, retries it every busyRetryInterval until
-// busyRetryBudget has elapsed since the first attempt or ctx is done. Any
-// non-busy error is returned immediately, with no retry.
-func retryBusy(ctx context.Context, op func() error) error {
-	deadline := busyRetryNow().Add(busyRetryBudget)
+// agent_pane_busy error, retries it every busyRetryInterval until budget
+// has elapsed since the first attempt or ctx is done. Any non-busy error is
+// returned immediately, with no retry.
+func retryBusy(ctx context.Context, budget time.Duration, op func() error) error {
+	deadline := busyRetryNow().Add(budget)
 	for {
 		err := op()
 		if err == nil || !errors.Is(err, herdrc.ErrPaneBusy) {
@@ -451,10 +475,15 @@ func retryBusy(ctx context.Context, op func() error) error {
 // emitProgress calls onProgress, when non-nil, with a Progress built from
 // the given fields.
 func emitProgress(onProgress func(Progress), index, total int, label string, state StepState, err error) {
+	emitProgressNote(onProgress, index, total, label, state, err, "")
+}
+
+// emitProgressNote is emitProgress with a Progress.Note.
+func emitProgressNote(onProgress func(Progress), index, total int, label string, state StepState, err error, note string) {
 	if onProgress == nil {
 		return
 	}
-	onProgress(Progress{Index: index, Total: total, Label: label, State: state, Err: err})
+	onProgress(Progress{Index: index, Total: total, Label: label, State: state, Err: err, Note: note})
 }
 
 // errAgentOnDialog marks the one promptIfReady refusal that is worth
@@ -1478,6 +1507,9 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 	var agentPane string
 	haveAgentPane := false
 	total := len(ops)
+	// envSettled: settleEnv has run, so a later launch op does not wait on
+	// the same pane again.
+	envSettled := false
 
 	for i, op := range ops {
 		emitProgress(onProgress, i, total, op.Label, StepRunning, nil)
@@ -1495,6 +1527,10 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 		// neverAsked is a worktree op that failed before `worktree create`
 		// was called, which is evidence of its own that nothing was made.
 		var neverAsked bool
+		// trust is what the worktree op did about the new checkout's
+		// .envrc and mise config, said in the step's Note whatever the
+		// step's state.
+		var trust TrustOutcome
 
 		// promptTyped is the one piece of per-op state that is deliberately
 		// NOT reset per attempt, unlike everything above it and unlike the
@@ -1519,6 +1555,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			gotTopo, reused, claimed, neverAsked = false, false, nil, false
 			reusedLabel, createdBranch, baseCommit = "", "", ""
 			caveat = nil
+			trust = TrustOutcome{}
 
 			var err error
 			switch op.Kind {
@@ -1625,6 +1662,12 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				if err := wrongBranch(op.Worktree.Branch, topo.Branch); err != nil {
 					return err
 				}
+				// Before anything else this step asks the machine: herdr has
+				// just started the new pane's shell, and its first prompt
+				// runs direnv's hook, which prints ".envrc is blocked" for
+				// an allow that lands after it. Best-effort -- the outcome
+				// is a note, never this step's error.
+				trust = extendTrust(ctx, op, topo.CheckoutPath)
 				// Only for a branch this run made: one the user already had
 				// keeps whatever it tracks.
 				if createdBranch != "" {
@@ -1755,7 +1798,18 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// -- herdrc has no way to report "I have started waiting"
 				// mid-call, and one extra `agent get` is a cheap price for
 				// both paths running the same three lines.
-				err = r.AwaitDetection(ctx, paneID, op.Timeout, 0)
+				// settleEnv waited out the environment load before the
+				// launch line was typed. A load it could not see -- one that
+				// began after it looked -- still holds the typed line until
+				// it finishes, so the detection allows for that too. Nothing
+				// is pressed here: ctrl+c now would flush the typed line, and
+				// a detection timeout cannot tell a slow environment from a
+				// slow agent.
+				timeout := op.Timeout
+				if result.EnvTrust.envLoaded() {
+					timeout += envLoadBusyBudget
+				}
+				err = r.AwaitDetection(ctx, paneID, timeout, 0)
 				if opts.TrustWait > 0 && isBlockedAgentError(err) {
 					err = waitThroughDialog(ctx, r, onProgress, i, total, op.Label, paneID, op.Timeout, opts.TrustWait)
 				}
@@ -1869,13 +1923,42 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 		// answers agent_pane_busy; kept for the same reason as the reset in
 		// attempt above.
 		var unproven bool
-		runErr := retryBusy(ctx, func() error {
+		// A shell loading an environment this run allowed is busy for as
+		// long as that takes. settleEnv below normally waits it out first;
+		// this is for the load it could not see, one that started after it
+		// looked or a pane whose foreground herdr could not report.
+		budget := busyRetryBudget
+		if result.EnvTrust.envLoaded() {
+			budget = envLoadBusyBudget
+		}
+		run := func() error {
 			err := attempt()
 			if err != nil && (gotTopo || !neverAsked && !errors.Is(err, herdrc.ErrNothingCreated)) {
 				unproven = true
 			}
 			return err
-		})
+		}
+		// The environment never fails a create (the operator's rule,
+		// 2026-10-14): before the agent is launched in a shell loading the
+		// .envrc this run allowed, the load is waited for, and interrupted
+		// if it outlasts its budget (settleEnv). Once per run, on whichever
+		// op launches it -- Path A's start or a pinned account's typed line.
+		var stepNote string
+		if (op.Kind == OpAgentStart || op.Kind == OpClauthLaunch) && result.EnvTrust.envLoaded() && !envSettled {
+			envSettled = true
+			pane := agentPane
+			if op.Agent != nil && op.Agent.PaneID != "" {
+				pane = op.Agent.PaneID
+			}
+			if pane != "" && settleEnv(ctx, r, pane) {
+				result.EnvTrust.Interrupted = true
+				stepNote = interruptedNote()
+			}
+		}
+		runErr := retryBusy(ctx, budget, run)
+		if op.Kind == OpWorktreeCreate {
+			stepNote = trust.Note()
+		}
 
 		if runErr != nil && isCosmeticKind(op.Kind) {
 			// Reported, and nothing else: FailedIndex, PromptText and the
@@ -1904,6 +1987,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				result.SpaceLabel = reusedLabel
 				result.CreatedBranch = createdBranch
 				result.BaseCommit = baseCommit
+				result.EnvTrust = trust
 			}
 			wrapped := fmt.Errorf("plan: execute: %s: %w", op.Label, runErr)
 			emitProgress(onProgress, i, total, op.Label, StepFailed, wrapped)
@@ -1932,6 +2016,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				}
 				result.CreatedBranch = createdBranch
 				result.BaseCommit = baseCommit
+				result.EnvTrust = trust
 			}
 			if i == agentPaneIdx {
 				// The whole topology, not just the pane: a reuse claim
@@ -1948,11 +2033,11 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 			}
 		}
 		if caveat != nil {
-			emitProgress(onProgress, i, total, op.Label, StepFailedNonFatal,
-				fmt.Errorf("plan: execute: %s: %w", op.Label, caveat))
+			emitProgressNote(onProgress, i, total, op.Label, StepFailedNonFatal,
+				fmt.Errorf("plan: execute: %s: %w", op.Label, caveat), stepNote)
 			continue
 		}
-		emitProgress(onProgress, i, total, op.Label, StepDone, nil)
+		emitProgressNote(onProgress, i, total, op.Label, StepDone, nil, stepNote)
 	}
 
 	return result

@@ -60,6 +60,7 @@ trust_wait_ms = 300000             # wait for you to answer a dialog (popup only
 
 [worktree]
 trust_repository = false           # waive git's ownership check per request
+inherit_trust = true               # extend direnv allow / mise trust to new worktrees
 
 [reaper]
 mark_ready = false                 # start every prompt on "reap"
@@ -341,6 +342,69 @@ permanent, machine-wide `git config --global --add safe.directory <path>`.
 Only `config.toml` can set this. A repository cannot vouch for itself, and
 neither memory file records it, because they record what you chose in the
 form and no row offers it.
+
+**`inherit_trust`** (default: `true`). After a worktree is cut, extends your
+direnv allow and your mise trust from the main clone to the worktree. It
+applies only where the worktree holds the same bytes you approved. It runs on
+the machine the session runs on, as soon as herdr has made the worktree. That
+is usually before the new pane's first prompt, so the prompt loads the
+environment instead of printing `.envrc is blocked`.
+
+It races that first prompt, though. A shell that starts faster than the allow
+lands prints `.envrc is blocked` once, even though `--json` reports `envrc:
+allowed`. Its next prompt loads the environment, but the agent may already be
+running without it.
+
+- **mise.** Every file the worktree has that matches one of mise's config
+  patterns (`mise.toml`, `.mise.toml`, `.rtx.toml`, the `mise/`, `.mise/` and
+  `.config/mise` forms with their `.local` and per-environment variants,
+  `conf.d`, and `.tool-versions`) must match the main clone's. `mise trust
+  --show` must already report the main clone trusted. Then the worktree is
+  trusted, and a trust left on a reused worktree path for content that no
+  longer matches is removed. If the worktree has a mise config and no mise
+  can be found, it is treated as untrusted.
+- **direnv.** The worktree's `.envrc` must match the main clone's, and
+  `direnv status` there must already report it allowed. It is held back while
+  the worktree's mise config is untrusted, because an `.envrc` that runs
+  `mise activate` would stop the pane on mise's prompt. An explicit `direnv
+  deny` of the worktree is left alone. Then the worktree's `.envrc` is
+  allowed.
+
+**What this trusts.** direnv keys an allow on a file's path and content, so
+for direnv the only new thing is the path. mise keys trust on a directory,
+and `mise trust` covers the worktree's whole directory, including any file
+the patterns above miss. That reaches no further than the main clone's own
+trust: the same branch, checked out in the main clone, would be read under
+it. The byte comparison is what keeps a branch's changed config blocked for
+review, not the trust boundary itself.
+
+**Paths change.** An `.envrc` that uses `source_up`, or a relative path such
+as `../`, resolves from the worktree's location
+(`~/.herdr/worktrees/<repo>/...`), not from the main clone's. The same bytes
+can therefore do something different there.
+
+**What gets reported.** The worktree step says what happened in one line. If
+the main clone's own file is not allowed or trusted, nothing is said, which
+is the behaviour from before this existed. Running `direnv allow` or `mise
+trust` in the main clone, once per machine, turns it on for a repository.
+
+A session started from another session's worktree compares against the
+repository's primary checkout as git reports it, with symlinks resolved. If
+you reach that checkout through a symlink and allowed or trusted it under
+that spelling, nothing is extended, and nothing is said.
+
+**When the environment is slow.** Before the agent is launched, herdr-draft
+watches the pane's foreground processes (`herdr pane process-info`) and waits
+for direnv's load to finish. If the load is still running after a minute, it
+presses ctrl+c in the pane, at most twice, before anything is typed. direnv
+gives up, the agent starts without the environment as it would have before,
+and `--json` reports `env_load_interrupted`. This covers both launch paths,
+pinned accounts included. A process the `.envrc` started can outlive the
+interrupt, and a load that begins only after herdr-draft has looked is still
+given the extra minute but is not interrupted.
+
+Set it to `false` to approve every worktree's environment by hand. Only
+`config.toml` can set it.
 
 ## `[reaper]`
 

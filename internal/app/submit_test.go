@@ -252,6 +252,17 @@ func (r *submitFakeRunner) PaneRun(context.Context, string, []herdrc.EnvVar, []s
 	return nil
 }
 
+func (r *submitFakeRunner) PaneProcessInfo(context.Context, string) (herdrc.ProcessInfo, error) {
+	return herdrc.ProcessInfo{}, errors.New("process info is not modelled here")
+}
+
+func (r *submitFakeRunner) PaneSendKeys(context.Context, string, ...string) error {
+	if r.shouldFail("PaneSendKeys") {
+		return r.failErr
+	}
+	return nil
+}
+
 func (r *submitFakeRunner) PaneClose(context.Context, string) error {
 	if r.shouldFail("PaneClose") {
 		return r.failErr
@@ -1941,6 +1952,39 @@ func TestSubmitProgress_AWorktreeCaveatIsNotATabName(t *testing.T) {
 	}
 	if strings.HasPrefix(row.Detail, "not named") || !strings.HasPrefix(row.Detail, "branch zvi/x still tracks origin/develop") {
 		t.Errorf("worktree row detail = %q, want the caveat itself, not a tab's \"not named\"", row.Detail)
+	}
+}
+
+// TestSubmitProgress_TheEnvrcNoteJoinsTheWorktreeRow: what the worktree
+// step did about the new checkout's .envrc is one line, said in that step's
+// row beside what the row already says -- the branch on success, and the
+// caveat when there is one -- in whichever order keeps the more urgent
+// words from being the ones a narrow row clips.
+func TestSubmitProgress_TheEnvrcNoteJoinsTheWorktreeRow(t *testing.T) {
+	const note = ".envrc allowed: same as the main clone's"
+	for _, tc := range []struct {
+		name  string
+		state plan.StepState
+		err   error
+		want  string
+	}{
+		// First on a finished row, where it is the news and the branch is
+		// what the user just typed.
+		{"done", plan.StepDone, nil, note + " · zvi/x from origin/main"},
+		// After a caveat, which is the warning the popup holds open for.
+		{"with a caveat", plan.StepFailedNonFatal, errors.New("plan: execute: creating worktree: branch zvi/x still tracks origin/main"),
+			"branch zvi/x still tracks origin/main · " + note},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := Model{submitSteps: []form.Step{{Label: "worktree", Detail: "zvi/x from origin/main", State: plan.StepRunning}}}
+			m, _ = m.handleSubmitProgress(submitProgressMsg{progress: plan.Progress{
+				Index: 0, Total: 1, Label: "creating worktree", Kind: plan.OpWorktreeCreate,
+				State: tc.state, Err: tc.err, Note: note,
+			}})
+			if got := m.submitSteps[0].Detail; got != tc.want {
+				t.Errorf("worktree row detail = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

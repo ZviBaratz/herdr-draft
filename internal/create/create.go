@@ -698,9 +698,17 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 	// -- which ExecResult itself does not carry -- is captured here.
 	total := len(ops)
 	onProgress := func(p plan.Progress) {
+		// A step's note -- the worktree's word on its .envrc and mise
+		// config, or the agent's on an interrupted environment load --
+		// closes its line in parentheses: said once, beside the step it
+		// belongs to, and never a failure of its own.
+		note := ""
+		if p.Note != "" {
+			note = " (" + p.Note + ")"
+		}
 		switch p.State {
 		case plan.StepDone:
-			fmt.Fprintf(deps.stderr(), "[%d/%d] %s ... ok\n", p.Index+1, total, p.Label)
+			fmt.Fprintf(deps.stderr(), "[%d/%d] %s ... ok%s\n", p.Index+1, total, p.Label, note)
 		case plan.StepFailed:
 			fmt.Fprintf(deps.stderr(), "[%d/%d] %s ... failed: %v\n", p.Index+1, total, p.Label, p.Err)
 			rep.failedLabel = p.Label
@@ -712,7 +720,7 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 			// by its number, or a branch still tracking its base (#221),
 			// changes nothing a caller of stdout or --json addresses
 			// next, and the line names the command that fixes the second.
-			fmt.Fprintf(deps.stderr(), "[%d/%d] %s ... failed, continuing: %v\n", p.Index+1, total, p.Label, p.Err)
+			fmt.Fprintf(deps.stderr(), "[%d/%d] %s ... failed, continuing: %v%s\n", p.Index+1, total, p.Label, p.Err, note)
 		}
 	}
 

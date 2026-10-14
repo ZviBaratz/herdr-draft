@@ -787,7 +787,10 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		// exists to prove the two paths build the same plan.Input. A flag
 		// only `create` could set would be the first thing to break that.
 		TrustRepository: res.TrustRepository,
-		Machine:         target,
+		// `[worktree] inherit_trust`, off the same config as the form's
+		// buildPlanInput, and for trust_repository's reason not a flag.
+		InheritTrust: t.cfg.Worktree.InheritsTrust(),
+		Machine:      target,
 	}, prov, nil
 }
 

@@ -2766,7 +2766,13 @@ func (m Model) buildPlanInput() plan.Input {
 		// repository or remembered choice may supply it (see
 		// defaults.Resolved.TrustRepository).
 		TrustRepository: m.resolved.TrustRepository,
-		Machine:         m.planMachine(),
+		// `[worktree] inherit_trust`: extend the main clone's direnv allow
+		// and mise trust to a new worktree's identical files
+		// (plan.Input.InheritTrust).
+		// On by default, and like [timeouts] it is read off config.toml
+		// directly, since nothing above that file may supply it.
+		InheritTrust: m.cfg.Worktree.InheritsTrust(),
+		Machine:      m.planMachine(),
 	}
 }
 

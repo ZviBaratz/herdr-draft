@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -1957,4 +1958,74 @@ func TestCLIRunnerPaneRunRefusesAnUnusableEnvName(t *testing.T) {
 	if _, err := os.Stat(argvLog); err == nil {
 		t.Fatalf("a refused env name must type nothing, got %q", readArgvLog(t, argvLog))
 	}
+}
+
+// TestCLIRunnerPaneSendKeys pins the argv -- the pane POSITIONAL, then one
+// argument per key -- and the success shape: `pane send-keys` goes through
+// herdr's send_ok_request, exactly as `pane run` does
+// (herdr:src/cli/pane.rs at v0.9.0, pane_send_keys), so success is the exit
+// code and nothing on stdout.
+func TestCLIRunnerPaneSendKeys(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, "")
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.PaneSendKeys(context.Background(), "p3", "ctrl+c"); err != nil {
+		t.Fatalf("PaneSendKeys: %v", err)
+	}
+	if got, want := readArgvLog(t, argvLog), "pane send-keys p3 ctrl+c"; got != want {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+}
+
+// TestCLIRunnerPaneSendKeysRefusesEmptyPaneID: keys sent to whatever pane
+// herdr would pick by default land in somebody's work.
+func TestCLIRunnerPaneSendKeysRefusesEmptyPaneID(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, "")
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.PaneSendKeys(context.Background(), "", "ctrl+c"); !errors.Is(err, errRefused) {
+		t.Fatalf("PaneSendKeys(\"\") = %v, want a refusal", err)
+	}
+	assertNeverExecuted(t, argvLog)
+}
+
+// TestCLIRunnerPaneProcessInfo pins the argv (`--pane`, not positional, as
+// `pane read` is) and the decode of the envelope herdr prints through
+// print_response (herdr:src/cli/pane.rs at v0.9.0, pane_process_info) --
+// here a pane whose shell is running direnv's export, as measured on the
+// laptop 2026-10-14, with argv absent for one process, which the schema
+// allows.
+func TestCLIRunnerPaneProcessInfo(t *testing.T) {
+	stdout := `{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":3003383,` +
+		`"foreground_processes":[{"argv":["/usr/bin/zsh"],"name":"zsh","pid":3003383},` +
+		`{"argv":["direnv","export","zsh"],"name":"direnv","pid":3003832},{"name":"sleep","pid":3003977}],` +
+		`"pane_id":"wQQ:p1","shell_pid":3003383},"type":"pane_process_info"}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	got, err := r.PaneProcessInfo(context.Background(), "wQQ:p1")
+	if err != nil {
+		t.Fatalf("PaneProcessInfo: %v", err)
+	}
+	if want := "pane process-info --pane wQQ:p1"; readArgvLog(t, argvLog) != want {
+		t.Errorf("argv = %q, want %q", readArgvLog(t, argvLog), want)
+	}
+	if got.ShellPID != 3003383 || len(got.Foreground) != 3 {
+		t.Fatalf("got %+v", got)
+	}
+	if p := got.Foreground[1]; p.Name != "direnv" || !reflect.DeepEqual(p.Argv, []string{"direnv", "export", "zsh"}) {
+		t.Errorf("process 1 = %+v", p)
+	}
+	if p := got.Foreground[2]; p.Name != "sleep" || p.Argv != nil {
+		t.Errorf("process 2 = %+v, want no argv", p)
+	}
+}
+
+func TestCLIRunnerPaneProcessInfoRefusesEmptyPaneID(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+	r := &CLIRunner{Bin: bin}
+	if _, err := r.PaneProcessInfo(context.Background(), ""); !errors.Is(err, errRefused) {
+		t.Fatalf("PaneProcessInfo(\"\") = %v, want a refusal", err)
+	}
+	assertNeverExecuted(t, argvLog)
 }

@@ -600,6 +600,30 @@ func TestLoad_TrustRepositoryExplicitFalseIsNotNil(t *testing.T) {
 	}
 }
 
+// TestLoad_InheritTrustIsOnUnlessTurnedOff: `[worktree] inherit_trust`
+// extends an allow or trust the operator already made, to the same bytes in
+// a new checkout, so it is on with no table at all and off only when said.
+func TestLoad_InheritTrustIsOnUnlessTurnedOff(t *testing.T) {
+	for file, want := range map[string]bool{
+		"":                                      true,
+		"[worktree]\ntrust_repository = true\n": true,
+		"[worktree]\ninherit_trust = true\n":    true,
+		"[worktree]\ninherit_trust = false\n":   false,
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(file), 0o600); err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load(%q): %v", file, err)
+		}
+		if got := cfg.Worktree.InheritsTrust(); got != want {
+			t.Errorf("config.toml %q: InheritsTrust() = %v, want %v", file, got, want)
+		}
+	}
+}
+
 // TestLoad_ReaperMarkReady pins reap spec §6.2. The key is a POINTER for
 // trust_repository's reason: a file with no [reaper] table must leave it
 // nil, so the resolver attributes the false to built-in and never to a

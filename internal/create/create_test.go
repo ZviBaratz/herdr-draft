@@ -364,6 +364,17 @@ func (r *fakeRunner) PaneRun(_ context.Context, paneID string, env []herdrc.EnvV
 	return r.record("PaneRun", append(rec, argv...)...)
 }
 
+func (r *fakeRunner) PaneProcessInfo(_ context.Context, paneID string) (herdrc.ProcessInfo, error) {
+	if err := r.record("PaneProcessInfo", paneID); err != nil {
+		return herdrc.ProcessInfo{}, err
+	}
+	return herdrc.ProcessInfo{}, errors.New("process info is not modelled here")
+}
+
+func (r *fakeRunner) PaneSendKeys(_ context.Context, paneID string, keys ...string) error {
+	return r.record("PaneSendKeys", append([]string{paneID}, keys...)...)
+}
+
 func (r *fakeRunner) PaneClose(_ context.Context, paneID string) error {
 	return r.record("PaneClose", paneID)
 }

@@ -295,6 +295,27 @@ type jsonReport struct {
 	SpaceTabID       string `json:"space_tab_id,omitempty"`
 	SpacePaneID      string `json:"space_pane_id,omitempty"`
 
+	// Envrc and Mise are what became of the new checkout's environment
+	// files (plan.ExecResult.EnvTrust, `[worktree] inherit_trust`). Envrc:
+	// "allowed", the main clone's own bytes and already allowed there;
+	// "differs", left blocked for review; "not_allowed", identical but the
+	// main clone's is not allowed either; "denied", an explicit direnv deny
+	// of the checkout, left alone; "held", left blocked because the
+	// checkout's mise config is not trusted; or "allowing", the allow begun
+	// when the step failed. Mise: "trusted", "differs" or "not_trusted",
+	// the same way, or "unknown", a mise config and no mise found. Each is
+	// absent when there was nothing to do -- no worktree, no such file, no
+	// direnv, or the key off. TrustError is the step failing, beside
+	// whatever it had found by then. None is a reason the create failed:
+	// the exit code and ok are what they would have been without it.
+	Envrc      string `json:"envrc,omitempty"`
+	Mise       string `json:"mise,omitempty"`
+	TrustError string `json:"trust_error,omitempty"`
+	// EnvLoadInterrupted is true when the .envrc allowed here was still
+	// loading after a minute, and was interrupted before the agent was
+	// launched, so the agent started anyway, without its environment.
+	EnvLoadInterrupted bool `json:"env_load_interrupted,omitempty"`
+
 	// PromptSent is absent when there was no prompt at all, and also when
 	// there WAS one whose fate is unknown -- a prompt-wait timeout (#108),
 	// where neither true nor false is a statement this command can make.
@@ -462,6 +483,13 @@ func (r report) writeJSON(w io.Writer) {
 		out.SpaceWorkspaceID, out.SpaceTabID, out.SpacePaneID = c.WorkspaceID, c.TabID, c.PaneID
 		out.CheckoutPath = c.CheckoutPath
 	}
+	// The verdicts are reported beside an error too: "allowing" is what a
+	// step that failed after starting the allow knows, and it matters.
+	if t := r.result.EnvTrust; t.Err != nil {
+		out.TrustError = t.Err.Error()
+	}
+	out.Envrc, out.Mise = string(r.result.EnvTrust.Trust.Envrc), string(r.result.EnvTrust.Trust.Mise)
+	out.EnvLoadInterrupted = r.result.EnvTrust.Interrupted
 	if a := r.result.AgentAt; a != nil {
 		out.WorkspaceID, out.TabID, out.PaneID = a.WorkspaceID, a.TabID, a.PaneID
 	}

@@ -158,6 +158,15 @@ type Runner interface {
 	// non-empty, is emitted ahead of argv as shell assignments -- see
 	// EnvVar for why it cannot simply be more argv.
 	PaneRun(ctx context.Context, paneID string, env []EnvVar, argv []string) error
+	// PaneSendKeys presses keys in a pane, named as herdr spells them
+	// (`ctrl+c`, `esc`). plan uses it for one thing: interrupting an
+	// environment load that has held a new pane's shell past its budget,
+	// before the agent is launched there (settleEnv).
+	PaneSendKeys(ctx context.Context, paneID string, keys ...string) error
+	// PaneProcessInfo reads which processes hold a pane's foreground --
+	// `herdr pane process-info`. plan reads it to see an environment load
+	// in progress (`direnv export`) before it starts an agent there.
+	PaneProcessInfo(ctx context.Context, paneID string) (ProcessInfo, error)
 	// PaneClose runs `herdr pane close <pane_id>`. Clean calls it for a
 	// `split here` space without a worktree, and -- placement spec §5.4 --
 	// for an agent pane that differs from the space's own, before removing
@@ -1419,6 +1428,70 @@ func (r *CLIRunner) PaneRun(ctx context.Context, paneID string, env []EnvVar, ar
 		args = append(args, shellQuote(a))
 	}
 	return r.runOK(ctx, args...)
+}
+
+// PaneSendKeys runs `herdr pane send-keys <pane_id> <key>...`. runOK, not
+// runJSON: it goes through herdr's send_ok_request, as `pane run` does
+// (herdr:src/cli/pane.rs at v0.9.0, pane_send_keys), so success is the exit
+// code alone. An empty pane id is refused rather than left to herdr's
+// default, for PaneClose's reason.
+func (r *CLIRunner) PaneSendKeys(ctx context.Context, paneID string, keys ...string) error {
+	if paneID == "" {
+		return fmt.Errorf("%w pane send-keys: no pane id to send to", errRefused)
+	}
+	return r.runOK(ctx, append([]string{"pane", "send-keys", paneID}, keys...)...)
+}
+
+// ProcessInfo is a pane's foreground, as `herdr pane process-info` reports
+// it: the shell's pid (0 when herdr does not know it) and every process in
+// the foreground process group.
+type ProcessInfo struct {
+	ShellPID   int
+	Foreground []Process
+}
+
+// Process is one foreground process. Argv is nil when herdr could not read
+// it, which its schema allows.
+type Process struct {
+	PID  int
+	Name string
+	Argv []string
+}
+
+// PaneProcessInfo runs `herdr pane process-info --pane <id>`. runJSON: it
+// prints through print_response, the envelope helper
+// (herdr:src/cli/pane.rs at v0.9.0, pane_process_info); the fields are
+// src/api/schema/panes.rs's PaneProcessInfo at the same ref, where
+// shell_pid and argv are both optional.
+func (r *CLIRunner) PaneProcessInfo(ctx context.Context, paneID string) (ProcessInfo, error) {
+	if paneID == "" {
+		return ProcessInfo{}, fmt.Errorf("%w pane process-info: no pane id to read", errRefused)
+	}
+	raw, err := r.runJSON(ctx, "pane", "process-info", "--pane", paneID)
+	if err != nil {
+		return ProcessInfo{}, err
+	}
+	var res struct {
+		ProcessInfo struct {
+			ShellPID   *int `json:"shell_pid"`
+			Foreground []struct {
+				PID  int      `json:"pid"`
+				Name string   `json:"name"`
+				Argv []string `json:"argv"`
+			} `json:"foreground_processes"`
+		} `json:"process_info"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return ProcessInfo{}, fmt.Errorf("herdr pane process-info: decoding the reply: %w", err)
+	}
+	var info ProcessInfo
+	if res.ProcessInfo.ShellPID != nil {
+		info.ShellPID = *res.ProcessInfo.ShellPID
+	}
+	for _, p := range res.ProcessInfo.Foreground {
+		info.Foreground = append(info.Foreground, Process{PID: p.PID, Name: p.Name, Argv: p.Argv})
+	}
+	return info, nil
 }
 
 // envNameOK reports whether name is a portable shell variable name --

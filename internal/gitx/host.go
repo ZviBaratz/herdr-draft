@@ -94,7 +94,8 @@ func remoteGit(dir string, args ...string) string {
 
 // ssh runs script on h's machine and returns its trimmed stdout. A failure
 // carries the remote's stderr -- ssh's own words when ssh itself failed --
-// and keeps the *exec.ExitError reachable for exitCode.
+// and keeps the *exec.ExitError reachable for exitCode; the stdout received
+// before it is returned beside it.
 //
 // stderr goes to a file, not a pipe. The first ssh to a host with
 // ControlPersist starts that host's ProxyCommand, which inherits ssh's
@@ -129,10 +130,13 @@ func (h Host) ssh(ctx context.Context, script string) (string, error) {
 		if _, seekErr := errFile.Seek(0, io.SeekStart); seekErr == nil {
 			stderr, _ = io.ReadAll(errFile)
 		}
+		// The stdout so far comes back too, for a script that reports its
+		// progress there (ExtendTrust); every other caller drops it.
+		out := strings.TrimSpace(stdout.String())
 		if exitCode(err) == 255 {
-			return "", fmt.Errorf("ssh %s: %w: %s", h.target, err, strings.TrimSpace(string(stderr)))
+			return out, fmt.Errorf("ssh %s: %w: %s", h.target, err, strings.TrimSpace(string(stderr)))
 		}
-		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(stderr)))
+		return out, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(stderr)))
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }

@@ -149,6 +149,13 @@ type mockRunner struct {
 	// the create" and "the checkout is gone before the branch is deleted"
 	// are orderings no test can see.
 	onWorktreeCreate func(herdrc.WorktreeCreateReq)
+	// onSendKeys runs on every PaneSendKeys, after it is recorded: a pane
+	// whose shell an interrupt frees, for one.
+	onSendKeys func(paneID string, keys []string)
+	// processInfo answers PaneProcessInfo; nil answers that herdr could
+	// not say, which is how every test that does not model a pane's
+	// foreground runs.
+	processInfo      func() (herdrc.ProcessInfo, error)
 	onWorktreeRemove func(workspaceID string)
 
 	// focusAsked is what every topology request asked herdr for, in call
@@ -337,6 +344,25 @@ func (m *mockRunner) PaneRun(ctx context.Context, paneID string, env []herdrc.En
 	m.record("PaneRun", append(rec, argv...)...)
 	if m.shouldFail("PaneRun") {
 		return m.failErr
+	}
+	return nil
+}
+
+func (m *mockRunner) PaneProcessInfo(ctx context.Context, paneID string) (herdrc.ProcessInfo, error) {
+	m.record("PaneProcessInfo", paneID)
+	if m.processInfo == nil {
+		return herdrc.ProcessInfo{}, errors.New("process info is not modelled here")
+	}
+	return m.processInfo()
+}
+
+func (m *mockRunner) PaneSendKeys(ctx context.Context, paneID string, keys ...string) error {
+	m.record("PaneSendKeys", append([]string{paneID}, keys...)...)
+	if m.shouldFail("PaneSendKeys") {
+		return m.failErr
+	}
+	if m.onSendKeys != nil {
+		m.onSendKeys(paneID, keys)
 	}
 	return nil
 }

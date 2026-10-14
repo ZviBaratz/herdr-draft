@@ -84,9 +84,13 @@ func (r *fakeRunner) AwaitDetection(context.Context, string, time.Duration, time
 }
 func (r *fakeRunner) PaneRun(context.Context, string, []herdrc.EnvVar, []string) error { return nil }
 func (r *fakeRunner) PaneClose(context.Context, string) error                          { return nil }
-func (r *fakeRunner) TabClose(context.Context, string) error                           { return nil }
-func (r *fakeRunner) WorktreeRemove(context.Context, string) error                     { return nil }
-func (r *fakeRunner) WorkspaceClose(context.Context, string) error                     { return nil }
+func (r *fakeRunner) PaneSendKeys(context.Context, string, ...string) error            { return nil }
+func (r *fakeRunner) PaneProcessInfo(context.Context, string) (herdrc.ProcessInfo, error) {
+	return herdrc.ProcessInfo{}, errors.New("process info is not modelled here")
+}
+func (r *fakeRunner) TabClose(context.Context, string) error       { return nil }
+func (r *fakeRunner) WorktreeRemove(context.Context, string) error { return nil }
+func (r *fakeRunner) WorkspaceClose(context.Context, string) error { return nil }
 
 // fakeGit implements gitSource, defaulting to "a usable git repo with no
 // duplicate branch" so most tests only need to override what they care

@@ -11,6 +11,40 @@ tag is the one no test can reach. See
 [CONTRIBUTING.md](CONTRIBUTING.md#releases) for the order they move in, and
 for why a heading here may read `unreleased`.
 
+## Unreleased
+
+### Added
+
+- **A new worktree inherits the main clone's direnv allow and mise
+  trust.** Without this, every worktree of a repository with an `.envrc`
+  printed `.envrc is blocked`. herdr-draft now extends your allow or trust,
+  on whichever machine the session runs on, but only where the worktree
+  holds exactly the bytes you approved:
+  - **Matching files only.** A worktree's `.envrc` is allowed only when it
+    is byte-identical to the main clone's and direnv already allows that
+    one. Its mise config is trusted only when every mise config file it has
+    is the main clone's, and mise already trusts the main clone. A branch
+    that changes either file keeps it blocked for you to review.
+  - **The `.envrc` waits for mise.** When the worktree's mise config cannot
+    be trusted, its `.envrc` stays blocked too. That includes a mise config
+    with no mise found to ask about it. An `.envrc` that runs `mise
+    activate` would otherwise stop the pane on mise's prompt. A trust left
+    on a reused worktree path is removed when the content no longer
+    matches. An explicit `direnv deny` is left alone.
+  - **One line says what happened**, beside the worktree step in the popup
+    and in `create`'s progress. `create --json` reports `envrc`, `mise` and
+    `trust_error`. The allow races the new shell's first prompt and usually
+    wins. A shell that starts first prints `.envrc is blocked` once, so its
+    agent runs without the environment.
+  - **A slow environment doesn't fail a create.** Before the agent is
+    launched, herdr-draft waits up to a minute for the pane's direnv load to
+    finish, reading the pane's foreground processes. If the environment is
+    still loading after that, herdr-draft presses ctrl+c in the pane (at
+    most twice) before anything is typed. The agent then starts without
+    the environment, and `create --json` reports `env_load_interrupted`.
+  - **On by default.** `[worktree] inherit_trust = false` turns it off. Only
+    `config.toml` can set it.
+
 ## 0.2.0 — 2026-10-14
 
 **Install:** `herdr plugin install ZviBaratz/herdr-draft --ref v0.2.0`.
