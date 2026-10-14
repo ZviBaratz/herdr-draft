@@ -11,7 +11,11 @@ tag is the one no test can reach. See
 [CONTRIBUTING.md](CONTRIBUTING.md#releases) for the order they move in, and
 for why a heading here may read `unreleased`.
 
-## Unreleased
+## 0.2.0 — unreleased
+
+**Install:** `herdr plugin install ZviBaratz/herdr-draft --ref v0.2.0`.
+The requirements are 0.1.0's; starting a session on another machine
+also needs herdr 0.9.1 or later on both machines.
 
 ### Added
 

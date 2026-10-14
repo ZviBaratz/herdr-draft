@@ -37,7 +37,7 @@ const PluginID = "zvibaratz.draft"
 // release heading to it as well. The git tag is the fourth member of that
 // set and the only one no test can reach -- see CONTRIBUTING.md's
 // "Releases" for why, and for the order the four move in.
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // ErrContextUnset reports that $HERDR_PLUGIN_CONTEXT_JSON was empty rather
 // than malformed. The two are worth telling apart: malformed means herdr
