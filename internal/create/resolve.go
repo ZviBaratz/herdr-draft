@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,6 +21,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/gitx"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/machine"
 	"github.com/ZviBaratz/herdr-draft/internal/pathx"
 	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
@@ -91,6 +93,22 @@ type resolution struct {
 	// write must use THIS one, or a create that refused another plugin's
 	// state directory as a source would still write to it as a sink.
 	env Env
+
+	// machine is the machine the session runs on, resolved from --machine
+	// or config.toml alone (machine spec §5), and rel the project's path
+	// under the laptop's home, which is where it is looked for there. rel
+	// is "" for this machine.
+	machine machine.Choice
+	rel     string
+	// probe is what run()'s probe of a remote machine found, nil until then
+	// and for this machine: the duplicate refusals read its branches and
+	// workspaces instead of this machine's.
+	probe *machine.Report
+	// memoryBase is the base the resolution chose before a remote session
+	// mapped it to one the remote can fetch (machine spec §6.4): what
+	// projects.json records, so a remote session's origin/main does not
+	// become this machine's default.
+	memoryBase string
 }
 
 // resolveRequest is the first half of the pre-flight: locate the project,
@@ -125,6 +143,11 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	// the popup's options panel shows (agent-options spec §6.2), because a
 	// default that silently did not apply is a session nobody can explain.
 	for _, w := range cfg.Agents.OptionWarnings {
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
+	}
+	// And every [machine.paths] rule it dropped (machine spec §5.1): a rule
+	// that silently does not apply sends sessions to the wrong machine.
+	for _, w := range cfg.Machine.Warnings {
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: %s\n", w)
 	}
 
@@ -205,10 +228,17 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 		return resolution{}, err
 	}
 
-	in, prov, err := buildInput(req, t, res, kinds, issue, explicitPrompt{text: prompt, given: promptGiven}, hctx, deps)
+	choice, rel, machineFrom, err := resolveMachine(ctx, req, cfg, t, deps)
 	if err != nil {
 		return resolution{}, err
 	}
+
+	in, prov, err := buildInput(req, t, res, kinds, issue, explicitPrompt{text: prompt, given: promptGiven}, hctx, deps, choice)
+	if err != nil {
+		return resolution{}, err
+	}
+	prov[defaults.FieldMachine] = machineFrom
+	memoryBase := in.BaseRef
 	in, err = withBase(ctx, in, t, prov, req.set["base"], deps.checks())
 	if err != nil {
 		return resolution{}, err
@@ -227,7 +257,50 @@ func resolveRequest(ctx context.Context, req request, env Env, deps Deps) (resol
 	// An `auto` account is still the sentinel here: turning it into a profile
 	// runs the picker for real and writes its ledger, so it waits for every
 	// refusal that can be known without it -- see run() (#145).
-	return resolution{input: in, tiers: t, provenance: prov, env: env}, nil
+	return resolution{input: in, tiers: t, provenance: prov, env: env,
+		machine: choice, rel: rel, memoryBase: memoryBase}, nil
+}
+
+// resolveMachine is which machine the session runs on (machine spec §5):
+// --machine, else defaults.Machine's answer from config.toml alone, and
+// where that came from for --json's provenance. Only a selector the form's
+// row would offer is accepted (§4.2) -- local and what config.toml names --
+// because every flag here has a form control behind it, and so a saved
+// machine the configuration never names, a production host, is out of
+// reach of both. A remote one is resolved to its profile through `herdr
+// machine list`, which is local, and gets the project's path under this
+// machine's home, which is what it is looked for by there (§6.1).
+func resolveMachine(ctx context.Context, req request, cfg config.Config, t tiers, deps Deps) (machine.Choice, string, string, error) {
+	sel, tier, _ := defaults.Machine(cfg, t.projectKey)
+	from := tier.String()
+	if req.set["machine"] {
+		sel, from = strings.TrimSpace(req.machine), provenanceFlag
+	}
+	if sel == config.LocalMachine {
+		return machine.Choice{Selector: sel}, "", from, nil
+	}
+	// Any name for an offered machine: the selector config.toml wrote, or
+	// the label or id --json hands back (machine.SelectOffered).
+	offered := cfg.Machine.Offered()
+	saved, err := deps.Runner.MachineList(ctx)
+	if err != nil {
+		if !slices.Contains(offered, sel) {
+			return machine.Choice{}, "", "", fmt.Errorf("--machine %q is not one config.toml's [machine] offers (%s)", sel, strings.Join(offered, ", "))
+		}
+		return machine.Choice{}, "", "", fmt.Errorf("could not read herdr's saved machines, which another machine needs herdr 0.9.1 for: %w", err)
+	}
+	choice, err := machine.SelectOffered(saved, offered, sel)
+	if err != nil {
+		if req.set["machine"] {
+			return machine.Choice{}, "", "", fmt.Errorf("--machine: %w", err)
+		}
+		return machine.Choice{}, "", "", fmt.Errorf("config.toml's [machine]: %w", err)
+	}
+	rel, err := machine.Rel(pathx.CanonicalKey(deps.home()), t.projectKey)
+	if err != nil {
+		return machine.Choice{}, "", "", fmt.Errorf("a session on %s: %w", choice.Label(), err)
+	}
+	return choice, rel, from, nil
 }
 
 // resolveProjectDir resolves --project, defaulting to the working directory --
@@ -476,7 +549,7 @@ func projectMemoryKey(projectDir, repoRoot string) string {
 // would have applied it (a worktree only where one is possible, a
 // placement that only applies without one -- placement spec §14 -- an
 // agent kind falling through to the first favorite).
-func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, issue *linear.Issue, prompt explicitPrompt, hctx herdrc.Context, deps Deps) (plan.Input, map[string]string, error) {
+func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, issue *linear.Issue, prompt explicitPrompt, hctx herdrc.Context, deps Deps, on machine.Choice) (plan.Input, map[string]string, error) {
 	prov := provenanceOf(res)
 
 	// Blank is judged on the cleaned text, as the form judges it: a paste
@@ -610,6 +683,19 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 	// nobody asked for it on this command line -- and simply does not apply
 	// (below). Checked before --workspace's id is looked up, so a caller is
 	// not sent to fix an id that could never be used.
+	// A session on another machine opens in a new space there (machine
+	// spec §6.2): the here placements need the caller's pane and tab-in one
+	// of this server's spaces, and none of them exists on that server.
+	// Refused when asked for, as refuseWorktreePlacement refuses the same
+	// under a worktree; a remembered one simply does not apply.
+	if on.Remote() {
+		if req.set["placement"] && placement != plan.PlacementNewSpace {
+			return plan.Input{}, nil, fmt.Errorf("a session on %s opens in a new space there, so --placement %s does not apply", on.Label(), req.placement)
+		}
+		if req.set["workspace"] {
+			return plan.Input{}, nil, fmt.Errorf("--workspace names a space on this machine, and a session on %s opens in a new space there", on.Label())
+		}
+	}
 	if useWorktree {
 		if err := refuseWorktreePlacement(req, placement, prov[defaults.FieldWorktree]); err != nil {
 			return plan.Input{}, nil, err
@@ -626,10 +712,14 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		prov[defaults.FieldPlacement] = provenanceFlag
 	}
 
-	if useWorktree && !req.set["placement"] {
+	switch {
+	case req.set["placement"]:
+	case useWorktree:
 		prov[defaults.FieldPlacement] = provenanceWorktree
+	case on.Remote():
+		prov[defaults.FieldPlacement] = provenanceMachine
 	}
-	placement = plan.EffectivePlacement(useWorktree, placement)
+	placement = plan.EffectivePlacement(useWorktree, on.Remote(), placement)
 
 	kind, err := agentKind(req, res, kinds, prov)
 	if err != nil {
@@ -650,6 +740,20 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		return plan.Input{}, nil, err
 	}
 
+	// Another machine uses its own login (machine spec §6.3): a pin asked
+	// for is refused, and config.toml's [clauth] default, which nobody
+	// asked for on this command line, simply does not apply there.
+	pin := accountPin(req, t.cfg, kind)
+	var target plan.Machine
+	if on.Remote() {
+		if req.set["account"] && pin != "" {
+			return plan.Input{}, nil, fmt.Errorf("%s uses its own login, so --account %s cannot be pinned there", on.Label(), req.account)
+		}
+		pin = ""
+		// Dir is the clone probe's answer, which run() fills in.
+		target = plan.Machine{ID: on.Info.ID, Label: on.Label(), Target: on.Info.Target}
+	}
+
 	return plan.Input{
 		ProjectDir:    t.projectDir,
 		Title:         title,
@@ -662,7 +766,7 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		AgentKind:     kind,
 		ExtraArgs:     t.cfg.Agents.ExtraArgs[kind],
 		AgentOptions:  options,
-		AccountPin:    accountPin(req, t.cfg, kind),
+		AccountPin:    pin,
 		AccountLaunch: accountLaunch(t.cfg),
 		// Off the same config as the form's buildPlanInput. Both paths must
 		// carry both of these or TestFormAndCommandProduceTheSamePlan fails --
@@ -683,6 +787,7 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 		// exists to prove the two paths build the same plan.Input. A flag
 		// only `create` could set would be the first thing to break that.
 		TrustRepository: res.TrustRepository,
+		Machine:         target,
 	}, prov, nil
 }
 
@@ -722,6 +827,20 @@ func buildInput(req request, t tiers, res defaults.Resolved, kinds []string, iss
 // projects.json records that, since it is keyed on the origin root and a
 // remembered commit would pin every later session in the repository to it.
 func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]string, explicit bool, git boundedGit) (plan.Input, error) {
+	// On another machine the worktree is cut from that machine's clone
+	// after a fetch there, so the base is one origin has (machine spec
+	// §6.4), and a lane's commit -- on this machine only -- is never it.
+	if in.Machine.Remote() {
+		if !in.UseWorktree {
+			return in, nil
+		}
+		base, err := git.RemoteBase(ctx, t.projectDir, in.BaseRef, in.Machine.Label)
+		if err != nil {
+			return plan.Input{}, err
+		}
+		in.BaseRef = base
+		return in, nil
+	}
 	lane := in.UseWorktree && t.primary != ""
 	chosen := explicit && in.BaseRef != "" && in.UseWorktree && t.isGitRepo
 	if !lane && !chosen {
@@ -784,6 +903,11 @@ func withBase(ctx context.Context, in plan.Input, t tiers, prov map[string]strin
 // so, never a refusal: refusing a create over a check nobody needed to pass
 // would be #272's "unknown is not invalid" turned round.
 func baseBehindWarning(ctx context.Context, in plan.Input, t tiers, git boundedGit) string {
+	if in.Machine.Remote() && in.UseWorktree {
+		// Not this clone's staleness: the remote's, which the fetch before
+		// the cut settles (machine spec §6.4).
+		return fmt.Sprintf("the worktree is cut on %s from %s, after a fetch there", in.Machine.Label, in.BaseRef)
+	}
 	if !in.UseWorktree || !t.isGitRepo || in.BaseRef == "" {
 		return ""
 	}
@@ -1227,6 +1351,7 @@ func workspaceByID(workspaces []herdrc.WorkspaceInfo, id string) (plan.Space, bo
 // (#209).
 const (
 	provenanceFlag      = "flag"
+	provenanceMachine   = "machine"
 	provenanceWorktree  = "worktree"
 	provenanceCheckout  = "checkout"
 	provenanceExtraArgs = "extra_args"

@@ -64,6 +64,11 @@ trust_repository = false           # waive git's ownership check per request
 [reaper]
 mark_ready = false                 # start every prompt on "reap"
 
+[machine]                          # the machine row appears with this table
+# default = "local"                # local, or a saved herdr machine
+[machine.paths]                    # projects to machines, longest match wins
+# "~/work" = "dev"
+
 [palette]                          # colour overrides, when the theme reads wrong
 # accent = "#89b4fa"
 ```
@@ -367,6 +372,71 @@ pane-reaper lives in the
 repository. Install it with
 `herdr plugin link <clone>/config/herdr/plugins/local/pane-reaper`.
 
+## `[machine]`
+
+Which herdr machine a session runs on. A machine is `local` (this one) or a
+machine you have saved with `herdr machine add`, named by its label, its
+profile id or its ssh target. herdr 0.9.1 or later is needed on **both**
+machines; see [Sessions on another machine](#sessions-on-another-machine).
+
+```toml
+[machine]
+default = "local"            # optional; the built-in is local
+
+[machine.paths]
+"~/work" = "dev"             # every project under ~/work opens on dev
+"~/work/browser-tests" = "local"
+```
+
+- **`default`** (default: `local`) is the machine for a project no path
+  matches.
+- **`[machine.paths]`** maps a directory to a machine. A project matches a
+  directory it is in or under, compared by whole path components, so
+  `~/work-old` is not under `~/work`, and the longest match wins. The
+  project is the repository's own checkout, so a session started from one
+  of its worktrees (under `~/.herdr/worktrees`, say) matches the
+  repository's rule.
+
+A path that is not absolute (write it from `~` or `/`), a path with no
+machine, and a second spelling of a directory already listed are ignored,
+each with a warning.
+
+**The table is what turns the feature on.** With a `[machine]` table, even an
+empty one, the form grows a `machine` row offering `local` and every machine
+the table names. `create --machine` accepts the same names. A saved machine
+the table never mentions is offered by neither, which is how a machine you
+must not land on by accident stays out of reach.
+
+**Only `config.toml` can set this, and it is never remembered.** A session
+you start on `local` from a project that usually goes to `dev`, to drive the
+browser or a phone here, does not make the next one local. A project that
+must always stay local gets its own path.
+
+### Sessions on another machine
+
+A session on another machine runs entirely there, and herdr-draft checks
+first that it can. It asks herdr to reach the machine and asks the machine,
+over ssh, whether the project is there. The project is looked for at the
+same path under that machine's home: `~/work/api` here is `~/work/api`
+there, whatever the two home directories are called. The form shows the
+answer on the `machine` row, and a machine that cannot be reached is
+refused with its own reason. Nothing falls back to this machine: choosing
+`local` is one key away on the row.
+
+On another machine:
+
+- **The session opens in a new space there.** The placement row has nothing
+  to choose.
+- **A worktree is cut from origin's copy of the base, after a fetch on that
+  machine.** `HEAD` means origin's default branch, and a local branch means
+  origin's branch of the same name, which must exist. Work that is only on
+  this machine is not there, so push it first.
+- **It uses that machine's own login.** The account row has nothing to
+  choose.
+- **Its pane is on that machine.** herdr lists it under the machine's name
+  in the sidebar, and a dialog it stops on is answered there. The popup
+  posts a notification here saying where it went.
+
 ## `[palette]`
 
 herdr-draft draws in herdr's colours. It reads herdr's own `config.toml`:
@@ -436,6 +506,9 @@ resolved the same way. **Highest first:**
 
 A team's committed default beats what you last did in some *other*
 repository, and loses to what you last did in this one.
+
+The machine is the exception: it comes from `config.toml`'s `[machine]` alone
+(or the built-in `local`), and no memory or repository default supplies it.
 
 Pressing `⌃R` twice clears the form back to these defaults, including the
 repository's `.herdr-draft.toml`. The one thing it leaves out is this
@@ -537,7 +610,8 @@ includes every other key `config.toml` accepts: `[agents.extra_args]` and
 `[agents] favorites` and `default` (a repository does not choose which
 agent runs on your machine), `[linear] prompt_template` (it would become the
 agent's first instruction), `[reaper]` (it would add an instruction to the
-prompt), `[linear] api_key` and `api_key_cmd`, and all of `[clauth]`,
+prompt), `[machine]` (a repository does not choose which host runs your
+code), `[linear] api_key` and `api_key_cmd`, and all of `[clauth]`,
 `[timeouts]`, `[palette]` and `[worktree]`. The last matters most:
 `trust_repository` waives a git safety check, and whether a repository is
 safe can never be decided by the repository. A misspelled key and a file that

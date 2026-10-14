@@ -376,6 +376,18 @@ func (m *mockRunner) WorkspaceClose(ctx context.Context, workspaceID string) err
 	return nil
 }
 
+// On, MachineList and NotificationShow: this fake is one machine, and
+// saves none (machine spec §8.1).
+// On records the machine a plan scoped this fake to, so a test can see
+// that nothing reached it first.
+func (m *mockRunner) On(id string) herdrc.Runner {
+	m.record("On", id)
+	return m
+}
+
+func (m *mockRunner) MachineList(context.Context) ([]herdrc.MachineInfo, error) { return nil, nil }
+func (m *mockRunner) NotificationShow(context.Context, string, string) error    { return nil }
+
 // withBusyRetryOverrides replaces busyRetryInterval/busyRetryNow for the
 // life of the calling test (restored via t.Cleanup), so Execute's busy
 // retry loop runs instantly instead of waiting out real sleeps. now == nil
@@ -2390,7 +2402,7 @@ func TestExecuteBlockedStartIsExplained(t *testing.T) {
 // stripping inside a plan test, against the wrong string.
 func TestExplainBlockedStartLeadsWithTheAction(t *testing.T) {
 	m := &mockRunner{readText: trustDialogScreen}
-	err := explainBlockedStart(context.Background(), m, "claude", "pane-1", notReadyErr("fix-pagination"))
+	err := explainBlockedStart(context.Background(), m, Machine{}, "claude", "pane-1", notReadyErr("fix-pagination"))
 
 	const rendered = 60 // roughly what an 80-cell popup gives the value column
 	head := firstRunes(err.Error(), rendered)

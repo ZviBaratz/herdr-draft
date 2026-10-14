@@ -477,10 +477,13 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 	// different branch_prefix, or turns linear_branch_name off, produces a
 	// different branch for the same title (see applyProjectDefaults).
 	branchBefore := m.worktree.Branch()
+	// And the machine: the project's rules can move it (machine spec §5),
+	// and a check asked about one machine says nothing about the other.
+	remoteBefore := m.remoteSelected()
 	settle := m.applyProjectDefaults(msg.req.key, msg.memoryKey, msg.isGitRepo, msg.repoConfig)
 
 	var cmd tea.Cmd
-	if m.worktree.On() != worktreeOnBefore || m.worktree.Branch() != branchBefore {
+	if m.worktree.On() != worktreeOnBefore || m.worktree.Branch() != branchBefore || m.remoteSelected() != remoteBefore {
 		// A default just flipped the toggle or rewrote the branch --
 		// runTitleCheck's own branch-exists half depends on both (it is
 		// skipped entirely while worktree is off), so re-run the
@@ -489,13 +492,20 @@ func (m Model) handleDirResult(msg dirResultMsg) (Model, tea.Cmd) {
 		// own syncDerivedInertness already resynced lastWorktreeOn to the
 		// NEW value, and this handler never runs reactToChanges, so its
 		// diff would otherwise never see either transition.
-		cmd = m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), msg.req.key, m.worktree.On())
+		cmd = m.scheduleTitleCheck(m.title.Value(), m.worktree.Branch(), msg.req.key, m.worktree.On(), m.remoteSelected())
 		// ...and the title panel's resting note follows both for the same
 		// reason: it names the branch, and is true only while a worktree
 		// is going to be created (see Model.titleNote).
 		m.title.SetVerdict(m.title.Value(), m.titleNote(), form.VerdictNote)
 	}
 	cmd = tea.Batch(cmd, settle)
+	// Back on this machine, the account row applies again, and the picker
+	// preview it skipped while another machine was selected is owed -- a
+	// submit resting on `auto` holds for it (reactToChanges does the same
+	// for a row the user cycled).
+	if remoteBefore && !m.remoteSelected() {
+		cmd = tea.Batch(cmd, m.schedulePickerPreview(msg.req.key))
+	}
 	if m.submitHeld {
 		// The submit this check was holding goes on from the top, so the
 		// validation it waited for runs on these answers (#195) -- or holds
@@ -1015,7 +1025,8 @@ func (m *Model) scheduleBaseBehind(force bool) tea.Cmd {
 	dir := m.dir.Value()
 	base := m.worktree.Base()
 	on := m.worktree.On()
-	key := dir + "\x00" + base + "\x00" + strconv.FormatBool(on)
+	remote := m.machineLabel()
+	key := dir + "\x00" + base + "\x00" + strconv.FormatBool(on) + "\x00" + remote
 	if key == m.lastBehindKey && !force {
 		return nil
 	}
@@ -1025,7 +1036,9 @@ func (m *Model) scheduleBaseBehind(force bool) tea.Cmd {
 		m.showRepoConfig()
 	}
 	m.reqs.baseBehind++
-	if !on || base == "" || dir == "" {
+	// On another machine the cut is made there, from origin's copy after a
+	// fetch, so this clone's staleness says nothing (machine spec §6.4).
+	if !on || base == "" || dir == "" || remote != "" {
 		return nil
 	}
 	v := m.reqs.baseBehind
@@ -1095,6 +1108,18 @@ func (m *Model) refreshBaseStatus() {
 		m.worktree.SetBaseStatus("couldn't check "+m.uncheckedBaseRef+": pick a base", true)
 		return
 	}
+	// On another machine the base is not this clone's at all: the cut is
+	// made there, from origin's copy, after a fetch (machine spec §6.4).
+	// Said here, where the base is chosen, rather than left to the row's
+	// `← HEAD`, which on dev means origin's default branch.
+	if label := m.machineLabel(); label != "" {
+		what := "origin's copy of " + m.worktree.Base()
+		if m.worktree.Base() == "" {
+			what = "origin's default branch"
+		}
+		m.worktree.SetBaseStatus("on "+label+": cut from "+what+", after a fetch there", false)
+		return
+	}
 	m.worktree.SetBaseStatus(m.baseListNote, false)
 }
 
@@ -1109,6 +1134,9 @@ type titleDebounceMsg struct {
 	branch     string
 	dir        string
 	worktreeOn bool
+	// remote is whether the session goes to another machine, which changes
+	// which branches and labels are in the way (machine spec §7).
+	remote bool
 }
 
 type titleResultMsg struct {
@@ -1132,7 +1160,7 @@ type titleResultMsg struct {
 // scheduling time (not re-read live when the check finally runs) -- the
 // same "capture the relevant state at call time" discipline Atrium's own
 // runBranchSearch uses for m.newSessionPath.
-func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn bool) tea.Cmd {
+func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn, remote bool) tea.Cmd {
 	m.reqs.title++
 	v := m.reqs.title
 	clock := m.deps.Clock
@@ -1143,6 +1171,7 @@ func (m *Model) scheduleTitleCheck(title, branch, dir string, worktreeOn bool) t
 			branch:     branch,
 			dir:        dir,
 			worktreeOn: worktreeOn,
+			remote:     remote,
 		}
 	}
 }
@@ -1173,10 +1202,15 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 	git := m.deps.Git
 	workspaces := m.workspaces
 	req := msg.req
-	branch, dir, worktreeOn := msg.branch, msg.dir, msg.worktreeOn
+	branch, dir, worktreeOn, remote := msg.branch, msg.dir, msg.worktreeOn, msg.remote
 	lt, deadline := m.checkBudget()
 	return func() tea.Msg {
-		labelTaken := workspaceLabelTaken(workspaces, req.key)
+		// On another machine the labels and the branches that matter are
+		// that machine's and origin's (machine spec §7): this machine's
+		// workspaces and local branches are not in the way there. The
+		// remote half -- its clone's branches and its workspace labels --
+		// is the probe's, read at submit (machineRefusal).
+		labelTaken := !remote && workspaceLabelTaken(workspaces, req.key)
 
 		var invalid error
 		if branch != "" {
@@ -1191,6 +1225,10 @@ func (m Model) runTitleCheck(msg titleDebounceMsg) tea.Cmd {
 			return res
 		}
 		exists, ok := awaitCheck(lt, deadline, func(ctx context.Context) bool {
+			if remote {
+				found, err := git.OriginBranchExists(ctx, pathx.ExpandTilde(dir), branch)
+				return err == nil && found
+			}
 			found, err := git.BranchExists(ctx, pathx.ExpandTilde(dir), branch)
 			return err == nil && found
 		})
@@ -1557,7 +1595,9 @@ type pickerPreviewMsg struct {
 // Returns nil when no picker is configured -- the normal case -- so nothing is
 // scheduled at all rather than scheduled and discarded.
 func (m *Model) schedulePickerPreview(path string) tea.Cmd {
-	if m.deps.Picker == nil || m.account == nil {
+	// Not for a session on another machine, which uses its own login
+	// (machine spec §6.3): there is no account here to preview.
+	if m.deps.Picker == nil || m.account == nil || m.remoteSelected() {
 		return nil
 	}
 	m.reqs.picker++
@@ -2143,6 +2183,11 @@ func submitWaitingHint(in plan.Input) string {
 	if in.Prompt == "" {
 		return ""
 	}
+	if in.Machine.Remote() {
+		// The dialog is on a screen this machine is not showing (machine
+		// spec §8.5).
+		return "answer the dialog on " + in.Machine.Label + " — your prompt goes out as soon as you do"
+	}
 	return "answer the dialog in the pane — your prompt goes out as soon as you do"
 }
 
@@ -2412,14 +2457,24 @@ func (m Model) persistStateCmd() tea.Cmd {
 
 	projectKey := m.projectKey
 	previous, _ := m.projects.Get(projectKey)
+	// A remote session's base is the origin ref it was mapped to for that
+	// machine; what is remembered is the row's (machine spec §6.5).
+	base := m.submitInput.BaseRef
+	if m.submitInput.Machine.Remote() {
+		base = m.worktree.Base()
+	}
 	projects := m.projects.Touched(projectKey, config.ProjectDefaults{
 		Kind:      m.submitInput.AgentKind,
 		Worktree:  &useWorktree,
 		Placement: defaults.RememberedPlacement(m.submitInput, previous.Placement),
-		Base:      m.submitInput.BaseRef,
+		Base:      base,
 	}, time.Now())
+	notify := notifyRemoteCmd(m.deps.Runner, m.submitInput)
 
 	return func() tea.Msg {
+		// Before the state write's own message ends the submit: the toast
+		// that says where a remote session went (machine spec §9.5).
+		notify()
 		// No stateDir guard here any more: both savers refuse an empty
 		// directory themselves. Three call sites with two of them
 		// remembering to check is exactly how linear.SaveCache came to
@@ -2718,6 +2773,22 @@ func (gitxSource) ResolveCommit(ctx context.Context, dir, ref string) (string, e
 
 func (gitxSource) BaseBehind(ctx context.Context, dir, ref string) (string, int, error) {
 	return gitx.BaseBehind(ctx, dir, ref)
+}
+
+func (gitxSource) FullRefName(ctx context.Context, dir, name string) (string, error) {
+	return gitx.FullRefName(ctx, dir, name)
+}
+
+func (gitxSource) OriginHead(ctx context.Context, dir string) (string, error) {
+	return gitx.OriginHead(ctx, dir)
+}
+
+func (gitxSource) OriginBranchExists(ctx context.Context, dir, name string) (bool, error) {
+	return gitx.OriginBranchExists(ctx, dir, name)
+}
+
+func (gitxSource) OriginURL(ctx context.Context, dir string) (string, error) {
+	return gitx.OriginURL(ctx, dir)
 }
 
 func (gitxSource) ListSubdirs(dir string, limit int) []string {

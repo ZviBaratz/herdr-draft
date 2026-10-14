@@ -42,6 +42,8 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/defaults"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/machine"
+	"github.com/ZviBaratz/herdr-draft/internal/pathx"
 	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 )
@@ -189,6 +191,10 @@ type GitSource interface {
 	// branch's short name and the count, or ("", 0) for any other base
 	// (gitx.BaseBehind, #354).
 	BaseBehind(ctx context.Context, dir, ref string) (string, int, error)
+	// RefReader is the four questions about this clone a session on
+	// another machine asks: which base it can carry there, and whether the
+	// clone there is the same repository (machine spec §6.4, §7).
+	machine.RefReader
 }
 
 // ClauthSource is clauth's status feed -- the same one-method interface
@@ -239,6 +245,14 @@ type Deps struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
+	// Prober runs a remote machine's two probes (machine spec §7), or nil
+	// for machine.CLIProber over Runner and ssh -- every test hands in a
+	// fake, so none runs either.
+	Prober machine.Prober
+	// Home is nil for pathx.Home: the laptop's home, which a project's path
+	// is carried to another machine relative to (machine spec §6.1).
+	Home func() string
+
 	// Workdir is nil for os.Getwd -- the default project directory when
 	// --project is not given.
 	Workdir func() (string, error)
@@ -269,6 +283,20 @@ func (d Deps) stderr() io.Writer {
 		return d.Stderr
 	}
 	return os.Stderr
+}
+
+func (d Deps) prober() machine.Prober {
+	if d.Prober != nil {
+		return d.Prober
+	}
+	return machine.CLIProber{Runner: d.Runner}
+}
+
+func (d Deps) home() string {
+	if d.Home != nil {
+		return d.Home()
+	}
+	return pathx.Home()
 }
 
 func (d Deps) stdin() io.Reader {
@@ -344,7 +372,14 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	// Built once as a CHECK, with an `auto` account still unpicked: every
 	// refusal plan.Build can make is a refusal the pick below must not be
 	// spent on (#145).
-	if _, err := plan.Build(resolved.input); err != nil {
+	//
+	// A remote session's directory there is the probe's answer, which needs
+	// herdr and so comes below; the check stands a placeholder in for it.
+	check := resolved.input
+	if check.Machine.Remote() {
+		check.Machine.Dir = "~/" + resolved.rel
+	}
+	if _, err := plan.Build(check); err != nil {
 		return refuse(deps.stderr(), err)
 	}
 	// `auto` with no picker to ask is a fault in the command or the config,
@@ -359,7 +394,15 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 	// that needs no herdr -- a typo in a flag should not need a running
 	// herdr to be reported -- and `workspace list` is the same call
 	// app.Bootstrap uses for the same purpose.
-	if _, err := deps.Runner.WorkspaceList(ctx); err != nil {
+	//
+	// A session on another machine needs that machine instead (machine
+	// spec §7): its probe is what answers "reachable", and whether it can
+	// host the session at all.
+	if resolved.machine.Remote() {
+		if code, ok := probeMachine(ctx, &resolved, deps); !ok {
+			return code
+		}
+	} else if _, err := deps.Runner.WorkspaceList(ctx); err != nil {
 		fmt.Fprintf(deps.stderr(), "herdr-draft create: herdr unreachable: %v\n", err)
 		return ExitUnreachable
 	}
@@ -394,7 +437,7 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 		// a request it passes is one the real run would not refuse before
 		// starting. Nothing past this point runs -- no plan, no memory
 		// write, and the pick above was the picker's own dry run.
-		rep := report{input: resolved.input, provenance: resolved.provenance, json: req.json, dryRun: true}
+		rep := report{input: resolved.input, provenance: resolved.provenance, json: req.json, dryRun: true, machine: resolved.machine}
 		if req.json {
 			// Only --json has somewhere to put it, so only --json reads it.
 			rep.usage = dryRunUsage(ctx, resolved, deps, cl)
@@ -452,6 +495,26 @@ func run(ctx context.Context, req request, env Env, deps Deps) int {
 // and the auth status as non-blocking whenever it is unknown.
 func refuseWhatTheFormRefuses(ctx context.Context, resolved resolution, deps Deps, cl *clauthOnce) error {
 	in := resolved.input
+
+	// On another machine the branch is made in THAT clone, from origin's
+	// copy, so what makes a name taken is that clone's branches and
+	// origin's -- not this machine's local ones -- and the workspace labels
+	// are that server's (machine spec §7).
+	if in.Machine.Remote() {
+		if in.UseWorktree && in.Branch != "" {
+			onOrigin, err := deps.checks().OriginBranchExists(ctx, resolved.tiers.projectDir, in.Branch)
+			if errors.Is(err, errCheckTimedOut) {
+				return err
+			}
+			if (err == nil && onOrigin) || resolved.probe.HasBranch(in.Branch) {
+				return fmt.Errorf("branch %q already exists on %s or on origin; pass --branch with a new name", in.Branch, in.Machine.Label)
+			}
+		}
+		if w, taken := app.WorkspaceLabelled(resolved.probe.Workspaces, in.Title); taken {
+			return fmt.Errorf("workspace %s on %s is already labelled %q; pass a different --title", w.WorkspaceID, in.Machine.Label, in.Title)
+		}
+		return nil
+	}
 
 	// Not a formality: herdr v0.9.0 does not refuse a branch that exists
 	// locally. It checks it out and ignores the base
@@ -600,7 +663,11 @@ func (c *clauthOnce) get(ctx context.Context) (clauth.Status, error) {
 // say so, would read as an account nobody could see into for no reason.
 func dryRunUsage(ctx context.Context, resolved resolution, deps Deps, cl *clauthOnce) *accountUsage {
 	in := resolved.input
-	if deps.Clauth == nil || in.AgentKind != claudeKind || !clauthEnabled(resolved) {
+	// Not for a session on another machine: it bills that machine's own
+	// login (machine spec §6.3), and this machine's clauth windows would be
+	// a number about the wrong account -- one the spawn skill tells agents
+	// to choose models by. Absent means unknown, as it always has here.
+	if deps.Clauth == nil || in.AgentKind != claudeKind || !clauthEnabled(resolved) || in.Machine.Remote() {
 		return nil
 	}
 	status, err := cl.get(ctx)
@@ -623,6 +690,7 @@ func execute(ctx context.Context, resolved resolution, req request, deps Deps, o
 		provenance: resolved.provenance,
 		onFailure:  req.onFailure,
 		json:       req.json,
+		machine:    resolved.machine,
 	}
 
 	// plan.Execute reports through this callback synchronously, so the
@@ -763,13 +831,59 @@ func remember(resolved resolution, now time.Time) {
 		return
 	}
 	previous, _ := resolved.tiers.projects.Get(resolved.tiers.projectKey)
+	// A remote session's base is the origin ref it was mapped to for that
+	// machine; what is remembered is the one the resolution chose
+	// (machine spec §6.5).
+	base := in.BaseRef
+	if in.Machine.Remote() {
+		base = resolved.memoryBase
+	}
 	projects := resolved.tiers.projects.Touched(resolved.tiers.projectKey, config.ProjectDefaults{
 		Kind:      in.AgentKind,
 		Worktree:  &useWorktree,
 		Placement: defaults.RememberedPlacement(in, previous.Placement),
-		Base:      in.BaseRef,
+		Base:      base,
 	}, now)
 	_ = config.SaveProjects(stateDir, projects)
+}
+
+// probeMachine runs machine spec §7's probes of a remote session's machine
+// and settles the session's directory there: the second half of the
+// pre-flight for a remote session, where a local one asks the local server
+// whether it is up. It reports a refusal itself and returns its exit code
+// and false; true means go on.
+//
+// Exit 3 for a machine it could not reach, naming the way to keep the
+// session here -- decision 4: refused, never relocated. Exit 5 for a probe
+// that did not answer, which is unknown, not unreachable (#272). Exit 2 for
+// a machine that answered and cannot host it: no clone there, or a
+// different repository.
+func probeMachine(ctx context.Context, resolved *resolution, deps Deps) (int, bool) {
+	choice := resolved.machine
+	git := deps.checks()
+	report, err := boundedErr(ctx, git.deadline, "the probe of "+choice.Label(), func(ctx context.Context) (machine.Report, error) {
+		return deps.prober().Probe(ctx, choice, resolved.rel)
+	})
+	switch {
+	case errors.Is(err, machine.ErrUnreachable):
+		fmt.Fprintf(deps.stderr(), "herdr-draft create: %v -- pass --machine local to start the session on this machine\n", err)
+		return ExitUnreachable, false
+	case err != nil:
+		return refuse(deps.stderr(), err), false
+	}
+	// Nothing to compare is not a mismatch, so an origin this clone could
+	// not name only skips the check. One nobody answered still refuses.
+	origin, err := git.OriginURL(ctx, resolved.tiers.projectDir)
+	if errors.Is(err, errCheckTimedOut) {
+		return refuse(deps.stderr(), err), false
+	}
+	dir, err := machine.Judge(report, choice, resolved.rel, resolved.input.UseWorktree, origin)
+	if err != nil {
+		return refuse(deps.stderr(), err), false
+	}
+	resolved.input.Machine.Dir = dir
+	resolved.probe = &report
+	return 0, true
 }
 
 // refuse reports a pre-flight refusal and returns its exit code, so every

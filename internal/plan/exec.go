@@ -1229,7 +1229,10 @@ func withScreenTail(screen string, err error) error {
 // kind is the agent kind being launched ("claude"), used only to name it;
 // an empty kind falls back to "the agent" rather than opening the sentence
 // with a space.
-func explainBlockedStart(ctx context.Context, r herdrc.Runner, kind, paneID string, err error) error {
+//
+// On another machine the pane is on a screen the laptop is not showing, so
+// the instruction says where (machine spec §8.5).
+func explainBlockedStart(ctx context.Context, r herdrc.Runner, on Machine, kind, paneID string, err error) error {
 	if !isBlockedAgentError(err) || paneID == "" {
 		return err
 	}
@@ -1238,8 +1241,12 @@ func explainBlockedStart(ctx context.Context, r herdrc.Runner, kind, paneID stri
 		return err
 	}
 	if sig := blockingDialogSignature(screen); sig != "" {
-		return fmt.Errorf("%s started; answer the dialog in the pane, then keep this session -- it is showing %q: %w",
-			agentKindName(kind), sig, err)
+		where := "in the pane"
+		if on.Remote() {
+			where = "on " + on.Label
+		}
+		return fmt.Errorf("%s started; answer the dialog %s, then keep this session -- it is showing %q: %w",
+			agentKindName(kind), where, sig, err)
 	}
 	return withScreenTail(screen, err)
 }
@@ -1449,6 +1456,13 @@ func topologyIndices(ops []Op) (space, agentPane int) {
 // dereferencing nil.
 func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onProgress func(Progress)) ExecResult {
 	result := ExecResult{FailedIndex: -1}
+	// Scoped here rather than by the caller, so a remote plan cannot be run
+	// against the local server: every op carries the same machine (Build
+	// stamps it) (machine spec §8.1). A local plan is left with the runner
+	// it was handed, exactly as before the field existed.
+	if len(ops) > 0 && ops[0].Machine.Remote() {
+		r = r.On(ops[0].Machine.ID)
+	}
 	spaceIdx, agentPaneIdx := topologyIndices(ops)
 	if report := onProgress; report != nil {
 		// Kind is stamped here, once, rather than threaded through every
@@ -1548,10 +1562,47 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// made the branch, so "absent a moment before" is the only
 				// proof there is. Not a gate -- an unreadable answer just
 				// leaves the branch unclaimed, which a clean keeps.
-				newBranch := branchIsAbsent(ctx, op.Worktree.Cwd, op.Worktree.Branch)
+				host := op.Machine.Git()
+				// On another machine the worktree is cut from that
+				// machine's clone, which herdr does not fetch first
+				// (machine spec §3.3) and which can be weeks stale -- so
+				// it is fetched here, and a fetch or a base that fails is
+				// fatal before herdr is asked: a session silently cut from
+				// last month's origin/main is the failure this exists to
+				// prevent (§8.3).
+				if op.Machine.Remote() {
+					fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
+					err := host.FetchPrune(fetchCtx, op.Worktree.Cwd)
+					// Once more, inside the same bound: sessions spawned
+					// together into one clone fetch at once, and git refuses
+					// the later fetch while the earlier holds a ref lock.
+					if err != nil && fetchCtx.Err() == nil {
+						// A moment for the other fetch to let go of the
+						// lock; the bound still applies to the wait.
+						select {
+						case <-time.After(fetchRetryPause):
+							err = host.FetchPrune(fetchCtx, op.Worktree.Cwd)
+						case <-fetchCtx.Done():
+						}
+					}
+					cancel()
+					if err != nil {
+						neverAsked = true
+						return fmt.Errorf("fetching on %s before cutting the worktree: %w", op.Machine.Label, err)
+					}
+				}
+				newBranch := branchIsAbsent(ctx, host, op.Worktree.Cwd, op.Worktree.Branch)
 				// Unreadable leaves the base unrecorded, which the clean
-				// then resolves for itself (cleanBase).
-				baseCommit, _ = commitAt(ctx, op.Worktree.Cwd, op.Worktree.Base)
+				// then resolves for itself (cleanBase) -- here. On another
+				// machine it is the base that was just fetched, and
+				// unreadable means herdr would be handed a ref the clone
+				// does not have.
+				var baseErr error
+				baseCommit, baseErr = commitAt(ctx, host, op.Worktree.Cwd, op.Worktree.Base)
+				if baseErr != nil && op.Machine.Remote() {
+					neverAsked = true
+					return fmt.Errorf("%s on %s after a fetch: %w", op.Worktree.Base, op.Machine.Label, baseErr)
+				}
 
 				req := *op.Worktree
 				req.Focus = opts.focus(req.Focus)
@@ -1577,7 +1628,10 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// Only for a branch this run made: one the user already had
 				// keeps whatever it tracks.
 				if createdBranch != "" {
-					caveat = untrackBase(ctx, op.Worktree.Cwd, createdBranch, op.Worktree.Base)
+					caveat = untrackBase(ctx, host, op.Worktree.Cwd, createdBranch, op.Worktree.Base)
+					if caveat != nil && op.Machine.Remote() {
+						caveat = fmt.Errorf("on %s: %w", op.Machine.Label, caveat)
+					}
 				}
 
 				if reused {
@@ -1663,7 +1717,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// agent_name_taken, and returns everything that is not
 				// agent_not_ready untouched -- including agent_pane_busy,
 				// which retryBusy one level up still has to recognize.
-				err = explainBlockedStart(ctx, r, req.Kind, req.PaneID, err)
+				err = explainBlockedStart(ctx, r, op.Machine, req.Kind, req.PaneID, err)
 				// And Path A gets the same pane quote Path B's detection
 				// wait gets, for the same failure: a wrapper in the pane's
 				// shell refusing the launch line herdr typed (#350). herdr
@@ -1711,7 +1765,7 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 					// Path B's equivalent of #90's refused start: the agent
 					// is up and waiting on a dialog, which is an instruction
 					// to give rather than a timeout to report.
-					err = explainBlockedStart(ctx, r, op.AgentKind, paneID, err)
+					err = explainBlockedStart(ctx, r, op.Machine, op.AgentKind, paneID, err)
 				case errors.Is(err, herdrc.ErrAgentGone):
 					// Already explained by waitThroughDialog, and the pane
 					// tail below would only quote a shell prompt.
@@ -2030,7 +2084,7 @@ func CleanCheck(ctx context.Context, in Input, result ExecResult) CleanDecision 
 		}
 	}
 
-	ok, reason, err := gitx.Disposable(ctx, checkout, base)
+	ok, reason, err := in.Machine.Git().Disposable(ctx, checkout, base)
 	if err != nil {
 		return CleanDecision{
 			Allowed: false,
@@ -2068,11 +2122,11 @@ func branchFate(in Input, result ExecResult) BranchFate {
 //
 // Local refs only (gitx.LocalBranchExists): a name only origin has still
 // gets a new local branch from herdr, and that one is this run's.
-func branchIsAbsent(ctx context.Context, dir, branch string) bool {
+func branchIsAbsent(ctx context.Context, h gitx.Host, dir, branch string) bool {
 	if dir == "" || branch == "" {
 		return false
 	}
-	exists, err := gitx.LocalBranchExists(ctx, dir, branch)
+	exists, err := h.LocalBranchExists(ctx, dir, branch)
 	return err == nil && !exists
 }
 
@@ -2153,11 +2207,11 @@ func wrongBranch(asked, got string) error {
 // A failure is not the create's: the checkout exists by now. It names the
 // command that finishes the job, which works from the session's checkout as
 // well as from dir, since the two share their branches.
-func untrackBase(ctx context.Context, dir, branch, base string) error {
+func untrackBase(ctx context.Context, h gitx.Host, dir, branch, base string) error {
 	if base == "" {
 		base = "HEAD" // herdr's own default, as in commitAt
 	}
-	upstream, err := gitx.Upstream(ctx, dir, branch)
+	upstream, err := h.Upstream(ctx, dir, branch)
 	if err != nil {
 		return fmt.Errorf("could not check whether branch %s tracks %s, the base it was cut from (%s); "+
 			"if `git branch -vv` shows it does, `git branch --unset-upstream %s` stops it", branch, base, gitMessage(err), branch)
@@ -2170,21 +2224,21 @@ func untrackBase(ctx context.Context, dir, branch, base string) error {
 		return fmt.Errorf("branch %s tracks %s, which may be the branch it was cut from (could not check: %s); "+
 			"if it is, `git branch --unset-upstream %s` stops it", branch, short, gitMessage(why), branch)
 	}
-	cutFrom, err := gitx.FullRefName(ctx, dir, base)
+	cutFrom, err := h.FullRefName(ctx, dir, base)
 	if err != nil {
 		return unchecked(err)
 	}
 	if cutFrom != upstream {
 		return nil
 	}
-	setting, err := gitx.AutoSetupMerge(ctx, dir)
+	setting, err := h.AutoSetupMerge(ctx, dir)
 	if err != nil {
 		return unchecked(err)
 	}
 	if setting == "always" {
 		return nil
 	}
-	if err := gitx.UnsetUpstream(ctx, dir, branch); err != nil {
+	if err := h.UnsetUpstream(ctx, dir, branch); err != nil {
 		return fmt.Errorf("branch %s still tracks %s, the branch it was cut from (%s); "+
 			"`git branch --unset-upstream %s` finishes the job", branch, short, gitMessage(err), branch)
 	}
@@ -2196,14 +2250,14 @@ func untrackBase(ctx context.Context, dir, branch, base string) error {
 // applies itself (start_api_worktree_create,
 // herdr:src/app/api/worktrees/deferred.rs at v0.9.0). With no directory it
 // is an error rather than a git call, for branchIsAbsent's reason.
-func commitAt(ctx context.Context, dir, base string) (string, error) {
+func commitAt(ctx context.Context, h gitx.Host, dir, base string) (string, error) {
 	if dir == "" {
 		return "", errors.New("no directory to resolve the base in")
 	}
 	if base == "" {
 		base = "HEAD"
 	}
-	return gitx.ResolveRef(ctx, dir, base)
+	return h.ResolveRef(ctx, dir, base)
 }
 
 // cleanBase is the commit the clean gate counts "commits beyond the base"
@@ -2250,7 +2304,7 @@ func branchToDelete(ctx context.Context, in Input, result ExecResult) (string, e
 	if dir == "" {
 		return "", &CleanRefusal{Reason: fmt.Sprintf("no directory to find branch %s in", branch)}
 	}
-	exists, err := gitx.LocalBranchExists(ctx, dir, branch)
+	exists, err := in.Machine.Git().LocalBranchExists(ctx, dir, branch)
 	if err != nil {
 		return "", &CleanRefusal{Reason: fmt.Sprintf("could not check branch %s: %s", branch, gitMessage(err))}
 	}
@@ -2261,7 +2315,7 @@ func branchToDelete(ctx context.Context, in Input, result ExecResult) (string, e
 	if err != nil {
 		return "", &CleanRefusal{Reason: fmt.Sprintf("could not determine what branch %s was cut from: %s", branch, gitMessage(err))}
 	}
-	ahead, err := gitx.CommitsAhead(ctx, dir, "refs/heads/"+branch, base)
+	ahead, err := in.Machine.Git().CommitsAhead(ctx, dir, "refs/heads/"+branch, base)
 	if err != nil {
 		return "", &CleanRefusal{Reason: fmt.Sprintf("could not count the commits on branch %s: %s", branch, gitMessage(err))}
 	}
@@ -2298,14 +2352,14 @@ func settleBranch(ctx context.Context, in Input, result ExecResult, branch strin
 		return CleanOutcome{DeletedBranch: result.CreatedBranch}
 	}
 	dir := WorktreeSource(in)
-	only, err := gitx.CommitsOnlyOn(ctx, dir, branch)
+	only, err := in.Machine.Git().CommitsOnlyOn(ctx, dir, branch)
 	switch {
 	case err != nil:
 		return CleanOutcome{KeptBranch: branch, KeptReason: "could not check what only it holds: " + gitMessage(err)}
 	case only != 0:
 		return CleanOutcome{KeptBranch: branch, KeptReason: fmt.Sprintf("it holds %d commit(s) nothing else does", only)}
 	}
-	tip, err := gitx.DeleteBranch(ctx, dir, branch)
+	tip, err := in.Machine.Git().DeleteBranch(ctx, dir, branch)
 	if err != nil {
 		return CleanOutcome{KeptBranch: branch, KeptReason: fmt.Sprintf(
 			"git would not delete it (%s); `git branch -D %s` finishes the job", gitMessage(err), branch)}
@@ -2390,7 +2444,7 @@ func resolveBaseRef(ctx context.Context, in Input) (string, error) {
 	if in.Linked.Commit != "" {
 		return in.Linked.Commit, nil
 	}
-	return commitAt(ctx, WorktreeSource(in), WorktreeBase(in))
+	return commitAt(ctx, in.Machine.Git(), WorktreeSource(in), WorktreeBase(in))
 }
 
 // Clean removes the space Execute created for in, once CleanCheck has
@@ -2446,6 +2500,11 @@ func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) (C
 	if result.Created == nil {
 		return CleanOutcome{}, fmt.Errorf("plan: clean: nothing was created")
 	}
+	// Execute's reason, and the same machine: what is removed is where it
+	// was made.
+	if in.Machine.Remote() {
+		r = r.On(in.Machine.ID)
+	}
 	created := *result.Created
 
 	branch, err := branchToDelete(ctx, in, result)
@@ -2486,7 +2545,10 @@ func Clean(ctx context.Context, r herdrc.Runner, in Input, result ExecResult) (C
 	// invariant this broke, and it should survive the next placement or the
 	// next change to what topologyOp returns rather than being re-derived
 	// from them. Refusing leaves litter; closing loses the user's work.
-	if created.WorkspaceID != "" && created.WorkspaceID == in.Ctx.WorkspaceID {
+	//
+	// Not on another machine: workspace ids are per server, so a remote w1
+	// is not the caller's local w1 (machine spec §8.4).
+	if !in.Machine.Remote() && created.WorkspaceID != "" && created.WorkspaceID == in.Ctx.WorkspaceID {
 		return CleanOutcome{}, fmt.Errorf(
 			"plan: clean: refusing to close %s -- it is the workspace this create was invoked from, "+
 				"not one this create made", created.WorkspaceID)

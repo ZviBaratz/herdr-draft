@@ -174,6 +174,17 @@ type Runner interface {
 	TabClose(ctx context.Context, tabID string) error
 	WorktreeRemove(ctx context.Context, workspaceID string) error
 	WorkspaceClose(ctx context.Context, workspaceID string) error
+	// On returns a Runner that sends every command to the saved herdr
+	// machine id, or to this machine when id is "" (machine spec §8.1).
+	// plan calls it itself, on every op, so no caller can hand a remote
+	// session's plan a local runner.
+	On(id string) Runner
+	// MachineList reads this machine's saved herdr machines (`herdr
+	// machine list --json`). It is local whatever the runner is scoped to.
+	MachineList(ctx context.Context) ([]MachineInfo, error)
+	// NotificationShow posts herdr's own toast on whichever server the
+	// runner is scoped to.
+	NotificationShow(ctx context.Context, title, body string) error
 }
 
 // defaultPollInterval is CLIRunner's polling cadence for AwaitDetection when
@@ -190,6 +201,9 @@ type CLIRunner struct {
 	// PollInterval is how often AwaitDetection polls `herdr agent get`.
 	// Zero means defaultPollInterval (500ms).
 	PollInterval time.Duration
+	// Machine is the saved herdr machine every command is sent to, by
+	// profile id, or "" for this machine. Set it with On.
+	Machine string
 }
 
 var _ Runner = (*CLIRunner)(nil)
@@ -246,6 +260,7 @@ type paneRef struct {
 // stdout contract is exactly why a PaneRun that failed against every real
 // invocation still passed its own unit test.
 func (r *CLIRunner) runJSON(ctx context.Context, args ...string) (json.RawMessage, error) {
+	args = r.argv(args...)
 	verb := strings.Join(args, " ")
 
 	cmd := exec.CommandContext(ctx, r.Bin, args...)
@@ -278,6 +293,7 @@ func (r *CLIRunner) runJSON(ctx context.Context, args ...string) (json.RawMessag
 // stdout -- see send_ok_request's own body -- so that text still reaches
 // the caller here exactly as it does for every runJSON-backed method).
 func (r *CLIRunner) runOK(ctx context.Context, args ...string) error {
+	args = r.argv(args...)
 	verb := strings.Join(args, " ")
 
 	cmd := exec.CommandContext(ctx, r.Bin, args...)
@@ -298,6 +314,7 @@ func (r *CLIRunner) runOK(ctx context.Context, args ...string) error {
 // including its stderr output (print_read_response writes its JSON error
 // envelope to stderr on failure, not stdout, exactly like send_ok_request).
 func (r *CLIRunner) runText(ctx context.Context, args ...string) (string, error) {
+	args = r.argv(args...)
 	verb := strings.Join(args, " ")
 
 	cmd := exec.CommandContext(ctx, r.Bin, args...)
@@ -351,7 +368,7 @@ type cliError struct {
 }
 
 func (e *cliError) Error() string {
-	if s := strings.TrimSpace(e.stderr); s != "" {
+	if s := strings.TrimSpace(plainStderr(e.stderr)); s != "" {
 		return fmt.Sprintf("herdr %s: %v: %s", e.verb, e.err, s)
 	}
 	return fmt.Sprintf("herdr %s: %v", e.verb, e.err)
@@ -1130,7 +1147,7 @@ type agentInfo struct {
 // paths mean the same thing by "detected", rather than leaving Path B with
 // a weaker promise nobody wrote down.
 func (r *CLIRunner) pollDetection(ctx context.Context, paneID string) detectionState {
-	cmd := exec.CommandContext(ctx, r.Bin, "agent", "get", paneID)
+	cmd := exec.CommandContext(ctx, r.Bin, r.argv("agent", "get", paneID)...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	// WaitDelay is load-bearing here, not tidiness. This poll used to

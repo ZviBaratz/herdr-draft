@@ -202,8 +202,10 @@ func nonInteractiveEnv(base []string, ssh string) []string {
 // rejects -o. herdr-draft installs on Linux and macOS only (the manifest's
 // platforms), where plink is not the ssh anyone has, and the blast radius
 // if someone does use such a wrapper is one best-effort background fetch:
-// FetchPrune is the only call in this package that reaches ssh at all, and
-// its failure is already swallowed by design.
+// FetchPrune is the only call in this package whose git reaches ssh, and
+// its failure is already swallowed by design. (Host's own ssh, in host.go,
+// is a different case: it runs `ssh` itself rather than through git, so no
+// wrapper of the user's is involved, and it spells the same option.)
 func effectiveSSHCommand(ctx context.Context, base []string, repoDir string) string {
 	var gitSSH string
 	for _, kv := range base {
@@ -547,8 +549,8 @@ func behindOrigin(ctx context.Context, repoDir string, local, origin map[string]
 // BranchExists reports whether name exists as a local branch or as an
 // origin remote-tracking branch in repoDir. Note "remote-tracking": it
 // reads refs git has already fetched and contacts no remote itself.
-func BranchExists(ctx context.Context, repoDir, name string) (bool, error) {
-	return anyRefExists(ctx, repoDir, "refs/heads/"+name, "refs/remotes/origin/"+name)
+func (h Host) BranchExists(ctx context.Context, repoDir, name string) (bool, error) {
+	return h.anyRefExists(ctx, repoDir, "refs/heads/"+name, "refs/remotes/origin/"+name)
 }
 
 // LocalBranchExists reports whether name exists as a local branch in
@@ -557,8 +559,8 @@ func BranchExists(ctx context.Context, repoDir, name string) (bool, error) {
 // the form refuses a name origin already uses -- and the wrong one for
 // "did this run make the branch?": when only origin has the name, herdr
 // still makes a new local branch from the base (#173).
-func LocalBranchExists(ctx context.Context, repoDir, name string) (bool, error) {
-	return anyRefExists(ctx, repoDir, "refs/heads/"+name)
+func (h Host) LocalBranchExists(ctx context.Context, repoDir, name string) (bool, error) {
+	return h.anyRefExists(ctx, repoDir, "refs/heads/"+name)
 }
 
 // anyRefExists reports whether any of refs exists in repoDir.
@@ -615,8 +617,8 @@ func CurrentBranch(ctx context.Context, repoDir string) (string, error) {
 // a tea.Cmd that reports completion regardless of outcome, mirroring
 // Atrium's own branchFetchDoneMsg's "completion always re-triggers a
 // search" contract, which needs no separate success/failure signal.
-func FetchPrune(ctx context.Context, repoDir string) error {
-	_, err := runGit(ctx, repoDir, "fetch", "--prune")
+func (h Host) FetchPrune(ctx context.Context, repoDir string) error {
+	_, err := h.run(ctx, repoDir, "fetch", "--prune")
 	if err != nil {
 		return fmt.Errorf("fetch --prune: %w", err)
 	}
@@ -635,11 +637,11 @@ func FetchPrune(ctx context.Context, repoDir string) error {
 // carries. So plan resolves every base here first, in the repository the
 // worktree was created from, and hands Disposable a commit the worktree can
 // actually be ahead of.
-func ResolveRef(ctx context.Context, repoDir, ref string) (string, error) {
+func (h Host) ResolveRef(ctx context.Context, repoDir, ref string) (string, error) {
 	if strings.TrimSpace(ref) == "" {
 		return "", fmt.Errorf("resolve ref: empty ref in %s", repoDir)
 	}
-	out, err := runGit(ctx, repoDir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	out, err := h.run(ctx, repoDir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("resolve ref %q: %w", ref, err)
 	}
@@ -668,7 +670,7 @@ func ResolveRef(ctx context.Context, repoDir, ref string) (string, error) {
 // worktreeDir must be named too: git given no directory answers about
 // whichever repository the process is in (#186), which judged a pristine
 // primary checkout in place of a worktree holding work.
-func Disposable(ctx context.Context, worktreeDir, base string) (ok bool, reason string, err error) {
+func (h Host) Disposable(ctx context.Context, worktreeDir, base string) (ok bool, reason string, err error) {
 	if worktreeDir == "" {
 		return false, "", errors.New("disposable: no worktree directory to judge")
 	}
@@ -676,7 +678,7 @@ func Disposable(ctx context.Context, worktreeDir, base string) (ok bool, reason 
 		return false, "", fmt.Errorf("disposable: base %q for worktree %s is not a commit id -- resolve it where the worktree was created from", base, worktreeDir)
 	}
 
-	status, err := runGit(ctx, worktreeDir, "status", "--porcelain")
+	status, err := h.run(ctx, worktreeDir, "status", "--porcelain")
 	if err != nil {
 		return false, "", fmt.Errorf("check worktree status: %w", err)
 	}
@@ -684,7 +686,7 @@ func Disposable(ctx context.Context, worktreeDir, base string) (ok bool, reason 
 		return false, "worktree has uncommitted changes", nil
 	}
 
-	count, err := CommitsAhead(ctx, worktreeDir, "HEAD", base)
+	count, err := h.CommitsAhead(ctx, worktreeDir, "HEAD", base)
 	if err != nil {
 		return false, "", err
 	}
@@ -718,11 +720,11 @@ func isCommitID(s string) bool {
 // Neither side may be empty. git reads `base..` and `..ref` as HEAD, so
 // an empty side is an answer about the wrong commit rather than an error --
 // the shape ResolveRef's doc comment describes making the gate unfailable.
-func CommitsAhead(ctx context.Context, repoDir, ref, base string) (int, error) {
+func (h Host) CommitsAhead(ctx context.Context, repoDir, ref, base string) (int, error) {
 	if strings.TrimSpace(ref) == "" || strings.TrimSpace(base) == "" {
 		return 0, fmt.Errorf("count commits: empty ref %q or base %q in %s", ref, base, repoDir)
 	}
-	out, err := runGit(ctx, repoDir, "rev-list", "--count", base+".."+ref)
+	out, err := h.run(ctx, repoDir, "rev-list", "--count", base+".."+ref)
 	if err != nil {
 		return 0, fmt.Errorf("count commits on %s not on %s: %w", ref, base, err)
 	}
@@ -746,9 +748,9 @@ func CommitsAhead(ctx context.Context, repoDir, ref, base string) (int, error) {
 // so this reads 0 for any branch still checked out anywhere. It means
 // something once the branch's checkout is gone, which is when plan.Clean
 // asks it (#173).
-func CommitsOnlyOn(ctx context.Context, repoDir, name string) (int, error) {
+func (h Host) CommitsOnlyOn(ctx context.Context, repoDir, name string) (int, error) {
 	ref := "refs/heads/" + name
-	out, err := runGit(ctx, repoDir, "rev-list", "--count", ref, "--not", "--exclude="+ref, "--all")
+	out, err := h.run(ctx, repoDir, "rev-list", "--count", ref, "--not", "--exclude="+ref, "--all")
 	if err != nil {
 		return 0, fmt.Errorf("count commits only %s holds: %w", name, err)
 	}
@@ -772,13 +774,56 @@ func CommitsOnlyOn(ctx context.Context, repoDir, name string) (int, error) {
 // asks the question that matters instead, CommitsOnlyOn, before it calls
 // this. git's other guard stays: a branch checked out in any worktree is
 // still refused.
-func DeleteBranch(ctx context.Context, repoDir, name string) (tip string, err error) {
-	tip, err = runGit(ctx, repoDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+name+"^{commit}")
+func (h Host) DeleteBranch(ctx context.Context, repoDir, name string) (tip string, err error) {
+	tip, err = h.run(ctx, repoDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+name+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("delete branch %s: %w", name, err)
 	}
-	if _, err := runGit(ctx, repoDir, "branch", "-D", "--", name); err != nil {
+	if _, err := h.run(ctx, repoDir, "branch", "-D", "--", name); err != nil {
 		return "", fmt.Errorf("delete branch %s: %w", name, err)
 	}
 	return tip, nil
+}
+
+// The package-level spellings below are Here's: this machine's clone, as
+// every caller had it before Host existed (machine spec §8.2).
+
+// LocalBranchExists is Here.LocalBranchExists.
+func LocalBranchExists(ctx context.Context, repoDir, name string) (bool, error) {
+	return Here.LocalBranchExists(ctx, repoDir, name)
+}
+
+// BranchExists is Here.BranchExists.
+func BranchExists(ctx context.Context, repoDir, name string) (bool, error) {
+	return Here.BranchExists(ctx, repoDir, name)
+}
+
+// ResolveRef is Here.ResolveRef.
+func ResolveRef(ctx context.Context, repoDir, ref string) (string, error) {
+	return Here.ResolveRef(ctx, repoDir, ref)
+}
+
+// Disposable is Here.Disposable.
+func Disposable(ctx context.Context, worktreeDir, base string) (ok bool, reason string, err error) {
+	return Here.Disposable(ctx, worktreeDir, base)
+}
+
+// CommitsAhead is Here.CommitsAhead.
+func CommitsAhead(ctx context.Context, repoDir, ref, base string) (int, error) {
+	return Here.CommitsAhead(ctx, repoDir, ref, base)
+}
+
+// CommitsOnlyOn is Here.CommitsOnlyOn.
+func CommitsOnlyOn(ctx context.Context, repoDir, name string) (int, error) {
+	return Here.CommitsOnlyOn(ctx, repoDir, name)
+}
+
+// DeleteBranch is Here.DeleteBranch.
+func DeleteBranch(ctx context.Context, repoDir, name string) (tip string, err error) {
+	return Here.DeleteBranch(ctx, repoDir, name)
+}
+
+// FetchPrune is Here.FetchPrune.
+func FetchPrune(ctx context.Context, repoDir string) error {
+	return Here.FetchPrune(ctx, repoDir)
 }

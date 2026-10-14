@@ -1808,6 +1808,75 @@ foreground process's `argv`, which is the one record of which flags
 actually reached claude, and so of whether an option replaced an extra
 arg or merely followed it.
 
+## What machines added
+
+### Cell 16 — a session on another herdr machine (machine spec)
+
+**Why this cell exists.** Every test of the feature runs against a fake
+herdr, a fake prober and a fake `ssh` that runs its script locally. None of
+them can show three things: that herdr 0.9.1's `--machine` really reaches
+the other server, that the clone probe's shell script parses in that
+machine's login shell, and that the session's pane really ends up there.
+
+**Setup:**
+
+- **Two machines:** this one and a saved herdr machine (`herdr machine
+  list`), both on herdr 0.9.1 or later. A server older than that is
+  refused, and that refusal is Route A's expected answer.
+- **A test clone on both:** the same repository at the same path under each
+  home (`~/work/smoke` here and there).
+- **A scratch config, not your live one:** a config directory holding only
+  `[machine.paths] "~/work" = "<machine>"`, passed as
+  `HERDR_PLUGIN_CONFIG_DIR`, with a scratch `HERDR_PLUGIN_STATE_DIR` beside
+  it.
+
+**Route A, read-only (any time).** From `~/work/smoke`, run this worktree's
+build:
+
+```bash
+HERDR_PLUGIN_ID=zvibaratz.draft HERDR_PLUGIN_CONFIG_DIR=<scratch>/config \
+HERDR_PLUGIN_STATE_DIR=<scratch>/state ./bin/herdr-draft create \
+  --title "smoke" --dry-run --json
+```
+
+Then run it three more times, changing one thing each time:
+
+1. add `--machine local`;
+2. run it from a project no rule covers;
+3. add `--machine <a saved machine the scratch config does not name>`.
+
+**Expected:**
+
+- **The first run** reports the machine: `machine.selector` is the rule's
+  name and `provenance.machine` is `config.toml`. Against a 0.9.0 server it
+  instead exits 3, quoting herdr's `remote Herdr does not support machine
+  API forwarding` and naming `--machine local`. Nothing exists on either
+  machine afterwards.
+- **`--machine local`** reports `local` with provenance `flag`.
+- **A project no rule covers** reports `local` from `built-in`.
+- **An unnamed saved machine** exits 2, listing what is offered.
+
+**Route B, end to end (both machines on 0.9.1, and the other machine's owner
+agrees to a session there).**
+
+1. Open the popup in `~/work/smoke`, type a title, and `⌃S`.
+2. Watch the machine row read `<machine> · checking…`, then the panel
+   `ready`. Placement should read `the worktree's own space on <machine>` and
+   account `<machine>'s own login`.
+3. After the submit, check that a notification here names the machine.
+4. Check that `herdr --machine <id> workspace list --json` shows the new
+   space, under the machine's name in the sidebar, cut from `origin/<default>`
+   **as of a fetch there** (`git -C <dir> log -1` on that machine).
+5. Note whether Claude stopped on its trust prompt for the new worktree
+   path. It is answered on that machine.
+6. Repeat with `←` on the machine row. The session must open here.
+7. Make a create fail after its worktree exists, and clean it. Give the
+   scratch config `[timeouts] detection_ms = 1`, make a local branch here
+   with the name the create will use, then run `create --worktree
+   --on-failure clean`. It exits 1 at the detection step, removes the
+   worktree and branch on that machine, and leaves this machine's branch of
+   the same name alone.
+
 ## After the matrix
 
 - Confirm no stray panes, workspaces, tabs, or worktree checkouts remain:
@@ -1840,6 +1909,73 @@ arg or merely followed it.
   alongside the release.
 
 ## Recorded runs
+
+### Cell 16 Route B, headless, against `dev (EC2)` on herdr 0.9.1 — 2026-10-14
+
+dev had just been brought to herdr 0.9.1 by dev-sync, with its server
+restarted. Before the run it held one shell pane, no agents and one worktree
+of hub. `herdr --machine <dev-id> status server` answered `running`, 0.9.1,
+compatible. The run used this worktree's build, with a scratch copy of the
+live `config.toml` plus `[machine.paths] "~/quantivly" = "dev"`, from
+`~/quantivly/hub`, with no prompt.
+
+- **`--dry-run --json`:** exit 0 in 3.3s, `machine` `dev (EC2)`, a new
+  space, base `origin/main`, no account.
+- **`create --title "b2 smoke dev" --json`:** exit 1 in 26s.
+  - `creating worktree on dev (EC2) ... ok` and `naming tab ... ok`. The
+    worktree was at `/home/ubuntu/.herdr/worktrees/hub/zvi-b2-smoke-dev`
+    on branch `zvi/b2-smoke-dev`, in workspace `w4`.
+  - `starting agent ... failed: claude started; answer the dialog on dev
+    (EC2), then keep this session -- it is showing "Quick safety check"`,
+    with herdr's `agent_not_ready`.
+  - The pane, read with `herdr --machine <id> pane read`, showed `claude
+    --model 'opus[1m]' --effort xhigh` typed and Claude's trust prompt, with
+    "No, exit" preselected. No prompt was sent into it.
+  - **The trust prompt is not new with dev.** Every new worktree path hits
+    it the first time, on either machine (`trust_wait_ms`, #115). On dev,
+    answering it means switching herdr to dev.
+- **Checked on dev over ssh:**
+  - the worktree's HEAD was `0cae494`, GitHub's `main` at that moment;
+  - `FETCH_HEAD` was stamped by this run's fetch;
+  - the branch had no upstream, so #221's untrack ran there.
+- **herdr also opened `w3 hub`,** the repository's parent space, as a first
+  `worktree create` in a repository does. That was cleaned up by hand:
+  `worktree remove --workspace w4`, then `workspace close w3`, then the
+  branch (no commits of its own) with `git branch -D` on dev. dev was left
+  as it was found, with no Claude process.
+- **Seen on the pane, for dev's own setup rather than herdr-draft:** direnv
+  blocks hub's `.envrc` in each new worktree, and a banner says
+  `dev-sync.timer` will not fire.
+
+The popup's own run (alt+n) waits for this branch to be released and
+installed.
+
+### Cell 16 Route A against `dev (EC2)` on herdr 0.9.0 — 2026-10-14
+
+This machine runs herdr 0.9.1, and `dev (EC2)` (saved, target `dev`) still
+runs 0.9.0. It was run from this worktree's build with a scratch config
+holding `[machine.paths] "~/quantivly" = "dev"`.
+
+- **`~/quantivly/hub`, no flag:** exit 3 in 2.2s, with
+  `herdr-draft create: dev (EC2) is unreachable: machine 'dev (EC2)': remote
+  Herdr does not support machine API forwarding; update Herdr on this
+  machine -- pass --machine local to start the session on this machine`. It
+  printed `the worktree is cut on dev (EC2) from origin/main, after a fetch
+  there` first. Nothing was created.
+- **`--machine local`:** exit 0, `{"selector":"local","label":"local"}`,
+  provenance `flag`.
+- **`~/Projects/herdr-draft`:** exit 0, `local` from `built-in`.
+- **`--machine nanoclaw`** (saved, not named): exit 2, `--machine
+  "nanoclaw" is not one config.toml's [machine] offers (local, dev)`.
+- **The clone probe on its own,** through `gitx.Over("dev").ProbeClone`
+  from a throwaway test: 0.31s over the multiplexed connection. It returned
+  home `/home/ubuntu`, dir `/home/ubuntu/quantivly/hub`, a repository, three
+  local branches, and origin `https://github.com/quantivly/hub.git`. That
+  origin matches this clone's `git@github.com:quantivly/hub.git` once both
+  are normalised. A missing directory answered `exists=false` with no
+  error.
+
+Route B waits for dev's herdr to reach 0.9.1.
 
 ### herdr 0.9.1 — 2026-09-22
 

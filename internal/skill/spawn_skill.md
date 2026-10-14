@@ -131,8 +131,9 @@ you are doing right now.
   whitespace at either end, is refused with exit 2 and nothing created. So
   is an empty `--branch`: leave the flag off instead.
 - `--base REF` is what the branch is cut from. Left off it resolves like
-  every other unset value — usually `HEAD`, which is *your current commit*,
-  though a repository's own `.herdr-draft.toml` can set a different
+  every other unset value — usually `HEAD`, which is *your current commit*
+  on this machine (on another one it is origin's default branch: see
+  section 4), though a repository's own `.herdr-draft.toml` can set a different
   default. Decide it rather than leave it: if you are on a feature branch
   and the new work should start from main, say so with `--base`, and
   section 7 shows the base either way. **A bare branch name is the local branch**, wherever
@@ -142,7 +143,7 @@ you are doing right now.
   A local base that is behind the branch it tracks, as of the last
   fetch, gets a `herdr-draft create:` line on stderr saying how far behind,
   and is used anyway. `--base HEAD` is your current commit whatever a
-  default says. With a worktree, a `--base` that names no commit is
+  default says, on this machine. With a worktree, a `--base` that names no commit is
   refused with exit 2 and nothing created. A remembered or configured one
   that names no commit is dropped for `HEAD`, with a `herdr-draft create:`
   line on stderr saying so. A branch cut from a remote's (`origin/main`)
@@ -153,7 +154,7 @@ you are doing right now.
   directory. That is right inside another session's worktree too. herdr
   requires the new worktree to be created from the repository's primary
   checkout, but its base is still resolved in yours, so `HEAD` is still
-  your current commit.
+  your current commit (for a session on this machine).
 
 **Uncommitted work does not travel.** A worktree is cut from a commit, so
 anything you have edited and not committed is invisible to the new agent.
@@ -213,13 +214,53 @@ without the other is what this flag is offering.
 `tab-in`. A script running in one space can therefore start a session in
 another without pretending to be a pane there.
 
+### Which machine
+
+A session can run on another herdr machine, such as a work server, rather
+than on this one. **Leave `--machine` off unless the task needs a
+particular machine.** The user's `config.toml` already maps their projects
+to machines (`[machine.paths]`), so a project that belongs on a server
+opens there, and everything else stays here. `--dry-run --json` shows
+which: its `machine` object names it, and `provenance.machine` says
+whether a rule chose it.
+
+Pass `--machine local` when the session needs **this** machine:
+
+- it drives the browser here (claude-in-chrome, or any browser tool);
+- it talks to a device plugged in here (adb, USB).
+
+`--machine` accepts `local` and the machines the user's configuration
+names, and nothing else: a saved machine they never configured is refused
+(exit 2), deliberately. Do not go looking for others.
+
+A session on another machine differs from a local one in four ways, so
+plan the handoff for them:
+
+- **It sees only what is pushed.** Its worktree is cut on that machine,
+  after a fetch there, from an `origin/` branch: `--base` is mapped to
+  `origin/<name>` when origin has the branch, and refused when it has
+  not, so push first. A lane's unpushed commits are not there. And an
+  unset `--base`, or `HEAD`, is origin's default branch there, not your
+  current commit: to continue from your own work, push your branch and
+  pass `--base origin/<your-branch>`.
+- **It opens in a new space there.** `tab-here`, `split-here`, `tab-in`
+  and `--workspace` are refused with another machine (exit 2).
+- **It uses that machine's own login.** There is no `--account` there
+  (section 5).
+- **Its pane is on that machine.** herdr's sidebar lists it under the
+  machine's name. A dialog it stops on, Claude's trust prompt for a new
+  worktree included, is answered there.
+
 ## 5. Agent, account and session options
 
 - `--agent KIND` picks which agent to start — `claude`, or whatever else
   the user has configured. Left off, their default applies. Leave it off
   unless they asked for another.
 - `--account NAME` pins a clauth account, and applies to `claude` only.
-  Left off, or given as `active`, whatever account is active is used.
+  Left off, or given as `active`, whatever account is active is used. A
+  session on another machine (section 4) uses that machine's own login:
+  `--account` is refused there (exit 2), the user's default account does
+  not apply, and the launch probe below is about this machine, so skip it.
 - `--account auto` asks the user's configured account picker to choose one
   for this project. It is a real call with real consequences: a picker
   that hands out accounts from a pool **spends one** when it runs. Do not
@@ -652,9 +693,9 @@ before you create, with the two choices above.
 | 0 | created | report where it is |
 | 1 | the plan started and failed | part of the session may exist — a space, or only some of a worktree: its branch, its checkout; look at it before retrying |
 | 2 | bad usage, or a request that cannot be resolved — including a branch or title already in use, a branch name git cannot use, and a pinned account whose credential clauth reports dead (`broken`) | fix the command and re-run |
-| 3 | herdr is unreachable, found before anything started | nothing was created; stop |
+| 3 | herdr is unreachable, found before anything started — or the machine the session was going to, whose own words the line quotes | nothing was created. For a machine, report the line: an expired login to it is the user's to renew, and `--machine local` starts the session here only if the user wants it here |
 | 4 | the plan started, and its first step failed before making anything | nothing exists and there is nothing to clean up; the error says why the step failed, so report it, or re-run once it is dealt with |
-| 5 | a question the command asked did not answer in time | nothing was created and nothing in the command would change it; the line names which question. A stalled mount answers a retry exactly as it answered the first time, so report it; something outside — Linear, or a credential helper — may answer the next time, so one retry is reasonable |
+| 5 | a question the command asked did not answer in time — including the probe of another machine | nothing was created and nothing in the command would change it; the line names which question. A stalled mount answers a retry exactly as it answered the first time, so report it; something outside — Linear, or a credential helper — may answer the next time, so one retry is reasonable |
 
 `--json` prints one object instead of a human line, and is the right
 choice whenever you are going to act on the result. Note that on exit 2,
@@ -697,6 +738,8 @@ pane itself **by pane**, not by agent:
 
 ```bash
 herdr pane read w12:p3 --source detection --format text
+# a session on another machine (--json has machine.id):
+herdr --machine <machine.id> pane read w12:p3 --source detection --format text
 ```
 
 The `herdr agent read` at the end of this section resolves its target
@@ -718,6 +761,14 @@ either differs from the confirmation, tell the user. Both are what this
 command passed after the agent's command: the pane's shell resolves that
 command, so a function standing in for it, or a `[clauth] launcher` for a
 pinned account, can still change what arrives.
+
+**On another machine, the ids are that machine's.** When `--json` carries
+`machine.id`, the session's workspace, tab and pane ids belong to that
+machine's herdr server, and the same ids on this machine name some other
+session's panes. Every herdr command about it therefore starts `herdr
+--machine <machine.id>`: reading its pane, reading its agent, and resending
+an unsent prompt with `herdr --machine <machine.id> agent prompt <pane_id>
+"<unsent_prompt>"`. Never send one of these ids to this machine's herdr.
 
 **The ids name the agent, not the space.** `workspace_id`, `tab_id` and
 `pane_id` are where the agent actually is, which is what you address next.
@@ -790,6 +841,8 @@ without reading the reason: one that holds a commit holds work.
 
 ```bash
 herdr agent read w12:p3 --source detection --format text
+# a session on another machine:
+herdr --machine <machine.id> agent read w12:p3 --source detection --format text
 ```
 
 A launch that reported success can still be sitting on a first-run trust

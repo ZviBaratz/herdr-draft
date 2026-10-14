@@ -280,6 +280,14 @@ func (r *submitFakeRunner) WorkspaceClose(context.Context, string) error {
 	return nil
 }
 
+// On, MachineList and NotificationShow: this fake is one machine, and
+// saves none (machine spec §8.1).
+func (r *submitFakeRunner) On(string) herdrc.Runner { return r }
+func (r *submitFakeRunner) MachineList(context.Context) ([]herdrc.MachineInfo, error) {
+	return nil, nil
+}
+func (r *submitFakeRunner) NotificationShow(context.Context, string, string) error { return nil }
+
 // newSubmitTestModel mirrors app_test.go's own newTestModel, but takes an
 // explicit herdrc.Runner -- newTestModel's own fakeRunner has no
 // configurable results at all, which every scenario below needs.

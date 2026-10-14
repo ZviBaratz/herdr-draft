@@ -21,6 +21,7 @@ import (
 	"github.com/ZviBaratz/herdr-draft/internal/form"
 	"github.com/ZviBaratz/herdr-draft/internal/herdrc"
 	"github.com/ZviBaratz/herdr-draft/internal/linear"
+	"github.com/ZviBaratz/herdr-draft/internal/machine"
 	"github.com/ZviBaratz/herdr-draft/internal/picker"
 	"github.com/ZviBaratz/herdr-draft/internal/plan"
 	"github.com/ZviBaratz/herdr-draft/internal/theme"
@@ -38,6 +39,8 @@ type fakeRunner struct {
 	workspaces []herdrc.WorkspaceInfo
 	listErr    error
 	listCalls  int
+	// machines is `herdr machine list --json`'s answer (machine spec §3.4).
+	machines []herdrc.MachineInfo
 }
 
 var _ herdrc.Runner = (*fakeRunner)(nil)
@@ -129,6 +132,15 @@ type fakeGit struct {
 	behindErr   error
 	behindCalls []string
 
+	// The laptop-side ref questions a remote session asks
+	// (machine.RefReader): fullRefs answers FullRefName (origin/<x>
+	// resolves to its remote-tracking ref by itself), originHead
+	// OriginHead, originBranches OriginBranchExists, originURL OriginURL.
+	fullRefs       map[string]string
+	originHead     string
+	originBranches map[string]bool
+	originURL      string
+
 	dirExistsCalls, isGitRepoCalls, listBranchesCalls, branchExistsCalls int
 	currentBranchCalls                                                   int
 	fetchPruneCalls                                                      []string
@@ -146,6 +158,14 @@ type fakeGit struct {
 	// through (e.g. that a "~/..." project directory was expanded first).
 	dirsSeen []string
 }
+
+// On, MachineList and NotificationShow: this fake is one machine, and
+// saves none (machine spec §8.1).
+func (r *fakeRunner) On(string) herdrc.Runner { return r }
+func (r *fakeRunner) MachineList(context.Context) ([]herdrc.MachineInfo, error) {
+	return r.machines, nil
+}
+func (r *fakeRunner) NotificationShow(context.Context, string, string) error { return nil }
 
 var _ gitSource = (*fakeGit)(nil)
 
@@ -237,6 +257,24 @@ type fakeBehind struct {
 	upstream string
 	count    int
 }
+
+func (g *fakeGit) FullRefName(_ context.Context, _ string, name string) (string, error) {
+	if full, ok := g.fullRefs[name]; ok {
+		return full, nil
+	}
+	if strings.HasPrefix(name, "origin/") {
+		return "refs/remotes/" + name, nil
+	}
+	return "", fmt.Errorf("fakeGit: %q names no ref", name)
+}
+
+func (g *fakeGit) OriginHead(context.Context, string) (string, error) { return g.originHead, nil }
+
+func (g *fakeGit) OriginBranchExists(_ context.Context, _ string, name string) (bool, error) {
+	return g.originBranches[name], nil
+}
+
+func (g *fakeGit) OriginURL(context.Context, string) (string, error) { return g.originURL, nil }
 
 func (g *fakeGit) BaseBehind(_ context.Context, dir, ref string) (string, int, error) {
 	key := dir + " " + ref
@@ -355,7 +393,11 @@ type testSetup struct {
 	// through New's real construction path rather than by reaching past it
 	// and poking the field.
 	ClauthUnavailable string
-	LinearCache       []linear.Issue
+	// Machines is herdr's saved machines and Prober the probe of one, for a
+	// form with a [machine] table (machine spec §9).
+	Machines    []herdrc.MachineInfo
+	Prober      machine.Prober
+	LinearCache []linear.Issue
 	// RepoConfig stands in for config.LoadRepoConfig (v2 spec §11), so a test
 	// gets a deterministic .herdr-draft.toml without putting one on disk.
 	// nil leaves Deps.RepoConfig nil, which is the production reader --
@@ -456,13 +498,14 @@ func newTestModel(t *testing.T, s testSetup) Model {
 
 	return New(Setup{
 		Deps: Deps{
-			Runner:     &fakeRunner{workspaces: s.Workspaces},
+			Runner:     &fakeRunner{workspaces: s.Workspaces, machines: s.Machines},
 			Linear:     linSrc,
 			Clauth:     clSrc,
 			Git:        git,
 			Clock:      noSleep,
 			RepoConfig: s.RepoConfig,
 			Picker:     s.Picker,
+			Prober:     s.Prober,
 		},
 		Ctx:                s.Ctx,
 		Config:             cfg,
@@ -632,7 +675,7 @@ func TestDupVerdictsPushedToTitleField(t *testing.T) {
 	})
 	m.title.SetTitle("taken", false)
 
-	cmd := m.scheduleTitleCheck("taken", "zvi/taken", "/repo", true)
+	cmd := m.scheduleTitleCheck("taken", "zvi/taken", "/repo", true, false)
 	debounce := cmd().(titleDebounceMsg)
 
 	m2, cmd2 := m.handleTitleDebounce(debounce)
@@ -659,7 +702,7 @@ func TestDupVerdicts_BranchExistsSkippedWhenWorktreeOff(t *testing.T) {
 	git.branchExists = true // would report a collision if the check ran at all
 	m := newTestModel(t, testSetup{Git: git})
 
-	cmd := m.scheduleTitleCheck("new title", "zvi/new-title", "/repo", false)
+	cmd := m.scheduleTitleCheck("new title", "zvi/new-title", "/repo", false, false)
 	debounce := cmd().(titleDebounceMsg)
 	_, cmd2 := m.handleTitleDebounce(debounce)
 	result := cmd2().(titleResultMsg)
@@ -683,8 +726,8 @@ func TestTitleResult_StaleVersionDropped(t *testing.T) {
 	m := newTestModel(t, testSetup{})
 	m.title.SetTitle("t", false)
 
-	cmd1 := m.scheduleTitleCheck("t", "b1", "/repo", true)
-	cmd2 := m.scheduleTitleCheck("t", "b2", "/repo", true)
+	cmd1 := m.scheduleTitleCheck("t", "b1", "/repo", true, false)
+	cmd2 := m.scheduleTitleCheck("t", "b2", "/repo", true, false)
 	v1 := cmd1().(titleDebounceMsg).req.version
 	v2 := cmd2().(titleDebounceMsg).req.version
 
@@ -2342,7 +2385,8 @@ func pumpAsync(t *testing.T, m Model, cmds []tea.Cmd) Model {
 		}
 		switch msg := cmd().(type) {
 		case dirDebounceMsg, dirResultMsg, baseDebounceMsg, baseResultMsg,
-			baseSettledMsg, baseBehindMsg, browseDebounceMsg, browseResultMsg:
+			baseSettledMsg, baseBehindMsg, browseDebounceMsg, browseResultMsg,
+			machinesListedMsg, machineResultMsg:
 			next, out := m.Update(msg)
 			m = next.(Model)
 			queue = append(queue, out)

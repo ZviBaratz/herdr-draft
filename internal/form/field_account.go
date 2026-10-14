@@ -239,6 +239,10 @@ type AccountField struct {
 	focused bool
 
 	agentIsClaude bool
+	// remote is the label of the machine the session runs on, "" for this
+	// one. Another machine uses its own login (machine spec §6.3), so no
+	// account here applies there, and the row is inert.
+	remote string
 
 	// status is the most recent SetProfiles payload, retained whole. The
 	// ROW needs its Profiles and ActiveProfile: with nothing pinned it
@@ -533,8 +537,12 @@ func (f *AccountField) SetLoading(loading bool) { f.loading = loading }
 // present-but-inert (form.go's Section doc comment) whenever the
 // currently selected agent kind is not claude -- see SetAgentIsClaude.
 func (f *AccountField) Enabled() bool {
-	return f.agentIsClaude && f.unavailable == "" && !f.loading
+	return f.agentIsClaude && f.unavailable == "" && !f.loading && f.remote == ""
 }
+
+// SetRemote records the machine the session runs on by its label, "" for
+// this one (machine spec §6.3).
+func (f *AccountField) SetRemote(label string) { f.remote = label }
 
 // RetryOnFocus asks the focus ring for a stop on a row Enabled() has just
 // refused -- form.go's optional retryOnFocus interface, and the one state
@@ -554,7 +562,9 @@ func (f *AccountField) Enabled() bool {
 // you tab onto to be told it does not apply to you; a LOADING row has
 // nothing to retry either, because the read it is waiting for is already
 // out and a second one would only retire the first (ruling 8).
-func (f *AccountField) RetryOnFocus() bool { return f.agentIsClaude && f.unavailable != "" }
+func (f *AccountField) RetryOnFocus() bool {
+	return f.agentIsClaude && f.unavailable != "" && f.remote == ""
+}
 
 // Focus gives the field input focus. widgets.Picker has no Focus/Blur of
 // its own (see its package doc); focused is tracked only for
@@ -1214,6 +1224,11 @@ func (f *AccountField) Row(w int) string {
 		w = 1
 	}
 	text := lipgloss.NewStyle().Foreground(f.palette.Text)
+	// First of all: on another machine no account here applies, so neither
+	// clauth's state nor the agent kind is this row's news.
+	if f.remote != "" {
+		return fitLine(dimHint(f.palette).Render(keepHead(f.remote+"'s own login", w)), w)
+	}
 	// Ahead of the agent check: a clauth that cannot be read is worth
 	// saying regardless of which agent is selected, and "this row is for
 	// claude" would be a misleading thing to show for a row that is inert
@@ -1546,6 +1561,8 @@ func (f *AccountField) filterCount() string {
 // saying what the `active` row means.
 func (f *AccountField) panelStatus(inner int) string {
 	switch {
+	case f.remote != "":
+		return dimHint(f.palette).Render("a session on " + f.remote + " uses that machine's own login")
 	case f.unavailable != "":
 		return dimHint(f.palette).Render(f.unavailable)
 	case f.loading:

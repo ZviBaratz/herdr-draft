@@ -35,6 +35,8 @@ import (
 // demand at one named method.
 type fakeRunner struct {
 	calls []string
+	// machines is `herdr machine list --json`'s answer (machine spec §3.4).
+	machines []herdrc.MachineInfo
 	// focusAsked is what each space, tab and split request asked herdr
 	// for, in call order: `create` must never take the user's focus.
 	focusAsked []bool
@@ -384,6 +386,18 @@ func (r *fakeRunner) WorkspaceClose(_ context.Context, workspaceID string) error
 	return r.record("WorkspaceClose", workspaceID)
 }
 
+// On records the machine a plan scoped this fake to: everything after it
+// went there. MachineList answers r.machines, and NotificationShow posts
+// nothing (machine spec §8.1).
+func (r *fakeRunner) On(id string) herdrc.Runner {
+	_ = r.record("On", id)
+	return r
+}
+func (r *fakeRunner) MachineList(context.Context) ([]herdrc.MachineInfo, error) {
+	return r.machines, nil
+}
+func (r *fakeRunner) NotificationShow(context.Context, string, string) error { return nil }
+
 // fakeGit implements GitSource: an existing git repository whose root is
 // itself, unless a test says otherwise.
 type fakeGit struct {
@@ -413,6 +427,14 @@ type fakeGit struct {
 	behind      map[string]fakeBehind
 	behindErr   error
 	behindCalls []string
+	// The laptop-side ref questions a remote session asks (machine.RefReader):
+	// fullRefs answers FullRefName (origin/<x> resolves to its
+	// remote-tracking ref by itself), originHead OriginHead, originBranches
+	// OriginBranchExists and originURL OriginURL.
+	fullRefs       map[string]string
+	originHead     string
+	originBranches map[string]bool
+	originURL      string
 }
 
 // fakeBehind is one BaseBehind answer.
@@ -464,6 +486,21 @@ func (g *fakeGit) BaseBehind(_ context.Context, dir, ref string) (string, int, e
 	b := g.behind[key]
 	return b.upstream, b.count, nil
 }
+
+func (g *fakeGit) FullRefName(_ context.Context, _ string, name string) (string, error) {
+	if full, ok := g.fullRefs[name]; ok {
+		return full, nil
+	}
+	if strings.HasPrefix(name, "origin/") {
+		return "refs/remotes/" + name, nil
+	}
+	return "", fmt.Errorf("fakeGit: %q names no ref", name)
+}
+func (g *fakeGit) OriginHead(context.Context, string) (string, error) { return g.originHead, nil }
+func (g *fakeGit) OriginBranchExists(_ context.Context, _ string, name string) (bool, error) {
+	return g.originBranches[name], nil
+}
+func (g *fakeGit) OriginURL(context.Context, string) (string, error) { return g.originURL, nil }
 
 // fakeLinear implements IssueSource.
 type fakeLinear struct {

@@ -52,6 +52,9 @@ type request struct {
 	agent     string
 	account   string
 	issue     string
+	// machine is --machine (machine spec §10.1): a selector from the set
+	// config.toml's [machine] offers, or local.
+	machine   string
 	onFailure string
 	json      bool
 	// dryRun is --dry-run (#209): the whole pre-flight, then a report of
@@ -142,7 +145,18 @@ flags:
                      the agent runs with. A kind that does not declare an
                      option refuses its flag
   --account NAME     clauth account to pin (claude only); "auto" asks the
-                     configured [clauth] picker to choose
+                     configured [clauth] picker to choose. Not on another
+                     machine, which uses its own login
+  --machine NAME     the herdr machine the session runs on: local, or one
+                     config.toml's [machine] names (by its label, profile
+                     id or ssh target). Unset, [machine.paths] decides by
+                     the project's directory, else [machine] default, else
+                     local. On another machine the session opens in a new
+                     space there, a worktree is cut after a fetch there
+                     from an origin/ branch, and only pushed work is
+                     visible; pass local for a session that drives this
+                     machine's browser or a USB device. Needs herdr 0.9.1
+                     on both machines
   --issue ID         seed title, branch and prompt from a Linear issue
   --json             print one JSON object instead of a human line
   --dry-run          resolve and check everything a create would, report
@@ -157,7 +171,8 @@ exit codes:
   1  the plan started and failed, and part of the session may exist
      (--on-failure applied)
   2  bad usage, or a request that cannot be resolved
-  3  herdr is unreachable, found before the plan starts
+  3  herdr, or the machine --machine names, is unreachable, found before
+     the plan starts
   4  the plan started, and its first step failed before making anything:
      nothing exists
   5  a question the command asked did not answer in time -- a stalled
@@ -208,6 +223,7 @@ func registerFlags(fs *flag.FlagSet, req *request, worktreeOn, worktreeOff *bool
 		fs.StringVar(v, agentopts.FlagName(name), "", "")
 	}
 	fs.StringVar(&req.account, "account", "", "")
+	fs.StringVar(&req.machine, "machine", "", "")
 	fs.StringVar(&req.issue, "issue", "", "")
 	fs.BoolVar(&req.json, "json", false, "")
 	fs.BoolVar(&req.dryRun, "dry-run", false, "")
@@ -294,6 +310,9 @@ func (r request) validate() error {
 		if r.set["placement"] && r.placement != "tab-in" {
 			return fmt.Errorf("--workspace names where --placement tab-in opens its tab; it does not apply to --placement %s", r.placement)
 		}
+	}
+	if r.set["machine"] && strings.TrimSpace(r.machine) == "" {
+		return fmt.Errorf("--machine needs a machine: local, or one config.toml's [machine] names")
 	}
 	switch r.onFailure {
 	case onFailureKeep, onFailureClean:
