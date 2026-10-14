@@ -404,7 +404,9 @@ func assertNotAllowedIn(t *testing.T, logPath, checkout string) {
 // directory, and `mise trust --show` prints "<cwd>: trusted|untrusted" with
 // $HOME spelled "~". Its `trust` exits $MISE_STUB_TRUST_EXIT when that is
 // set and non-zero, and records nothing while exiting 0 when
-// $MISE_STUB_TRUST_NOOP is set. Calls are logged as "<cwd> <args>".
+// $MISE_STUB_TRUST_NOOP is set. With $MISE_STUB_SHOW_RESOLVED set, --show
+// names the directory by its symlink-resolved path, as a mise that
+// canonicalizes would. Calls are logged as "<cwd> <args>".
 func fakeMise(t *testing.T, dir string) (logPath string) {
 	t.Helper()
 	db := t.TempDir()
@@ -415,7 +417,9 @@ key() { printf '%s' "$1" | tr / _; }
 disp() { case $1 in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' "$1" ;; esac; }
 [ "$1" = trust ] || exit 0
 if [ "$2" = --show ]; then
-  if [ -e '` + db + `'/"$(key "$PWD")" ]; then echo "$(disp "$PWD"): trusted"; else echo "$(disp "$PWD"): untrusted"; fi
+  shown=$PWD
+  [ -z "$MISE_STUB_SHOW_RESOLVED" ] || shown=$(pwd -P)
+  if [ -e '` + db + `'/"$(key "$PWD")" ]; then echo "$(disp "$shown"): trusted"; else echo "$(disp "$shown"): untrusted"; fi
   exit 0
 fi
 [ "${MISE_STUB_TRUST_EXIT:-0}" = 0 ] || { echo "mise ERROR could not trust" >&2; exit "$MISE_STUB_TRUST_EXIT"; }
@@ -722,4 +726,39 @@ func withoutOnPath(t *testing.T, name string) {
 		}
 	}
 	t.Setenv("PATH", strings.Join(keep, string(os.PathListSeparator)))
+}
+
+// TestExtendTrustKeepsTheMainClonesPathAsSpelled: direnv keys an allow on the
+// path the operator's shell spelled, and mise a trust on the directory as it
+// was named, so a main clone reached through a symlink -- macOS's /var, or a
+// home whose ~/quantivly links elsewhere -- must be asked about by that same
+// spelling. git's --show-toplevel resolves symlinks, and asking direnv about
+// the resolved path read every such clone as not allowed (macOS CI, #366).
+func TestExtendTrustKeepsTheMainClonesPathAsSpelled(t *testing.T) {
+	fakeDirenv(t, "0")
+	miseOnPath(t)
+	real, checkout := hubLike(t)
+	link := filepath.Join(t.TempDir(), "hub-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	allowIn(t, link)
+	trustIn(t, link)
+	sub := filepath.Join(link, "services")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, resolved := range []string{"", "1"} {
+		t.Setenv("MISE_STUB_SHOW_RESOLVED", resolved)
+		for _, source := range []string{link, sub} {
+			got, err := Here.ExtendTrust(context.Background(), source, checkout)
+			if err != nil {
+				t.Fatalf("ExtendTrust(%s): %v", source, err)
+			}
+			if want := (EnvTrust{Envrc: EnvrcAllowed, Mise: MiseTrusted}); got != want {
+				t.Errorf("mise naming the resolved path: %q; ExtendTrust(%s) = %+v, want %+v", resolved, source, got, want)
+			}
+		}
+	}
 }

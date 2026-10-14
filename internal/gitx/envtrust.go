@@ -153,9 +153,16 @@ var miseConfigFiles = []string{
 // include it (dev, 2026-10-14). Not finding it would read as "no mise" and
 // allow an .envrc into the prompt EnvrcHeld exists to avoid.
 //
+// The main clone's root is found with --show-cdup and a cd, not with
+// --show-toplevel, because the latter resolves symlinks: direnv keys an
+// allow on the path the operator's shell spelled, so a clone reached
+// through one -- macOS's /var, or a ~/quantivly that links elsewhere --
+// has to be asked about by that spelling, or it reads as not allowed.
+//
 // `mise trust --show` prints one "<dir>: trusted|untrusted" line per
 // directory from the current one up, with $HOME spelled "~"; the main
-// clone's own line is the one read. `direnv status` has two text formats in
+// clone's own line is the one read, under its spelled or its resolved
+// path, since mise may name either. `direnv status` has two text formats in
 // use: "Found RC allowed true" up to 2.32 (dev runs 2.25.2, which also
 // ignores --json), and the AllowStatus number since 2.33, where 0 is
 // allowed and 1 and 2 are not-allowed and denied (the laptop runs 2.37.1).
@@ -166,10 +173,11 @@ func extendTrustScript(source, checkout string) string {
 		`PATH=$PATH:$HOME/.local/bin`,
 		`wt=` + shellQuote(checkout),
 		`src=` + shellQuote(source),
-		`top=$(GIT_TERMINAL_PROMPT=0 git -C "$src" rev-parse --show-toplevel 2>/dev/null) || top=$src`,
+		`top=$(cd -- "$src" 2>/dev/null && c=$(GIT_TERMINAL_PROMPT=0 git rev-parse --show-cdup 2>/dev/null) && cd -- "./$c" && pwd) || top=$src`,
 		// mise
 		`mfiles() { (cd -- "$1" 2>/dev/null && for f in ` + strings.Join(miseConfigFiles, " ") + `; do [ -f "$f" ] && printf '%s\n' "$f"; done); }`,
-		`mtrusted() { d=$1; case $d in "$HOME"/*) d="~${d#"$HOME"}" ;; esac; (cd -- "$1" && mise trust --show 2>/dev/null) | while IFS= read -r l; do [ "$l" = "$d: trusted" ] && echo yes; done; }`,
+		`tilde() { case $1 in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' "$1" ;; esac; }`,
+		`mtrusted() { d=$(tilde "$1"); p=$(tilde "$(cd -- "$1" && pwd -P)"); (cd -- "$1" && mise trust --show 2>/dev/null) | while IFS= read -r l; do { [ "$l" = "$d: trusted" ] || [ "$l" = "$p: trusted" ]; } && echo yes; done; }`,
 		`m=`,
 		`if command -v mise >/dev/null 2>&1; then`,
 		`  wl=$(mfiles "$wt")`,
