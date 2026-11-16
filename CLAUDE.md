@@ -384,7 +384,12 @@ Layering, outermost to innermost:
   no reaction within five seconds as a stall. A **stall** means herdr observed no
   working or blocked state at all, which is positive evidence nothing was
   processed — so it is the one failure worth sending again, exactly once,
-  through `promptIfReady` so the guard gates the retry. Its dominant cause is
+  behind the same guard as the first send. "Sending again" is not always
+  typing: a stall can leave the text in the input box with its Enter unacted
+  on, and a second copy then joins it into one turn (#371). The retry reads
+  the box first (`retryStalledPrompt`) and presses Enter on a prompt it finds
+  there; it retypes only when the box does not hold it and the agent is not
+  already working. Its dominant cause is
   measured: for about a second after a trust dialog clears, `agent get`
   reports `idle` and `interactive_ready` while the agent's TUI is not yet
   accepting input. Collapsing the two would either strand a delivered prompt

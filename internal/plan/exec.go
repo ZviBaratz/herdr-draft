@@ -226,7 +226,7 @@ type ExecResult struct {
 	BaseCommit string
 
 	// PromptUnconfirmed reports that delivery of the prompt is UNKNOWN
-	// rather than known to be false (#108). It is reached five ways, and
+	// rather than known to be false (#108). It is reached six ways, and
 	// they rest on different evidence:
 	//
 	//   - ErrPromptWaitTimeout. `herdr agent prompt --wait` ran out of
@@ -260,6 +260,9 @@ type ExecResult struct {
 	//     above applied to a FIRST send -- the case it used to miss,
 	//     because "the text went out" was inferred from a list of errors
 	//     rather than recorded when herdr accepted the send.
+	//   - a stall that left the prompt in the agent's input box, with Enter
+	//     pressed on it and still no reaction (errPromptLeftInInputBox,
+	//     #371). One copy was typed, and it is most likely still there.
 	//   - herdr failing the send itself (herdrc.ErrPromptSendFailed, #228).
 	//     The one shape that is not evidence the text went out: herdr raises
 	//     `agent_prompt_failed` before queueing anything and when a write
@@ -359,6 +362,12 @@ const (
 	// (herdrc.ErrPromptSendFailed), which it reports the same way whether
 	// it had typed none, some or all of the prompt (#228).
 	causeSendFailed unconfirmedCause = "send-failed"
+
+	// causeLeftInInputBox: a stall left the prompt in the agent's input
+	// box, Enter was pressed on it, and the agent still did not react
+	// (errPromptLeftInInputBox, #371). One copy was typed; it is most
+	// likely still there, unsubmitted.
+	causeLeftInInputBox unconfirmedCause = "left-in-input-box"
 )
 
 // busyRetryInterval, busyRetryBudget, and busyRetryNow implement the busy
@@ -631,23 +640,41 @@ var dialogPollInterval = 500 * time.Millisecond
 // allow-list of errors meaning "the text went out" is how a first send the
 // check found swallowed came to be reported `unsent` (#154).
 func promptIfReady(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptReq, textAlreadySent bool) (typed bool, err error) {
+	if _, err := guardPromptScreen(ctx, r, req.Target, textAlreadySent); err != nil {
+		return false, err
+	}
+	return sendPrompt(ctx, r, req)
+}
+
+// guardPromptScreen is promptIfReady's pre-send read: the pane's screen,
+// or the refusal that says why nothing may be typed into it. The screen is
+// returned because the stall retry decides from this same read what to do
+// next (retryStalledPrompt), rather than reading the pane a second time.
+func guardPromptScreen(ctx context.Context, r herdrc.Runner, target string, textAlreadySent bool) (string, error) {
 	refused := "prompt not sent"
 	if textAlreadySent {
 		refused = "nothing more was sent, but the prompt text had already gone out once -- read the pane"
 	}
-	screen, err := r.AgentRead(ctx, req.Target)
+	screen, err := r.AgentRead(ctx, target)
 	if err != nil {
-		return false, fmt.Errorf("could not confirm the agent is ready for a prompt: %w", err)
+		return "", fmt.Errorf("could not confirm the agent is ready for a prompt: %w", err)
 	}
 	if strings.TrimSpace(screen) == "" {
 		// #116: the rule is positive now. A screen with nothing on it is
 		// not one that failed to match a signature -- it is one there was
 		// nothing to match against.
-		return false, fmt.Errorf("%w -- %s", errPaneUnpainted, refused)
+		return "", fmt.Errorf("%w -- %s", errPaneUnpainted, refused)
 	}
 	if sig := blockingDialogSignature(screen); sig != "" {
-		return false, fmt.Errorf("%w (%q) -- %s", errAgentOnDialog, sig, refused)
+		return "", fmt.Errorf("%w (%q) -- %s", errAgentOnDialog, sig, refused)
 	}
+	return screen, nil
+}
+
+// sendPrompt is promptIfReady's send, for a screen the guard has already
+// passed: `agent prompt`, then the post-send check. typed is as
+// promptIfReady documents it.
+func sendPrompt(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptReq) (typed bool, err error) {
 	if err := r.AgentPrompt(ctx, req); err != nil {
 		return promptTextMayBeTyped(err), err
 	}
@@ -1098,9 +1125,10 @@ func promptTextMayBeTyped(err error) bool {
 // The last case is the sticky one (#132's rider), and the order matters:
 // the sentinels above it name the evidence the step ended on, so they win
 // over the weaker "something went out at some point" when both are true.
-// Four are herdr's and two are confirmPromptLanded's verdicts (#154), and
+// Four are herdr's, two are confirmPromptLanded's verdicts (#154) and one is
+// the stall retry's (errPromptLeftInInputBox, #371), and
 // all are ungated for the same reason: none of them can rule out that
-// herdr typed the text, so each carries textAlreadySent in itself. Five
+// herdr typed the text, so each carries textAlreadySent in itself. Six
 // prove it; ErrPromptSendFailed proves nothing either way (#228), and is
 // here because "unsent" is the one claim it cannot support. What they do
 // not all carry is how many sends there were: a stall whose retry is
@@ -1118,6 +1146,8 @@ func classifyPromptDelivery(runErr error, textAlreadySent bool) (bool, unconfirm
 		return true, causeAgentGoneAfterSend
 	case errors.Is(runErr, herdrc.ErrPromptSendFailed):
 		return true, causeSendFailed
+	case errors.Is(runErr, errPromptLeftInInputBox):
+		return true, causeLeftInInputBox
 	case textAlreadySent:
 		return true, causeFailedAfterSending
 	}
@@ -1885,10 +1915,13 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 				// means the agent WAS working, and resending would give a
 				// busy agent its instructions twice (#108).
 				//
-				// Exactly one extra attempt, and through promptIfReady, so
-				// the guard gates the retry as it gates the first send and a
-				// TUI that buffered the keystrokes it was handed while
-				// starting cannot be fed the same prompt repeatedly.
+				// Exactly one extra attempt, behind the same guard as the
+				// first send, so a TUI that buffered the keystrokes it was
+				// handed while starting cannot be fed the same prompt
+				// repeatedly. And not always a second copy: a stall can
+				// leave the first one in the input box, where typing again
+				// joins the two into one turn (#371). retryStalledPrompt
+				// reads the box first and presses Enter on what is there.
 				//
 				// Ungated by opts.TrustWait, unlike the two waits above, and
 				// that asymmetry is the point (#132): TrustWait budgets a
@@ -1907,7 +1940,17 @@ func Execute(ctx context.Context, r herdrc.Runner, ops []Op, opts ExecOpts, onPr
 					case <-ctx.Done():
 					case <-time.After(promptRetrySettle):
 					}
-					err = send()
+					// The retype goes through sendPrompt, not send: the
+					// retry's guard read has already been made, and the
+					// box judged from it.
+					retype := func() error {
+						typed, e := sendPrompt(ctx, r, req)
+						if typed {
+							promptTyped = true
+						}
+						return e
+					}
+					err = retryStalledPrompt(ctx, r, req, promptTyped, retype)
 					retried = true
 				}
 				switch {
@@ -2505,6 +2548,10 @@ func unconfirmedCleanReason(cause unconfirmedCause) string {
 		return "herdr failed a send (agent_prompt_failed) without saying how far it got, so what " +
 			"the pane holds is unknown -- it may include some or all of the prompt, typed but never " +
 			"submitted. Read the pane before removing anything."
+	case causeLeftInInputBox:
+		return "the prompt was typed once and herdr saw the agent do nothing, and Enter pressed on " +
+			"it again changed nothing either, so it is most likely still in the agent's input box, " +
+			"unsubmitted. Read the pane before removing anything."
 	}
 	// causeWaitTimedOut, and the zero value with it. CleanCheck cannot
 	// reach that zero value -- the cause is set on the same line as the

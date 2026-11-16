@@ -60,6 +60,20 @@ for why a heading here may read `unreleased`.
   fine. herdr-draft now asks herdr to stop waiting at the agent's first
   reaction, which is the proof the prompt landed. The popup closes about
   a second after that. Headless `create` returns at the same point.
+- **A prompt is no longer sent twice in one message after a stall** (#371).
+  When the agent did not react to a prompt within five seconds,
+  herdr-draft typed it again. Sometimes the first copy was still in Claude
+  Code's input box, its Enter not acted on, so the agent got the prompt
+  twice in one turn while the run reported `sent`. The retry now reads the
+  input box first:
+  - **The prompt is still in the box:** it presses Enter on it.
+  - **The agent is already working on it:** it sends nothing.
+  - **Neither:** it types the prompt again, as before.
+
+  If Enter changes nothing either, the run says the prompt is most likely
+  still in the box and to press Enter there, instead of offering it back to
+  paste. The spawn skill and `docs/create.md` describe this `unconfirmed`
+  case too.
 
 ## 0.2.0 — 2026-10-14
 

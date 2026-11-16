@@ -148,6 +148,10 @@ type Runner interface {
 	PaneSplit(ctx context.Context, req PaneSplitReq) (CreatedTopology, error)
 	AgentStart(ctx context.Context, req AgentStartReq) error
 	AgentPrompt(ctx context.Context, req AgentPromptReq) error
+	// AgentWait reports whether the agent reaches one of the statuses
+	// within timeout; zero asks about now. Running out the budget is
+	// (false, nil).
+	AgentWait(ctx context.Context, target string, timeout time.Duration, until ...AgentStatus) (bool, error)
 	AgentRead(ctx context.Context, target string) (string, error)
 	// PaneRead reads a pane's screen without going through herdr's agent
 	// layer, which is the only way to see a pane whose launch never
@@ -536,6 +540,12 @@ const promptStalledCode = "agent_prompt_stalled"
 // not yet accepting input. herdr types, nothing happens, and the pane is left
 // with an empty buffer and no turn -- so a caller that waits a moment and
 // sends again delivers the prompt exactly once rather than not at all.
+//
+// Not always an empty buffer, though (#371). On 2026-11-16 a stall left the
+// TEXT in Claude Code's input box with the Enter after it unacted on, and a
+// second send typed another copy behind it: one turn, the prompt twice.
+// internal/plan's retry therefore reads the box before it sends again, and
+// presses Enter on a prompt it finds there.
 //
 // "processed", not "delivered", and the one word is the whole point (#132).
 // herdr writes the prompt text and Enter BEFORE it starts watching for an
@@ -1031,9 +1041,24 @@ const agentStartTimeoutCode = "timeout"
 // agent_name_taken, whose diagnosis is already in hand.
 var ErrAgentStartTimeout = errors.New("herdr waited for the agent to start and never saw it")
 
-// promptLandedStatuses are the agent statuses AgentPrompt passes to
+// AgentStatus is one of herdr's agent statuses, spelled as `--until` takes
+// it (parse_agent_status,
+// https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli.rs#L899-L910). Only
+// the ones a caller here waits for are named.
+type AgentStatus string
+
+const (
+	// AgentWorking is an agent on a turn.
+	AgentWorking AgentStatus = "working"
+	// AgentBlocked is an agent waiting on a dialog: a permission prompt, or
+	// Claude Code's trust prompt.
+	AgentBlocked AgentStatus = "blocked"
+)
+
+// PromptLandedStatuses are the agent statuses AgentPrompt passes to
 // `--until`: the first reaction that proves a prompt landed, which is all
-// the caller is waiting to learn.
+// the caller is waiting to learn. A function rather than a package var so
+// no caller can change the list for every other one.
 //
 // Without them `--wait` is two waits, not one. herdr first waits up to five
 // seconds for the agent to go working or blocked, reporting
@@ -1054,22 +1079,32 @@ var ErrAgentStartTimeout = errors.New("herdr waited for the agent to start and n
 // blocked, which was already in the default `until`, and confirmPromptLanded
 // still reads the pane afterwards.
 //
-// The spellings are herdr's own (parse_agent_status,
-// https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli.rs#L899-L910), and
 // `agent prompt` takes the flag once per status
 // (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/agent.rs#L792-L806).
-var promptLandedStatuses = []string{"working", "blocked"}
+// internal/plan waits for the same two after pressing Enter on a prompt a
+// stall left in the agent's input box (#371).
+func PromptLandedStatuses() []AgentStatus {
+	return []AgentStatus{AgentWorking, AgentBlocked}
+}
+
+// appendUntil appends one `--until` per status, through appendFlag.
+func appendUntil(args []string, statuses []AgentStatus) ([]string, error) {
+	var err error
+	for _, status := range statuses {
+		if args, err = appendFlag(args, "--until", string(status)); err != nil {
+			return nil, err
+		}
+	}
+	return args, nil
+}
 
 // AgentPrompt runs `herdr agent prompt --wait --until working --until
 // blocked` (spec §9 step 3): it returns once the agent has reacted to the
-// prompt, not once the agent's turn is over (promptLandedStatuses).
+// prompt, not once the agent's turn is over (PromptLandedStatuses).
 func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
-	args := []string{"agent", "prompt", req.Target, req.Text, "--wait"}
-	var err error
-	for _, status := range promptLandedStatuses {
-		if args, err = appendFlag(args, "--until", status); err != nil {
-			return err
-		}
+	args, err := appendUntil([]string{"agent", "prompt", req.Target, req.Text, "--wait"}, PromptLandedStatuses())
+	if err != nil {
+		return err
 	}
 	if req.WaitTimeout > 0 {
 		// The > 0 guard already rules out a "-"-leading duration; the flag
@@ -1093,6 +1128,54 @@ func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 		return err
 	}
 	return nil
+}
+
+// agentWaitTimeoutCode is herdr's `error.code` when `agent wait` runs out
+// its budget without seeing any of the statuses: agent_wait_timeout's
+// Status kind, "timed out waiting for agent status"
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/api/wait.rs#L650-L658).
+// The same generic word as promptWaitTimeoutCode and agentStartTimeoutCode,
+// and scoped the same way: read from the parsed envelope at this one call
+// site, never put in codeSentinels.
+const agentWaitTimeoutCode = "timeout"
+
+// AgentWait runs `herdr agent wait <target> --until S... --timeout MS` and
+// reports whether the agent reached one of the statuses within timeout.
+//
+// herdr checks the current status before it starts waiting
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/api/wait.rs#L132-L152),
+// so a zero timeout asks "is it in one of these now". That is why the flag
+// is always passed here, unlike AgentPrompt's: with no `--timeout` herdr
+// waits with no deadline at all.
+//
+// Running out the budget is an answer, (false, nil), not an error: it is the
+// "no" the caller asked about. Anything else herdr refuses with -- the agent
+// gone, the target unknown -- is an error that keeps herdr's code.
+//
+// At least one status is required. With none, herdr substitutes idle, done
+// or blocked (agent_wait_statuses, wait.rs#L523-L535), the end of a turn,
+// and nothing here means to ask that.
+func (r *CLIRunner) AgentWait(ctx context.Context, target string, timeout time.Duration, until ...AgentStatus) (bool, error) {
+	if timeout < 0 {
+		return false, fmt.Errorf("%w agent wait: a negative budget (%s) for %s", errRefused, timeout, target)
+	}
+	if len(until) == 0 {
+		return false, fmt.Errorf("%w agent wait: no status to wait for on %s", errRefused, target)
+	}
+	args, err := appendUntil([]string{"agent", "wait", target}, until)
+	if err != nil {
+		return false, err
+	}
+	if args, err = appendFlag(args, "--timeout", strconv.FormatInt(timeout.Milliseconds(), 10)); err != nil {
+		return false, err
+	}
+	if _, err = r.runJSON(ctx, args...); err != nil {
+		if herdrErrorCode(err) == agentWaitTimeoutCode {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // AgentRead runs `herdr agent read <target> --source detection --format

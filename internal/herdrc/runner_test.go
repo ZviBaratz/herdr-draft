@@ -584,6 +584,98 @@ func TestCLIRunnerAgentPromptWaitEndsWhenThePromptLands(t *testing.T) {
 	}
 }
 
+// TestCLIRunnerAgentWaitMatched: herdr answers a wait that saw one of the
+// statuses with the agent record, which is a match.
+func TestCLIRunnerAgentWaitMatched(t *testing.T) {
+	stdout := `{"id":"cli:agent:wait","result":{"type":"agent_info","agent":{"agent":"claude","agent_status":"working"}}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	matched, err := r.AgentWait(context.Background(), "w1:p1", 5*time.Second, PromptLandedStatuses()...)
+	if err != nil {
+		t.Fatalf("AgentWait: %v", err)
+	}
+	if !matched {
+		t.Error("matched = false, want true for a wait herdr answered with the agent")
+	}
+	wantArgv := "agent wait w1:p1 --until working --until blocked --timeout 5000"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerAgentWaitZeroBudgetAsksAboutNow pins `--timeout 0` on the
+// argv. A zero budget means "is it in one of these statuses now": herdr
+// checks the current status before it starts waiting. Leaving the flag off
+// instead, the way AgentPrompt treats an unset budget, would ask herdr to
+// wait with no deadline at all.
+func TestCLIRunnerAgentWaitZeroBudgetAsksAboutNow(t *testing.T) {
+	stdout := `{"id":"cli:agent:wait","result":{"type":"agent_info","agent":{"agent_status":"working"}}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	if _, err := r.AgentWait(context.Background(), "w1:p1", 0, AgentWorking); err != nil {
+		t.Fatalf("AgentWait: %v", err)
+	}
+	wantArgv := "agent wait w1:p1 --until working --timeout 0"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerAgentWaitTimeoutIsAnAnswer: herdr's `timeout` from `agent
+// wait` means none of the statuses appeared, which is the answer "no", not
+// a failure to ask. It is read from the parsed envelope at this one call
+// site, for the reason agentStartTimeoutCode gives.
+func TestCLIRunnerAgentWaitTimeoutIsAnAnswer(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "timeout", "timed out waiting for agent status")
+	r := &CLIRunner{Bin: bin}
+
+	matched, err := r.AgentWait(context.Background(), "w1:p1", time.Second, AgentWorking)
+	if err != nil {
+		t.Fatalf("AgentWait: %v, want no error for a wait that saw nothing", err)
+	}
+	if matched {
+		t.Error("matched = true, want false")
+	}
+}
+
+// TestCLIRunnerAgentWaitOtherFailureIsAnError: anything else herdr refuses
+// with -- the agent gone, the target unknown -- is not "no", and it keeps
+// herdr's own code.
+func TestCLIRunnerAgentWaitOtherFailureIsAnError(t *testing.T) {
+	bin := fakeHerdrFailEnvelope(t, "agent_not_running", "agent is no longer running")
+	r := &CLIRunner{Bin: bin}
+
+	matched, err := r.AgentWait(context.Background(), "w1:p1", time.Second, AgentWorking)
+	if err == nil || matched {
+		t.Fatalf("AgentWait = (%v, %v), want (false, an error)", matched, err)
+	}
+	if !strings.Contains(err.Error(), "agent_not_running") {
+		t.Errorf("error %q drops herdr's own code", err)
+	}
+}
+
+// TestCLIRunnerAgentWaitRefusesAnUnboundedOrEmptyWait: a negative budget and
+// an empty status list are both refused before herdr is run. With no
+// statuses herdr substitutes its own default (idle, done or blocked), which
+// is the end of a turn, and is exactly what AgentPrompt had to stop asking
+// for.
+func TestCLIRunnerAgentWaitRefusesAnUnboundedOrEmptyWait(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{}`)
+	r := &CLIRunner{Bin: bin}
+
+	if _, err := r.AgentWait(context.Background(), "w1:p1", -time.Second, AgentWorking); err == nil {
+		t.Error("negative budget: want an error")
+	}
+	if _, err := r.AgentWait(context.Background(), "w1:p1", time.Second); err == nil {
+		t.Error("no statuses: want an error")
+	}
+	if b, err := os.ReadFile(argvLog); err == nil && len(b) > 0 {
+		t.Errorf("herdr was run: %q", b)
+	}
+}
+
 func TestCLIRunnerAgentPromptNonZeroExit(t *testing.T) {
 	bin := fakeHerdrFail(t, "agent_blocked")
 	r := &CLIRunner{Bin: bin}
@@ -1831,7 +1923,8 @@ func TestCLIRunnerAwaitDetectionNeverReportsGoneWithoutHavingSeenBlocked(t *test
 // nothing was processed. Recorded live on 2026-09-09: for the ~seconds after
 // a trust dialog is answered, `agent get` reports idle and interactive_ready
 // while Claude Code is not yet accepting input, and the pane afterwards holds
-// an empty buffer and no turn.
+// an empty buffer and no turn -- or, recorded on 2026-11-16, the text with its
+// Enter unacted on (#371).
 func TestCLIRunnerAgentPromptStalled(t *testing.T) {
 	bin := fakeHerdrFailEnvelope(t, "agent_prompt_stalled",
 		"agent prompt produced no observed working or blocked state within 5000 ms; current status is idle")
