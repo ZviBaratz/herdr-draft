@@ -1568,9 +1568,9 @@ func fakeHerdrFailEnvelope(t *testing.T, code, message string) string {
 //
 // From `agent start` it means the readiness poll never saw an agent --
 // nothing started, and the reason is on the pane rather than in the error
-// (#350). From `agent prompt --wait` it means the wait gave up while the
-// agent was demonstrably busy, so delivery is unknown and the text must
-// never be resent (#108).
+// (#350). From `agent prompt --wait` it means the wait ran out before it saw
+// the agent react, so delivery is unknown and the text must never be resent
+// (#108).
 func TestCLIRunnerAgentStartTimeout(t *testing.T) {
 	bin := fakeHerdrFailEnvelope(t, "timeout", "timed out waiting for agent startup")
 	r := &CLIRunner{Bin: bin}

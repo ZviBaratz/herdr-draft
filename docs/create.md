@@ -353,8 +353,9 @@ yours to reuse.
 **`unconfirmed`** means the text may already be in front of the agent.
 Delivery is unknown when:
 
-- herdr's wait for the agent to take the prompt ran out. A large prompt into
-  an agent that is slow to redraw can time out while working perfectly well.
+- herdr's wait for the agent to take the prompt ran out before it saw the
+  agent react. That takes a `prompt_wait_ms` under five seconds, because
+  herdr reports no reaction within five seconds as a stall instead.
 - the send stalled twice. herdr-draft sends once more after a stall, and
   herdr types the text before it starts watching, so the pane may hold two
   copies.

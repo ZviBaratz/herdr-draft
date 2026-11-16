@@ -3670,8 +3670,8 @@ func TestExecuteDoesNotRetryAnUnconfirmedPrompt(t *testing.T) {
 // discriminator from rotting back into one generic sentence.
 //
 // PromptUnconfirmed is one posture reached several ways, and each rests on
-// different evidence. A wait timeout gave up while the agent was
-// demonstrably busy -- that is what "timed out" names, and it is the reason
+// different evidence. A wait timeout ran out before anything confirmed
+// delivery either way, so the agent may be mid-turn -- and that is the reason
 // `clean` would kill a mid-turn agent. A stall timed nothing out; herdr
 // watched and saw the agent do nothing, twice, so what is unknown is
 // whether either send landed and what the pane may hold is two copies.
