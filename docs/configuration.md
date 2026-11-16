@@ -312,8 +312,12 @@ permission_mode = "plan"      # manual | plan | acceptEdits | auto
 the agent after it starts.
 
 **`prompt_wait_ms`** (default: `120000`). How long to wait for the agent to
-take the first prompt. A wait that runs out does not mean the prompt was
-lost: the agent may have been busy painting its screen. See
+take the first prompt: for herdr to type it, and for the agent to react. The
+popup closes as soon as the agent reacts. It doesn't wait for the agent's
+turn to end. herdr gives up after five seconds with no reaction and says so
+as a stall, which herdr-draft retries once, so this only matters when set
+below that or for a prompt large enough to take a while to type. A wait that
+runs out does not mean the prompt was lost. See
 [Troubleshooting](troubleshooting.md#delivery-unconfirmed-after-a-submit).
 
 **`trust_wait_ms`** (default: `300000`, five minutes). How long the popup

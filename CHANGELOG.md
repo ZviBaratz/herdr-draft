@@ -48,6 +48,19 @@ for why a heading here may read `unreleased`.
   - **On by default.** `[worktree] inherit_trust = false` turns it off. Only
     `config.toml` can set it.
 
+### Fixed
+
+- **The popup closes once the prompt lands, not when the agent's first
+  turn ends.** After a submit, the new session appeared but the popup
+  stayed on the pane it was opened from, ignoring Esc, until the new agent
+  paused: 10 s and 53 s after the session was created on two ordinary
+  submits. herdr's `agent prompt --wait` waits out the agent's whole turn
+  unless told otherwise, so a turn longer than `prompt_wait_ms` ended on a
+  "delivery unconfirmed" failure screen over an agent that was working
+  fine. herdr-draft now asks herdr to stop waiting at the agent's first
+  reaction, which is the proof the prompt landed. The popup closes about
+  a second after that. Headless `create` returns at the same point.
+
 ## 0.2.0 — 2026-10-14
 
 **Install:** `herdr plugin install ZviBaratz/herdr-draft --ref v0.2.0`.

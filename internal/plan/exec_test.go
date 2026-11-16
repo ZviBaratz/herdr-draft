@@ -4071,8 +4071,8 @@ func TestExecutePromptFailsWhenTheSendKilledTheAgent(t *testing.T) {
 	// what was seen. "Exited" is the likeliest cause of that, not an
 	// observation: the reads fail the same way whatever went wrong. Nor is
 	// "as the prompt was sent" something either witness can see: the reads
-	// run only once `agent prompt --wait` returns, which can be a whole
-	// turn after the send.
+	// run only once `agent prompt --wait` returns, which is after the
+	// agent's first reaction to the send, not at it.
 	if !strings.HasPrefix(strings.TrimPrefix(msg, "plan: execute: sending prompt: "),
 		"the agent stopped answering after the prompt was sent") {
 		t.Errorf("step message = %q, want it to open with what was seen", msg)

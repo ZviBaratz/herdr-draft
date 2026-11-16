@@ -229,10 +229,13 @@ type ExecResult struct {
 	// rather than known to be false (#108). It is reached five ways, and
 	// they rest on different evidence:
 	//
-	//   - ErrPromptWaitTimeout. `herdr agent prompt --wait` gave up
-	//     waiting for the agent's status to change, having watched it be
-	//     demonstrably busy. The send itself did not fail; only the wait
-	//     for its effect did.
+	//   - ErrPromptWaitTimeout. `herdr agent prompt --wait` ran out of
+	//     budget before it saw the agent react. Reachable only with under
+	//     five seconds of prompt_wait_ms left, and herdr's message does not
+	//     say whether that was before the send or after it, so nothing
+	//     confirms delivery either way. (#108's own timeout was herdr
+	//     waiting out a long first turn, which AgentPrompt's `--until` has
+	//     since stopped it doing: herdrc.ErrPromptWaitTimeout.)
 	//   - ErrPromptStalled, twice. herdr saw no working and no blocked
 	//     state at all, so nothing was PROCESSED -- which is why Execute
 	//     answers the first one by sending again. What the second does not
@@ -326,9 +329,9 @@ type ExecResult struct {
 type unconfirmedCause string
 
 const (
-	// causeWaitTimedOut: `agent prompt --wait` gave up while the agent was
-	// demonstrably busy (#108). The send did not fail; the wait for its
-	// effect did.
+	// causeWaitTimedOut: `agent prompt --wait` ran out of budget before it
+	// saw the agent react (#108). Nothing failed that says the prompt did
+	// not arrive; nothing confirmed that it did.
 	causeWaitTimedOut unconfirmedCause = "wait-timed-out"
 
 	// causeStalledTwice: two sends, and herdr observed no working or
@@ -994,11 +997,13 @@ func explainAbandonedDialog(err error) error {
 // head is the clause the popup's truncation leaves. It used to open "the
 // agent exited", beside a remove line saying "most likely it exited" about
 // the same evidence. Nor does it say WHEN: herdr's `agent prompt --wait`
-// runs on to a settled status once it has seen the agent working, up to
-// prompt_wait_ms, and confirmPromptLanded reads only after that returns,
-// so either witness can report an agent that went a whole turn after the
-// send. The dialog is therefore offered as how an exit at the send
-// happens, not as what happened here.
+// returns at the agent's first reaction to the send (herdrc's
+// promptLandedStatuses), and confirmPromptLanded reads only after that, so
+// either witness can report an agent that took the prompt, started on it and
+// then went, which reads the same as one the send itself killed. (Until the
+// wait stopped at that first reaction it ran on to the end of the agent's
+// turn, and the gap was a whole turn wide.) The dialog is therefore offered
+// as how an exit at the send happens, not as what happened here.
 //
 // Two callers reach it holding the same fact from different witnesses:
 // confirmPromptLanded, whose reads of the pane failed (errAgentGoneAfterSend),

@@ -372,10 +372,16 @@ Layering, outermost to innermost:
   (`ErrPromptWaitTimeout`, herdr's `timeout`); stall
   (`ErrPromptStalled`, herdr's `agent_prompt_stalled`); or fail outright.
   The middle two look alike and mean opposite things, which is why each is a
-  typed sentinel rather than a substring match. A **timeout** means the wait
-  gave up while the agent was demonstrably busy, so delivery is UNKNOWN: the
-  text must never be relabelled "unsent", never resent (#108), and
-  `CleanCheck` refuses the clean. A **stall** means herdr observed no
+  typed sentinel rather than a substring match. A **timeout** means the budget
+  ran out with nothing confirming delivery either way, so delivery is
+  UNKNOWN: the text must never be relabelled "unsent", never resent (#108),
+  and `CleanCheck` refuses the clean. Note what `--wait` waits FOR: with no
+  `--until` it waits out the agent's whole first turn (idle, done or
+  blocked, `herdr:src/api/wait.rs` at v0.9.0), which held the popup open for
+  that turn and was #108's real timeout. `AgentPrompt` therefore passes
+  `--until working --until blocked` (`promptLandedStatuses`), and with the
+  default budget a timeout is effectively unreachable, since herdr reports
+  no reaction within five seconds as a stall. A **stall** means herdr observed no
   working or blocked state at all, which is positive evidence nothing was
   processed — so it is the one failure worth sending again, exactly once,
   through `promptIfReady` so the guard gates the retry. Its dominant cause is

@@ -558,7 +558,27 @@ func TestCLIRunnerAgentPromptWait(t *testing.T) {
 		t.Fatalf("AgentPrompt: %v", err)
 	}
 
-	wantArgv := "agent prompt w1:p1 hello --wait --timeout 5000"
+	wantArgv := "agent prompt w1:p1 hello --wait --until working --until blocked --timeout 5000"
+	if got := readArgvLog(t, argvLog); got != wantArgv {
+		t.Errorf("argv = %q, want %q", got, wantArgv)
+	}
+}
+
+// TestCLIRunnerAgentPromptWaitEndsWhenThePromptLands pins the `--until`
+// pair on its own, with no `--timeout` beside it to make the argv look
+// complete. Without it `--wait` runs on past the prompt landing to the end of
+// the agent's first turn (herdr's default `until` is idle, done or blocked),
+// and the popup stays on screen for that whole turn.
+func TestCLIRunnerAgentPromptWaitEndsWhenThePromptLands(t *testing.T) {
+	stdout := `{"id":"cli:agent:prompt","result":{"type":"agent_prompted","agent":{"agent":"claude"}}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.AgentPrompt(context.Background(), AgentPromptReq{Target: "w1:p1", Text: "hello"}); err != nil {
+		t.Fatalf("AgentPrompt: %v", err)
+	}
+
+	wantArgv := "agent prompt w1:p1 hello --wait --until working --until blocked"
 	if got := readArgvLog(t, argvLog); got != wantArgv {
 		t.Errorf("argv = %q, want %q", got, wantArgv)
 	}
