@@ -38,15 +38,28 @@ func claudeScreen(transcript, box string) string {
 
 func TestPromptLeftInInputBox(t *testing.T) {
 	const prompt = "implement the fix for the stalled retry"
-	// Numbered so that no stretch of it looks like its start: a box whose
-	// start has scrolled away must be recognised by its end alone.
+	// Numbered so that no stretch of it looks like its start.
 	var numbered []string
 	for i := 1; i <= 150; i++ {
 		numbered = append(numbered, fmt.Sprintf("w%d", i))
 	}
 	longPrompt := "Start of the handoff: " + strings.Join(numbered, " ") + " and stop there."
 	wrapped := wrapForBox(longPrompt, 60)
-	scrolledToEnd := "  " + strings.Join(strings.Split(wrapped, "\n  ")[3:], "\n  ")
+	// Only the end of the prompt in the box. Nothing measured shows Claude
+	// Code scrolling its box this way, and a box ending like the prompt but
+	// not starting like it may hold part of it: Enter would submit that part.
+	endOnly := "  " + strings.Join(strings.Split(wrapped, "\n  ")[3:], "\n  ")
+	// The input box gone, a dialog in its place, and the prompt already in
+	// the transcript above it -- carrying the same marker the box does.
+	transcriptOverDialog := " ▐▛███▛█   Claude Code v2.1.325\n\n" +
+		"❯ " + prompt + "\n\n" +
+		"  Run a dynamic workflow?\n  1. Yes\n  2. No\n\n  Esc to cancel\n"
+	// An empty box, and text under its bottom edge that begins like the
+	// prompt: under the box is not in it.
+	promptUnderTheBox := claudeScreen("", "") + prompt + "\n"
+	// An earlier frame of the box, holding the prompt, left above the live
+	// one, which is empty: the live box is the last.
+	staleFrameAbove := claudeScreen(inputBoxRuleLine+"\n❯ "+prompt+"\n"+inputBoxRuleLine, "")
 
 	for _, tc := range []struct {
 		name   string
@@ -56,7 +69,10 @@ func TestPromptLeftInInputBox(t *testing.T) {
 	}{
 		{"the prompt, inline", claudeScreen("", prompt), prompt, true},
 		{"a long prompt, wrapped across the box", claudeScreen("", wrapped), longPrompt, true},
-		{"a long prompt whose start has scrolled out of the box", claudeScreen("", scrolledToEnd), longPrompt, true},
+		{"only the end of a long prompt in the box", claudeScreen("", endOnly), longPrompt, false},
+		{"a dialog where the box was, the prompt in the transcript", transcriptOverDialog, prompt, false},
+		{"the prompt under an empty box", promptUnderTheBox, prompt, false},
+		{"an earlier frame of the box above an empty live one", staleFrameAbove, prompt, false},
 		{"a large paste, collapsed with its line count", claudeScreen("", "[Pasted text #1 +59 lines]"), "line\n" + prompt, true},
 		{"a long single-line paste, collapsed without one", claudeScreen("", "[Pasted text #2]"), longPrompt, true},
 		// The ghost text Claude Code shows in an empty box reads, in plain
@@ -303,6 +319,12 @@ func TestExecuteStallThenEnterFailsIsUnconfirmed(t *testing.T) {
 	}
 
 	m := stalledOnceMock(claudeScreen("", "implement the fix"))
+	// The agent WOULD be seen reacting, so an Enter failure that was
+	// swallowed would end as a delivered prompt rather than pass this test
+	// as "no reaction" -- which is unconfirmed too, and was how it did.
+	m.agentWait = func(timeout time.Duration, until []herdrc.AgentStatus) (bool, error) {
+		return isReactionWait(timeout, until), nil
+	}
 	failing := &failingSendKeys{mockRunner: m}
 
 	result := Execute(context.Background(), failing, ops, ExecOpts{}, nil)
@@ -313,8 +335,48 @@ func TestExecuteStallThenEnterFailsIsUnconfirmed(t *testing.T) {
 	if !result.PromptUnconfirmed {
 		t.Error("PromptUnconfirmed = false, want true")
 	}
+	if result.promptUnconfirmedCause != causeFailedAfterSending {
+		t.Errorf("cause = %q, want %q", result.promptUnconfirmedCause, causeFailedAfterSending)
+	}
 	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
 		t.Errorf("AgentPrompt called %d times, want 1: %v", n, m.calls)
+	}
+	if containsCall(m.calls, "AgentWait(pane-1,5s,working|blocked)") {
+		t.Errorf("calls = %v, want no reaction watched for after a failed Enter", m.calls)
+	}
+}
+
+// TestExecuteStallWithThePromptInTheBoxAndTheAgentBlockedDoesNotPressEnter:
+// the screen passed the guard, but herdr's manifest knows dialogs dialog.go
+// does not, and Enter into one answers it. A blocked agent gets no Enter.
+func TestExecuteStallWithThePromptInTheBoxAndTheAgentBlockedDoesNotPressEnter(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := stalledOnceMock(claudeScreen("", "implement the fix"))
+	m.agentWait = func(timeout time.Duration, until []herdrc.AgentStatus) (bool, error) {
+		return timeout == 0 && slices.Equal(until, []herdrc.AgentStatus{herdrc.AgentBlocked}), nil
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d: %+v", result.FailedIndex, want, result)
+	}
+	if n := countCallsWithPrefix(m.calls, "PaneSendKeys"); n != 0 {
+		t.Errorf("PaneSendKeys called %d times, want 0 -- Enter into a blocked agent: %v", n, m.calls)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Errorf("AgentPrompt called %d times, want 1: %v", n, m.calls)
+	}
+	if !result.PromptUnconfirmed {
+		t.Error("PromptUnconfirmed = false, want true: the text was typed")
 	}
 }
 
@@ -325,4 +387,38 @@ type failingSendKeys struct{ *mockRunner }
 func (f *failingSendKeys) PaneSendKeys(ctx context.Context, paneID string, keys ...string) error {
 	f.record("PaneSendKeys", append([]string{paneID}, keys...)...)
 	return errors.New("herdr pane send-keys pane-1 Enter: exit status 1")
+}
+
+// TestExecuteStallWithThePromptInTheBoxAndNoStatusDoesNotPressEnter: when
+// herdr cannot say whether the agent is blocked, the answer is the guard's
+// own for an unreadable pane -- nothing pressed.
+func TestExecuteStallWithThePromptInTheBoxAndNoStatusDoesNotPressEnter(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := stalledOnceMock(claudeScreen("", "implement the fix"))
+	m.agentWait = func(timeout time.Duration, until []herdrc.AgentStatus) (bool, error) {
+		if slices.Equal(until, []herdrc.AgentStatus{herdrc.AgentBlocked}) {
+			return false, errors.New("herdr agent wait pane-1: exit status 1")
+		}
+		return isReactionWait(timeout, until), nil
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d: %+v", result.FailedIndex, want, result)
+	}
+	if n := countCallsWithPrefix(m.calls, "PaneSendKeys"); n != 0 {
+		t.Errorf("PaneSendKeys called %d times, want 0: %v", n, m.calls)
+	}
+	if !result.PromptUnconfirmed {
+		t.Error("PromptUnconfirmed = false, want true: the text was typed")
+	}
 }

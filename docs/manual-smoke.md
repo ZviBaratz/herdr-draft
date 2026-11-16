@@ -2017,13 +2017,15 @@ A stall cannot be provoked on demand, so this run puts the pane into each
 state a stall can leave and calls `retryStalledPrompt` on it directly. A
 throwaway test file in `internal/plan`, never committed, used a `CLIRunner`
 pointed at a Route A0 session on herdr 0.9.1. The pane held an idle Claude
-Code 2.1.325 on Haiku. Text was typed into the box with `herdr pane send-text`,
+Code 2.1.325 on Haiku. These figures are from the run on the final code,
+after review. An earlier run, before the review added the blocked check and
+the box's top edge, gave the same four outcomes. Text was typed into the box with `herdr pane send-text`,
 which, like the stall, types without an Enter.
 
 | state left in the pane | what the retry did | result |
 |---|---|---|
-| a short prompt in the box | Enter, then `agent wait --until working --until blocked` | delivered in 1.23 s, the prompt on screen once |
-| a 41-line prompt, shown as `[Pasted text #3 +40 lines]` | Enter | delivered |
+| a short prompt in the box | checked the agent was not blocked, pressed Enter, then `agent wait --until working --until blocked` | delivered in 0.76 s, the prompt on screen once |
+| a 41-line prompt, shown as `[Pasted text #1 +40 lines]` | Enter | delivered |
 | an empty box, agent idle | typed the prompt again | as before #371 |
 | an empty box, agent already working on the prompt | nothing | delivered, the prompt on screen once |
 

@@ -77,8 +77,9 @@ var errPromptLeftInInputBox = errors.New("the prompt is most likely still in the
 // retryStalledPrompt is the one retry a stalled send gets, and it decides
 // from the pane what that retry is.
 //
-//   - The prompt is still in the input box: press Enter on it and watch for
-//     the reaction (submitPromptLeftInInputBox). Typing it again is #371.
+//   - The prompt is still in the input box: press Enter on it, unless herdr
+//     reports the agent blocked, and watch for the reaction
+//     (submitPromptLeftInInputBox). Typing it again is #371.
 //   - It is not, and the agent is working: the first send's Enter was acted
 //     on after herdr stopped watching. The prompt is delivered, and a second
 //     copy would be queued behind it as a second turn.
@@ -105,10 +106,24 @@ func retryStalledPrompt(ctx context.Context, r herdrc.Runner, req herdrc.AgentPr
 }
 
 // submitPromptLeftInInputBox presses Enter on the prompt a stall left in the
-// agent's input box, and watches for the same reaction AgentPrompt's own
-// wait looks for (herdrc.PromptLandedStatuses). A reaction is followed by
-// the post-send check every delivered prompt gets.
+// agent's input box, unless herdr reports the agent blocked, and watches
+// for the same reaction AgentPrompt's own wait looks for
+// (herdrc.PromptLandedStatuses). A reaction is followed by the post-send
+// check every delivered prompt gets.
 func submitPromptLeftInInputBox(ctx context.Context, r herdrc.Runner, req herdrc.AgentPromptReq) error {
+	// `pane send-keys` is raw, with none of `agent prompt`'s own refusal of
+	// a blocked agent, and herdr's manifest knows dialogs dialog.go does
+	// not: so ask it. A question herdr cannot answer gets the guard's own
+	// treatment of an unreadable pane -- nothing typed.
+	blocked, err := r.AgentWait(ctx, req.Target, statusNow, herdrc.AgentBlocked)
+	if err != nil {
+		return fmt.Errorf("the prompt is in the agent's input box, and herdr could not say whether the "+
+			"agent is waiting on a dialog, so Enter was not pressed -- read the pane: %w", err)
+	}
+	if blocked {
+		return fmt.Errorf("%w (herdr reports the agent blocked) -- Enter was not pressed on the prompt "+
+			"in its input box -- read the pane", errAgentOnDialog)
+	}
 	if err := r.PaneSendKeys(ctx, req.Target, enterKey); err != nil {
 		return fmt.Errorf("could not press Enter on the prompt a stalled send left in the agent's input "+
 			"box -- read the pane: %w", err)
@@ -126,15 +141,18 @@ func submitPromptLeftInInputBox(ctx context.Context, r herdrc.Runner, req herdrc
 	return confirmPromptLanded(ctx, r, req)
 }
 
-// promptLeftInInputBox reports whether screen's input box holds text: the
-// prompt itself, from its start or (when the start has scrolled out of the
-// box) its end, or Claude Code's placeholder for a large paste.
+// promptLeftInInputBox reports whether screen's input box holds the prompt:
+// its start, inline, or Claude Code's placeholder for a large paste.
 //
 // It answers only on positive evidence, and its errors run toward "no":
 // that is a retype, which is what the retry always did, and never Enter
-// pressed into an input box holding something else.
+// pressed into an input box holding something else. That is why a box is
+// not matched by the prompt's END. Nothing measured shows Claude Code
+// scrolling a prompt's start out of its box (a large one is collapsed into
+// the placeholder instead), and a box that ends like the prompt without
+// starting like it may hold only part of it, which Enter would submit.
 func promptLeftInInputBox(screen, text string) bool {
-	box, found := inputBoxText(screen)
+	box, found := inputBoxStart(screen)
 	if !found {
 		return false
 	}
@@ -146,37 +164,36 @@ func promptLeftInInputBox(screen, text string) bool {
 	if len(prompt) == 0 {
 		return false
 	}
-	probeLength := min(len(prompt), promptProbeRunes)
-	promptStart := string(prompt[:probeLength])
-	promptEnd := string(prompt[len(prompt)-probeLength:])
-	return strings.HasPrefix(boxText, promptStart) || strings.HasSuffix(boxText, promptEnd)
+	promptStart := string(prompt[:min(len(prompt), promptProbeRunes)])
+	return strings.HasPrefix(boxText, promptStart)
 }
 
-// inputBoxText is what Claude Code's input box holds on screen: the text
-// after the last line's inputBoxMarker, and the lines under it down to the
-// box's bottom edge. found is false for a screen with no input box on it,
-// which includes every agent that does not draw one this way.
-func inputBoxText(screen string) (text string, found bool) {
+// inputBoxStart is the screen from Claude Code's input box on: the text
+// after the inputBoxMarker on the line under the box's top edge, and every
+// line below it. Only its start is ever compared, so where the box ends does
+// not matter: anything after its bottom edge follows a run of inputBoxEdge,
+// which no prompt starts with. found is false for a screen with no input box
+// on it, which includes every agent that does not draw one this way.
+//
+// The top edge is what makes the marker the box's. A submitted prompt in the
+// transcript carries the same marker, and with a dialog drawn where the box
+// was, the last marker on the screen is that prompt: taken for the box, it
+// would have Enter pressed into the dialog. The LAST marker under an edge is
+// taken, because a redraw can leave an earlier frame of the box above the
+// live one.
+func inputBoxStart(screen string) (text string, found bool) {
 	lines := strings.Split(screen, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
+	for i := len(lines) - 1; i > 0; i-- {
 		first, isBoxLine := strings.CutPrefix(strings.TrimLeft(lines[i], " "), inputBoxMarker)
-		if !isBoxLine {
-			continue
+		if isBoxLine && isInputBoxEdge(lines[i-1]) {
+			return strings.Join(append([]string{first}, lines[i+1:]...), "\n"), true
 		}
-		boxLines := []string{first}
-		for _, line := range lines[i+1:] {
-			if isInputBoxEdge(line) {
-				break
-			}
-			boxLines = append(boxLines, line)
-		}
-		return strings.Join(boxLines, "\n"), true
 	}
 	return "", false
 }
 
-// isInputBoxEdge reports whether line is one of the input box's edges: a
-// line of inputBoxEdge and nothing else.
+// isInputBoxEdge reports whether line is an edge of the input box: a line of
+// inputBoxEdge and nothing else.
 func isInputBoxEdge(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return trimmed != "" && strings.Trim(trimmed, string(inputBoxEdge)) == ""

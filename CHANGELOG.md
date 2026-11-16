@@ -66,7 +66,8 @@ for why a heading here may read `unreleased`.
   Code's input box, its Enter not acted on, so the agent got the prompt
   twice in one turn while the run reported `sent`. The retry now reads the
   input box first:
-  - **The prompt is still in the box:** it presses Enter on it.
+  - **The prompt is still in the box:** it presses Enter on it, unless
+    herdr reports the agent waiting on a dialog.
   - **The agent is already working on it:** it sends nothing.
   - **Neither:** it types the prompt again, as before.
 
