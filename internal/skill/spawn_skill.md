@@ -814,6 +814,13 @@ straight after the send, most likely because it exited. Read the pane and
 hand it to the user. Do not resend on the strength of a screen that looks
 empty.
 
+It also covers a prompt left in the agent's input box. A stall can leave
+the typed text there with its Enter not acted on, and herdr-draft then
+presses Enter on it once. If the agent still does not react, the text is
+most likely still in the box, unsubmitted. If the pane shows it there,
+`herdr pane send-keys <pane_id> Enter` submits it. Pasting it would put a
+second copy behind the first, and the agent would get both in one message.
+
 And it covers herdr failing the send itself, with its code
 "agent_prompt_failed" in `error`. herdr gives that code both when it typed
 nothing and when the pane failed partway through the text, so the input box

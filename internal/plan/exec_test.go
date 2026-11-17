@@ -169,9 +169,29 @@ type mockRunner struct {
 	// focusAsked is what every topology request asked herdr for, in call
 	// order, as "<method>:<focus>" -- ExecOpts.NoFocus's evidence.
 	focusAsked []string
+
+	// agentWait answers AgentWait. nil answers (false, nil) -- the agent is
+	// not in any of the statuses and does not get there -- which is how
+	// every test that does not model a status runs.
+	agentWait func(timeout time.Duration, until []herdrc.AgentStatus) (bool, error)
 }
 
 var _ herdrc.Runner = (*mockRunner)(nil)
+
+func (m *mockRunner) AgentWait(ctx context.Context, target string, timeout time.Duration, until ...herdrc.AgentStatus) (bool, error) {
+	statuses := make([]string, 0, len(until))
+	for _, status := range until {
+		statuses = append(statuses, string(status))
+	}
+	m.record("AgentWait", target, timeout.String(), strings.Join(statuses, "|"))
+	if m.shouldFail("AgentWait") {
+		return false, m.failErr
+	}
+	if m.agentWait == nil {
+		return false, nil
+	}
+	return m.agentWait(timeout, until)
+}
 
 func (m *mockRunner) record(name string, args ...string) {
 	m.calls = append(m.calls, name+"("+strings.Join(args, ",")+")")
@@ -3490,7 +3510,8 @@ func TestExecuteToleratesAnUnreadablePaneWhileWaiting(t *testing.T) {
 // Claude Code is not yet accepting input. herdr types, sees nothing happen,
 // and returns agent_prompt_stalled with the pane left holding an empty
 // buffer and no turn. Without a retry the wait ends exactly where it began
-// -- a failure screen and a prompt to paste by hand.
+// -- a failure screen and a prompt to paste by hand. (A stall can also leave
+// the text in the input box, which stallretry_test.go covers: #371.)
 
 // stalledPromptErr is herdr's own refusal, as herdrc types it.
 func stalledPromptErr() error {

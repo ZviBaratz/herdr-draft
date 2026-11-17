@@ -2011,6 +2011,31 @@ environment was allowed.
 
 ## Recorded runs
 
+### The stall retry reads the input box first (#371) — 2026-11-16
+
+A stall cannot be provoked on demand, so this run puts the pane into each
+state a stall can leave and calls `retryStalledPrompt` on it directly. A
+throwaway test file in `internal/plan`, never committed, used a `CLIRunner`
+pointed at a Route A0 session on herdr 0.9.1. The pane held an idle Claude
+Code 2.1.325 on Haiku. These figures are from the run on the final code,
+after review. An earlier run, before the review added the blocked check and
+the box's top edge, gave the same four outcomes. Text was typed into the box with `herdr pane send-text`,
+which, like the stall, types without an Enter.
+
+| state left in the pane | what the retry did | result |
+|---|---|---|
+| a short prompt in the box | checked the agent was not blocked, pressed Enter, then `agent wait --until working --until blocked` | delivered in 0.76 s, the prompt on screen once |
+| a 41-line prompt, shown as `[Pasted text #1 +40 lines]` | Enter | delivered |
+| an empty box, agent idle | typed the prompt again | as before #371 |
+| an empty box, agent already working on the prompt | nothing | delivered, the prompt on screen once |
+
+Measured while building it, on the same agent:
+- Enter on an empty box starts no turn: `agent wait` timed out after 3 s.
+- An empty box shows ghost text, `Try "write a test for create_test.go"`, in
+  plain text.
+- ctrl+c clears the box but arms "Press Ctrl-C again to exit".
+- ctrl+u clears one wrapped line per press.
+
 ### Cell 10c headless: `create` returns at the agent's first reaction — 2026-11-16
 
 Route A0 on herdr 0.9.1, with a scratch plugin config and state directory. Two
@@ -2043,7 +2068,8 @@ behind it and submitted both, so the pane read:
 That submit was one turn with the prompt in it twice, reported `sent`. The
 retry assumes a stall leaves the input box empty. This run shows it can leave
 the text there. The `--until` fix does not touch this: the stall is in the
-part of herdr's wait that comes before any `--until` applies.
+part of herdr's wait that comes before any `--until` applies. #371 is the
+fix, recorded in the run above.
 
 ### Cell 16 Route B, headless, against `dev (EC2)` on herdr 0.9.1 — 2026-10-14
 

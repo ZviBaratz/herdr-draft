@@ -315,6 +315,13 @@ func (r *fakeRunner) AgentPrompt(_ context.Context, req herdrc.AgentPromptReq) e
 	return nil
 }
 
+func (r *fakeRunner) AgentWait(_ context.Context, target string, _ time.Duration, _ ...herdrc.AgentStatus) (bool, error) {
+	if err := r.record("AgentWait", target); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
 func (r *fakeRunner) AgentRead(_ context.Context, target string) (string, error) {
 	if err := r.record("AgentRead", target); err != nil {
 		return "", err

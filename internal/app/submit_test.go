@@ -180,6 +180,13 @@ func (r *submitFakeRunner) AgentPrompt(context.Context, herdrc.AgentPromptReq) e
 	return nil
 }
 
+func (r *submitFakeRunner) AgentWait(context.Context, string, time.Duration, ...herdrc.AgentStatus) (bool, error) {
+	if r.shouldFail("AgentWait") {
+		return false, r.failErr
+	}
+	return false, nil
+}
+
 func (r *submitFakeRunner) AgentRead(context.Context, string) (string, error) {
 	if r.shouldFail("AgentRead") {
 		return "", r.failErr

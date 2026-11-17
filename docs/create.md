@@ -359,6 +359,9 @@ Delivery is unknown when:
 - the send stalled twice. herdr-draft sends once more after a stall, and
   herdr types the text before it starts watching, so the pane may hold two
   copies.
+- a stall left the prompt in the agent's input box. herdr-draft pressed
+  Enter on it rather than typing it again, and the agent still did not
+  react. The text is most likely still in the box: press Enter in the pane.
 - the send went out, and the pane afterwards showed a dialog with none of the
   prompt on it, or stopped answering, which usually means the agent exited.
 - herdr failed the send partway through, and cannot say how much it typed.
