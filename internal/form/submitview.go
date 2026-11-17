@@ -877,10 +877,12 @@ func (v *SubmitView) unsentPromptLines(width int) []string {
 // deliver anything, and offering the text back is the right answer there.
 //
 // The unconfirmed set exists because #108 made "prompt not sent" a claim
-// the form cannot support. `herdr agent prompt --wait` completes only on
-// observed working-or-blocked activity, so a large prompt into an agent
-// slow to paint its status transition times out while running perfectly
-// well -- in the live case, several tool calls deep. Every line therefore
+// the form cannot support: a wait timing out is not the prompt failing, and
+// in #108's live case the agent was several tool calls deep when it did. (The
+// wait was running on to the end of that agent's turn, which it no longer
+// does -- herdrc.ErrPromptWaitTimeout -- but a send can still go out without
+// anything confirming it landed, in the five ways
+// plan.ExecResult.PromptUnconfirmed lists.) Every line therefore
 // leads with what is actually known and carries the instruction that
 // replaces "paste this": read the pane first. Pasting is precisely how a
 // working agent gets its instructions twice.

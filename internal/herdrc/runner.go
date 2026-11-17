@@ -108,7 +108,9 @@ type AgentStartReq struct {
 }
 
 // AgentPromptReq is the request shape for `herdr agent prompt --wait`
-// (spec §9 step 3).
+// (spec §9 step 3). WaitTimeout bounds the whole call -- the look-up, the
+// typing and the watch for the agent's reaction -- and not the agent's turn,
+// which the call no longer waits for (see promptLandedStatuses).
 type AgentPromptReq struct {
 	Target      string
 	Text        string
@@ -480,14 +482,28 @@ var ErrAgentNotReady = errors.New("herdr: the agent is not ready for input")
 // against an error's text.
 const promptWaitTimeoutCode = "timeout"
 
-// ErrPromptWaitTimeout reports that `herdr agent prompt --wait` stopped
-// waiting for the agent's status to change. It does NOT report that the
-// prompt failed to arrive, and conflating the two is the #108 defect:
-// herdr 0.9.0 completes this wait only on "observed working or blocked
-// activity" (its own note for #3506/#3685), so a large prompt into an
-// agent slow to PAINT a status transition can exceed the timeout while
-// being perfectly fine. The prompt was handed to herdr; what timed out is
-// the confirmation.
+// ErrPromptWaitTimeout reports that `herdr agent prompt --wait` ran out of
+// its budget before it saw the status it was waiting for. It does NOT
+// report that the prompt failed to arrive, and conflating the two is the
+// #108 defect.
+//
+// #108's own timeout was not what it was diagnosed as at the time. It was
+// put down to an agent slow to PAINT a status transition, on herdr's note
+// for #3506/#3685 that the wait requires "observed working or blocked
+// activity". That is a necessary condition, not the whole wait: with no
+// `--until`, herdr goes on to wait for idle, done or blocked, which is the
+// end of the agent's turn (https://github.com/herdrdev/herdr/blob/v0.9.0/src/api/wait.rs#L291-L321
+// and #L523-L535). #108's agent was several tool calls into a long turn
+// when 120 s ran out. AgentPrompt now passes promptLandedStatuses as the
+// `--until`, so the wait ends at the agent's first reaction.
+//
+// That leaves this code reachable only when less than five seconds of the
+// budget remain, because with more herdr gives up after five seconds on its
+// own and says so as a stall (ErrPromptStalled). Within those five seconds
+// it can come from the watch after the send, or from the look-up before it
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/api/wait.rs#L579-L604),
+// and herdr's message is the same for both. So it still says only that
+// nothing confirmed delivery, and the prompt is treated as unconfirmed.
 //
 // A typed sentinel for the same reason ErrAgentBlocked is one: callers
 // must be able to tell this apart from every other prompt failure without
@@ -508,10 +524,11 @@ const promptStalledCode = "agent_prompt_stalled"
 // window.
 //
 // It is the opposite conclusion from ErrPromptWaitTimeout above, and keeping
-// the two apart is the whole reason it exists. That one means a wait gave up
-// while the agent was demonstrably busy, so delivery is UNKNOWN and must not
-// be re-attempted. This one means herdr observed no reaction at all, which is
-// the positive evidence that nothing was processed.
+// the two apart is the whole reason it exists. That one means a budget ran out
+// with nothing seen either way, so delivery is UNKNOWN and must not be
+// re-attempted. This one means herdr watched for its full five seconds and
+// observed no reaction at all, which is the positive evidence that nothing was
+// processed.
 //
 // Live on herdr 0.9.0 (docs/manual-smoke.md, 2026-09-09) it has one dominant
 // cause: for a second or so after Claude Code's trust dialog is answered,
@@ -550,10 +567,10 @@ const promptAgentGoneCode = "agent_not_running"
 //
 // Its likeliest cause is #116's killed agent -- the prompt's Enter
 // answering a dialog's "No, exit" -- noticed by herdr's wait before
-// herdr-draft's own read of the pane. Not the only one: once herdr has seen
-// the agent working, the same wait runs on to a settled status for the
-// rest of the timeout, so an agent that exits mid-turn, or a pane closed
-// under it, is reported with this code too.
+// herdr-draft's own read of the pane. A pane closed or an agent released in
+// the moment between the send and its first reaction is the other. An agent
+// that exits mid-turn no longer is: the wait ends at the first reaction
+// (promptLandedStatuses), so it is over before the turn is.
 var ErrPromptAgentGone = errors.New("the agent stopped running after the prompt was sent")
 
 // promptSendFailedCode is herdr's `error.code` for `agent prompt` failing to
@@ -1014,10 +1031,46 @@ const agentStartTimeoutCode = "timeout"
 // agent_name_taken, whose diagnosis is already in hand.
 var ErrAgentStartTimeout = errors.New("herdr waited for the agent to start and never saw it")
 
-// AgentPrompt runs `herdr agent prompt --wait` (spec §9 step 3).
+// promptLandedStatuses are the agent statuses AgentPrompt passes to
+// `--until`: the first reaction that proves a prompt landed, which is all
+// the caller is waiting to learn.
+//
+// Without them `--wait` is two waits, not one. herdr first waits up to five
+// seconds for the agent to go working or blocked, reporting
+// `agent_prompt_stalled` if it does not, and then keeps waiting until the
+// status is in `until` -- which, left empty, is idle, done or blocked: the
+// end of the agent's turn (prompt_agent and agent_wait_statuses,
+// https://github.com/herdrdev/herdr/blob/v0.9.0/src/api/wait.rs#L177-L322
+// and #L523-L535). The popup's progress stream holds open for the whole
+// call, so it stayed on the pane it was opened from until the new agent
+// paused, measured at 4.8 s and 47.6 s on two ordinary submits, and a turn
+// longer than prompt_wait_ms ended on a "delivery unconfirmed" failure screen
+// over an agent that was working fine. `create` blocked for the same time.
+//
+// With `until` set to the same two statuses the first wait looks for, the
+// second wait matches at once (wait.rs#L291). Nothing else about the first
+// wait changes, so a stall, an agent gone and a failed send arrive exactly as
+// before, and so does a dialog: herdr reports Claude Code's trust prompt as
+// blocked, which was already in the default `until`, and confirmPromptLanded
+// still reads the pane afterwards.
+//
+// The spellings are herdr's own (parse_agent_status,
+// https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli.rs#L899-L910), and
+// `agent prompt` takes the flag once per status
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/agent.rs#L792-L806).
+var promptLandedStatuses = []string{"working", "blocked"}
+
+// AgentPrompt runs `herdr agent prompt --wait --until working --until
+// blocked` (spec §9 step 3): it returns once the agent has reacted to the
+// prompt, not once the agent's turn is over (promptLandedStatuses).
 func (r *CLIRunner) AgentPrompt(ctx context.Context, req AgentPromptReq) error {
 	args := []string{"agent", "prompt", req.Target, req.Text, "--wait"}
 	var err error
+	for _, status := range promptLandedStatuses {
+		if args, err = appendFlag(args, "--until", status); err != nil {
+			return err
+		}
+	}
 	if req.WaitTimeout > 0 {
 		// The > 0 guard already rules out a "-"-leading duration; the flag
 		// still goes through appendFlag so the funnel has no exceptions to

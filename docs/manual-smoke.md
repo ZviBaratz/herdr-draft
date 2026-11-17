@@ -1194,16 +1194,23 @@ pane: `agent prompt --wait` returned the `timeout` code, `create` reported
 exit 1 and `prompt_sent: false` with the whole prompt back under
 `unsent_prompt` — and the agent was already several tool calls into it.
 
-`--wait` completes only on *observed* working-or-blocked activity (herdr's
-own note for #3506/#3685), so an agent slow to paint its status transition
-exceeds the prompt timeout while being perfectly healthy. The wait timing
-out says nothing about delivery.
+This cell used to blame an agent slow to paint its status transition, after
+herdr's note for #3506/#3685 that `--wait` needs *observed* working-or-blocked
+activity. That is only the first half of the wait. With no `--until`, herdr
+then waits for idle, done or blocked, which is the end of the agent's turn
+(`herdr:src/api/wait.rs` at v0.9.0, `prompt_agent` and `agent_wait_statuses`).
+#108's agent was busy for all 120 s, so the wait ran out. Since the popup
+stopped closing until the agent's turn ended (Cell 10c), `create` passes
+`--until working --until blocked`, and the wait ends at the first reaction.
+Either way, the wait timing out says nothing about delivery.
 
-**How to provoke it.** Raise the odds rather than engineer it: a large
-prompt into a slow-to-paint agent, with the prompt timeout cut short.
+**How to provoke it.** herdr now gives up after five seconds on its own when
+it sees no reaction, and calls that a stall (`agent_prompt_stalled`), not a
+timeout. So a `timeout` takes a prompt timeout shorter than that. A large
+prompt still helps, because typing it spends the budget.
 
 ```bash
-# from the scratch pane, with [timeouts] prompt_wait_ms lowered in config.toml
+# from the scratch pane, with [timeouts] prompt_wait_ms = 1000 in config.toml
 herdr-draft create --title "smoke unconfirmed" --no-worktree   --placement split-here --prompt - --json < /tmp/smoke-prompt.txt
 ```
 
@@ -1230,10 +1237,38 @@ already submitted. Doing the documented thing with that field sends the
 agent its instructions twice, and `--on-failure clean` would have removed
 the session mid-turn.
 
-**Unrun.** The fix is unit- and mutation-tested; provoking a real
-`timeout` from herdr needs an agent that genuinely paints slowly, so this
-cell is written from the code and the one live capture in #108 — a
-hypothesis until someone runs it.
+**Unrun.** The fix is unit- and mutation-tested, and this cell is written
+from the code and the one live capture in #108. It is a hypothesis until
+someone runs it.
+
+### Cell 10c — the popup closes once the prompt lands, not when the turn ends
+
+**The defect.** The popup stayed on the pane it was opened from after the
+session appeared, ignoring Esc, until the new agent's first turn paused. On
+two ordinary submits that was 9.9 s and 53 s after the session was created.
+A turn longer than `prompt_wait_ms` ended on a "delivery unconfirmed" failure
+screen over an agent that was working fine. `agent prompt --wait` without
+`--until` waits out the agent's turn; Cell 10b has the herdr source.
+
+**Run it.** Submit from the real popup with a prompt that keeps the agent
+working for a while, for example *"Without using any tools, write the
+numbers one to three hundred as English words, one per line."* Then read
+herdr's own log:
+
+```bash
+grep -n 'plugin.pane.open\|workspace.create\|worktree.create\|tab.create\|pane.split\|method="agent.prompt"\|pane child exited' \
+  ~/.config/herdr/herdr-server.log | tail -12
+```
+
+**Expected:** `agent.prompt`'s `received` and `completed` lines are a second
+or two apart, not the length of the agent's turn. The popup's `pane child
+exited`, which is its own pane id with `code: 0`, follows within about 20 ms.
+The new pane is still `working` after the popup has gone. From the session
+being created to the popup closing should take Claude Code's startup plus
+about a second.
+
+**The failure signature is the old behaviour:** `agent.prompt` taking as
+long as the agent's turn, and the popup exiting only then.
 
 ## What the account picker added
 
@@ -1975,6 +2010,40 @@ environment was allowed.
   alongside the release.
 
 ## Recorded runs
+
+### Cell 10c headless: `create` returns at the agent's first reaction — 2026-11-16
+
+Route A0 on herdr 0.9.1, with a scratch plugin config and state directory. Two
+`create --no-worktree --placement new-space --model haiku` runs into
+`~/Projects/herdr-draft`, a directory the account already trusted, with the
+same tool-free prompt: *"Without using any tools, write the numbers one to
+three hundred as English words, one per line."*
+
+| binary | `sending prompt` step | `agent.prompt` in herdr's log | agent status when `create` exited |
+|---|---|---|---|
+| `ca39c4f`, before `--until` | 14.8 s | 5.4 s stalled, then 7.4 s on the retry | `done` |
+| this fix | 0.84 s | 0.80 s | `working` |
+
+Both reported `prompt_status: sent` and exited 0. The fixed `create` returned
+while the agent was still writing. The old one returned only once the agent's
+turn was over. Without the stall, the old run would still have waited out the
+whole 7.4 s turn.
+
+**The old run also showed a separate, older defect.** Its first send
+stalled: herdr typed the text, its Enter 300 ms later
+(`AGENT_PROMPT_SUBMIT_DELAY`, `herdr:src/app/api/agents.rs` at v0.9.0) was
+not acted on, and no reaction came within five seconds. The text stayed in
+Claude Code's input box. The stall retry (#132) then typed a second copy
+behind it and submitted both, so the pane read:
+
+```
+❯ Without using any tools, … one per line.Without using any tools, … one per line.
+```
+
+That submit was one turn with the prompt in it twice, reported `sent`. The
+retry assumes a stall leaves the input box empty. This run shows it can leave
+the text there. The `--until` fix does not touch this: the stall is in the
+part of herdr's wait that comes before any `--until` applies.
 
 ### Cell 16 Route B, headless, against `dev (EC2)` on herdr 0.9.1 — 2026-10-14
 
