@@ -95,13 +95,21 @@ const freeTextRule = "a model id starts with a letter or digit and uses only let
 // merely not offered, and the user's own config.toml can still pass it.
 const extraArgsEscape = "[agents.extra_args] can still pass it"
 
+// ModelOption and EffortOption name Claude's model and effort options: the
+// two an account picker is told about (#374), since a limit can apply to
+// one model only, and the effort says how fast a session spends it.
+const (
+	ModelOption  = "model"
+	EffortOption = "effort"
+)
+
 // declarations is every declared kind. Claude's values are copied from
 // `claude --help` of claude 2.1.276 (2026-09-18); the spec's §9 says how a
 // stale copy shows up, and docs/manual-smoke.md carries the check.
 var declarations = map[string][]Option{
 	"claude": {
 		{
-			Name:  "model",
+			Name:  ModelOption,
 			Label: "model",
 			Flag:  "--model",
 			Choices: []Choice{
@@ -114,7 +122,7 @@ var declarations = map[string][]Option{
 			RowFormat: "%s",
 		},
 		{
-			Name:  "effort",
+			Name:  EffortOption,
 			Label: "effort",
 			Flag:  "--effort",
 			Choices: []Choice{
@@ -326,6 +334,16 @@ func Launch(kind string, extra []string, vals Values) []string {
 		out = append(out, o.Flag, vals[o.Name])
 	}
 	return out
+}
+
+// Effective is what each of the kind's declared options will launch with:
+// Launch's argument list read back the way Pinned reads extra_args, so a
+// chosen option beats extra_args and extra_args fills in what was not
+// chosen. A value nothing passes is absent. It is what an account picker is
+// told (#374): the session's real model, which a picker weighing a limit
+// for one model must not guess.
+func Effective(kind string, extra []string, vals Values) Values {
+	return Pinned(kind, Launch(kind, extra, vals))
 }
 
 // flagOf reports which of opts argument a is the flag of, in either

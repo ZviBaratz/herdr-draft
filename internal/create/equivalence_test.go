@@ -1610,6 +1610,75 @@ launch = "wrapper"
 	}
 }
 
+// TestFormAndCommandTellThePickerTheSameSession extends the auto promise to
+// what the picker is told (#374): the model and effort the session will
+// launch with, so a limit that applies to one model can be weighed. Neither
+// is a plan.Input field, so TestFormAndCommandResolveAutoTheSameWay cannot
+// see them drift; the commit pick each side makes is compared instead. The
+// model comes from the options row's default and the effort from extra_args,
+// so both of the inputs agentopts.Effective reads are exercised.
+func TestFormAndCommandTellThePickerTheSameSession(t *testing.T) {
+	const projectDir = "/projects/thing"
+	const title = "fix login redirect loop"
+	const configTOML = `
+branch_prefix = "zvi/"
+[agents]
+favorites = ["claude"]
+[agents.extra_args]
+claude = ["--model", "opus[1m]", "--effort", "xhigh"]
+[agents.options.claude]
+model = "fable"
+[clauth]
+picker = "stub"
+default = "auto"
+`
+	contextJSON := `{"workspace_id":"wS0","workspace_cwd":"` + projectDir +
+		`","tab_id":"tT0","focused_pane_id":"pP0"}`
+	answer := picker.Result{Profile: "alpha-1", Tier: "Max", ConfigDir: "/dirs/alpha-1"}
+	commandPicker, formPicker := &fakePicker{res: answer}, &fakePicker{res: answer}
+
+	configDir, stateDir := t.TempDir(), t.TempDir()
+	writeConfig(t, configDir, configTOML)
+	repoConfig := func(string) config.RepoConfig { return config.RepoConfig{} }
+
+	commandPlanInput(t, commandCase{
+		configDir:   configDir,
+		stateDir:    stateDir,
+		contextJSON: contextJSON,
+		projectDir:  projectDir,
+		repoConfig:  repoConfig,
+		args:        []string{"--title", title},
+		picker:      commandPicker,
+	})
+	formPlanInputAuto(t, formCase{
+		configDir:   configDir,
+		stateDir:    stateDir,
+		contextJSON: contextJSON,
+		repoConfig:  repoConfig,
+		title:       title,
+		picker:      formPicker,
+		clauthStatus: clauth.Status{Schema: 1, ActiveProfile: "alpha-1", Profiles: []clauth.Profile{
+			{Name: "alpha-1", Tier: "Max", AuthStatus: "ok"},
+			{Name: "alpha-2", Tier: "Max", AuthStatus: "ok"},
+		}},
+	})
+
+	if len(commandPicker.calls) == 0 || len(formPicker.calls) == 0 {
+		t.Fatalf("picker calls: command %d, form %d, want a commit pick from each",
+			len(commandPicker.calls), len(formPicker.calls))
+	}
+	fromCommand := commandPicker.calls[len(commandPicker.calls)-1]
+	fromForm := formPicker.calls[len(formPicker.calls)-1]
+	if fromCommand.Model != fromForm.Model || fromCommand.Effort != fromForm.Effort {
+		t.Fatalf("the picker was told different sessions: command model %q effort %q, form model %q effort %q",
+			fromCommand.Model, fromCommand.Effort, fromForm.Model, fromForm.Effort)
+	}
+	if fromCommand.Model != "fable" || fromCommand.Effort != "xhigh" {
+		t.Errorf("both told model %q, effort %q, want fable (the option) and xhigh (extra_args)",
+			fromCommand.Model, fromCommand.Effort)
+	}
+}
+
 // formPlanInputAuto is formPlanInput plus the commit-time account pick the
 // submit pipeline performs. Kept separate rather than folded in, because every
 // other scenario has no picker and calling ResolveAccount there would assert

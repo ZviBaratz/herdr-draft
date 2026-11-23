@@ -1643,6 +1643,9 @@ func (m Model) runPickerPreview(req request) tea.Cmd {
 	// separate probe would be a second subprocess for an answer this one
 	// already carries.
 	probe := m.pickerProbePending
+	// Read now, when the debounce has settled, so the preview asks about the
+	// model and effort on screen (#374).
+	model, effort := m.pickerSession()
 	return func() tea.Msg {
 		// On the app's own context like the commit pick below, though a
 		// preview writes no ledger and so leaves nothing behind: a picker
@@ -1650,7 +1653,7 @@ func (m Model) runPickerPreview(req request) tea.Cmd {
 		// to leave one running for a form that is gone (#211).
 		ctx, done := lt.Begin()
 		defer done()
-		res, err := src.Pick(ctx, path, picker.Options{DryRun: true, Probe: probe})
+		res, err := src.Pick(ctx, path, picker.Options{DryRun: true, Probe: probe, Model: model, Effort: effort})
 		return pickerPreviewMsg{req: req, res: res, err: err, probed: probe}
 	}
 }
