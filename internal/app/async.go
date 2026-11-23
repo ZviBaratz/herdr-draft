@@ -2585,12 +2585,16 @@ func runCleanCheckCmd(in plan.Input, result plan.ExecResult) tea.Cmd {
 // plan.Clean, rather than trusting SubmitView's own k/c gating alone (the
 // same defense-in-depth posture reloadClauthCmd's nil-source guard
 // already applies elsewhere in this package).
+//
+// The prompt waits for a key, and the person is most likely looking at the
+// session this submit created and focused, so the popup's tab is brought
+// back into view (#375).
 func (m Model) handleCleanCheckResult(msg cleanCheckMsg) (Model, tea.Cmd) {
 	m.submitCleanDecision = msg.decision
 	if m.submitView != nil {
 		m.submitView.SetFailure(msg.result, msg.decision)
 	}
-	return m, nil
+	return m, m.focusPopupTabCmd()
 }
 
 // handleCleanRequested implements form.CleanMsg (the "c" keypress from
@@ -2731,10 +2735,12 @@ func (m Model) updateSubmitting(msg tea.Msg) (Model, tea.Cmd) {
 		// creating and launching the session, which is done. Unless a step
 		// finished with a warning (#230): its row's reason is the only
 		// place it is said, and quitting would take it off screen at once.
+		// Held, it waits for a key on the popup's tab, which the create
+		// has just moved the view away from (#375).
 		if m.submitView != nil && hasWarning(m.submitSteps) {
 			m.submitWarned = true
 			m.submitView.SetDoneWithWarnings()
-			return m, nil
+			return m, m.focusPopupTabCmd()
 		}
 		return m, tea.Quit
 	case form.KeepMsg:
@@ -2756,6 +2762,44 @@ func hasWarning(steps []form.Step) bool {
 		}
 	}
 	return false
+}
+
+// popupFocusDeadline bounds the call that brings the popup's tab back into
+// view. Best-effort, like notifyDeadline: a focus that does not land leaves
+// the popup exactly where it was, waiting as it always has.
+const popupFocusDeadline = 2 * time.Second
+
+// focusPopupTabCmd brings the person back to the popup when a submit ends
+// on a screen that waits for them (#375): the keep-or-clean prompt, or a
+// success held to show its warning (#230).
+//
+// herdr draws a popup only over the tab it was opened on, and a create
+// moves the view to the session it made, so without this the screen waits
+// where nobody is looking -- and herdr's one popup slot stays taken, so
+// the person cannot open another either. The tab is the plugin context's:
+// the one herdr opened the popup over. A submit whose first step failed is
+// not brought back, since nothing was created and the view never moved,
+// and neither is a popup that closes by itself.
+//
+// It runs on the Lifetime's context, so a person who answers the screen
+// before the focus lands, closing the popup, cancels it rather than having
+// the view pulled back to a tab with nothing on it. A failure is dropped
+// for the same reason the toast's is: the popup is still there, as before,
+// and the screen that would report it is the one nobody can see.
+func (m Model) focusPopupTabCmd() tea.Cmd {
+	runner, tabID := m.deps.Runner, m.ctx.TabID
+	if runner == nil || tabID == "" {
+		return nil
+	}
+	lt := m.deps.Lifetime
+	return func() tea.Msg {
+		lifetimeCtx, done := lt.Begin()
+		defer done()
+		ctx, cancel := context.WithTimeout(lifetimeCtx, popupFocusDeadline)
+		defer cancel()
+		_ = runner.TabFocus(ctx, tabID)
+		return nil
+	}
 }
 
 // --- production gitSource: internal/gitx + os.Stat ------------------------

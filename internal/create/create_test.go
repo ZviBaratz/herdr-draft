@@ -292,6 +292,12 @@ func (r *fakeRunner) TabRename(_ context.Context, req herdrc.TabRenameReq) error
 	return r.record("TabRename", req.TabID, req.Label)
 }
 
+// TabFocus is never called by `create`, which has no popup to bring back
+// (#375); it is recorded so a test would see it if it were.
+func (r *fakeRunner) TabFocus(_ context.Context, tabID string) error {
+	return r.record("TabFocus", tabID)
+}
+
 func (r *fakeRunner) PaneSplit(_ context.Context, req herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
 	r.focusAsked = append(r.focusAsked, req.Focus)
 	if err := r.record("PaneSplit", req.PaneID, req.Direction); err != nil {

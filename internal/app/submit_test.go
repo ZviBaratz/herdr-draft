@@ -24,6 +24,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,6 +114,8 @@ type submitFakeRunner struct {
 	// worktreeReqs is every `worktree create` request, as herdr would have
 	// received it.
 	worktreeReqs []herdrc.WorktreeCreateReq
+	// focusedTabs is every tab TabFocus brought into view, in order.
+	focusedTabs []string
 }
 
 var _ herdrc.Runner = (*submitFakeRunner)(nil)
@@ -155,6 +158,15 @@ func (r *submitFakeRunner) TabRename(context.Context, herdrc.TabRenameReq) error
 	if r.shouldFail("TabRename") {
 		return r.failErr
 	}
+	return nil
+}
+
+// TabFocus records the tab it was asked to bring into view (#375).
+func (r *submitFakeRunner) TabFocus(_ context.Context, tabID string) error {
+	if r.shouldFail("TabFocus") {
+		return r.failErr
+	}
+	r.focusedTabs = append(r.focusedTabs, tabID)
 	return nil
 }
 
@@ -2074,5 +2086,130 @@ func TestSubmit_ACleanSuccessStillClosesByItself(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("a clean success did not quit once state was persisted")
+	}
+}
+
+// popupTabID is the tab the popup was opened over, as herdr's plugin context
+// names it: where herdr draws the popup, and so where a held screen is.
+const popupTabID = "w1:t1"
+
+// runFocusCmd runs cmd, which must be the focus command alone, and fails
+// the test if it is missing or tries to end the popup.
+func runFocusCmd(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("no command, want the one that brings the popup back into view")
+	}
+	if _, quit := cmd().(tea.QuitMsg); quit {
+		t.Fatal("the command quit the popup, want it held and brought into view")
+	}
+}
+
+// TestSubmit_AFailureScreenBringsThePopupBackIntoView is #375. The submit
+// focused the new session, herdr draws the popup only on the tab it opened
+// over, and its keep-or-clean screen waited there unseen for minutes.
+func TestSubmit_AFailureScreenBringsThePopupBackIntoView(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:    herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:  "AgentStart",
+		failErr: errors.New("boom"),
+	}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo", TabID: popupTabID}})
+	m = settle(t, m)
+	m.title.SetTitle("Fix pagination", false)
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	m, cleanCmd := m.handleSubmitDone(done)
+	ccMsg, ok := cleanCmd().(cleanCheckMsg)
+	if !ok {
+		t.Fatal("handleSubmitDone did not run the clean check")
+	}
+	if len(runner.focusedTabs) != 0 {
+		t.Fatalf("focused %v before the failure screen was up, want nothing yet", runner.focusedTabs)
+	}
+
+	_, focus := m.handleCleanCheckResult(ccMsg)
+	runFocusCmd(t, focus)
+
+	if want := []string{popupTabID}; !slices.Equal(runner.focusedTabs, want) {
+		t.Errorf("focused tabs = %v, want %v", runner.focusedTabs, want)
+	}
+}
+
+// TestSubmit_AWarningHoldBringsThePopupBackIntoView: a success held to show
+// its warning (#230) waits for a key exactly as the failure screen does, on
+// the same tab the view has just left.
+func TestSubmit_AWarningHoldBringsThePopupBackIntoView(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:    herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"},
+		failAt:  "TabRename",
+		failErr: errors.New("tab rename refused"),
+	}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo", TabID: popupTabID}})
+	m = settle(t, m)
+	m.title.SetTitle("Fix pagination", false)
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	m, _ = m.handleSubmitDone(done)
+
+	next, focus := m.Update(statePersistedMsg{})
+	m = next.(Model)
+	if !m.submitWarned {
+		t.Fatal("the success was not held for its warning")
+	}
+	runFocusCmd(t, focus)
+
+	if want := []string{popupTabID}; !slices.Equal(runner.focusedTabs, want) {
+		t.Errorf("focused tabs = %v, want %v", runner.focusedTabs, want)
+	}
+}
+
+// TestSubmit_ASuccessThatClosesLeavesTheViewOnTheNewSession: a popup that
+// closes by itself has nothing to show, and the view stays where the
+// create put it.
+func TestSubmit_ASuccessThatClosesLeavesTheViewOnTheNewSession(t *testing.T) {
+	runner := &submitFakeRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", TabID: "tab-1", PaneID: "pane-1"}}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo", TabID: popupTabID}})
+	m = settle(t, m)
+	m.title.SetTitle("Fix pagination", false)
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	m, _ = m.handleSubmitDone(done)
+
+	_, cmd = m.Update(statePersistedMsg{})
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("a clean success did not quit once state was persisted")
+	}
+	if len(runner.focusedTabs) != 0 {
+		t.Errorf("focused tabs = %v, want none: the popup is closing", runner.focusedTabs)
+	}
+}
+
+// TestSubmit_NoPopupTabInTheContextFocusesNothing: without the tab herdr
+// opened the popup over, there is nowhere to send the view, and herdr is
+// not asked to guess.
+func TestSubmit_NoPopupTabInTheContextFocusesNothing(t *testing.T) {
+	runner := &submitFakeRunner{
+		topo:    herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+		failAt:  "AgentStart",
+		failErr: errors.New("boom"),
+	}
+	m := newSubmitTestModel(t, runner, testSetup{Ctx: herdrc.Context{WorkspaceCwd: "/repo"}})
+	m = settle(t, m)
+	m.title.SetTitle("Fix pagination", false)
+	next, cmd := m.Update(form.SubmitMsg{})
+	m = next.(Model)
+	m, _, done := drainSubmitProgress(t, m, cmd)
+	m, cleanCmd := m.handleSubmitDone(done)
+	ccMsg := cleanCmd().(cleanCheckMsg)
+
+	if _, focus := m.handleCleanCheckResult(ccMsg); focus != nil {
+		focus()
+	}
+	if len(runner.focusedTabs) != 0 || containsString(runner.calls, "TabFocus") {
+		t.Errorf("TabFocus was called with no popup tab to focus: %v", runner.calls)
 	}
 }
