@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ZviBaratz/herdr-draft/internal/agentopts"
 	"github.com/ZviBaratz/herdr-draft/internal/clauth"
 	"github.com/ZviBaratz/herdr-draft/internal/config"
 	"github.com/ZviBaratz/herdr-draft/internal/form"
@@ -3060,6 +3061,90 @@ func TestResolveAccountIsANoOpWhenNotAuto(t *testing.T) {
 // A preview for a project the user has since navigated away from must not
 // overwrite the current one -- the same staleness rule every other async
 // source in async.go follows.
+// TestPreviewAndCommitTellThePickerTheSessionsModelAndEffort is #374: an
+// account whose limit for one model is spent looks healthy to a picker that
+// is not told the model. What it is told is what the agent will launch
+// with -- the options row over [agents.extra_args] -- on both calls.
+func TestPreviewAndCommitTellThePickerTheSessionsModelAndEffort(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}}
+	m := modelWithPicker(t, p, config.Config{Agents: config.AgentsConfig{
+		ExtraArgs: map[string][]string{"claude": {"--model", "opus[1m]", "--effort", "xhigh"}},
+		Options:   map[string]agentopts.Values{"claude": {agentopts.ModelOption: "fable"}},
+	}})
+
+	m = runPreview(t, m, "/p/thing")
+	if _, err := m.ResolveAccount(context.Background()); err != nil {
+		t.Fatalf("ResolveAccount: %v", err)
+	}
+
+	if len(p.calls) != 2 {
+		t.Fatalf("picker calls = %d, want the preview and the commit", len(p.calls))
+	}
+	for i, call := range p.calls {
+		if call.Model != "fable" || call.Effort != "xhigh" {
+			t.Errorf("call %d told model %q, effort %q, want fable (the row) and xhigh (extra_args)",
+				i, call.Model, call.Effort)
+		}
+	}
+}
+
+// pickerDebounceIn runs cmd and every command it batches, and returns the
+// picker preview's debounce among their messages, if one was scheduled.
+func pickerDebounceIn(cmd tea.Cmd) (pickerDebounceMsg, bool) {
+	if cmd == nil {
+		return pickerDebounceMsg{}, false
+	}
+	switch msg := cmd().(type) {
+	case pickerDebounceMsg:
+		return msg, true
+	case tea.BatchMsg:
+		for _, inner := range msg {
+			if found, ok := pickerDebounceIn(inner); ok {
+				return found, true
+			}
+		}
+	}
+	return pickerDebounceMsg{}, false
+}
+
+// TestChangingTheModelPreviewsTheAccountAgain: the picker's answer depends on
+// the model now, so the `auto` entry is asked again when it moves, as it is
+// when the project does.
+func TestChangingTheModelPreviewsTheAccountAgain(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1"}}
+	m := modelWithPicker(t, p, config.Config{})
+
+	m.form.FocusByID("options")
+	next, cmd := m.Update(key(tea.KeyRight, 0)) // model: inherit -> fable
+	m = next.(Model)
+	debounce, ok := pickerDebounceIn(cmd)
+	if !ok {
+		t.Fatal("choosing a model scheduled no account preview")
+	}
+	m, run := m.handlePickerDebounce(debounce)
+	if run == nil {
+		t.Fatal("the model change's preview was dropped as superseded")
+	}
+	run()
+
+	if len(p.calls) == 0 || p.calls[len(p.calls)-1].Model != "fable" {
+		t.Fatalf("picker calls = %+v, want the last one told model fable", p.calls)
+	}
+}
+
+// TestTypingATitleDoesNotPreviewTheAccountAgain: only what the picker is told
+// moving asks it again, not every keystroke in the form.
+func TestTypingATitleDoesNotPreviewTheAccountAgain(t *testing.T) {
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1"}}
+	m := modelWithPicker(t, p, config.Config{})
+
+	m.form.FocusByID("title")
+	_, cmd := m.Update(key('x', 0))
+	if _, ok := pickerDebounceIn(cmd); ok {
+		t.Fatal("a keystroke in the title scheduled an account preview")
+	}
+}
+
 func TestStalePreviewIsDiscarded(t *testing.T) {
 	p := &fakePicker{res: picker.Result{Profile: "alpha-1"}}
 	m := modelWithPicker(t, p, config.Config{})

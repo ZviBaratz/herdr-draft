@@ -183,6 +183,25 @@ func TestPinned(t *testing.T) {
 	}
 }
 
+// TestEffective is what the agent will launch with, which is what an account
+// picker is told (#374): a chosen option over extra_args, extra_args where
+// nothing is chosen, and nothing where neither says.
+func TestEffective(t *testing.T) {
+	extra := []string{"--model", "opus[1m]", "--effort", "xhigh", "--verbose"}
+
+	got := Effective("claude", extra, Values{ModelOption: "fable"})
+	want := Values{ModelOption: "fable", EffortOption: "xhigh"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Effective with the model chosen = %v, want %v", got, want)
+	}
+	if got := Effective("claude", extra, nil); !reflect.DeepEqual(got, Values{ModelOption: "opus[1m]", EffortOption: "xhigh"}) {
+		t.Fatalf("Effective with nothing chosen = %v, want extra_args' values", got)
+	}
+	if got := Effective("claude", nil, nil); got[ModelOption] != "" || got[EffortOption] != "" {
+		t.Fatalf("Effective with neither = %v, want no model and no effort", got)
+	}
+}
+
 func TestOptionRow(t *testing.T) {
 	opts := For("claude")
 	cases := []struct {

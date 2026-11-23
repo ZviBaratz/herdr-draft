@@ -15,6 +15,15 @@ for why a heading here may read `unreleased`.
 
 ### Added
 
+- **The account picker is told the session's model and effort** (#374).
+  Every picker call now carries `--model` and `--effort` with the values
+  the agent will launch with, whenever the launch sets them, and the `auto`
+  entry is previewed again when either changes. A picker can now avoid an account whose limit for that
+  one model is spent: on 2026-11-23 `auto` launched a Fable session on an
+  account whose Fable week was used up while its other windows looked
+  healthy. A picker that rejects the new flags is asked again without them.
+  `docs/account-picker.md` documents both.
+
 - **A new worktree inherits the main clone's direnv allow and mise
   trust.** Without this, every worktree of a repository with an `.envrc`
   printed `.envrc is blocked`. herdr-draft now extends your allow or trust,

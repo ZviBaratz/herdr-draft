@@ -57,6 +57,102 @@ func TestArgvIsTheDocumentedInvocation(t *testing.T) {
 	}
 }
 
+// TestArgvTellsThePickerTheSessionsModelAndEffort is #374: an account whose
+// limit for ONE model is spent looks healthy to a picker that is not told
+// the model, and `auto` chose one for a Fable session.
+func TestArgvTellsThePickerTheSessionsModelAndEffort(t *testing.T) {
+	opts := Options{DryRun: true, Model: "fable", Effort: "xhigh"}
+	if got, want := strings.Join(Argv("acct-pick", "/p/thing", opts), " "),
+		"acct-pick --dir /p/thing --json --dry-run --model fable --effort xhigh"; got != want {
+		t.Fatalf("Argv = %q, want %q", got, want)
+	}
+	// Either alone: a launch can carry one without the other.
+	if got, want := strings.Join(Argv("acct-pick", "/p/thing", Options{Effort: "high"}), " "),
+		"acct-pick --dir /p/thing --json --effort high"; got != want {
+		t.Fatalf("Argv = %q, want %q", got, want)
+	}
+}
+
+// TestArgvLeavesOutAValueThatWouldReadAsAFlag: a value from extra_args is
+// not validated, and one starting with "-" would be read by the picker as
+// an option of its own. Not knowing the model is the picker's old state, so
+// it is the safe one.
+func TestArgvLeavesOutAValueThatWouldReadAsAFlag(t *testing.T) {
+	opts := Options{Model: "--strict", Effort: "-x"}
+	if got, want := strings.Join(Argv("acct-pick", "/p/thing", opts), " "),
+		"acct-pick --dir /p/thing --json"; got != want {
+		t.Fatalf("Argv = %q, want %q", got, want)
+	}
+}
+
+// rejectsSessionFlagsPicker is a picker written before #374: it exits 64,
+// as the protocol's usage error, on any flag it does not know, and answers
+// normally otherwise. Every invocation is appended to calls, one per line.
+func rejectsSessionFlagsPicker(t *testing.T) (bin, calls string) {
+	t.Helper()
+	calls = filepath.Join(t.TempDir(), "calls")
+	bin = scriptPicker(t, "echo \"$*\" >> "+calls+"\n"+
+		"for a in \"$@\"; do case \"$a\" in --model|--effort) echo 'unknown option' >&2; exit 64;; esac; done\n"+
+		"cat <<'STUBOUT'\n"+stubPicked+"\nSTUBOUT\n")
+	return bin, calls
+}
+
+// TestPickAsksAgainWithoutTheSessionFlagsWhenThePickerRejectsThem keeps
+// every picker written before #374 working: one that refuses the new flags
+// as a usage error is asked again without them, and answers as it always
+// has.
+func TestPickAsksAgainWithoutTheSessionFlagsWhenThePickerRejectsThem(t *testing.T) {
+	bin, calls := rejectsSessionFlagsPicker(t)
+
+	got, err := CLI{Bin: bin}.Pick(context.Background(), "/p/thing", Options{DryRun: true, Model: "fable", Effort: "xhigh"})
+	if err != nil {
+		t.Fatalf("Pick: %v", err)
+	}
+	if got.Profile != "alpha-1" {
+		t.Fatalf("Pick = %+v, want the answer from the second invocation", got)
+	}
+	log, _ := os.ReadFile(calls)
+	want := "--dir /p/thing --json --dry-run --model fable --effort xhigh\n--dir /p/thing --json --dry-run\n"
+	if string(log) != want {
+		t.Fatalf("invocations =\n%s\nwant\n%s", log, want)
+	}
+}
+
+// TestPickAsksOnceWhenThereAreNoSessionFlagsToDrop: a usage error with
+// nothing new on the command line is the picker disagreeing with the
+// protocol it always had, and it is reported as before rather than asked
+// twice.
+func TestPickAsksOnceWhenThereAreNoSessionFlagsToDrop(t *testing.T) {
+	calls := filepath.Join(t.TempDir(), "calls")
+	bin := scriptPicker(t, "echo \"$*\" >> "+calls+"\necho 'unknown option' >&2\nexit 64\n")
+
+	_, err := CLI{Bin: bin}.Pick(context.Background(), "/p/thing", Options{DryRun: true})
+	var refusal *RefusalError
+	if !errors.As(err, &refusal) || refusal.Code != ExitUsage {
+		t.Fatalf("Pick err = %v, want the usage error reported as before", err)
+	}
+	if log, _ := os.ReadFile(calls); strings.Count(string(log), "\n") != 1 {
+		t.Fatalf("invocations =\n%s\nwant exactly one", log)
+	}
+}
+
+// TestPickReportsAUsageErrorThatOutlivesTheRetry: a picker that refuses its
+// invocation for some other reason refuses the second one too, and that is
+// what the caller hears -- not a silent success, and not a third attempt.
+func TestPickReportsAUsageErrorThatOutlivesTheRetry(t *testing.T) {
+	calls := filepath.Join(t.TempDir(), "calls")
+	bin := scriptPicker(t, "echo \"$*\" >> "+calls+"\necho 'bad --dir' >&2\nexit 64\n")
+
+	_, err := CLI{Bin: bin}.Pick(context.Background(), "/p/thing", Options{Model: "fable"})
+	var refusal *RefusalError
+	if !errors.As(err, &refusal) || refusal.Code != ExitUsage {
+		t.Fatalf("Pick err = %v, want the usage error", err)
+	}
+	if log, _ := os.ReadFile(calls); strings.Count(string(log), "\n") != 2 {
+		t.Fatalf("invocations =\n%s\nwant exactly two", log)
+	}
+}
+
 func TestPickPassesTheDocumentedFlagsAndDecodes(t *testing.T) {
 	bin, argvFile := stubPicker(t, stubPicked, "", 0)
 	got, err := CLI{Bin: bin}.Pick(context.Background(), "/p/thing", Options{DryRun: true})

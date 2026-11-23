@@ -1096,7 +1096,17 @@ func resolveAccount(ctx context.Context, in plan.Input, src picker.Source, dryRu
 	if err := requirePicker(in, src); err != nil {
 		return in, nil, err
 	}
-	res, err := src.Pick(ctx, in.ProjectDir, picker.Options{Strict: true, DryRun: dryRun})
+	// The session's model and effort as the agent will launch with them, so
+	// a limit that applies to one model can be weighed (#374). The form
+	// tells the picker the same pair through Model.pickerSession.
+	launch := agentopts.Effective(in.AgentKind, in.ExtraArgs, in.AgentOptions)
+	opts := picker.Options{
+		Strict: true,
+		DryRun: dryRun,
+		Model:  launch[agentopts.ModelOption],
+		Effort: launch[agentopts.EffortOption],
+	}
+	res, err := src.Pick(ctx, in.ProjectDir, opts)
 	if err != nil {
 		return in, nil, err
 	}

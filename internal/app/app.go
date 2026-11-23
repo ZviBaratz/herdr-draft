@@ -1143,6 +1143,10 @@ type Model struct {
 	lastDupKey     string
 	lastWorktreeOn bool
 	lastFocusedID  string
+	// lastPickerSession is pickerSessionKey as of the last preview: the
+	// model and effort the picker was told, so a change asks it again
+	// (#374).
+	lastPickerSession string
 
 	// projectCandidates is the fragment-mode candidate pool built once at
 	// New (buildDirCandidates), kept so leaving path mode can put it back
@@ -1744,6 +1748,7 @@ func New(s Setup) Model {
 	if m.machine != nil {
 		m.initCmds = append(m.initCmds, m.machineListCmd())
 	}
+	m.lastPickerSession = m.pickerSessionKey()
 	if preview := m.schedulePickerPreview(m.lastDir); preview != nil {
 		m.initCmds = append(m.initCmds, preview)
 	}
@@ -2582,7 +2587,28 @@ func (m Model) ResolveAccount(ctx context.Context) (picker.Result, error) {
 	if m.deps.Picker == nil || m.account == nil || !m.accountIsAuto() || m.agent.Value() != claudeKind {
 		return picker.Result{}, nil
 	}
-	return m.deps.Picker.Pick(ctx, pathx.ExpandTilde(m.dir.Value()), picker.Options{})
+	model, effort := m.pickerSession()
+	return m.deps.Picker.Pick(ctx, pathx.ExpandTilde(m.dir.Value()), picker.Options{Model: model, Effort: effort})
+}
+
+// pickerSession is the model and effort the session will launch with -- the
+// options row over [agents.extra_args], read back from the argument list the
+// agent is started with (agentopts.Effective) -- which the picker is told so
+// it can weigh a limit that applies to one model only (#374). "" for either
+// one the launch does not carry. internal/create's resolveAccount tells it
+// the same pair from the same three inputs, and equivalence_test.go holds
+// the two to it.
+func (m Model) pickerSession() (model, effort string) {
+	kind := m.agent.Value()
+	launch := agentopts.Effective(kind, m.cfg.Agents.ExtraArgs[kind], m.agentOptions())
+	return launch[agentopts.ModelOption], launch[agentopts.EffortOption]
+}
+
+// pickerSessionKey is pickerSession as one comparable value, for
+// reactToChanges' snapshot.
+func (m Model) pickerSessionKey() string {
+	model, effort := m.pickerSession()
+	return model + "\x00" + effort
 }
 
 // linkedProject is the dir check's answer about a lane (#171): root is the
@@ -2949,9 +2975,21 @@ func (m *Model) reactToChanges() []tea.Cmd {
 	}
 
 	dirVal := m.dir.Value()
-	if dirVal != m.lastDir {
+	dirChanged := dirVal != m.lastDir
+	if dirChanged {
 		m.lastDir = dirVal
 		cmds = append(cmds, m.scheduleDirCheck(dirVal), m.scheduleBaseCheck(dirVal), m.schedulePickerPreview(dirVal))
+	}
+
+	// The picker is told the session's model and effort (#374), so its
+	// answer moves with them as it does with the project. A project change
+	// in the same message has already scheduled the preview, which reads
+	// both when it runs.
+	if session := m.pickerSessionKey(); session != m.lastPickerSession {
+		m.lastPickerSession = session
+		if !dirChanged {
+			cmds = append(cmds, m.schedulePickerPreview(dirVal))
+		}
 	}
 
 	titleVal := m.title.Value()

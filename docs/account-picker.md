@@ -75,7 +75,7 @@ accepts `--account auto`.
 ### Invocation
 
 ```
-<picker> --dir <project path> --json [--strict] [--dry-run]
+<picker> --dir <project path> --json [--strict] [--dry-run] [--model <model>] [--effort <effort>]
 ```
 
 - `--dir` is the project directory the session is being created in.
@@ -86,6 +86,13 @@ accepts `--account auto`.
   it keeps, and **not** to build an account directory, so `config_dir` comes
   back `null`. The popup's preview passes it, on every project change. The
   one call that picks for real, when you create, does not.
+- `--model` and `--effort` are what the session will launch with: the
+  values the agent's own command line carries, from the `options` row or
+  `[agents.extra_args]`, such as `--model fable --effort xhigh`. Each is
+  left out when the launch carries none. Use them to weigh a limit that
+  applies to one model only: an account whose weekly limit for one model is
+  spent can look healthy on every window it shares with the others. A picker
+  may ignore them.
 
 ### Answer
 
@@ -140,6 +147,11 @@ unpinned instead.
 your request; `64` means the picker and herdr-draft disagree about how it is
 called. If you see it, compare your picker's flags with the invocation above.
 
+A picker written before `--model` and `--effort` existed may refuse them
+with `64`. herdr-draft then asks once more without them, so such a picker
+keeps working, and picks as it always did. A `64` that survives that second
+call is reported.
+
 **Every call gets 30 seconds.** A picker that has not answered by then is
 abandoned and reported as a malfunction, never as a refusal. The limit is
 generous because a picker may need several network round trips. Nothing it
@@ -156,8 +168,9 @@ real pick with nothing on screen.
   working picker. If the check fails, the `account` row says so and loses
   its `auto` entry — which it had been offering since the first frame,
   because the popup draws before this call answers.
-- **On every project change**: `--json --dry-run` again, so the `auto` entry
-  shows what the picker would choose here.
+- **On every project change**, and every change to the session's model or
+  effort: `--json --dry-run` again, so the `auto` entry shows what the
+  picker would choose for this session.
 - **Once per create**, after every other check has passed and before
   anything is created: `--json`, plus `--strict` from `create`. This is the
   call whose answer becomes the pin. A refusal here refuses the create and,

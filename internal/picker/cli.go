@@ -37,6 +37,26 @@ type Options struct {
 	// judge the ANSWER: a machine whose pool is exhausted, or which has no
 	// tenant table, still has a perfectly good picker.
 	Probe bool
+	// Model and Effort are what the session will launch with -- the values
+	// the agent's own argv carries for --model and --effort, from the
+	// options row or [agents.extra_args] -- and "" when the launch carries
+	// none. They are passed so the picker can weigh a limit that applies to
+	// one model only (#374): an account whose Fable week is spent reads as
+	// healthy to a picker that is not told the session is Fable's.
+	Model  string
+	Effort string
+}
+
+// hasSessionFlags reports whether Argv passes anything a picker written
+// before #374 does not know.
+func (o Options) hasSessionFlags() bool {
+	return isPassableFlagValue(o.Model) || isPassableFlagValue(o.Effort)
+}
+
+// withoutSessionFlags is o as such a picker understands it.
+func (o Options) withoutSessionFlags() Options {
+	o.Model, o.Effort = "", ""
+	return o
 }
 
 // ProbeError is a verdict about the EXECUTABLE rather than about one pick:
@@ -75,7 +95,25 @@ func Argv(bin, dir string, opts Options) []string {
 	if opts.DryRun {
 		argv = append(argv, "--dry-run")
 	}
-	return argv
+	argv = appendSessionFlag(argv, "--model", opts.Model)
+	return appendSessionFlag(argv, "--effort", opts.Effort)
+}
+
+// appendSessionFlag adds flag and its value when the value can be passed.
+func appendSessionFlag(argv []string, flag, value string) []string {
+	if !isPassableFlagValue(value) {
+		return argv
+	}
+	return append(argv, flag, value)
+}
+
+// isPassableFlagValue reports whether value can follow a flag: it is not
+// empty, and it would not read as a flag of its own. A value from
+// extra_args is not validated, and a picker handed `--model --strict` would
+// take a mode it was never asked for; leaving the flag out is the picker's
+// state before #374, which is the safe one.
+func isPassableFlagValue(value string) bool {
+	return value != "" && !strings.HasPrefix(value, "-")
 }
 
 // CLI runs a picker executable. Bin is what `[clauth] picker` named -- a
@@ -100,6 +138,14 @@ var _ Source = CLI{}
 // protocol -- a malfunction).
 func (c CLI) Pick(ctx context.Context, dir string, opts Options) (Result, error) {
 	code, stdout, stderr, err := c.run(ctx, dir, opts)
+	// A picker written before #374 refuses --model and --effort as a usage
+	// error. It is asked once more without them, and answers as it always
+	// has. One that refuses for another reason refuses the second call too,
+	// and that answer is reported below like any other.
+	if err == nil && code == ExitUsage && opts.hasSessionFlags() {
+		opts = opts.withoutSessionFlags()
+		code, stdout, stderr, err = c.run(ctx, dir, opts)
+	}
 	if err != nil {
 		if opts.Probe {
 			// The executable did not run, or did not answer inside its

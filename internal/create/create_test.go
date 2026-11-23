@@ -2645,6 +2645,26 @@ func TestCreateResolvesAutoThroughThePickerStrictly(t *testing.T) {
 	}
 }
 
+// TestCreateTellsThePickerTheSessionsModelAndEffort is #374: an account
+// whose limit for one model is spent looks healthy to a picker that is not
+// told the model, and `auto` launched a Fable session on one.
+func TestCreateTellsThePickerTheSessionsModelAndEffort(t *testing.T) {
+	h := newHarness(t)
+	p := &fakePicker{res: picker.Result{Profile: "alpha-1", ConfigDir: "/dirs/alpha-1"}}
+	h.deps.Picker = p
+
+	code := h.run("--title", "fix login", "--account", "auto", "--no-worktree", "--model", "fable", "--effort", "xhigh")
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d\nstderr: %s", code, ExitOK, h.stderr)
+	}
+	if len(p.calls) != 1 {
+		t.Fatalf("picker calls = %d, want exactly 1", len(p.calls))
+	}
+	if got := p.calls[0]; got.Model != "fable" || got.Effort != "xhigh" {
+		t.Errorf("picker told model %q, effort %q, want fable and xhigh", got.Model, got.Effort)
+	}
+}
+
 // The picker's warnings go to stderr (#165): `create` has no account panel to
 // draw them on, and a warning nobody sees is a warning not given.
 func TestCreatePrintsThePickersWarnings(t *testing.T) {
