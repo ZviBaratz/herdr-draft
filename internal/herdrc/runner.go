@@ -145,6 +145,10 @@ type Runner interface {
 	// `workspace create` or `worktree create` opened gets the session's
 	// title, since neither call can name it.
 	TabRename(ctx context.Context, req TabRenameReq) error
+	// TabFocus runs `herdr tab focus <tab_id>`: how a popup whose submit
+	// ends on a screen waiting for the person brings that person back to
+	// it, since herdr draws a popup only over the tab it opened on (#375).
+	TabFocus(ctx context.Context, tabID string) error
 	PaneSplit(ctx context.Context, req PaneSplitReq) (CreatedTopology, error)
 	AgentStart(ctx context.Context, req AgentStartReq) error
 	AgentPrompt(ctx context.Context, req AgentPromptReq) error
@@ -940,6 +944,28 @@ func (r *CLIRunner) TabRename(ctx context.Context, req TabRenameReq) error {
 		return fmt.Errorf("%w tab rename: no tab id to rename", errRefused)
 	}
 	_, err := r.runJSON(ctx, "tab", "rename", req.TabID, req.Label)
+	return err
+}
+
+// TabFocus runs `herdr tab focus <tab_id>`, which prints its result through
+// print_method_response like `tab rename`
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/runtime.rs#L61-L63),
+// so it goes through runJSON.
+//
+// It moves the view of every client attached to the session, not only the
+// one a person last used (focus_all_shell_clients_on_default_target,
+// src/server/headless/client_views.rs at v0.9.0): that is what `--focus` on a
+// create does as well,
+// and it is why a caller should use it only to bring someone back to
+// something that is waiting for them.
+//
+// An empty id is refused rather than passed on: a caller holding no tab id
+// does not know where the view should go, and herdr is never asked to guess.
+func (r *CLIRunner) TabFocus(ctx context.Context, tabID string) error {
+	if tabID == "" {
+		return fmt.Errorf("%w tab focus: no tab id to focus", errRefused)
+	}
+	_, err := r.runJSON(ctx, "tab", "focus", tabID)
 	return err
 }
 

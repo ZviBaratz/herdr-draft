@@ -899,6 +899,56 @@ func TestCLIRunnerTabRenameRefusesEmptyTabID(t *testing.T) {
 	assertNeverExecuted(t, argvLog)
 }
 
+// TestCLIRunnerTabFocus pins `herdr tab focus <tab_id>` (#375). The envelope
+// is the one herdr 0.9.1 printed live on 2026-11-23, trimmed.
+func TestCLIRunnerTabFocus(t *testing.T) {
+	stdout := `{"id":"cli:tab:focus","result":{"tab":{"focused":true,"label":"1","tab_id":"w1:t1","workspace_id":"w1"},"type":"tab_info"}}`
+	bin, argvLog := fakeHerdr(t, stdout)
+	r := &CLIRunner{Bin: bin}
+
+	if err := r.TabFocus(context.Background(), "w1:t1"); err != nil {
+		t.Fatalf("TabFocus: %v", err)
+	}
+
+	if got, want := readArgvLog(t, argvLog), "tab focus w1:t1"; got != want {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+}
+
+// TestCLIRunnerTabFocusRequiresTheJSONEnvelope: at v0.9.0 `tab_focus` prints
+// through print_method_response, as `tab rename` does
+// (https://github.com/herdrdev/herdr/blob/v0.9.0/src/cli/runtime.rs#L61-L63),
+// and only a fixture that prints NOTHING can tell runJSON from runOK.
+func TestCLIRunnerTabFocusRequiresTheJSONEnvelope(t *testing.T) {
+	bin, _ := fakeHerdrOK(t)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.TabFocus(context.Background(), "w1:t1")
+	if err == nil {
+		t.Fatal("TabFocus = nil against a subcommand that printed no envelope; " +
+			"`tab focus` reports success as JSON, so it has to go through runJSON")
+	}
+	if !strings.Contains(err.Error(), "parse response") {
+		t.Errorf("error = %v, want the missing envelope to be what failed", err)
+	}
+}
+
+// TestCLIRunnerTabFocusRefusesEmptyTabID: a caller holding no tab id does not
+// know where the view should go, and herdr is never asked to guess.
+func TestCLIRunnerTabFocusRefusesEmptyTabID(t *testing.T) {
+	bin, argvLog := fakeHerdr(t, `{"id":"x","result":{}}`)
+	r := &CLIRunner{Bin: bin}
+
+	err := r.TabFocus(context.Background(), "")
+	if err == nil {
+		t.Fatal("TabFocus with no tab id = nil, want a refusal")
+	}
+	if !errors.Is(err, errRefused) {
+		t.Errorf("error %q is not a refusal to run (errors.Is errRefused = false)", err)
+	}
+	assertNeverExecuted(t, argvLog)
+}
+
 // TestCLIRunnerTabCloseRefusesEmptyTabID mirrors
 // TestCLIRunnerPaneCloseRefusesEmptyPaneID: a caller holding no tab id must
 // not silently close whatever tab herdr would pick by default.

@@ -360,6 +360,11 @@ popup offers what to do with whatever the create already made:
   nothing was created when herdr refused before acting, and otherwise names
   what may have been left behind, for you to look at before retrying.
 
+Both screens wait on the tab you opened the popup from, which is the only
+place herdr draws it, and the create has just moved you to the new session.
+So when either appears, herdr-draft brings you back to that tab. Until you
+answer it, herdr will not open another popup.
+
 A prompt that could not be delivered is never lost: it is saved to a file
 the failure screen names. See
 [Troubleshooting](troubleshooting.md#prompt-not-sent-after-a-submit) for

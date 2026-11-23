@@ -79,6 +79,12 @@ for why a heading here may read `unreleased`.
   still in the box and to press Enter there, instead of offering it back to
   paste. The spawn skill and `docs/create.md` describe this `unconfirmed`
   case too.
+- **A failure or a warning after a create no longer waits out of sight**
+  (#375). herdr draws the popup only over the tab it was opened from, and
+  the create moves you to the new session, so the keep-or-clean screen,
+  and a success held to show a warning, waited where nobody was looking.
+  Until it was answered, herdr refused to open another popup. herdr-draft
+  now brings you back to the popup's tab when either screen appears.
 
 ## 0.2.0 — 2026-10-14
 

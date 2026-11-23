@@ -256,6 +256,13 @@ func (m *mockRunner) TabRename(ctx context.Context, req herdrc.TabRenameReq) err
 	return nil
 }
 
+// TabFocus is the popup's call, not the plan's (#375); recorded so a test
+// would see a plan that made it.
+func (m *mockRunner) TabFocus(ctx context.Context, tabID string) error {
+	m.record("TabFocus", tabID)
+	return nil
+}
+
 func (m *mockRunner) PaneSplit(ctx context.Context, req herdrc.PaneSplitReq) (herdrc.CreatedTopology, error) {
 	m.record("PaneSplit", req.PaneID, req.Direction, req.Cwd)
 	m.focusAsked = append(m.focusAsked, fmt.Sprintf("%s:%t", "PaneSplit", req.Focus))
