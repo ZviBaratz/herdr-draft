@@ -226,7 +226,7 @@ type ExecResult struct {
 	BaseCommit string
 
 	// PromptUnconfirmed reports that delivery of the prompt is UNKNOWN
-	// rather than known to be false (#108). It is reached six ways, and
+	// rather than known to be false (#108). It is reached seven ways, and
 	// they rest on different evidence:
 	//
 	//   - ErrPromptWaitTimeout. `herdr agent prompt --wait` ran out of
@@ -263,6 +263,10 @@ type ExecResult struct {
 	//   - a stall that left the prompt in the agent's input box, with Enter
 	//     pressed on it and still no reaction (errPromptLeftInInputBox,
 	//     #371). One copy was typed, and it is most likely still there.
+	//   - a stall, and no input box on the screen for the retry to judge
+	//     (errInputBoxNotOnScreen, #373): a dialog or an error drawn where it
+	//     was. One copy was typed, and the agent may be holding it behind
+	//     what it shows, so a second was not.
 	//   - herdr failing the send itself (herdrc.ErrPromptSendFailed, #228).
 	//     The one shape that is not evidence the text went out: herdr raises
 	//     `agent_prompt_failed` before queueing anything and when a write
@@ -368,6 +372,12 @@ const (
 	// (errPromptLeftInInputBox, #371). One copy was typed; it is most
 	// likely still there, unsubmitted.
 	causeLeftInInputBox unconfirmedCause = "left-in-input-box"
+
+	// causeInputBoxNotOnScreen: a stall, and the retry found no input box
+	// on the screen at all -- a dialog or an error drawn where it was
+	// (errInputBoxNotOnScreen, #373). One copy was typed, and the agent may
+	// be holding it behind what it is showing, so none was typed again.
+	causeInputBoxNotOnScreen unconfirmedCause = "input-box-not-on-screen"
 )
 
 // busyRetryInterval, busyRetryBudget, and busyRetryNow implement the busy
@@ -1125,10 +1135,11 @@ func promptTextMayBeTyped(err error) bool {
 // The last case is the sticky one (#132's rider), and the order matters:
 // the sentinels above it name the evidence the step ended on, so they win
 // over the weaker "something went out at some point" when both are true.
-// Four are herdr's, two are confirmPromptLanded's verdicts (#154) and one is
-// the stall retry's (errPromptLeftInInputBox, #371), and
+// Four are herdr's, two are confirmPromptLanded's verdicts (#154) and two
+// are the stall retry's (errPromptLeftInInputBox, #371, and
+// errInputBoxNotOnScreen, #373), and
 // all are ungated for the same reason: none of them can rule out that
-// herdr typed the text, so each carries textAlreadySent in itself. Six
+// herdr typed the text, so each carries textAlreadySent in itself. Seven
 // prove it; ErrPromptSendFailed proves nothing either way (#228), and is
 // here because "unsent" is the one claim it cannot support. What they do
 // not all carry is how many sends there were: a stall whose retry is
@@ -1148,6 +1159,8 @@ func classifyPromptDelivery(runErr error, textAlreadySent bool) (bool, unconfirm
 		return true, causeSendFailed
 	case errors.Is(runErr, errPromptLeftInInputBox):
 		return true, causeLeftInInputBox
+	case errors.Is(runErr, errInputBoxNotOnScreen):
+		return true, causeInputBoxNotOnScreen
 	case textAlreadySent:
 		return true, causeFailedAfterSending
 	}
@@ -2552,6 +2565,10 @@ func unconfirmedCleanReason(cause unconfirmedCause) string {
 		return "the prompt was typed once and herdr saw the agent do nothing, and Enter pressed on " +
 			"it again changed nothing either, so it is most likely still in the agent's input box, " +
 			"unsubmitted. Read the pane before removing anything."
+	case causeInputBoxNotOnScreen:
+		return "the prompt was typed once while the agent was showing something other than its input " +
+			"box, a dialog or an error, so it may be waiting in that input box, unsubmitted, behind " +
+			"what the agent is showing. Read the pane before removing anything."
 	}
 	// causeWaitTimedOut, and the zero value with it. CleanCheck cannot
 	// reach that zero value -- the cause is set on the same line as the

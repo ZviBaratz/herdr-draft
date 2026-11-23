@@ -389,8 +389,10 @@ Layering, outermost to innermost:
   on, and a second copy then joins it into one turn (#371). The retry reads
   the box first (`retryStalledPrompt`) and presses Enter on a prompt it finds
   there, unless herdr reports the agent blocked (`pane send-keys` is raw, and
-  herdr knows dialogs `dialog.go` does not); it retypes only when the box does
-  not hold it and the agent is not already working. Its dominant cause is
+  herdr knows dialogs `dialog.go` does not); it retypes only when the box is
+  on screen, does not hold it, and the agent is not already working. A screen
+  with no box on it may be a dialog with the first copy queued behind it,
+  which is how a retype once put two copies there (#373). Its dominant cause is
   measured: for about a second after a trust dialog clears, `agent get`
   reports `idle` and `interactive_ready` while the agent's TUI is not yet
   accepting input. Collapsing the two would either strand a delivered prompt
@@ -421,7 +423,7 @@ Layering, outermost to innermost:
   because "unsent" is the claim that costs, not because typing is likely.
   Don't try to split it by herdr's message: `herdrc.ErrPromptSendFailed`'s
   doc cites every path at v0.9.0. `ExecResult.promptUnconfirmedCause` carries
-  which of the six shapes it was, purely so `CleanCheck` names the right
+  which of the seven shapes it was, purely so `CleanCheck` names the right
   evidence; the exported flag stays the posture every other package reads.
 - **A herdr error is classified by its code, never by its text (#144).**
   `cliError`'s message embeds the argv, and the argv carries the user's

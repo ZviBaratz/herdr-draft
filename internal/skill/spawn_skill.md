@@ -821,6 +821,12 @@ most likely still in the box, unsubmitted. If the pane shows it there,
 `herdr pane send-keys <pane_id> Enter` submits it. Pasting it would put a
 second copy behind the first, and the agent would get both in one message.
 
+It also covers a stall while the agent showed something other than its
+input box, such as a dialog or an error. herdr-draft does not type the
+prompt again then: the agent may be holding the first copy behind what it
+shows. Read the pane. Once its input box is back, if the prompt is in it,
+`herdr pane send-keys <pane_id> Enter` submits it.
+
 And it covers herdr failing the send itself, with its code
 "agent_prompt_failed" in `error`. herdr gives that code both when it typed
 nothing and when the pane failed partway through the text, so the input box

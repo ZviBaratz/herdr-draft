@@ -362,6 +362,10 @@ Delivery is unknown when:
 - a stall left the prompt in the agent's input box. herdr-draft pressed
   Enter on it rather than typing it again, and the agent still did not
   react. The text is most likely still in the box: press Enter in the pane.
+- a stall, and the agent was showing something other than its input box,
+  such as a dialog or an error. herdr-draft did not type the prompt again,
+  because the agent may be holding the first copy behind what it shows. Once
+  the box is back, check it: if the prompt is there, press Enter in the pane.
 - the send went out, and the pane afterwards showed a dialog with none of the
   prompt on it, or stopped answering, which usually means the agent exited.
 - herdr failed the send partway through, and cannot say how much it typed.
