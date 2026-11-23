@@ -355,6 +355,15 @@ func (r *fakeRunner) PaneRead(_ context.Context, target string) (string, error) 
 
 const paintedIdleScreen = "> Sonnet 5 · claude-code\n  Type your message...\n"
 
+// emptyInputBoxScreen is Claude Code idle with nothing typed: its input box,
+// between its two edges, showing only ghost text. A stall retry types the
+// prompt again only where it can see that box (#373), which paintedIdleScreen
+// does not draw, so the tests of a retype show it this one.
+const emptyInputBoxScreen = " ▐▛███▛█   Claude Code v2.1.330\n\n" +
+	"────────────────────────────────────────\n" +
+	"❯ Try \"write a test for create_test.go\"\n" +
+	"────────────────────────────────────────\n"
+
 func (r *fakeRunner) AwaitDetection(_ context.Context, paneID string, _, blockedTimeout time.Duration) error {
 	// The blocked budget is part of the record on purpose: headless
 	// `create` must never wait for a dialog nobody is there to answer
@@ -1345,6 +1354,7 @@ func TestStalledPromptIsRetriedThenReportedUnconfirmed(t *testing.T) {
 	h := newHarness(t)
 	h.runner.failAt = "AgentPrompt"
 	h.runner.failErr = stalledPromptErr()
+	h.runner.readText = emptyInputBoxScreen
 
 	code := h.run("--title", "t", "--no-worktree", "--prompt", prompt, "--json")
 	if code != ExitFailed {
@@ -1422,6 +1432,7 @@ func TestStalledPromptTheRetryRescues(t *testing.T) {
 	h := newHarness(t)
 	h.runner.failAt = "AgentPrompt"
 	h.runner.failErr = stalledPromptErr()
+	h.runner.readText = emptyInputBoxScreen
 	h.runner.failTimes = 1
 
 	code := h.run("--title", "t", "--no-worktree", "--prompt", prompt, "--json")

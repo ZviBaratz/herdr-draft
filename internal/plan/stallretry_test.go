@@ -36,6 +36,11 @@ func claudeScreen(transcript, box string) string {
 		"  ⏵⏵ auto mode on (shift+tab to cycle)\n"
 }
 
+// emptyInputBoxScreen is Claude Code idle with nothing typed: an input box
+// showing only its ghost text. It is what a stall retry needs to see before
+// it types the prompt again (#373), so every test of a retype carries it.
+var emptyInputBoxScreen = claudeScreen("", `Try "write a test for create_test.go"`)
+
 func TestPromptLeftInInputBox(t *testing.T) {
 	const prompt = "implement the fix for the stalled retry"
 	// Numbered so that no stretch of it looks like its start.
@@ -284,7 +289,7 @@ func TestExecuteStallWithAnEmptyBoxTypesThePromptAgain(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	m := stalledOnceMock(claudeScreen("", `Try "write a test for create_test.go"`))
+	m := stalledOnceMock(emptyInputBoxScreen)
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
 
@@ -302,6 +307,97 @@ func TestExecuteStallWithAnEmptyBoxTypesThePromptAgain(t *testing.T) {
 	// not an extra read in front of it.
 	if n := countCallsWithPrefix(m.calls, "AgentRead"); n != 3 {
 		t.Errorf("AgentRead called %d times, want 3: %v", n, m.calls)
+	}
+}
+
+// dialogInPlaceOfTheBox is a screen with Claude Code's banner and a dialog
+// where its input box should be. #373's dialog was about a connectivity
+// error and its text was not captured, so this is its shape rather than its
+// words. It matches no promptDialogSignatures entry, so the guard lets it
+// through, as it let the real one through. Its option marker is the box's
+// own glyph with no edge above it: not a box.
+const dialogInPlaceOfTheBox = " ▐▛███▛█   Claude Code v2.1.330\n▝▜██████▀  Fable 5.2 · Claude Team\n\n" +
+	"  Could not reach the service.\n\n" +
+	"  ❯ 1. Try again\n" +
+	"    2. Exit\n"
+
+// TestExecuteStallWithNoInputBoxOnScreenDoesNotTypeAgain is #373: a dialog
+// drawn where the box was hides whether the first copy is waiting behind
+// it. Claude Code queued it there, and a retype queued a second one.
+func TestExecuteStallWithNoInputBoxOnScreenDoesNotTypeAgain(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := stalledOnceMock(dialogInPlaceOfTheBox)
+
+	var progressed []Progress
+	result := Execute(context.Background(), m, ops, ExecOpts{},
+		func(p Progress) { progressed = append(progressed, p) })
+
+	if want := indexOfKind(ops, OpAgentPrompt); result.FailedIndex != want {
+		t.Fatalf("FailedIndex = %d, want %d (the prompt op): %+v", result.FailedIndex, want, result)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Errorf("AgentPrompt called %d times, want 1 -- no box, no second copy: %v", n, m.calls)
+	}
+	if n := countCallsWithPrefix(m.calls, "PaneSendKeys"); n != 0 {
+		t.Errorf("PaneSendKeys called %d times, want 0 -- Enter would answer the dialog: %v", n, m.calls)
+	}
+	if !result.PromptUnconfirmed {
+		t.Errorf("PromptUnconfirmed = false, want true: the text was typed once")
+	}
+	if result.promptUnconfirmedCause != causeInputBoxNotOnScreen {
+		t.Errorf("cause = %q, want %q", result.promptUnconfirmedCause, causeInputBoxNotOnScreen)
+	}
+	if result.PromptText != in.Prompt {
+		t.Errorf("PromptText = %q, want the prompt handed back", result.PromptText)
+	}
+	msg := progressed[len(progressed)-1].Err.Error()
+	for _, want := range []string{"input box", "press Enter"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("step message = %q, want it to say %q", msg, want)
+		}
+	}
+	decision := CleanCheck(context.Background(), in, result)
+	if decision.Allowed {
+		t.Errorf("CleanCheck allowed a clean over a prompt that may be queued behind a dialog")
+	}
+	if !strings.Contains(decision.Reason, "input box") {
+		t.Errorf("clean reason = %q, want it to say where the prompt may be", decision.Reason)
+	}
+}
+
+// TestExecuteStallWithNoInputBoxButTheAgentWorkingIsDelivered keeps the
+// order of the retry's questions: an agent that is working took the first
+// copy, whatever is on its screen, and that is a delivery, not a refusal.
+func TestExecuteStallWithNoInputBoxButTheAgentWorkingIsDelivered(t *testing.T) {
+	withPromptRetrySettle(t, 0)
+	in := validInput()
+	in.UseWorktree = true
+	in.Prompt = "implement the fix"
+	ops, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	m := stalledOnceMock(dialogInPlaceOfTheBox)
+	m.agentWait = func(timeout time.Duration, until []herdrc.AgentStatus) (bool, error) {
+		return timeout == 0 && slices.Equal(until, []herdrc.AgentStatus{herdrc.AgentWorking}), nil
+	}
+
+	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
+
+	if result.FailedIndex != -1 {
+		t.Fatalf("FailedIndex = %d, want -1: %+v", result.FailedIndex, result)
+	}
+	if n := countCallsWithPrefix(m.calls, "AgentPrompt"); n != 1 {
+		t.Errorf("AgentPrompt called %d times, want 1: %v", n, m.calls)
 	}
 }
 

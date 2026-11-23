@@ -74,6 +74,12 @@ const statusNow time.Duration = 0
 // (causeLeftInInputBox), and it is never answered by typing the prompt again.
 var errPromptLeftInInputBox = errors.New("the prompt is most likely still in the agent's input box, unsubmitted")
 
+// errInputBoxNotOnScreen is the retry's verdict on a screen with no input box
+// on it at all (#373). Text was typed once, and where it went cannot be seen,
+// so it takes the unconfirmed posture (causeInputBoxNotOnScreen) and nothing
+// is typed again.
+var errInputBoxNotOnScreen = errors.New("the agent's input box was not on screen, so the prompt was not typed again")
+
 // retryStalledPrompt is the one retry a stalled send gets, and it decides
 // from the pane what that retry is.
 //
@@ -83,7 +89,14 @@ var errPromptLeftInInputBox = errors.New("the prompt is most likely still in the
 //   - It is not, and the agent is working: the first send's Enter was acted
 //     on after herdr stopped watching. The prompt is delivered, and a second
 //     copy would be queued behind it as a second turn.
-//   - Otherwise: type it again (#132's case), with retype.
+//   - There is no input box on the screen: type nothing (#373). A dialog or
+//     an error drawn where the box was hides whether the first copy is
+//     waiting behind it. Claude Code was seen holding it there (#373): once
+//     the dialog cleared, the retype's copy sat behind the first. This also covers every
+//     agent that does not draw Claude Code's box, whose first copy is just
+//     as invisible.
+//   - Otherwise, an input box that does not hold the prompt: type it again
+//     (#132's case), with retype.
 //
 // The guard read runs first and refuses exactly as the first send's does,
 // worded for text that has already gone out (textAlreadySent). The box is
@@ -101,6 +114,11 @@ func retryStalledPrompt(ctx context.Context, r herdrc.Runner, req herdrc.AgentPr
 	// would have before the question was asked.
 	if landedLate, err := r.AgentWait(ctx, req.Target, statusNow, herdrc.AgentWorking); err == nil && landedLate {
 		return confirmPromptLanded(ctx, r, req)
+	}
+	if !inputBoxOnScreen(screen) {
+		return fmt.Errorf("%w -- the agent is showing something else, a dialog or an error, and may be "+
+			"holding the prompt behind it: read the pane, and once its input box is back, press Enter "+
+			"on the prompt there rather than pasting it", errInputBoxNotOnScreen)
 	}
 	return retype()
 }
@@ -145,8 +163,9 @@ func submitPromptLeftInInputBox(ctx context.Context, r herdrc.Runner, req herdrc
 // its start, inline, or Claude Code's placeholder for a large paste.
 //
 // It answers only on positive evidence, and its errors run toward "no":
-// that is a retype, which is what the retry always did, and never Enter
-// pressed into an input box holding something else. That is why a box is
+// that is a retype into a box seen empty, or nothing at all where no box is
+// seen (#373), and never Enter pressed into an input box holding something
+// else. That is why a box is
 // not matched by the prompt's END. Nothing measured shows Claude Code
 // scrolling a prompt's start out of its box (a large one is collapsed into
 // the placeholder instead), and a box that ends like the prompt without
@@ -190,6 +209,14 @@ func inputBoxStart(screen string) (text string, found bool) {
 		}
 	}
 	return "", false
+}
+
+// inputBoxOnScreen reports whether screen shows Claude Code's input box at
+// all, by the same rule inputBoxStart finds it with: the marker on the line
+// under the box's top edge.
+func inputBoxOnScreen(screen string) bool {
+	_, found := inputBoxStart(screen)
+	return found
 }
 
 // isInputBoxEdge reports whether line is an edge of the input box: a line of

@@ -197,7 +197,8 @@ pane shows, and paste the prompt in.
 The prompt was typed into the pane, or may have been, but nothing confirmed
 that the agent took it: the wait for the agent ran out, a send stalled twice,
 the prompt was left in the agent's input box and Enter on it changed nothing,
-the pane afterwards showed a dialog without the prompt or stopped answering,
+a send stalled while the agent was showing a dialog or an error instead of its
+input box, the pane afterwards showed a dialog without the prompt or stopped answering,
 or herdr failed the send partway through. The agent may already be working on
 it, or its input box may hold some or all of it. If the whole prompt is
 sitting in the box, press Enter there rather than pasting it again.

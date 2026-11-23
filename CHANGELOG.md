@@ -69,7 +69,11 @@ for why a heading here may read `unreleased`.
   - **The prompt is still in the box:** it presses Enter on it, unless
     herdr reports the agent waiting on a dialog.
   - **The agent is already working on it:** it sends nothing.
-  - **Neither:** it types the prompt again, as before.
+  - **No input box on screen**, a dialog or an error in its place: it types
+    nothing (#373). The agent may be holding the first copy behind what it
+    shows, and a retype once left two copies there. The run says so, and
+    to press Enter in the box once it is back.
+  - **An empty input box:** it types the prompt again, as before.
 
   If Enter changes nothing either, the run says the prompt is most likely
   still in the box and to press Enter there, instead of offering it back to

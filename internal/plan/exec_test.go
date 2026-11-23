@@ -3512,6 +3512,11 @@ func TestExecuteToleratesAnUnreadablePaneWhileWaiting(t *testing.T) {
 // buffer and no turn. Without a retry the wait ends exactly where it began
 // -- a failure screen and a prompt to paste by hand. (A stall can also leave
 // the text in the input box, which stallretry_test.go covers: #371.)
+//
+// Every test here that expects the retry to TYPE shows it an empty input
+// box (emptyInputBoxScreen). The fake's default screen draws none, and since
+// #373 a retry types only where it can see that the box is empty: a screen
+// without one may be a dialog holding the first copy behind it.
 
 // stalledPromptErr is herdr's own refusal, as herdrc types it.
 func stalledPromptErr() error {
@@ -3537,6 +3542,7 @@ func TestExecuteRetriesAPromptThatStalled(t *testing.T) {
 		failAt:    "AgentPrompt",
 		failErr:   stalledPromptErr(),
 		failCount: 1,
+		readText:  emptyInputBoxScreen,
 	}
 
 	result := Execute(context.Background(), m, ops, ExecOpts{TrustWait: 5 * time.Minute}, nil)
@@ -3580,6 +3586,7 @@ func TestExecuteRetriesAStalledPromptOnlyOnce(t *testing.T) {
 		failAt:    "AgentPrompt",
 		failErr:   stalledPromptErr(),
 		failCount: 99,
+		readText:  emptyInputBoxScreen,
 	}
 
 	var progressed []Progress
@@ -3636,6 +3643,7 @@ func TestExecuteRetriesAStalledPromptWithoutATrustBudget(t *testing.T) {
 		failAt:    "AgentPrompt",
 		failErr:   stalledPromptErr(),
 		failCount: 99,
+		readText:  emptyInputBoxScreen,
 	}
 
 	result := Execute(context.Background(), m, ops, ExecOpts{}, nil)
@@ -4271,6 +4279,7 @@ func TestExecuteStallThenASwallowedRetryIsUnconfirmed(t *testing.T) {
 		failAt:    "AgentPrompt",
 		failErr:   stalledPromptErr(),
 		failCount: 1,
+		readText:  emptyInputBoxScreen,
 		postPromptText: "Quick safety check: Is this a project you created or one you trust?\n\n" +
 			"❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel\n",
 	}
@@ -4470,8 +4479,11 @@ func TestExecuteStallThenAFailedSendIsUnconfirmed(t *testing.T) {
 	}
 
 	m := &promptErrSequence{
-		mockRunner: &mockRunner{topo: herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"}},
-		errs:       []error{stalledPromptErr(), sendFailedPromptErr()},
+		mockRunner: &mockRunner{
+			topo:     herdrc.CreatedTopology{WorkspaceID: "ws-1", PaneID: "pane-1"},
+			readText: emptyInputBoxScreen,
+		},
+		errs: []error{stalledPromptErr(), sendFailedPromptErr()},
 	}
 
 	var progressed []Progress
